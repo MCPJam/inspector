@@ -1,9 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { Copy, Check, ExternalLink } from "lucide-react";
+import {
+  Copy,
+  Check,
+  ExternalLink,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import type { ListToolsResultWithMetadata } from "@/lib/mcp-tools-api";
+import { getStoredTokens } from "@/lib/mcp-oauth";
+import { decodeJWT } from "@/lib/jwt-decoder";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
+import "react18-json-view/src/dark.css";
 
 interface ServerInfoModalProps {
   isOpen: boolean;
@@ -19,6 +30,17 @@ export function ServerInfoModal({
   toolsData,
 }: ServerInfoModalProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
+
+  const oauthTokens = server.oauthTokens || getStoredTokens(server.name);
+  const isHttpServer = "url" in server.config;
+
+  useEffect(() => {
+    if (!isOpen) {
+      setCopiedField(null);
+      setExpandedTokens(new Set());
+    }
+  }, [isOpen, server.name]);
 
   const initializationInfo = server.initializationInfo;
 
@@ -27,6 +49,7 @@ export function ServerInfoModal({
   const serverTitle = initializationInfo?.serverVersion?.title;
   const version = initializationInfo?.serverVersion?.version;
   const websiteUrl = initializationInfo?.serverVersion?.websiteUrl;
+  const serverIcon = initializationInfo?.serverVersion?.icons?.[0];
   const protocolVersion = initializationInfo?.protocolVersion;
   const transport = initializationInfo?.transport;
   const instructions = initializationInfo?.instructions;
@@ -52,6 +75,140 @@ export function ServerInfoModal({
       console.error("Failed to copy text:", error);
     }
   };
+
+  const toggleTokenExpansion = (tokenName: string) => {
+    setExpandedTokens((prev) => {
+      const next = new Set(prev);
+      if (next.has(tokenName)) {
+        next.delete(tokenName);
+      } else {
+        next.add(tokenName);
+      }
+      return next;
+    });
+  };
+
+  const renderToken = (
+    label: string,
+    tokenValue: string | undefined,
+    tokenKey: string,
+  ) => {
+    if (!tokenValue) return null;
+    const decoded = decodeJWT(tokenValue);
+
+    return (
+      <div>
+        <span className="text-muted-foreground font-medium">{label}:</span>
+        <div
+          className="font-mono text-foreground break-all bg-background/50 p-2 rounded mt-1 relative group cursor-pointer hover:bg-background/70 transition-colors"
+          onClick={() => toggleTokenExpansion(tokenKey)}
+        >
+          <div className="pr-8">
+            {expandedTokens.has(tokenKey) || tokenValue.length <= 50
+              ? tokenValue
+              : `${tokenValue.substring(0, 50)}...`}
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              copyToClipboard(tokenValue, tokenKey);
+            }}
+            className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
+          >
+            {copiedField === tokenKey ? (
+              <Check className="h-3 w-3 text-green-500" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+          </button>
+        </div>
+        {decoded && (
+          <div className="mt-1">
+            <button
+              type="button"
+              onClick={() => toggleTokenExpansion(`${tokenKey}Decoded`)}
+              className="text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
+            >
+              {expandedTokens.has(`${tokenKey}Decoded`) ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              View Decoded JWT
+            </button>
+            {expandedTokens.has(`${tokenKey}Decoded`) && (
+              <div className="mt-1">
+                <JsonView
+                  src={decoded}
+                  theme="atom"
+                  dark={true}
+                  enableClipboard={true}
+                  displaySize={false}
+                  collapseStringsAfterLength={100}
+                  style={{
+                    fontSize: "11px",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                    backgroundColor: "hsl(var(--background))",
+                    padding: "8px",
+                    borderRadius: "6px",
+                    border: "1px solid hsl(var(--border))",
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderOAuthTokensSection = () => {
+    if (!isHttpServer || !oauthTokens) return null;
+
+    return (
+      <div className="space-y-3 text-xs pt-2">
+        <div className="text-sm font-medium text-muted-foreground">
+          OAuth Tokens
+        </div>
+        <div className="space-y-3 rounded-md bg-muted/40 p-3">
+          {renderToken("Access Token", oauthTokens.access_token, "accessToken")}
+          {renderToken(
+            "Refresh Token",
+            oauthTokens.refresh_token,
+            "refreshToken",
+          )}
+          {renderToken("ID Token", (oauthTokens as any).id_token, "idToken")}
+
+          <div className="flex flex-wrap gap-4 text-muted-foreground pt-1">
+            <span>Type: {oauthTokens.token_type || "Bearer"}</span>
+            {oauthTokens.expires_in && (
+              <span>Expires in: {oauthTokens.expires_in}s</span>
+            )}
+            {oauthTokens.scope && <span>Scope: {oauthTokens.scope}</span>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderIconRow = () => (
+    <div>
+      <div className="text-sm font-medium text-muted-foreground mb-1">Icon</div>
+      {serverIcon?.src ? (
+        <img
+          src={serverIcon.src}
+          alt={serverTitle || serverName || "Server icon"}
+          className="h-10 w-10 rounded border border-border/40 bg-muted object-contain"
+        />
+      ) : (
+        <div className="text-sm text-muted-foreground italic">
+          No icon provided
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -101,6 +258,8 @@ export function ServerInfoModal({
                 </div>
               )}
 
+              {renderIconRow()}
+
               {protocolVersion && (
                 <div>
                   <div className="text-sm font-medium text-muted-foreground mb-1">
@@ -142,10 +301,10 @@ export function ServerInfoModal({
               {serverCapabilities && (
                 <div>
                   <div className="text-sm font-medium text-muted-foreground mb-2">
-                    Server Capabilities (Raw)
+                    Server Capabilities
                   </div>
                   <div className="relative">
-                    <pre className="text-sm font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
+                    <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
                       {JSON.stringify(serverCapabilities, null, 2)}
                     </pre>
                     <button
@@ -171,10 +330,10 @@ export function ServerInfoModal({
               {clientCapabilities && (
                 <div>
                   <div className="text-sm font-medium text-muted-foreground mb-2">
-                    Client Capabilities (Raw)
+                    Client Capabilities
                   </div>
                   <div className="relative">
-                    <pre className="text-sm font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
+                    <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
                       {JSON.stringify(clientCapabilities, null, 2)}
                     </pre>
                     <button
@@ -210,6 +369,8 @@ export function ServerInfoModal({
                   </a>
                 </div>
               )}
+
+              {renderOAuthTokensSection()}
             </TabsContent>
 
             <TabsContent value="metadata" className="space-y-4 mt-4">
@@ -304,6 +465,8 @@ export function ServerInfoModal({
               </div>
             )}
 
+            {renderIconRow()}
+
             {protocolVersion && (
               <div>
                 <div className="text-sm font-medium text-muted-foreground mb-1">
@@ -345,10 +508,10 @@ export function ServerInfoModal({
             {serverCapabilities && (
               <div>
                 <div className="text-sm font-medium text-muted-foreground mb-2">
-                  Server Capabilities (Raw)
+                  Server Capabilities
                 </div>
                 <div className="relative">
-                  <pre className="text-sm font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
+                  <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
                     {JSON.stringify(serverCapabilities, null, 2)}
                   </pre>
                   <button
@@ -374,10 +537,10 @@ export function ServerInfoModal({
             {clientCapabilities && (
               <div>
                 <div className="text-sm font-medium text-muted-foreground mb-2">
-                  Client Capabilities (Raw)
+                  Client Capabilities
                 </div>
                 <div className="relative">
-                  <pre className="text-sm font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
+                  <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
                     {JSON.stringify(clientCapabilities, null, 2)}
                   </pre>
                   <button
@@ -413,6 +576,8 @@ export function ServerInfoModal({
                 </a>
               </div>
             )}
+
+            {renderOAuthTokensSection()}
           </div>
         )}
       </DialogContent>
