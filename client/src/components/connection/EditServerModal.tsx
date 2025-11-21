@@ -166,12 +166,22 @@ export function EditServerModal({
               <div className="flex">
                 <Select
                   value={serverFormData.type}
-                  onValueChange={(value: "stdio" | "http") =>
+                  onValueChange={(value: "stdio" | "http") => {
+                    // Preserve the current input value before switching
+                    const currentValue = commandInput;
                     setServerFormData((prev) => ({
                       ...prev,
                       type: value,
-                    }))
-                  }
+                    }));
+
+                    // Apply the preserved value to the appropriate field after switching
+                    if (value === "http" && currentValue) {
+                      setServerFormData((prev) => ({
+                        ...prev,
+                        url: currentValue,
+                      }));
+                    }
+                  }}
                 >
                   <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
                     <SelectValue />
@@ -193,12 +203,19 @@ export function EditServerModal({
               <div className="flex">
                 <Select
                   value={serverFormData.type}
-                  onValueChange={(value: "stdio" | "http") =>
+                  onValueChange={(value: "stdio" | "http") => {
+                    // Preserve the current input value before switching
+                    const currentValue = serverFormData.url;
                     setServerFormData((prev) => ({
                       ...prev,
                       type: value,
-                    }))
-                  }
+                    }));
+
+                    // Apply the preserved value to the appropriate field after switching
+                    if (value === "stdio" && currentValue) {
+                      setCommandInput(currentValue);
+                    }
+                  }}
                 >
                   <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
                     <SelectValue />
