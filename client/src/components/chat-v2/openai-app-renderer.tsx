@@ -208,7 +208,7 @@ export function OpenAIAppRenderer({
   );
 
   const iframeHeight = useMemo(() => {
-    if (displayMode === "fullscreen") return "80vh";
+    if (displayMode === "fullscreen") return "100%";
     if (displayMode === "pip") {
       return pipWidgetId === resolvedToolCallId
         ? "400px"
@@ -438,32 +438,48 @@ export function OpenAIAppRenderer({
   }
 
   const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
+  const isFullscreen = displayMode === "fullscreen";
 
-  const containerClassName = isPip
-    ? [
-        "fixed",
-        "top-4",
-        "inset-x-0",
-        "z-40",
-        "w-full",
-        "max-w-4xl",
-        "mx-auto",
-        "space-y-2",
-        "bg-background/95",
-        "backdrop-blur",
-        "supports-[backdrop-filter]:bg-background/80",
-        "shadow-xl",
-        "border",
-        "border-border/60",
-        "rounded-xl",
-        "p-3",
-      ].join(" ")
-    : "mt-3 space-y-2";
+  let containerClassName = "mt-3 space-y-2 relative group";
+
+  if (isFullscreen) {
+    containerClassName = [
+      "fixed",
+      "inset-0",
+      "z-50",
+      "w-full",
+      "h-full",
+      "bg-background",
+      "flex",
+      "flex-col",
+    ].join(" ");
+  } else if (isPip) {
+    containerClassName = [
+      "fixed",
+      "top-4",
+      "inset-x-0",
+      "z-40",
+      "w-full",
+      "max-w-4xl",
+      "mx-auto",
+      "space-y-2",
+      "bg-background/95",
+      "backdrop-blur",
+      "supports-[backdrop-filter]:bg-background/80",
+      "shadow-xl",
+      "border",
+      "border-border/60",
+      "rounded-xl",
+      "p-3",
+    ].join(" ");
+  }
+
+  const shouldShowExitButton = isPip || isFullscreen;
 
   // Render iframe
   return (
     <div className={containerClassName}>
-      {isPip && (
+      {shouldShowExitButton && (
         <button
           onClick={() => {
             setDisplayMode("inline");
