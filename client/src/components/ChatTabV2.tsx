@@ -486,7 +486,10 @@ export function ChatTabV2({
     signUp();
   };
 
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = (
+    event: FormEvent<HTMLFormElement>,
+    additionalInput?: string,
+  ) => {
     event.preventDefault();
     if (
       input.trim() &&
@@ -502,7 +505,7 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
-      sendMessage({ text: input });
+      sendMessage({ text: `${additionalInput || ""}${input}` });
       setInput("");
     }
   };
