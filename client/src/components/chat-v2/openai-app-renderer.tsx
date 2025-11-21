@@ -49,13 +49,13 @@ export function OpenAIAppRenderer({
   const previousWidgetStateRef = useRef<string | null>(null);
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
-    [toolCallId, toolName],
+    [toolCallId, toolName]
   );
 
   // Extract outputTemplate from tool metadata
   const outputTemplate = useMemo(
     () => toolMetadata?.["openai/outputTemplate"],
-    [toolMetadata],
+    [toolMetadata]
   );
 
   // Extract structuredContent from tool output
@@ -94,12 +94,12 @@ export function OpenAIAppRenderer({
 
   const resolvedToolInput = useMemo(
     () => (toolInputProp as Record<string, any>) ?? {},
-    [toolInputProp],
+    [toolInputProp]
   );
 
   const resolvedToolOutput = useMemo(
     () => structuredContent ?? toolOutputProp ?? null,
-    [structuredContent, toolOutputProp],
+    [structuredContent, toolOutputProp]
   );
 
   // Store widget data and get URL - ONLY once when tool state is output-available
@@ -154,7 +154,7 @@ export function OpenAIAppRenderer({
 
         if (!response.ok) {
           throw new Error(
-            `Failed to store widget data: ${response.statusText}`,
+            `Failed to store widget data: ${response.statusText}`
           );
         }
 
@@ -167,7 +167,7 @@ export function OpenAIAppRenderer({
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
         setStoreError(
-          err instanceof Error ? err.message : "Failed to prepare widget",
+          err instanceof Error ? err.message : "Failed to prepare widget"
         );
       } finally {
         if (!isCancelled) {
@@ -198,7 +198,7 @@ export function OpenAIAppRenderer({
 
   const appliedHeight = useMemo(
     () => Math.min(Math.max(contentHeight, 320), maxHeight),
-    [contentHeight, maxHeight],
+    [contentHeight, maxHeight]
   );
 
   const iframeHeight = useMemo(() => {
@@ -224,7 +224,7 @@ export function OpenAIAppRenderer({
           if (Number.isFinite(rawHeight) && rawHeight > 0) {
             const nextHeight = Math.round(rawHeight);
             setContentHeight((prev) =>
-              Math.abs(prev - nextHeight) > 1 ? nextHeight : prev,
+              Math.abs(prev - nextHeight) > 1 ? nextHeight : prev
             );
           }
           break;
@@ -250,7 +250,7 @@ export function OpenAIAppRenderer({
         case "openai:callTool": {
           if (!onCallTool) {
             console.warn(
-              "[OpenAI App] callTool received but handler not available",
+              "[OpenAI App] callTool received but handler not available"
             );
             iframeRef.current?.contentWindow?.postMessage(
               {
@@ -258,7 +258,7 @@ export function OpenAIAppRenderer({
                 requestId: event.data.requestId,
                 error: "callTool is not supported in this context",
               },
-              "*",
+              "*"
             );
             break;
           }
@@ -266,7 +266,7 @@ export function OpenAIAppRenderer({
           try {
             const result = await onCallTool(
               event.data.toolName,
-              event.data.params || {},
+              event.data.params || {}
             );
             iframeRef.current?.contentWindow?.postMessage(
               {
@@ -274,7 +274,7 @@ export function OpenAIAppRenderer({
                 requestId: event.data.requestId,
                 result,
               },
-              "*",
+              "*"
             );
           } catch (err) {
             iframeRef.current?.contentWindow?.postMessage(
@@ -283,7 +283,7 @@ export function OpenAIAppRenderer({
                 requestId: event.data.requestId,
                 error: err instanceof Error ? err.message : "Unknown error",
               },
-              "*",
+              "*"
             );
           }
           break;
@@ -305,7 +305,7 @@ export function OpenAIAppRenderer({
               {
                 hasHandler: !!onSendFollowUp,
                 message: event.data.message,
-              },
+              }
             );
           }
           break;
@@ -329,7 +329,7 @@ export function OpenAIAppRenderer({
         }
       }
     },
-    [onCallTool, onSendFollowUp, onWidgetStateChange, resolvedToolCallId],
+    [onCallTool, onSendFollowUp, onWidgetStateChange, resolvedToolCallId]
   );
 
   useEffect(() => {
@@ -351,7 +351,7 @@ export function OpenAIAppRenderer({
           theme: themeMode,
         },
       },
-      "*",
+      "*"
     );
   }, [themeMode, isReady]);
 
@@ -409,9 +409,9 @@ export function OpenAIAppRenderer({
 
   const containerClassName = isPip
     ? [
-        "fixed", // now fixed INSIDE the chat panel
-        "top-4", // pinned a bit below the panel header
-        "inset-x-0", // span the panel’s width
+        "fixed",
+        "top-4",
+        "inset-x-0",
         "z-40",
         "w-full",
         "max-w-4xl",
