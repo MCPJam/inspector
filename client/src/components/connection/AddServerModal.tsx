@@ -176,12 +176,22 @@ export function AddServerModal({
               <div className="flex">
                 <Select
                   value={formState.serverFormData.type}
-                  onValueChange={(value: "stdio" | "http") =>
+                  onValueChange={(value: "stdio" | "http") => {
+                    // Preserve the current input value before switching
+                    const currentValue = formState.commandInput;
                     formState.setServerFormData((prev) => ({
                       ...prev,
                       type: value,
-                    }))
-                  }
+                    }));
+
+                    // Apply the preserved value to the appropriate field after switching
+                    if (value === "http" && currentValue) {
+                      formState.setServerFormData((prev) => ({
+                        ...prev,
+                        url: currentValue,
+                      }));
+                    }
+                  }}
                 >
                   <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
                     <SelectValue />
@@ -203,12 +213,19 @@ export function AddServerModal({
               <div className="flex">
                 <Select
                   value={formState.serverFormData.type}
-                  onValueChange={(value: "stdio" | "http") =>
+                  onValueChange={(value: "stdio" | "http") => {
+                    // Preserve the current input value before switching
+                    const currentValue = formState.serverFormData.url;
                     formState.setServerFormData((prev) => ({
                       ...prev,
                       type: value,
-                    }))
-                  }
+                    }));
+
+                    // Apply the preserved value to the appropriate field after switching
+                    if (value === "stdio" && currentValue) {
+                      formState.setCommandInput(currentValue);
+                    }
+                  }}
                 >
                   <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
                     <SelectValue />
