@@ -113,7 +113,7 @@ export function ChatInput({
           readOnly={disabled}
           minRows={2}
           className={cn(
-            "max-h-32 min-h-[64px] w-full resize-none border-none bg-transparent px-4",
+            "max-h-32 min-h-[64px] w-full resize-none border-none bg-transparent dark:bg-transparent px-4",
             "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
             "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
             disabled ? "cursor-not-allowed text-muted-foreground" : "",
