@@ -1,4 +1,4 @@
-import { useState } from "react";
+import type React from "react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -16,16 +16,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { ChevronDown, ChevronRight, Copy, Check } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { getStoredTokens } from "@/lib/mcp-oauth";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
-import { decodeJWT } from "@/lib/jwt-decoder";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
 import { useServerForm } from "./hooks/use-server-form";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { CustomHeadersSection } from "./shared/CustomHeadersSection";
@@ -51,10 +45,6 @@ export function EditServerModal({
   skipAutoConnect = false,
 }: EditServerModalProps) {
   const posthog = usePostHog();
-  const [activeTab, setActiveTab] = useState<"config" | "auth">("config");
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
-  const [showTokenInsights, setShowTokenInsights] = useState<boolean>(false);
 
   // Use the shared form hook
   const {
@@ -82,12 +72,8 @@ export function EditServerModal({
     setClientSecretError,
     envVars,
     customHeaders,
-    showConfiguration,
-    setShowConfiguration,
     showEnvVars,
     setShowEnvVars,
-    showCustomHeaders,
-    setShowCustomHeaders,
     showAuthSettings,
     setShowAuthSettings,
     validateClientId,
@@ -100,31 +86,6 @@ export function EditServerModal({
     updateCustomHeader,
     buildFormData,
   } = useServerForm(server);
-
-  // Copy to clipboard helper
-  const copyToClipboard = async (text: string, fieldName: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedField(fieldName);
-      setTimeout(() => setCopiedField(null), 2000);
-    } catch (error) {
-      console.error("Failed to copy text:", error);
-      toast.error("Failed to copy to clipboard");
-    }
-  };
-
-  // Toggle token expansion
-  const toggleTokenExpansion = (tokenName: string) => {
-    setExpandedTokens((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(tokenName)) {
-        newSet.delete(tokenName);
-      } else {
-        newSet.add(tokenName);
-      }
-      return newSet;
-    });
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,10 +114,6 @@ export function EditServerModal({
   };
 
   const handleClose = () => {
-    setActiveTab("config");
-    setCopiedField(null);
-    setExpandedTokens(new Set());
-    setShowTokenInsights(false);
     onClose();
   };
 
@@ -164,648 +121,214 @@ export function EditServerModal({
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader className="space-y-3">
-          <DialogTitle className="flex text-xl font-semibold">
+          <DialogTitle className="flex text-sm font-semibold">
             <img src="/mcp.svg" alt="MCP" className="mr-2" /> Edit MCP Server
           </DialogTitle>
           <DialogDescription className="sr-only">
             Edit your MCP server configuration and authentication settings
           </DialogDescription>
-
-          {/* Tab switcher */}
-          <div className="flex gap-2 border-b border-border">
-            <button
-              type="button"
-              onClick={() => setActiveTab("config")}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                activeTab === "config"
-                  ? "border-b-2 border-primary text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Configuration
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("auth")}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                activeTab === "auth"
-                  ? "border-b-2 border-primary text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Authentication
-            </button>
-          </div>
         </DialogHeader>
 
-        {/* Configuration Tab */}
-        {activeTab === "config" && (
-          <form
-            onSubmit={(e) => {
-              posthog.capture("update_server_button_clicked", {
-                location: "server_modal_config_tab",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              });
-              handleSubmit(e);
-            }}
-            className="space-y-6"
-          >
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-foreground">
-                Server Name
-              </label>
-              <Input
-                value={serverFormData.name}
-                onChange={(e) =>
-                  setServerFormData((prev) => ({
-                    ...prev,
-                    name: e.target.value,
-                  }))
-                }
-                placeholder="my-mcp-server"
-                required
-                className="h-10"
-              />
-            </div>
+        <form
+          onSubmit={(e) => {
+            posthog.capture("update_server_button_clicked", {
+              location: "edit_server_modal_combined",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+            });
+            handleSubmit(e);
+          }}
+          className="space-y-6"
+        >
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              Server Name
+            </label>
+            <Input
+              value={serverFormData.name}
+              onChange={(e) =>
+                setServerFormData((prev) => ({
+                  ...prev,
+                  name: e.target.value,
+                }))
+              }
+              placeholder="my-mcp-server"
+              required
+              className="h-10"
+            />
+          </div>
 
-            {/* Connection Type */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-foreground">
-                Connection Type
-              </label>
-              {serverFormData.type === "stdio" ? (
-                <div className="flex">
-                  <Select
-                    value={serverFormData.type}
-                    onValueChange={(value: "stdio" | "http") =>
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        type: value,
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="stdio">STDIO</SelectItem>
-                      <SelectItem value="http">HTTP</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    value={commandInput}
-                    onChange={(e) => setCommandInput(e.target.value)}
-                    placeholder="npx -y @modelcontextprotocol/server-everything"
-                    required
-                    className="flex-1 rounded-l-none text-sm border-border"
-                  />
-                </div>
-              ) : (
-                <div className="flex">
-                  <Select
-                    value={serverFormData.type}
-                    onValueChange={(value: "stdio" | "http") =>
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        type: value,
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="stdio">STDIO</SelectItem>
-                      <SelectItem value="http">HTTP</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    value={serverFormData.url}
-                    onChange={(e) =>
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        url: e.target.value,
-                      }))
-                    }
-                    placeholder="http://localhost:8080/mcp"
-                    required
-                    className="flex-1 rounded-l-none text-sm border-border"
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Environment Variables for STDIO */}
-            {serverFormData.type === "stdio" && (
-              <EnvVarsSection
-                envVars={envVars}
-                showEnvVars={showEnvVars}
-                onToggle={() => setShowEnvVars(!showEnvVars)}
-                onAdd={addEnvVar}
-                onRemove={removeEnvVar}
-                onUpdate={updateEnvVar}
-              />
-            )}
-
-            {/* Custom Headers for HTTP */}
-            {serverFormData.type === "http" && (
-              <CustomHeadersSection
-                customHeaders={customHeaders}
-                showCustomHeaders={showCustomHeaders}
-                onToggle={() => setShowCustomHeaders(!showCustomHeaders)}
-                onAdd={addCustomHeader}
-                onRemove={removeCustomHeader}
-                onUpdate={updateCustomHeader}
-              />
-            )}
-
-            {/* Additional Configuration Section */}
-            <div className="border border-border rounded-lg overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setShowConfiguration(!showConfiguration)}
-                className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  {showConfiguration ? (
-                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  )}
-                  <span className="text-sm font-medium text-foreground">
-                    Additional Configuration
-                  </span>
-                </div>
-              </button>
-
-              {showConfiguration && (
-                <div className="p-4 space-y-4 border-t border-border bg-muted/30">
-                  {/* Request Timeout */}
-                  <div className="space-y-2">
-                    <label className="block text-sm font-medium text-foreground">
-                      Request Timeout
-                    </label>
-                    <Input
-                      type="number"
-                      value={requestTimeout}
-                      onChange={(e) => setRequestTimeout(e.target.value)}
-                      placeholder="10000"
-                      className="h-10"
-                      min="1000"
-                      max="600000"
-                      step="1000"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Timeout in ms (default: 10000ms, min: 1000ms, max:
-                      600000ms)
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end space-x-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  posthog.capture("cancel_button_clicked", {
-                    location: "edit_server_modal_config",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                  });
-                  handleClose();
-                }}
-                className="px-4"
-              >
-                Cancel
-              </Button>
-              <Button type="submit" className="px-4">
-                Update Server
-              </Button>
-            </div>
-          </form>
-        )}
-
-        {/* Authentication Tab */}
-        {activeTab === "auth" && (
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-lg font-semibold">Authentication Settings</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Configure authentication for your MCP server connection
-              </p>
-            </div>
-
-            {serverFormData.type === "http" ? (
-              <div className="space-y-4">
-                {/* Authentication Section */}
-                <AuthenticationSection
-                  authType={authType}
-                  onAuthTypeChange={(value) => {
-                    setAuthType(value);
-                    setShowAuthSettings(value !== "none");
-                    if (value === "oauth") {
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        useOAuth: true,
-                      }));
-                    } else {
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        useOAuth: false,
-                      }));
-                    }
-                  }}
-                  showAuthSettings={showAuthSettings}
-                  bearerToken={bearerToken}
-                  onBearerTokenChange={setBearerToken}
-                  oauthScopesInput={oauthScopesInput}
-                  onOauthScopesChange={setOauthScopesInput}
-                  useCustomClientId={useCustomClientId}
-                  onUseCustomClientIdChange={(checked) => {
-                    setUseCustomClientId(checked);
-                    if (!checked) {
-                      setClientId("");
-                      setClientSecret("");
-                      setClientIdError(null);
-                      setClientSecretError(null);
-                    }
-                  }}
-                  clientId={clientId}
-                  onClientIdChange={(value) => {
-                    setClientId(value);
-                    const error = validateClientId(value);
-                    setClientIdError(error);
-                  }}
-                  clientSecret={clientSecret}
-                  onClientSecretChange={(value) => {
-                    setClientSecret(value);
-                    const error = validateClientSecret(value);
-                    setClientSecretError(error);
-                  }}
-                  clientIdError={clientIdError}
-                  clientSecretError={clientSecretError}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              Connection Type
+            </label>
+            {serverFormData.type === "stdio" ? (
+              <div className="flex">
+                <Select
+                  value={serverFormData.type}
+                  onValueChange={(value: "stdio" | "http") =>
+                    setServerFormData((prev) => ({
+                      ...prev,
+                      type: value,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="stdio">STDIO</SelectItem>
+                    <SelectItem value="http">HTTP</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={commandInput}
+                  onChange={(e) => setCommandInput(e.target.value)}
+                  placeholder="npx -y @modelcontextprotocol/server-everything"
+                  required
+                  className="flex-1 rounded-l-none text-sm border-border"
                 />
-
-                {/* Token Insights (OAuth only) */}
-                {(authType === "oauth" || server.oauthTokens) &&
-                  (() => {
-                    const tokens =
-                      server.oauthTokens || getStoredTokens(server.name);
-                    if (!tokens) return null;
-
-                    return (
-                      <div className="border border-border rounded-lg overflow-hidden">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setShowTokenInsights(!showTokenInsights)
-                          }
-                          className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors cursor-pointer"
-                        >
-                          <div className="flex items-center gap-2">
-                            {showTokenInsights ? (
-                              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                            ) : (
-                              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                            )}
-                            <span className="text-sm font-medium text-foreground">
-                              OAuth Tokens
-                            </span>
-                          </div>
-                        </button>
-
-                        {showTokenInsights && (
-                          <div className="p-4 space-y-3 border-t border-border bg-muted/30">
-                            {/* Access Token */}
-                            <div>
-                              <span className="text-xs text-muted-foreground font-medium">
-                                Access Token:
-                              </span>
-                              <div
-                                className="font-mono text-xs text-foreground break-all bg-background/50 p-2 rounded mt-1 relative group cursor-pointer hover:bg-background/70 transition-colors"
-                                onClick={() =>
-                                  toggleTokenExpansion("accessToken")
-                                }
-                              >
-                                <div className="pr-8">
-                                  {expandedTokens.has("accessToken") ||
-                                  tokens.access_token.length <= 50
-                                    ? tokens.access_token
-                                    : `${tokens.access_token.substring(0, 50)}...`}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    copyToClipboard(
-                                      tokens.access_token,
-                                      "accessToken",
-                                    );
-                                  }}
-                                  className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-                                >
-                                  {copiedField === "accessToken" ? (
-                                    <Check className="h-3 w-3 text-green-500" />
-                                  ) : (
-                                    <Copy className="h-3 w-3" />
-                                  )}
-                                </button>
-                              </div>
-                              {(() => {
-                                const decoded = decodeJWT(tokens.access_token);
-                                if (!decoded) return null;
-                                return (
-                                  <div className="mt-2">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        toggleTokenExpansion(
-                                          "accessTokenDecoded",
-                                        )
-                                      }
-                                      className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
-                                    >
-                                      {expandedTokens.has(
-                                        "accessTokenDecoded",
-                                      ) ? (
-                                        <ChevronDown className="h-3 w-3" />
-                                      ) : (
-                                        <ChevronRight className="h-3 w-3" />
-                                      )}
-                                      View Decoded JWT
-                                    </button>
-                                    {expandedTokens.has(
-                                      "accessTokenDecoded",
-                                    ) && (
-                                      <div className="mt-1">
-                                        <JsonView
-                                          src={decoded}
-                                          theme="atom"
-                                          dark={true}
-                                          enableClipboard={true}
-                                          displaySize={false}
-                                          collapseStringsAfterLength={100}
-                                          style={{
-                                            fontSize: "11px",
-                                            fontFamily:
-                                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                            backgroundColor:
-                                              "hsl(var(--background))",
-                                            padding: "8px",
-                                            borderRadius: "6px",
-                                            border:
-                                              "1px solid hsl(var(--border))",
-                                          }}
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-                            </div>
-
-                            {/* Refresh Token */}
-                            {tokens.refresh_token && (
-                              <div>
-                                <span className="text-xs text-muted-foreground font-medium">
-                                  Refresh Token:
-                                </span>
-                                <div
-                                  className="font-mono text-xs text-foreground break-all bg-background/50 p-2 rounded mt-1 relative group cursor-pointer hover:bg-background/70 transition-colors"
-                                  onClick={() =>
-                                    toggleTokenExpansion("refreshToken")
-                                  }
-                                >
-                                  <div className="pr-8">
-                                    {expandedTokens.has("refreshToken") ||
-                                    tokens.refresh_token.length <= 50
-                                      ? tokens.refresh_token
-                                      : `${tokens.refresh_token.substring(0, 50)}...`}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      copyToClipboard(
-                                        tokens.refresh_token || "",
-                                        "refreshToken",
-                                      );
-                                    }}
-                                    className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-                                  >
-                                    {copiedField === "refreshToken" ? (
-                                      <Check className="h-3 w-3 text-green-500" />
-                                    ) : (
-                                      <Copy className="h-3 w-3" />
-                                    )}
-                                  </button>
-                                </div>
-                                {(() => {
-                                  const decoded = decodeJWT(
-                                    tokens.refresh_token,
-                                  );
-                                  if (!decoded) return null;
-                                  return (
-                                    <div className="mt-2">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          toggleTokenExpansion(
-                                            "refreshTokenDecoded",
-                                          )
-                                        }
-                                        className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
-                                      >
-                                        {expandedTokens.has(
-                                          "refreshTokenDecoded",
-                                        ) ? (
-                                          <ChevronDown className="h-3 w-3" />
-                                        ) : (
-                                          <ChevronRight className="h-3 w-3" />
-                                        )}
-                                        View Decoded JWT
-                                      </button>
-                                      {expandedTokens.has(
-                                        "refreshTokenDecoded",
-                                      ) && (
-                                        <div className="mt-1">
-                                          <JsonView
-                                            src={decoded}
-                                            theme="atom"
-                                            dark={true}
-                                            enableClipboard={true}
-                                            displaySize={false}
-                                            collapseStringsAfterLength={100}
-                                            style={{
-                                              fontSize: "11px",
-                                              fontFamily:
-                                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                              backgroundColor:
-                                                "hsl(var(--background))",
-                                              padding: "8px",
-                                              borderRadius: "6px",
-                                              border:
-                                                "1px solid hsl(var(--border))",
-                                            }}
-                                          />
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            )}
-
-                            {/* ID Token */}
-                            {(tokens as any).id_token && (
-                              <div>
-                                <span className="text-xs text-muted-foreground font-medium">
-                                  ID Token:
-                                </span>
-                                <div
-                                  className="font-mono text-xs text-foreground break-all bg-background/50 p-2 rounded mt-1 relative group cursor-pointer hover:bg-background/70 transition-colors"
-                                  onClick={() =>
-                                    toggleTokenExpansion("idToken")
-                                  }
-                                >
-                                  <div className="pr-8">
-                                    {expandedTokens.has("idToken") ||
-                                    (tokens as any).id_token.length <= 50
-                                      ? (tokens as any).id_token
-                                      : `${(tokens as any).id_token.substring(0, 50)}...`}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      copyToClipboard(
-                                        (tokens as any).id_token || "",
-                                        "idToken",
-                                      );
-                                    }}
-                                    className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
-                                  >
-                                    {copiedField === "idToken" ? (
-                                      <Check className="h-3 w-3 text-green-500" />
-                                    ) : (
-                                      <Copy className="h-3 w-3" />
-                                    )}
-                                  </button>
-                                </div>
-                                {(() => {
-                                  const decoded = decodeJWT(
-                                    (tokens as any).id_token,
-                                  );
-                                  if (!decoded) return null;
-                                  return (
-                                    <div className="mt-2">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          toggleTokenExpansion("idTokenDecoded")
-                                        }
-                                        className="text-xs text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
-                                      >
-                                        {expandedTokens.has(
-                                          "idTokenDecoded",
-                                        ) ? (
-                                          <ChevronDown className="h-3 w-3" />
-                                        ) : (
-                                          <ChevronRight className="h-3 w-3" />
-                                        )}
-                                        View Decoded JWT
-                                      </button>
-                                      {expandedTokens.has("idTokenDecoded") && (
-                                        <div className="mt-1">
-                                          <JsonView
-                                            src={decoded}
-                                            theme="atom"
-                                            dark={true}
-                                            enableClipboard={true}
-                                            displaySize={false}
-                                            collapseStringsAfterLength={100}
-                                            style={{
-                                              fontSize: "11px",
-                                              fontFamily:
-                                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                              backgroundColor:
-                                                "hsl(var(--background))",
-                                              padding: "8px",
-                                              borderRadius: "6px",
-                                              border:
-                                                "1px solid hsl(var(--border))",
-                                            }}
-                                          />
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            )}
-
-                            {/* Token Metadata */}
-                            <div className="flex flex-wrap gap-4 text-xs text-muted-foreground pt-2 border-t border-border">
-                              <span>Type: {tokens.token_type || "Bearer"}</span>
-                              {tokens.expires_in && (
-                                <span>Expires in: {tokens.expires_in}s</span>
-                              )}
-                              {tokens.scope && (
-                                <span>Scope: {tokens.scope}</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
               </div>
             ) : (
-              <div className="bg-muted/30 rounded-lg p-8 text-center">
-                <p className="text-sm text-muted-foreground">
-                  Authentication settings are only available for HTTP/SSE
-                  servers. STDIO servers use process-level authentication.
-                </p>
+              <div className="flex">
+                <Select
+                  value={serverFormData.type}
+                  onValueChange={(value: "stdio" | "http") =>
+                    setServerFormData((prev) => ({
+                      ...prev,
+                      type: value,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="stdio">STDIO</SelectItem>
+                    <SelectItem value="http">HTTP</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={serverFormData.url}
+                  onChange={(e) =>
+                    setServerFormData((prev) => ({
+                      ...prev,
+                      url: e.target.value,
+                    }))
+                  }
+                  placeholder="http://localhost:8080/mcp"
+                  required
+                  className="flex-1 rounded-l-none text-sm border-border"
+                />
               </div>
             )}
-
-            {/* Action buttons */}
-            <div className="flex justify-end space-x-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  posthog.capture("cancel_button_clicked", {
-                    location: "edit_server_modal_auth",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                  });
-                  handleClose();
-                }}
-                className="px-4"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onClick={(e) => {
-                  posthog.capture("update_server_button_clicked", {
-                    location: "edit_server_modal_auth_tab",
-                    platform: detectPlatform(),
-                    environment: detectEnvironment(),
-                  });
-                  handleSubmit(e as any);
-                }}
-                className="px-4"
-              >
-                Update Server
-              </Button>
-            </div>
           </div>
-        )}
+
+          {serverFormData.type === "http" && (
+            <div className="space-y-3 pt-2">
+              <AuthenticationSection
+                authType={authType}
+                onAuthTypeChange={(value) => {
+                  setAuthType(value);
+                  setShowAuthSettings(value !== "none");
+                  setServerFormData((prev) => ({
+                    ...prev,
+                    useOAuth: value === "oauth",
+                  }));
+                }}
+                showAuthSettings={showAuthSettings}
+                bearerToken={bearerToken}
+                onBearerTokenChange={setBearerToken}
+                oauthScopesInput={oauthScopesInput}
+                onOauthScopesChange={setOauthScopesInput}
+                useCustomClientId={useCustomClientId}
+                onUseCustomClientIdChange={(checked) => {
+                  setUseCustomClientId(checked);
+                  if (!checked) {
+                    setClientId("");
+                    setClientSecret("");
+                    setClientIdError(null);
+                    setClientSecretError(null);
+                  }
+                }}
+                clientId={clientId}
+                onClientIdChange={(value) => {
+                  setClientId(value);
+                  const error = validateClientId(value);
+                  setClientIdError(error);
+                }}
+                clientSecret={clientSecret}
+                onClientSecretChange={(value) => {
+                  setClientSecret(value);
+                  const error = validateClientSecret(value);
+                  setClientSecretError(error);
+                }}
+                clientIdError={clientIdError}
+                clientSecretError={clientSecretError}
+              />
+            </div>
+          )}
+
+          {serverFormData.type === "stdio" && (
+            <EnvVarsSection
+              envVars={envVars}
+              showEnvVars={showEnvVars}
+              onToggle={() => setShowEnvVars(!showEnvVars)}
+              onAdd={addEnvVar}
+              onRemove={removeEnvVar}
+              onUpdate={updateEnvVar}
+            />
+          )}
+
+          {serverFormData.type === "http" && (
+            <CustomHeadersSection
+              customHeaders={customHeaders}
+              onAdd={addCustomHeader}
+              onRemove={removeCustomHeader}
+              onUpdate={updateCustomHeader}
+            />
+          )}
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              Request Timeout (ms)
+            </label>
+            <Input
+              type="number"
+              value={requestTimeout}
+              onChange={(e) => setRequestTimeout(e.target.value)}
+              placeholder="10000"
+              className="h-10"
+              min="1000"
+              max="600000"
+              step="1000"
+            />
+            <p className="text-xs text-muted-foreground">
+              Default 10000 (min 1000, max 600000)
+            </p>
+          </div>
+
+          <div className="flex justify-end space-x-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                posthog.capture("cancel_button_clicked", {
+                  location: "edit_server_modal_combined",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                handleClose();
+              }}
+              className="px-4"
+            >
+              Cancel
+            </Button>
+            <Button type="submit" className="px-4">
+              Update Server
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );
