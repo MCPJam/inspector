@@ -26,7 +26,10 @@ import { MCPPromptResult, isMCPPromptsRequested } from "./mcp-prompts-popover";
 interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSubmit: (
+    event: FormEvent<HTMLFormElement>,
+    additionalInput?: string,
+  ) => void;
   stop: () => void;
   disabled?: boolean;
   submitDisabled?: boolean;
@@ -144,8 +147,50 @@ export function ChatInput({
     }
   };
 
+  const mcpPromptResultsToText = () => {
+    if (mcpPromptResults.length === 0) return '';
+    
+    return mcpPromptResults
+      .map((result) => {
+        const messages = result.result.content.messages
+          .map((message: any) => {
+            // Handle array of content blocks
+            if (Array.isArray(message.content)) {
+              return message.content
+                .map((block: any) => block?.text)
+                .filter(Boolean)
+                .join('\n');
+            }
+            // Handle single content object
+            return message.content?.text;
+          })
+          .filter(Boolean)
+          .join("\n\n");
+        
+        if (!messages) return '';
+        
+        // Include prompt name as header
+        return `[${result.namespacedName}]\n\n${messages}`;
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (mcpPromptResults.length > 0) {
+      const promptsText = mcpPromptResultsToText();
+      onSubmit(event, promptsText + "\n\n");
+    } else {
+      onSubmit(event);
+    }
+  };
+
   return (
-    <form ref={formRef} className={cn("w-full", className)} onSubmit={onSubmit}>
+    <form
+      ref={formRef}
+      className={cn("w-full", className)}
+      onSubmit={handleSubmit}
+    >
       <div
         ref={containerRef}
         className={cn(
