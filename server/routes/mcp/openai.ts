@@ -16,7 +16,8 @@ interface WidgetData {
   timestamp: number;
 }
 
-const widgetDataStore = new Map<string, WidgetData>();
+// Export the widget data store so it can be accessed by the adapter-http proxy
+export const widgetDataStore = new Map<string, WidgetData>();
 
 const serializeForInlineScript = (value: unknown) =>
   JSON.stringify(value ?? null)
@@ -99,6 +100,23 @@ openai.get("/widget/:toolId", async (c) => {
     );
   }
 
+  // Determine the base path for widget content
+  // If accessed through adapter-http, use the full request path
+  const requestPath = new URL(c.req.url).pathname;
+  let widgetContentUrl = `/api/mcp/openai/widget-content/${toolId}`;
+
+  // If this is being accessed through adapter-http proxy (contains /adapter-http/ in path)
+  // we need to use the relative path from the current location
+  if (requestPath.includes('/adapter-http/')) {
+    // Extract the serverId from the path: /api/mcp/adapter-http/{serverId}/widget/{toolId}
+    const match = requestPath.match(/\/adapter-http\/([^/]+)\/widget/);
+    if (match) {
+      const serverId = match[1];
+      // Use relative path so it works regardless of the domain (ngrok or direct)
+      widgetContentUrl = `./widget-content/${toolId}`;
+    }
+  }
+
   // Return a container page that will fetch and load the actual widget
   return c.html(`
     <!DOCTYPE html>
@@ -114,7 +132,7 @@ openai.get("/widget/:toolId", async (c) => {
           history.replaceState(null, '', '/');
 
           // Fetch the actual widget HTML using toolId
-          const response = await fetch('/api/mcp/openai/widget-content/${toolId}');
+          const response = await fetch('${widgetContentUrl}');
           const html = await response.text();
 
           // Replace entire document with widget HTML

@@ -126,12 +126,28 @@ tools.post("/list", async (c) => {
     if (!serverId) {
       return c.json({ error: "serverId is required" }, 400);
     }
+
+    // Normalize serverId - try to find a case-insensitive match if exact match fails
+    let normalizedServerId = serverId;
+    const availableServers = c.mcpClientManager
+      .listServers()
+      .filter((id: string) => Boolean(c.mcpClientManager.getClient(id)));
+
+    if (!availableServers.includes(serverId)) {
+      const match = availableServers.find(
+        (name: string) => name.toLowerCase() === serverId.toLowerCase(),
+      );
+      if (match) {
+        normalizedServerId = match;
+      }
+    }
+
     const result = (await c.mcpClientManager.listTools(
-      serverId,
+      normalizedServerId,
     )) as ListToolsResult;
 
     // Get cached metadata map for O(1) frontend lookups
-    const toolsMetadata = c.mcpClientManager.getAllToolsMetadata(serverId);
+    const toolsMetadata = c.mcpClientManager.getAllToolsMetadata(normalizedServerId);
 
     return c.json({ ...result, toolsMetadata });
   } catch (error) {
