@@ -21,7 +21,10 @@ import {
   ContextMCPServerUsage,
   ContextSystemPromptUsage,
 } from "./context";
-import { MCPPromptResult, isMCPPromptsRequested } from "./mcp-prompts-popover";
+import {
+  type MCPPromptResult,
+  isMCPPromptsRequested,
+} from "./mcp-prompts-popover";
 
 interface ChatInputProps {
   value: string;
@@ -56,6 +59,8 @@ interface ChatInputProps {
   connectedServerConfigs?: Record<string, { name: string }>;
   systemPromptTokenCount?: number | null;
   systemPromptTokenCountLoading?: boolean;
+  mcpPromptResults: MCPPromptResult[];
+  onChangeMcpPromptResults: (mcpPromptResults: MCPPromptResult[]) => void;
 }
 
 export function ChatInput({
@@ -84,6 +89,8 @@ export function ChatInput({
   connectedServerConfigs,
   systemPromptTokenCount,
   systemPromptTokenCountLoading = false,
+  mcpPromptResults,
+  onChangeMcpPromptResults,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,9 +99,6 @@ export function ChatInput({
   const [mcpPromptPopoverKeyTrigger, setMcpPromptPopoverKeyTrigger] = useState<
     string | null
   >(null);
-  const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
-    [],
-  );
 
   const caret = useTextareaCaretPosition(
     textareaRef,
@@ -106,7 +110,7 @@ export function ChatInput({
   const onMCPPromptSelected = useCallback(
     (mcpPromptResult: MCPPromptResult) => {
       // Add the prompt result to the mcpPromptResults state
-      setMcpPromptResults((prev) => [...prev, mcpPromptResult]);
+      onChangeMcpPromptResults([...mcpPromptResults, mcpPromptResult]);
 
       // Remove the "/" that triggered the popover
       const textBeforeCaret = value.slice(0, caretIndex);
@@ -119,7 +123,7 @@ export function ChatInput({
   );
 
   const removeMCPPromptResult = (index: number) => {
-    setMcpPromptResults((prev) => prev.filter((_, i) => i !== index));
+    onChangeMcpPromptResults(mcpPromptResults.filter((_, i) => i !== index));
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -140,57 +144,20 @@ export function ChatInput({
     ) {
       const trimmed = value.trim();
       event.preventDefault();
-      if (!trimmed || disabled || submitDisabled || isLoading) {
+      if (
+        (!trimmed && mcpPromptResults.length === 0) ||
+        disabled ||
+        submitDisabled ||
+        isLoading
+      ) {
         return;
       }
       formRef.current?.requestSubmit();
     }
   };
 
-  const mcpPromptResultsToText = () => {
-    if (mcpPromptResults.length === 0) return '';
-    
-    return mcpPromptResults
-      .map((result) => {
-        const messages = result.result.content.messages
-          .map((message: any) => {
-            // Handle array of content blocks
-            if (Array.isArray(message.content)) {
-              return message.content
-                .map((block: any) => block?.text)
-                .filter(Boolean)
-                .join('\n');
-            }
-            // Handle single content object
-            return message.content?.text;
-          })
-          .filter(Boolean)
-          .join("\n\n");
-        
-        if (!messages) return '';
-        
-        // Include prompt name as header
-        return `[${result.namespacedName}]\n\n${messages}`;
-      })
-      .filter(Boolean)
-      .join("\n\n");
-  };
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    if (mcpPromptResults.length > 0) {
-      const promptsText = mcpPromptResultsToText();
-      onSubmit(event, promptsText + "\n\n");
-    } else {
-      onSubmit(event);
-    }
-  };
-
   return (
-    <form
-      ref={formRef}
-      className={cn("w-full", className)}
-      onSubmit={handleSubmit}
-    >
+    <form ref={formRef} className={cn("w-full", className)} onSubmit={onSubmit}>
       <div
         ref={containerRef}
         className={cn(
@@ -348,11 +315,17 @@ export function ChatInput({
                     size="icon"
                     className={cn(
                       "size-[34px] rounded-full transition-colors",
-                      value.trim() && !disabled && !submitDisabled
+                      (value.trim() || mcpPromptResults.length > 0) &&
+                        !disabled &&
+                        !submitDisabled
                         ? "bg-primary text-primary-foreground hover:bg-primary/90"
                         : "bg-muted text-muted-foreground cursor-not-allowed",
                     )}
-                    disabled={!value.trim() || disabled || submitDisabled}
+                    disabled={
+                      (!value.trim() && mcpPromptResults.length === 0) ||
+                      disabled ||
+                      submitDisabled
+                    }
                   >
                     <ArrowUp size={16} />
                   </Button>

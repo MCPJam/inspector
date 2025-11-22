@@ -403,3 +403,33 @@ export function PromptsArgumentsDialog({
     </Dialog>
   );
 }
+
+// utils
+export const mcpPromptResultsToText = (mcpPromptResults: MCPPromptResult[]) => {
+  if (mcpPromptResults.length === 0) return "";
+
+  return mcpPromptResults
+    .map((result) => {
+      const messages = result.result.content.messages
+        .map((message: any) => {
+          // Handle array of content blocks
+          if (Array.isArray(message.content)) {
+            return message.content
+              .map((block: any) => block?.text)
+              .filter(Boolean)
+              .join("\n");
+          }
+          // Handle single content object
+          return message.content?.text;
+        })
+        .filter(Boolean)
+        .join("\n\n");
+
+      if (!messages) return "";
+
+      // Include prompt name as header
+      return `[${result.namespacedName}]\n\n${messages}`;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+};
