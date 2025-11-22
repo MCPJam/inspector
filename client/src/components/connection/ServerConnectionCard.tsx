@@ -22,6 +22,7 @@ import {
   Edit,
   Expand,
   ExternalLink,
+  Link,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/mcp-export-api";
@@ -37,6 +38,7 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/mcp-tools-api";
 import { ServerInfoModal } from "./ServerInfoModal";
+import { createTunnel, getTunnel } from "@/lib/mcp-tunnels-api";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -61,6 +63,8 @@ export function ServerConnectionCard({
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
+  const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
+  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
 
   const { label: connectionStatusLabel, indicatorColor } =
     getConnectionStatusMeta(server.connectionStatus);
@@ -139,6 +143,52 @@ export function ServerConnectionCard({
       setIsReconnecting(false);
     }
   };
+
+  const handleCreateTunnel = async () => {
+    setIsCreatingTunnel(true);
+    try {
+      const result = await createTunnel(server.name);
+      setTunnelUrl(result.url);
+
+      // Copy URL to clipboard
+      await navigator.clipboard.writeText(result.url);
+
+      toast.success(
+        result.existed
+          ? "Tunnel URL copied to clipboard!"
+          : "Tunnel created! URL copied to clipboard.",
+        {
+          description: result.url,
+          duration: 5000,
+        }
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to create tunnel";
+      toast.error(`Tunnel creation failed: ${errorMessage}`);
+    } finally {
+      setIsCreatingTunnel(false);
+    }
+  };
+
+  // Check for existing tunnel on mount
+  useEffect(() => {
+    const checkExistingTunnel = async () => {
+      if (server.connectionStatus === "connected") {
+        try {
+          const existingTunnel = await getTunnel(server.name);
+          if (existingTunnel) {
+            setTunnelUrl(existingTunnel.url);
+          }
+        } catch (err) {
+          // Silently fail - tunnel doesn't exist or error fetching
+          console.debug("No existing tunnel found:", err);
+        }
+      }
+    };
+
+    checkExistingTunnel();
+  }, [server.name, server.connectionStatus]);
 
   const downloadJson = (filename: string, data: any) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -298,6 +348,31 @@ export function ServerConnectionCard({
                   >
                     <Edit className="h-3 w-3 mr-2" />
                     Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      posthog.capture("create_tunnel_clicked", {
+                        location: "server_connection_card",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                      });
+                      handleCreateTunnel();
+                    }}
+                    disabled={
+                      isCreatingTunnel || server.connectionStatus !== "connected"
+                    }
+                    className="text-xs cursor-pointer"
+                  >
+                    {isCreatingTunnel ? (
+                      <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                    ) : (
+                      <Link className="h-3 w-3 mr-2" />
+                    )}
+                    {isCreatingTunnel
+                      ? "Creating tunnel..."
+                      : tunnelUrl
+                        ? "Copy tunnel URL"
+                        : "Create tunnel"}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => {

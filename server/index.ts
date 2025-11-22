@@ -47,6 +47,7 @@ function logBox(content: string, title?: string) {
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
+import { tunnelManager } from "./services/tunnel-manager";
 import "./types/hono"; // Type extensions
 
 // Utility function to extract MCP server config from environment variables
@@ -275,14 +276,16 @@ const server = serve({
 });
 
 // Handle graceful shutdown
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
   console.log("\n🛑 Shutting down gracefully...");
+  await tunnelManager.closeAll();
   server.close();
   process.exit(0);
 });
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   console.log("\n🛑 Shutting down gracefully...");
+  await tunnelManager.closeAll();
   server.close();
   process.exit(0);
 });

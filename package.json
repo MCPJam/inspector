@@ -81,6 +81,7 @@
     "@mastra/mcp": "0.13.1",
     "@mcp-ui/client": "^5.9.0",
     "@modelcontextprotocol/sdk": "^1.21.0",
+    "@ngrok/ngrok": "^1.6.0",
     "@openrouter/ai-sdk-provider": "^1.2.0",
     "@sentry/electron": "^5.10.0",
     "@sentry/node": "^8.47.0",
