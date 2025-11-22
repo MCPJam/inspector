@@ -456,7 +456,7 @@ export function OpenAIAppRenderer({
       )}
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
+        <DialogContent className="sm:max-w-6xl h-[70vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{modalTitle}</DialogTitle>
           </DialogHeader>
