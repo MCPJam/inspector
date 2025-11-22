@@ -428,7 +428,7 @@ export const mcpPromptResultsToText = (mcpPromptResults: MCPPromptResult[]) => {
       if (!messages) return "";
 
       // Include prompt name as header
-      return `[${result.namespacedName}]\n\n${messages}`;
+      return `[${result.namespacedName}]\n\n${messages}\n\n`;
     })
     .filter(Boolean)
     .join("\n\n");
