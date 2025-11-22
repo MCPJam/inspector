@@ -119,7 +119,7 @@ export function ChatInput({
       const newValue = cleanedBefore + textAfterCaret;
       onChange(newValue);
     },
-    [value, caretIndex, onChange],
+    [value, caretIndex, onChange, mcpPromptResults, onChangeMcpPromptResults],
   );
 
   const removeMCPPromptResult = (index: number) => {
