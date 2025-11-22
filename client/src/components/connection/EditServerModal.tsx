@@ -47,60 +47,24 @@ export function EditServerModal({
   const posthog = usePostHog();
 
   // Use the shared form hook
-  const {
-    serverFormData,
-    setServerFormData,
-    commandInput,
-    setCommandInput,
-    oauthScopesInput,
-    setOauthScopesInput,
-    clientId,
-    setClientId,
-    clientSecret,
-    setClientSecret,
-    bearerToken,
-    setBearerToken,
-    authType,
-    setAuthType,
-    useCustomClientId,
-    setUseCustomClientId,
-    requestTimeout,
-    setRequestTimeout,
-    clientIdError,
-    setClientIdError,
-    clientSecretError,
-    setClientSecretError,
-    envVars,
-    customHeaders,
-    showEnvVars,
-    setShowEnvVars,
-    showAuthSettings,
-    setShowAuthSettings,
-    validateClientId,
-    validateClientSecret,
-    addEnvVar,
-    removeEnvVar,
-    updateEnvVar,
-    addCustomHeader,
-    removeCustomHeader,
-    updateCustomHeader,
-    buildFormData,
-  } = useServerForm(server);
+  const formState = useServerForm(server);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     // Validate Client ID if using custom configuration
-    if (authType === "oauth" && useCustomClientId) {
-      const clientIdError = validateClientId(clientId);
+    if (formState.authType === "oauth" && formState.useCustomClientId) {
+      const clientIdError = formState.validateClientId(formState.clientId);
       if (clientIdError) {
         toast.error(clientIdError);
         return;
       }
 
       // Validate Client Secret if provided
-      if (clientSecret) {
-        const clientSecretError = validateClientSecret(clientSecret);
+      if (formState.clientSecret) {
+        const clientSecretError = formState.validateClientSecret(
+          formState.clientSecret,
+        );
         if (clientSecretError) {
           toast.error(clientSecretError);
           return;
@@ -108,7 +72,7 @@ export function EditServerModal({
       }
     }
 
-    const finalFormData = buildFormData();
+    const finalFormData = formState.buildFormData();
     onSubmit(finalFormData, server.name, skipAutoConnect);
     handleClose();
   };
@@ -145,13 +109,8 @@ export function EditServerModal({
               Server Name
             </label>
             <Input
-              value={serverFormData.name}
-              onChange={(e) =>
-                setServerFormData((prev) => ({
-                  ...prev,
-                  name: e.target.value,
-                }))
-              }
+              value={formState.name}
+              onChange={(e) => formState.setName(e.target.value)}
               placeholder="my-mcp-server"
               required
               className="h-10"
@@ -162,24 +121,15 @@ export function EditServerModal({
             <label className="block text-sm font-medium text-foreground">
               Connection Type
             </label>
-            {serverFormData.type === "stdio" ? (
+            {formState.type === "stdio" ? (
               <div className="flex">
                 <Select
-                  value={serverFormData.type}
+                  value={formState.type}
                   onValueChange={(value: "stdio" | "http") => {
-                    // Preserve the current input value before switching
-                    const currentValue = commandInput;
-                    setServerFormData((prev) => ({
-                      ...prev,
-                      type: value,
-                    }));
-
-                    // Apply the preserved value to the appropriate field after switching
+                    const currentValue = formState.commandInput;
+                    formState.setType(value);
                     if (value === "http" && currentValue) {
-                      setServerFormData((prev) => ({
-                        ...prev,
-                        url: currentValue,
-                      }));
+                      formState.setUrl(currentValue);
                     }
                   }}
                 >
@@ -192,8 +142,8 @@ export function EditServerModal({
                   </SelectContent>
                 </Select>
                 <Input
-                  value={commandInput}
-                  onChange={(e) => setCommandInput(e.target.value)}
+                  value={formState.commandInput}
+                  onChange={(e) => formState.setCommandInput(e.target.value)}
                   placeholder="npx -y @modelcontextprotocol/server-everything"
                   required
                   className="flex-1 rounded-l-none text-sm border-border"
@@ -202,18 +152,12 @@ export function EditServerModal({
             ) : (
               <div className="flex">
                 <Select
-                  value={serverFormData.type}
+                  value={formState.type}
                   onValueChange={(value: "stdio" | "http") => {
-                    // Preserve the current input value before switching
-                    const currentValue = serverFormData.url;
-                    setServerFormData((prev) => ({
-                      ...prev,
-                      type: value,
-                    }));
-
-                    // Apply the preserved value to the appropriate field after switching
+                    const currentValue = formState.url;
+                    formState.setType(value);
                     if (value === "stdio" && currentValue) {
-                      setCommandInput(currentValue);
+                      formState.setCommandInput(currentValue);
                     }
                   }}
                 >
@@ -226,13 +170,8 @@ export function EditServerModal({
                   </SelectContent>
                 </Select>
                 <Input
-                  value={serverFormData.url}
-                  onChange={(e) =>
-                    setServerFormData((prev) => ({
-                      ...prev,
-                      url: e.target.value,
-                    }))
-                  }
+                  value={formState.url}
+                  onChange={(e) => formState.setUrl(e.target.value)}
                   placeholder="http://localhost:8080/mcp"
                   required
                   className="flex-1 rounded-l-none text-sm border-border"
@@ -241,68 +180,64 @@ export function EditServerModal({
             )}
           </div>
 
-          {serverFormData.type === "http" && (
+          {formState.type === "http" && (
             <div className="space-y-3 pt-2">
               <AuthenticationSection
-                authType={authType}
+                authType={formState.authType}
                 onAuthTypeChange={(value) => {
-                  setAuthType(value);
-                  setShowAuthSettings(value !== "none");
-                  setServerFormData((prev) => ({
-                    ...prev,
-                    useOAuth: value === "oauth",
-                  }));
+                  formState.setAuthType(value);
+                  formState.setShowAuthSettings(value !== "none");
                 }}
-                showAuthSettings={showAuthSettings}
-                bearerToken={bearerToken}
-                onBearerTokenChange={setBearerToken}
-                oauthScopesInput={oauthScopesInput}
-                onOauthScopesChange={setOauthScopesInput}
-                useCustomClientId={useCustomClientId}
+                showAuthSettings={formState.showAuthSettings}
+                bearerToken={formState.bearerToken}
+                onBearerTokenChange={formState.setBearerToken}
+                oauthScopesInput={formState.oauthScopesInput}
+                onOauthScopesChange={formState.setOauthScopesInput}
+                useCustomClientId={formState.useCustomClientId}
                 onUseCustomClientIdChange={(checked) => {
-                  setUseCustomClientId(checked);
+                  formState.setUseCustomClientId(checked);
                   if (!checked) {
-                    setClientId("");
-                    setClientSecret("");
-                    setClientIdError(null);
-                    setClientSecretError(null);
+                    formState.setClientId("");
+                    formState.setClientSecret("");
+                    formState.setClientIdError(null);
+                    formState.setClientSecretError(null);
                   }
                 }}
-                clientId={clientId}
+                clientId={formState.clientId}
                 onClientIdChange={(value) => {
-                  setClientId(value);
-                  const error = validateClientId(value);
-                  setClientIdError(error);
+                  formState.setClientId(value);
+                  const error = formState.validateClientId(value);
+                  formState.setClientIdError(error);
                 }}
-                clientSecret={clientSecret}
+                clientSecret={formState.clientSecret}
                 onClientSecretChange={(value) => {
-                  setClientSecret(value);
-                  const error = validateClientSecret(value);
-                  setClientSecretError(error);
+                  formState.setClientSecret(value);
+                  const error = formState.validateClientSecret(value);
+                  formState.setClientSecretError(error);
                 }}
-                clientIdError={clientIdError}
-                clientSecretError={clientSecretError}
+                clientIdError={formState.clientIdError}
+                clientSecretError={formState.clientSecretError}
               />
             </div>
           )}
 
-          {serverFormData.type === "stdio" && (
+          {formState.type === "stdio" && (
             <EnvVarsSection
-              envVars={envVars}
-              showEnvVars={showEnvVars}
-              onToggle={() => setShowEnvVars(!showEnvVars)}
-              onAdd={addEnvVar}
-              onRemove={removeEnvVar}
-              onUpdate={updateEnvVar}
+              envVars={formState.envVars}
+              showEnvVars={formState.showEnvVars}
+              onToggle={() => formState.setShowEnvVars(!formState.showEnvVars)}
+              onAdd={formState.addEnvVar}
+              onRemove={formState.removeEnvVar}
+              onUpdate={formState.updateEnvVar}
             />
           )}
 
-          {serverFormData.type === "http" && (
+          {formState.type === "http" && (
             <CustomHeadersSection
-              customHeaders={customHeaders}
-              onAdd={addCustomHeader}
-              onRemove={removeCustomHeader}
-              onUpdate={updateCustomHeader}
+              customHeaders={formState.customHeaders}
+              onAdd={formState.addCustomHeader}
+              onRemove={formState.removeCustomHeader}
+              onUpdate={formState.updateCustomHeader}
             />
           )}
 
@@ -312,8 +247,8 @@ export function EditServerModal({
             </label>
             <Input
               type="number"
-              value={requestTimeout}
-              onChange={(e) => setRequestTimeout(e.target.value)}
+              value={formState.requestTimeout}
+              onChange={(e) => formState.setRequestTimeout(e.target.value)}
               placeholder="10000"
               className="h-10"
               min="1000"
