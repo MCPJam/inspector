@@ -28,13 +28,17 @@ class TunnelManager {
     }
 
     try {
-      // Create tunnel pointing to your adapter-http endpoint
+      // Create tunnel pointing to the base server
+      // The full URL will be: https://xxxx.ngrok-free.dev/api/mcp/adapter-http/${serverId}
       const listener = await ngrok.forward({
-        addr: `http://localhost:6274/api/mcp/adapter-http/${serverId}`,
+        addr: 'http://localhost:6274',
         authtoken: this.ngrokToken,
       });
 
-      const url = listener.url()!;
+      const baseUrl = listener.url()!;
+      // Construct the full URL with the path to the adapter-http endpoint
+      const url = `${baseUrl}/api/mcp/adapter-http/${serverId}`;
+
       this.tunnels.set(serverId, { listener, url, serverId });
 
       console.log(`✓ Created tunnel for ${serverId}: ${url}`);
