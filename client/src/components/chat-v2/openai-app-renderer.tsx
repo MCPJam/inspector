@@ -1,5 +1,11 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 
@@ -45,6 +51,9 @@ export function OpenAIAppRenderer({
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalParams, setModalParams] = useState<Record<string, any>>({});
+  const [modalTitle, setModalTitle] = useState<string>("");
   const previousWidgetStateRef = useRef<string | null>(null);
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
@@ -326,6 +335,13 @@ export function OpenAIAppRenderer({
           }
           break;
         }
+
+        case "openai:requestModal": {
+          setModalTitle(event.data.title || "Modal");
+          setModalParams(event.data.params || {});
+          setModalOpen(true);
+          break;
+        }
       }
     },
     [onCallTool, onSendFollowUp, onWidgetStateChange, resolvedToolCallId],
@@ -438,6 +454,24 @@ export function OpenAIAppRenderer({
           Template: <code>{outputTemplate}</code>
         </div>
       )}
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{modalTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 w-full h-full min-h-0">
+            <iframe
+              src={`${widgetUrl}?view_mode=modal&view_params=${encodeURIComponent(
+                JSON.stringify(modalParams),
+              )}`}
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+              title={`OpenAI App Modal: ${modalTitle}`}
+              className="w-full h-full border-0 rounded-md bg-background"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
