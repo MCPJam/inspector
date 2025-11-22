@@ -47,6 +47,10 @@ import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
+import {
+  type MCPPromptResult,
+  mcpPromptResultsToText,
+} from "@/components/chat-v2/mcp-prompts-popover";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
@@ -143,6 +147,9 @@ export function ChatTabV2({
   > | null>(null);
   const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
     useState(false);
+  const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
+    [],
+  );
   const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
     number | null
   >(null);
@@ -561,7 +568,7 @@ export function ChatTabV2({
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (
-      input.trim() &&
+      (input.trim() || mcpPromptResults.length > 0) &&
       status === "ready" &&
       !disableForAuthentication &&
       !disableForServers
@@ -574,8 +581,11 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
-      sendMessage({ text: input });
+      sendMessage({
+        text: `${mcpPromptResultsToText(mcpPromptResults) || ""}${input}`,
+      });
       setInput("");
+      setMcpPromptResults([]);
     }
   };
 
@@ -623,6 +633,8 @@ export function ChatTabV2({
     connectedServerConfigs,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
+    mcpPromptResults,
+    onChangeMcpPromptResults: setMcpPromptResults,
   };
 
   const showStarterPrompts =
