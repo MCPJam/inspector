@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/chat-utils";
 import { MessageSquareCode, ListChecks, Loader2 } from "lucide-react";
 
-import { useEffect, useMemo, useState, FormEvent } from "react";
+import { useEffect, useMemo, useState, FormEvent, useCallback } from "react";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
@@ -105,25 +105,25 @@ export function PromptsPopover({
     };
   }, [selectedServers]);
 
-  const getPromptResult = async (
-    promptListItem: PromptListItem,
-    values: Record<string, string>,
-  ) => {
-    try {
-      const { serverId, name: promptName } = promptListItem;
-      const response = await getPrompt(serverId, promptName, values);
-      const promptResult: MCPPromptResult = {
-        ...promptListItem,
-        result: response,
-      };
-      onPromptSelected(promptResult);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[PromptsPopover] Failed to get prompt result", message);
-    } finally {
-      setSelectedPrompt(null);
-    }
-  };
+  const getPromptResult = useCallback(
+    async (promptListItem: PromptListItem, values: Record<string, string>) => {
+      try {
+        const { serverId, name: promptName } = promptListItem;
+        const response = await getPrompt(serverId, promptName, values);
+        const promptResult: MCPPromptResult = {
+          ...promptListItem,
+          result: response,
+        };
+        onPromptSelected(promptResult);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[PromptsPopover] Failed to get prompt result", message);
+      } finally {
+        setSelectedPrompt(null);
+      }
+    },
+    [onPromptSelected],
+  );
 
   useEffect(() => {
     // Handle prompt click
