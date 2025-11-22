@@ -5,17 +5,23 @@ import '../../types/hono';
 const tunnels = new Hono();
 
 // Fetch ngrok token from Convex backend
-async function fetchNgrokToken(): Promise<string> {
+async function fetchNgrokToken(authHeader?: string): Promise<string> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new Error('CONVEX_HTTP_URL not configured');
   }
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (authHeader) {
+    headers['Authorization'] = authHeader;
+  }
+
   const response = await fetch(`${convexUrl}/tunnels/token`, {
     method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -32,19 +38,25 @@ async function fetchNgrokToken(): Promise<string> {
 }
 
 // Report tunnel creation to Convex backend
-async function recordTunnel(serverId: string, url: string): Promise<void> {
+async function recordTunnel(serverId: string, url: string, authHeader?: string): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     console.warn('CONVEX_HTTP_URL not configured, skipping tunnel recording');
     return;
   }
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (authHeader) {
+    headers['Authorization'] = authHeader;
+  }
+
   try {
     await fetch(`${convexUrl}/tunnels/record`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ serverId, url }),
     });
   } catch (error) {
@@ -54,18 +66,24 @@ async function recordTunnel(serverId: string, url: string): Promise<void> {
 }
 
 // Report tunnel closure to Convex backend
-async function reportTunnelClosure(serverId: string): Promise<void> {
+async function reportTunnelClosure(serverId: string, authHeader?: string): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     return;
   }
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (authHeader) {
+    headers['Authorization'] = authHeader;
+  }
+
   try {
     await fetch(`${convexUrl}/tunnels/close`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ serverId }),
     });
   } catch (error) {
@@ -76,6 +94,7 @@ async function reportTunnelClosure(serverId: string): Promise<void> {
 // Create a tunnel for a server
 tunnels.post('/:serverId/create', async (c) => {
   const serverId = c.req.param('serverId');
+  const authHeader = c.req.header('authorization');
 
   try {
     // Check if tunnel already exists
@@ -90,7 +109,7 @@ tunnels.post('/:serverId/create', async (c) => {
 
     // Fetch ngrok token from Convex if not already set
     if (!tunnelManager.hasTunnel(serverId)) {
-      const token = await fetchNgrokToken();
+      const token = await fetchNgrokToken(authHeader);
       tunnelManager.setNgrokToken(token);
     }
 
@@ -98,7 +117,7 @@ tunnels.post('/:serverId/create', async (c) => {
     const url = await tunnelManager.createTunnel(serverId);
 
     // Record the tunnel in Convex backend
-    await recordTunnel(serverId, url);
+    await recordTunnel(serverId, url, authHeader);
 
     return c.json({
       url,
@@ -132,10 +151,11 @@ tunnels.get('/:serverId', async (c) => {
 // Close a tunnel
 tunnels.delete('/:serverId', async (c) => {
   const serverId = c.req.param('serverId');
+  const authHeader = c.req.header('authorization');
 
   try {
     await tunnelManager.closeTunnel(serverId);
-    await reportTunnelClosure(serverId);
+    await reportTunnelClosure(serverId, authHeader);
 
     return c.json({ success: true, serverId });
   } catch (error: any) {

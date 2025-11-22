@@ -39,6 +39,7 @@ import {
 } from "@/lib/mcp-tools-api";
 import { ServerInfoModal } from "./ServerInfoModal";
 import { createTunnel, getTunnel } from "@/lib/mcp-tunnels-api";
+import { useAuth } from "@workos-inc/authkit-react";
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
@@ -56,6 +57,7 @@ export function ServerConnectionCard({
   onRemove,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
+  const { getAccessToken } = useAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
@@ -147,7 +149,10 @@ export function ServerConnectionCard({
   const handleCreateTunnel = async () => {
     setIsCreatingTunnel(true);
     try {
-      const result = await createTunnel(server.name);
+      // Get access token for authenticated requests
+      const accessToken = await getAccessToken();
+
+      const result = await createTunnel(server.name, accessToken);
       setTunnelUrl(result.url);
 
       // Copy URL to clipboard
@@ -176,7 +181,10 @@ export function ServerConnectionCard({
     const checkExistingTunnel = async () => {
       if (server.connectionStatus === "connected") {
         try {
-          const existingTunnel = await getTunnel(server.name);
+          // Get access token for authenticated requests
+          const accessToken = await getAccessToken();
+
+          const existingTunnel = await getTunnel(server.name, accessToken);
           if (existingTunnel) {
             setTunnelUrl(existingTunnel.url);
           }
@@ -188,7 +196,7 @@ export function ServerConnectionCard({
     };
 
     checkExistingTunnel();
-  }, [server.name, server.connectionStatus]);
+  }, [server.name, server.connectionStatus, getAccessToken]);
 
   const downloadJson = (filename: string, data: any) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
