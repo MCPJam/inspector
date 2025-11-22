@@ -646,11 +646,13 @@ export interface MCPTool {
 export interface MCPPrompt {
   name: string;
   description?: string;
-  arguments?: Array<{
-    name: string;
-    description?: string;
-    required?: boolean;
-  }>;
+  arguments?: Array<MCPPromptArgument>;
+}
+
+export interface MCPPromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
 }
 
 // API Response types
