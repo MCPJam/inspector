@@ -110,11 +110,12 @@ openai.get("/widget/:toolId", async (c) => {
     <body>
       <script>
         (async function() {
+          const searchParams = window.location.search;
           // Change URL to "/" BEFORE loading widget (for React Router)
           history.replaceState(null, '', '/');
 
           // Fetch the actual widget HTML using toolId
-          const response = await fetch('/api/mcp/openai/widget-content/${toolId}');
+          const response = await fetch('/api/mcp/openai/widget-content/${toolId}' + searchParams);
           const html = await response.text();
 
           // Replace entire document with widget HTML
@@ -132,6 +133,16 @@ openai.get("/widget/:toolId", async (c) => {
 openai.get("/widget-content/:toolId", async (c) => {
   try {
     const toolId = c.req.param("toolId");
+    const viewMode = c.req.query("view_mode") || "inline";
+    const viewParamsStr = c.req.query("view_params");
+    let viewParams = {};
+    try {
+      if (viewParamsStr) {
+        viewParams = JSON.parse(viewParamsStr);
+      }
+    } catch (e) {
+      console.error("Failed to parse view_params:", e);
+    }
 
     // Retrieve widget data from storage
     const widgetData = widgetDataStore.get(toolId);
@@ -234,6 +245,10 @@ openai.get("/widget-content/:toolId", async (c) => {
               device: { type: 'desktop' },
               capabilities: { hover: true, touch: false }
             },
+            view: {
+              mode: ${JSON.stringify(viewMode)},
+              params: ${serializeForInlineScript(viewParams)}
+            },
             widgetState: null,
 
             async setWidgetState(state) {
@@ -312,6 +327,15 @@ openai.get("/widget-content/:toolId", async (c) => {
                 href
               }, '*');
               window.open(href, '_blank', 'noopener,noreferrer');
+            },
+
+            async requestModal(options) {
+              window.parent.postMessage({
+                type: 'openai:requestModal',
+                title: options.title,
+                params: options.params,
+                anchor: options.anchor
+              }, '*');
             }
           };
 
