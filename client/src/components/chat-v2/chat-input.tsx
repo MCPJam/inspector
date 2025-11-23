@@ -4,7 +4,7 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "../ui/button";
 import { TextareaAutosize } from "../ui/textarea-autosize";
 import { PromptsPopover } from "./mcp-prompts-popover";
-import { ArrowUp, Square, X } from "lucide-react";
+import { ArrowUp, Square } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { ModelSelector } from "./model-selector";
 import { ModelDefinition } from "@/shared/types";
@@ -25,6 +25,7 @@ import {
   type MCPPromptResult,
   isMCPPromptsRequested,
 } from "./mcp-prompts-popover";
+import { MCPPromptResultCard } from "./mcp-prompt-result-card";
 
 interface ChatInputProps {
   value: string;
@@ -156,6 +157,23 @@ export function ChatInput({
     }
   };
 
+  const renderMcpPromptResultCards = () => {
+    if (mcpPromptResults.length === 0) return null;
+    return (
+      <div className="px-4 pt-1 pb-0.5">
+        <div className="flex flex-wrap gap-1.5">
+          {mcpPromptResults.map((mcpPromptResult, index) => (
+            <MCPPromptResultCard
+              key={index}
+              mcpPromptResult={mcpPromptResult}
+              onRemove={() => removeMCPPromptResult(index)}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <form ref={formRef} className={cn("w-full", className)} onSubmit={onSubmit}>
       <div
@@ -175,38 +193,8 @@ export function ChatInput({
           caretIndex={caretIndex}
         />
 
-        {/* Prompt Response Cards */}
-        {mcpPromptResults.length > 0 && (
-          <div className="px-4 pt-1 pb-0.5">
-            <div className="flex flex-wrap gap-1.5">
-              {mcpPromptResults.map((response, index) => (
-                <div
-                  key={index}
-                  className="group inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs"
-                >
-                  <span className="font-medium text-foreground truncate max-w-[180px]">
-                    {response.namespacedName}
-                  </span>
-                  {response.result.content.messages.length > 0 && (
-                    <span className="text-[10px] text-muted-foreground">
-                      ({response.result.content.messages.length})
-                    </span>
-                  )}
-                  {removeMCPPromptResult && (
-                    <button
-                      type="button"
-                      onClick={() => removeMCPPromptResult(index)}
-                      className="flex-shrink-0 rounded-sm opacity-60 hover:opacity-100 transition-opacity hover:bg-accent p-0.5"
-                      aria-label={`Remove ${response.namespacedName}`}
-                    >
-                      <X size={12} className="text-muted-foreground" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* MCP Prompts Cards */}
+        {renderMcpPromptResultCards()}
 
         <TextareaAutosize
           ref={textareaRef}

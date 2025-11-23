@@ -79,7 +79,6 @@ interface ChatTabProps {
 function formatErrorMessage(
   error: unknown,
 ): { message: string; details?: string } | null {
-  console.log(error);
   if (!error) return null;
 
   let errorString: string;
@@ -539,7 +538,7 @@ export function ChatTabV2({
   const submitBlocked = disableForAuthentication || disableForServers;
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  let placeholder = "Ask something…";
+  let placeholder = 'Ask something… Use Slash "/" commands for MCP prompts';
   if (disableForServers) {
     placeholder = "Connect an MCP server to send your first message";
   }
