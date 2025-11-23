@@ -47,67 +47,18 @@ import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
+import { type MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
 import {
-  type MCPPromptResult,
-  mcpPromptResultsToText,
-} from "@/components/chat-v2/mcp-prompts-popover";
-
-const DEFAULT_SYSTEM_PROMPT =
-  "You are a helpful assistant with access to MCP tools.";
-
-const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
-  {
-    label: "Show me connected tools",
-    text: "List my connected MCP servers and their available tools.",
-  },
-  {
-    label: "Suggest an automation",
-    text: "Suggest an automation I can build with my current MCP setup.",
-  },
-  {
-    label: "Summarize recent activity",
-    text: "Summarize the most recent activity across my MCP servers.",
-  },
-];
+  DEFAULT_SYSTEM_PROMPT,
+  STARTER_PROMPTS,
+  formatErrorMessage,
+  buildMcpPromptMessages,
+} from "@/components/chat-v2/chat-helpers";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
-}
-
-function formatErrorMessage(
-  error: unknown,
-): { message: string; details?: string } | null {
-  if (!error) return null;
-
-  let errorString: string;
-  if (typeof error === "string") {
-    errorString = error;
-  } else if (error instanceof Error) {
-    errorString = error.message;
-  } else {
-    try {
-      errorString = JSON.stringify(error);
-    } catch {
-      errorString = String(error);
-    }
-  }
-
-  // Try to parse as JSON to extract message and details
-  try {
-    const parsed = JSON.parse(errorString);
-    if (parsed && typeof parsed === "object" && parsed.message) {
-      return {
-        message: parsed.message,
-        details: parsed.details,
-      };
-    }
-  } catch {
-    // Return as-is
-  }
-
-  return { message: errorString };
 }
 
 export function ChatTabV2({
@@ -580,9 +531,11 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
-      sendMessage({
-        text: `${mcpPromptResultsToText(mcpPromptResults) || ""}${input}`,
-      });
+      const promptMessages = buildMcpPromptMessages(mcpPromptResults);
+      if (promptMessages.length > 0) {
+        setMessages((prev) => [...prev, ...promptMessages]);
+      }
+      sendMessage({ text: input });
       setInput("");
       setMcpPromptResults([]);
     }
