@@ -123,6 +123,10 @@ Once you've configured your LLM API keys, go to the Playground tab. On the botto
 You can configure the system prompt and temperature, just like you would building an agent. The temperature is defaulted to the default value of the LLM providers (Claude = 0, OpenAI = 1.0).
 
 <Info>
+  Server instructions from connected MCP servers are automatically included in the chat context as system messages, helping the LLM understand server-specific capabilities and guidance.
+</Info>
+
+<Info>
   Higher temperature settings tend to hallucinate more with MCP interactions
 </Info>
 
