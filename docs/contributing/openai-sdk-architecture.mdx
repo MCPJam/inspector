@@ -1162,6 +1162,18 @@ server.connect(transport);
    - Verify widget has event listener for theme changes
    - Inspect `window.openai.theme` value in widget console
 
+8. **Modal not opening**
+   - Verify `requestModal` postMessage is being sent
+   - Check that Dialog component state is updating (`modalOpen`)
+   - Inspect modal iframe URL includes `view_mode=modal` query param
+   - Confirm `window.openai.view.mode` is `'modal'` in modal iframe
+
+9. **State not syncing between inline and modal**
+   - Check that both iframes are mounted and have valid contentWindow
+   - Verify `openai:pushWidgetState` messages are being sent
+   - Inspect localStorage for widget state key
+   - Confirm both views have `openai:widget_state` event listener
+
 **Debug Tools:**
 
 ```javascript
