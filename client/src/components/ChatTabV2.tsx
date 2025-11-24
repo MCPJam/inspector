@@ -100,6 +100,9 @@ export function ChatTabV2({
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
+  const [widgetStateQueue, setWidgetStateQueue] = useState<
+    { toolCallId: string; state: any }[]
+  >([]);
   const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
     number | null
   >(null);
@@ -213,7 +216,6 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
-
   // Notify parent when messages change
   useEffect(() => {
     onHasMessagesChange?.(messages.length > 0);
@@ -257,55 +259,89 @@ export function ChatTabV2({
     setChatSessionId(generateId());
     setMessages([]);
     setInput("");
+    setWidgetStateQueue([]);
   }, [setMessages]);
 
-  const handleWidgetStateChange = useCallback(
-    (toolCallId: string, state: any) => {
-      setMessages((prevMessages) => {
+  const applyWidgetStateUpdates = useCallback(
+    (
+      prevMessages: typeof messages,
+      updates: { toolCallId: string; state: any }[],
+    ) => {
+      let nextMessages = prevMessages;
+
+      for (const { toolCallId, state } of updates) {
         const messageId = `widget-state-${toolCallId}`;
 
-        // If state is null, remove the widget state message
         if (state === null) {
-          return prevMessages.filter((msg) => msg.id !== messageId);
+          const filtered = nextMessages.filter((msg) => msg.id !== messageId);
+          nextMessages = filtered;
+          continue;
         }
 
         const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
-
-        const existingIndex = prevMessages.findIndex(
+        const existingIndex = nextMessages.findIndex(
           (msg) => msg.id === messageId,
         );
 
         if (existingIndex !== -1) {
-          const existingMessage = prevMessages[existingIndex];
+          const existingMessage = nextMessages[existingIndex];
           const existingText =
             existingMessage.parts?.[0]?.type === "text"
               ? (existingMessage.parts[0] as any).text
               : null;
+
           if (existingText === stateText) {
-            return prevMessages;
+            continue;
           }
 
-          const newMessages = [...prevMessages];
-          newMessages[existingIndex] = {
+          const updatedMessages = [...nextMessages];
+          updatedMessages[existingIndex] = {
             id: messageId,
             role: "assistant",
             parts: [{ type: "text", text: stateText }],
           };
-          return newMessages;
+          nextMessages = updatedMessages;
+          continue;
         }
 
-        return [
-          ...prevMessages,
+        nextMessages = [
+          ...nextMessages,
           {
             id: messageId,
             role: "assistant",
             parts: [{ type: "text", text: stateText }],
           },
         ];
-      });
+      }
+
+      return nextMessages;
     },
-    [setMessages],
+    [],
   );
+
+  const handleWidgetStateChange = useCallback(
+    (toolCallId: string, state: any) => {
+      // Avoid mutating the messages array while a response is streaming;
+      // queue updates and apply once the chat is back to "ready".
+      if (status === "ready") {
+        setMessages((prevMessages) =>
+          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }]),
+        );
+      } else {
+        setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
+      }
+    },
+    [status, setMessages, applyWidgetStateUpdates],
+  );
+
+  useEffect(() => {
+    if (status !== "ready" || widgetStateQueue.length === 0) return;
+
+    setMessages((prevMessages) =>
+      applyWidgetStateUpdates(prevMessages, widgetStateQueue),
+    );
+    setWidgetStateQueue([]);
+  }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
 
   useEffect(() => {
     resetChat();
