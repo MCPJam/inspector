@@ -680,13 +680,15 @@ useEffect(() => {
               event.data.toolName,
               event.data.params || {}
             );
-            iframeRef.current?.contentWindow?.postMessage({
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage({
               type: \"openai:callTool:response\",
               requestId: event.data.requestId,
               result: result
             }, \"*\");
           } catch (err) {
-            iframeRef.current?.contentWindow?.postMessage({
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage({
               type: \"openai:callTool:response\",
               requestId: event.data.requestId,
               error: err instanceof Error ? err.message : \"Unknown error\"
