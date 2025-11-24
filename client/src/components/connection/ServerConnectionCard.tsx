@@ -20,7 +20,6 @@ import {
   Download,
   Check,
   Edit,
-  Expand,
   ExternalLink,
   Link,
 } from "lucide-react";
@@ -161,11 +160,7 @@ export function ServerConnectionCard({
       toast.success(
         result.existed
           ? "Tunnel URL copied to clipboard!"
-          : "Tunnel created! URL copied to clipboard.",
-        {
-          description: result.url,
-          duration: 5000,
-        }
+          : "Tunnel created! URL copied to clipboard."
       );
     } catch (error) {
       const errorMessage =
@@ -445,30 +440,54 @@ export function ServerConnectionCard({
             </button>
           </div>
 
-          {/* Server Info Button */}
-          {hasInitInfo && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsInfoModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            >
-              <Expand className="h-3 w-3" />
-              <span>
-                {isOpenAIApp
-                  ? "View server info / OpenAI Apps SDK"
-                  : "View server info"}
-              </span>
-              {isOpenAIApp && (
-                <img
-                  src="/openai_logo.png"
-                  alt="OpenAI App"
-                  className="h-4 w-4 flex-shrink-0"
-                  title="OpenAI App"
-                />
+          {/* Server Info and Tunnel URL Row */}
+          {(hasInitInfo || tunnelUrl) && (
+            <div className="flex items-center justify-between gap-2">
+              {hasInitInfo && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsInfoModalOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <span>
+                    {"View server info"}
+                  </span>
+                  {isOpenAIApp && (
+                    <img
+                      src="/openai_logo.png"
+                      alt="OpenAI App"
+                      className="h-4 w-4 flex-shrink-0"
+                      title="OpenAI App"
+                    />
+                  )}
+                </button>
               )}
-            </button>
+              {tunnelUrl && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground flex-shrink-0">
+                    Tunnel:
+                  </span>
+                  <div
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 px-2 py-1 rounded border border-border/30 relative group cursor-pointer hover:text-foreground transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(tunnelUrl, "tunnel");
+                    }}
+                    title={tunnelUrl}
+                  >
+                    <Link className="h-3 w-3 flex-shrink-0" />
+                    <span className="truncate max-w-[200px]">{tunnelUrl}</span>
+                    {copiedField === "tunnel" ? (
+                      <Check className="h-3 w-3 text-green-500 flex-shrink-0" />
+                    ) : (
+                      <Copy className="h-3 w-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Error Alert for Failed Connections */}
