@@ -630,12 +630,27 @@ useEffect(() => {
           onSendFollowup(event.data.message);
         }
         break;
+
+      case \"openai:requestDisplayMode\":
+        const mode = event.data.mode;
+        setDisplayMode(mode);
+        if (mode === \"pip\") {
+          onRequestPip?.(resolvedToolCallId);
+        } else if (mode === \"inline\" || mode === \"fullscreen\") {
+          if (pipWidgetId === resolvedToolCallId) {
+            onExitPip?.(resolvedToolCallId);
+          }
+        }
+        if (typeof event.data.maxHeight === \"number\") {
+          setMaxHeight(event.data.maxHeight);
+        }
+        break;
     }
   };
 
   window.addEventListener(\"message\", handleMessage);
   return () => window.removeEventListener(\"message\", handleMessage);
-}, [widgetUrl, onCallTool, onSendFollowup]);
+}, [widgetUrl, onCallTool, onSendFollowup, pipWidgetId, onRequestPip, onExitPip, resolvedToolCallId]);
 ```
 
 #### Theme Synchronization
