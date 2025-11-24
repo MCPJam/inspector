@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, FileText, Layers, Link, Loader2, X } from "lucide-react";
+import { Plus, FileText, Layers, Cable, Link, Loader2, X, Copy, Check } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { ServerConnectionDetails } from "./connection/ServerConnectionDetails";
@@ -54,6 +54,7 @@ export function ServersTab({
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
+  const [isTunnelUrlCopied, setIsTunnelUrlCopied] = useState(false);
 
   useEffect(() => {
     posthog.capture("servers_tab_viewed", {
@@ -182,6 +183,17 @@ export function ServersTab({
     }
   };
 
+  const copyTunnelUrl = async () => {
+    if (!tunnelUrl) return;
+    try {
+      await navigator.clipboard.writeText(tunnelUrl);
+      setIsTunnelUrlCopied(true);
+      setTimeout(() => setIsTunnelUrlCopied(false), 2000);
+    } catch (error) {
+      console.error("Failed to copy tunnel URL:", error);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       {connectedCount > 0 ? (
@@ -192,9 +204,11 @@ export function ServersTab({
               {/* Header Section */}
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-2xl font-bold tracking-tight">
-                    MCP Servers
-                  </h2>
+                  <div className="flex items-center gap-6">
+                    <h2 className="text-2xl font-bold tracking-tight">
+                      MCP Servers
+                    </h2>
+                  </div>
                   <div className="flex items-center gap-2">
                     {tunnelUrl ? (
                       <Button
@@ -202,14 +216,22 @@ export function ServersTab({
                         size="sm"
                         onClick={handleCloseTunnel}
                         disabled={isClosingTunnel}
-                        className="cursor-pointer"
+                        className="cursor-pointer relative"
                       >
                         {isClosingTunnel ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Close Tunnel
+                          </>
                         ) : (
-                          <X className="h-4 w-4 mr-2" />
+                          <>
+                            <span className="relative flex h-2 w-2 mr-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-50"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                            </span>
+                            Close Tunnel
+                          </>
                         )}
-                        Close Tunnel
                       </Button>
                     ) : (
                       <Button
@@ -222,7 +244,7 @@ export function ServersTab({
                         {isCreatingTunnel ? (
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         ) : (
-                          <Link className="h-4 w-4 mr-2" />
+                          <Cable className="h-4 w-4 mr-2" />
                         )}
                         Create Tunnel
                       </Button>
@@ -308,7 +330,28 @@ export function ServersTab({
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
           <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+            <div className="flex items-center gap-6">
+              <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+              {tunnelUrl && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground">Tunnel:</span>
+                  <button
+                    onClick={copyTunnelUrl}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground bg-muted/20 px-1.5 py-0.5 rounded border border-border/20 transition-colors cursor-pointer"
+                  >
+                    <Link className="h-2.5 w-2.5 flex-shrink-0" />
+                    {isTunnelUrlCopied ? (
+                      <>
+                        <Check className="h-2.5 w-2.5 text-green-500" />
+                        <span className="text-green-500">Copied!</span>
+                      </>
+                    ) : (
+                      <Copy className="h-2.5 w-2.5" />
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {tunnelUrl ? (
                 <Button
@@ -316,14 +359,22 @@ export function ServersTab({
                   size="sm"
                   onClick={handleCloseTunnel}
                   disabled={isClosingTunnel}
-                  className="cursor-pointer"
+                  className="cursor-pointer relative"
                 >
                   {isClosingTunnel ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Close Tunnel
+                    </>
                   ) : (
-                    <X className="h-4 w-4 mr-2" />
+                    <>
+                      <span className="relative flex h-2 w-2 mr-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-50"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                      </span>
+                      Close Tunnel
+                    </>
                   )}
-                  Close Tunnel
                 </Button>
               ) : (
                 <Button
@@ -336,7 +387,7 @@ export function ServersTab({
                   {isCreatingTunnel ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
-                    <Link className="h-4 w-4 mr-2" />
+                    <Cable className="h-4 w-4 mr-2" />
                   )}
                   Create Tunnel
                 </Button>
