@@ -407,6 +407,27 @@ openai.get("/widget-content/:toolId", async (c) => {
                 }
               }
             }
+
+            if (event.data.type === 'openai:pushWidgetState' && event.data.toolId === ${JSON.stringify(toolId)}) {
+              try {
+                const nextState = event.data.state ?? null;
+                window.openai.widgetState = nextState;
+                try {
+                  localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(nextState));
+                } catch (err) {
+                }
+                try {
+                  const stateEvent = new CustomEvent('openai:widget_state', {
+                    detail: { state: nextState }
+                  });
+                  window.dispatchEvent(stateEvent);
+                } catch (err) {
+                  console.error('[OpenAI Widget] Failed to dispatch widget state event:', err);
+                }
+              } catch (err) {
+                console.error('[OpenAI Widget] Failed to apply pushed widget state:', err);
+              }
+            }
           });
         })();
       </script>
