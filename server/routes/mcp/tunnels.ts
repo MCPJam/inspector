@@ -91,37 +91,34 @@ async function reportTunnelClosure(serverId: string, authHeader?: string): Promi
   }
 }
 
-// Create a tunnel for a server
-tunnels.post('/:serverId/create', async (c) => {
-  const serverId = c.req.param('serverId');
+// Create a shared tunnel
+tunnels.post('/create', async (c) => {
   const authHeader = c.req.header('authorization');
 
   try {
     // Check if tunnel already exists
-    const existingUrl = tunnelManager.getTunnelUrl(serverId);
+    const existingUrl = tunnelManager.getTunnelUrl();
     if (existingUrl) {
       return c.json({
         url: existingUrl,
-        serverId,
         existed: true,
       });
     }
 
     // Fetch ngrok token from Convex if not already set
-    if (!tunnelManager.hasTunnel(serverId)) {
+    if (!tunnelManager.hasTunnel()) {
       const token = await fetchNgrokToken(authHeader);
       tunnelManager.setNgrokToken(token);
     }
 
     // Create the tunnel
-    const url = await tunnelManager.createTunnel(serverId);
+    const url = await tunnelManager.createTunnel();
 
-    // Record the tunnel in Convex backend
-    await recordTunnel(serverId, url, authHeader);
+    // Record the tunnel in Convex backend (use a fixed serverId for the shared tunnel)
+    await recordTunnel('shared', url, authHeader);
 
     return c.json({
       url,
-      serverId,
       existed: false,
     });
   } catch (error: any) {
@@ -129,7 +126,6 @@ tunnels.post('/:serverId/create', async (c) => {
     return c.json(
       {
         error: error.message || 'Failed to create tunnel',
-        serverId,
       },
       500
     );
@@ -137,9 +133,20 @@ tunnels.post('/:serverId/create', async (c) => {
 });
 
 // Get existing tunnel URL
-tunnels.get('/:serverId', async (c) => {
+tunnels.get('/', async (c) => {
+  const url = tunnelManager.getTunnelUrl();
+
+  if (!url) {
+    return c.json({ error: 'No tunnel found' }, 404);
+  }
+
+  return c.json({ url });
+});
+
+// Get server-specific tunnel URL
+tunnels.get('/server/:serverId', async (c) => {
   const serverId = c.req.param('serverId');
-  const url = tunnelManager.getTunnelUrl(serverId);
+  const url = tunnelManager.getServerTunnelUrl(serverId);
 
   if (!url) {
     return c.json({ error: 'No tunnel found' }, 404);
@@ -148,32 +155,24 @@ tunnels.get('/:serverId', async (c) => {
   return c.json({ url, serverId });
 });
 
-// Close a tunnel
-tunnels.delete('/:serverId', async (c) => {
-  const serverId = c.req.param('serverId');
+// Close the tunnel
+tunnels.delete('/', async (c) => {
   const authHeader = c.req.header('authorization');
 
   try {
-    await tunnelManager.closeTunnel(serverId);
-    await reportTunnelClosure(serverId, authHeader);
+    await tunnelManager.closeTunnel();
+    await reportTunnelClosure('shared', authHeader);
 
-    return c.json({ success: true, serverId });
+    return c.json({ success: true });
   } catch (error: any) {
     console.error('Error closing tunnel:', error);
     return c.json(
       {
         error: error.message || 'Failed to close tunnel',
-        serverId,
       },
       500
     );
   }
-});
-
-// List all active tunnels
-tunnels.get('/', async (c) => {
-  const tunnels = tunnelManager.getActiveTunnels();
-  return c.json({ tunnels });
 });
 
 export default tunnels;
