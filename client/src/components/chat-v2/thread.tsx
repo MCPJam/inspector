@@ -60,7 +60,7 @@ export function Thread({
   onWidgetStateChange,
 }: ThreadProps) {
   return (
-    <div className="flex-1 overflow-y-auto pb-4">
+    <div className="flex-1 min-h-0 pb-4">
       <div className="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8">
         {messages.map((message, idx) => (
           <MessageView
