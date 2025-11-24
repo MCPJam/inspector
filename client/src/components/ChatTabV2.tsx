@@ -259,6 +259,7 @@ export function ChatTabV2({
     setChatSessionId(generateId());
     setMessages([]);
     setInput("");
+    setWidgetStateQueue([]);
   }, [setMessages]);
 
   const applyWidgetStateUpdates = useCallback(
