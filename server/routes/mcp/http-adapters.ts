@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { handleJsonRpc, BridgeMode } from "../../services/mcp-http-bridge";
-import { widgetDataStore } from "./openai";
+import {
+  widgetDataStore,
+  getOpenAiBridgeScript,
+  extractHtmlContent,
+  processLocalhostUrls,
+  injectBridgeScript,
+} from "./widget-utils";
 
 // In-memory SSE session store per serverId:sessionId
 type Session = {
@@ -152,30 +158,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
             uri,
           });
 
-          let htmlContent = "";
-          const contentsArray = Array.isArray(content?.contents)
-            ? content.contents
-            : [];
-
-          const firstContent = contentsArray[0];
-          if (firstContent) {
-            if (typeof (firstContent as { text?: unknown }).text === "string") {
-              htmlContent = (firstContent as { text: string }).text;
-            } else if (
-              typeof (firstContent as { blob?: unknown }).blob === "string"
-            ) {
-              htmlContent = (firstContent as { blob: string }).blob;
-            }
-          }
-
-          if (!htmlContent && content && typeof content === "object") {
-            const recordContent = content as Record<string, unknown>;
-            if (typeof recordContent.text === "string") {
-              htmlContent = recordContent.text;
-            } else if (typeof recordContent.blob === "string") {
-              htmlContent = recordContent.blob;
-            }
-          }
+          let htmlContent = extractHtmlContent(content);
 
           if (!htmlContent) {
             return c.html(
@@ -189,213 +172,33 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           }
 
           // Rewrite localhost URLs to route through our proxy
-          const localhostUrlRegex = /(https?:\/\/localhost:\d+)/g;
-          const localhostMatches = htmlContent.match(localhostUrlRegex);
-
           const requestUrl = new URL(c.req.url);
           const forwardedProto = c.req.header('x-forwarded-proto') || c.req.header('x-forwarded-protocol');
-          const protocol = forwardedProto || requestUrl.protocol.replace(':', '');
-          const baseUrl = `${protocol}://${requestUrl.host}`;
 
-          // Track if we found localhost URLs to proxy
-          let hasLocalhostUrls = false;
-          let primaryLocalhostUrl: string | null = null;
+          const {
+            htmlContent: processedHtml,
+            hasLocalhostUrls,
+            primaryLocalhostUrl,
+            baseUrl
+          } = processLocalhostUrls(
+            htmlContent,
+            requestUrl,
+            forwardedProto,
+            pathname,
+            '/widget'
+          );
 
-          if (localhostMatches && localhostMatches.length > 0) {
-            hasLocalhostUrls = true;
-            const uniqueLocalhosts = [...new Set(localhostMatches)];
-            primaryLocalhostUrl = uniqueLocalhosts[0];
-
-            for (const localhostUrl of uniqueLocalhosts) {
-              const proxyPath = pathname.replace(/\/widget\/[^/]+$/, `/widget-proxy/${encodeURIComponent(localhostUrl)}`);
-              const proxyUrl = `${baseUrl}${proxyPath}`;
-              htmlContent = htmlContent.replace(new RegExp(localhostUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), proxyUrl);
-            }
-          }
-
-          const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
-
-          // Serialize for inline script
-          const serializeForInlineScript = (value: unknown) =>
-            JSON.stringify(value ?? null)
-              .replace(/</g, "\\u003C")
-              .replace(/>/g, "\\u003E")
-              .replace(/&/g, "\\u0026")
-              .replace(/\u2028/g, "\\u2028")
-              .replace(/\u2029/g, "\\u2029");
+          htmlContent = processedHtml;
 
           // OpenAI Apps SDK bridge script - complete implementation
-          const apiScript = `
-            <script>
-              (function() {
-                'use strict';
-
-                const openaiAPI = {
-                  toolInput: ${serializeForInlineScript(toolInput)},
-                  toolOutput: ${serializeForInlineScript(toolOutput)},
-                  toolResponseMetadata: ${serializeForInlineScript(toolResponseMetadata)},
-                  displayMode: 'inline',
-                  maxHeight: 600,
-                  theme: ${JSON.stringify(theme ?? "dark")},
-                  locale: 'en-US',
-                  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
-                  userAgent: {
-                    device: { type: 'desktop' },
-                    capabilities: { hover: true, touch: false }
-                  },
-                  widgetState: null,
-
-                  async setWidgetState(state) {
-                    this.widgetState = state;
-                    try {
-                      localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(state));
-                    } catch (err) {
-                    }
-                    window.parent.postMessage({
-                      type: 'openai:setWidgetState',
-                      toolId: ${JSON.stringify(toolId)},
-                      state
-                    }, '*');
-                  },
-
-                  async callTool(toolName, params = {}) {
-                    return new Promise((resolve, reject) => {
-                      const requestId = \`tool_\${Date.now()}_\${Math.random()}\`;
-                      const handler = (event) => {
-                        if (event.data.type === 'openai:callTool:response' &&
-                            event.data.requestId === requestId) {
-                          window.removeEventListener('message', handler);
-                          if (event.data.error) {
-                            reject(new Error(event.data.error));
-                          } else {
-                            resolve(event.data.result);
-                          }
-                        }
-                      };
-                      window.addEventListener('message', handler);
-                      window.parent.postMessage({
-                        type: 'openai:callTool',
-                        requestId,
-                        toolName,
-                        params
-                      }, '*');
-                      setTimeout(() => {
-                        window.removeEventListener('message', handler);
-                        reject(new Error('Tool call timeout'));
-                      }, 30000);
-                    });
-                  },
-
-                  async sendFollowupTurn(message) {
-                    const payload = typeof message === 'string'
-                      ? { prompt: message }
-                      : message;
-                    window.parent.postMessage({
-                      type: 'openai:sendFollowup',
-                      message: payload.prompt || payload
-                    }, '*');
-                  },
-
-                  async requestDisplayMode(options = {}) {
-                    const mode = options.mode || 'inline';
-                    this.displayMode = mode;
-                    window.parent.postMessage({
-                      type: 'openai:requestDisplayMode',
-                      mode
-                    }, '*');
-                    return { mode };
-                  },
-
-                  async sendFollowUpMessage(args) {
-                    const prompt = typeof args === 'string' ? args : (args?.prompt || '');
-                    return this.sendFollowupTurn(prompt);
-                  },
-
-                  async openExternal(options) {
-                    const href = typeof options === 'string' ? options : options?.href;
-                    if (!href) {
-                      throw new Error('href is required for openExternal');
-                    }
-                    window.parent.postMessage({
-                      type: 'openai:openExternal',
-                      href
-                    }, '*');
-                    window.open(href, '_blank', 'noopener,noreferrer');
-                  }
-                };
-
-                // Define window.openai
-                Object.defineProperty(window, 'openai', {
-                  value: openaiAPI,
-                  writable: false,
-                  configurable: false,
-                  enumerable: true
-                });
-
-                // Define window.webplus (alias)
-                Object.defineProperty(window, 'webplus', {
-                  value: openaiAPI,
-                  writable: false,
-                  configurable: false,
-                  enumerable: true
-                });
-
-                // Dispatch initial globals event
-                setTimeout(() => {
-                  try {
-                    const globalsEvent = new CustomEvent('openai:set_globals', {
-                      detail: {
-                        globals: {
-                          displayMode: openaiAPI.displayMode,
-                          maxHeight: openaiAPI.maxHeight,
-                          theme: openaiAPI.theme,
-                          locale: openaiAPI.locale,
-                          safeArea: openaiAPI.safeArea,
-                          userAgent: openaiAPI.userAgent
-                        }
-                      }
-                    });
-                    window.dispatchEvent(globalsEvent);
-                  } catch (err) {
-                    console.error('[OpenAI Widget] Failed to dispatch globals event:', err);
-                  }
-                }, 0);
-
-                // Restore widget state from localStorage
-                setTimeout(() => {
-                  try {
-                    const stored = localStorage.getItem(${JSON.stringify(widgetStateKey)});
-                    if (stored && window.openai) {
-                      window.openai.widgetState = JSON.parse(stored);
-                    }
-                  } catch (err) {
-                    console.error('[OpenAI Widget] Failed to restore widget state:', err);
-                  }
-                }, 0);
-
-                // Listen for theme changes from parent
-                window.addEventListener('message', (event) => {
-                  if (event.data.type === 'openai:set_globals') {
-                    const { globals } = event.data;
-
-                    if (globals?.theme && window.openai) {
-                      window.openai.theme = globals.theme;
-
-                      // Dispatch event for widgets that use useTheme() hook
-                      try {
-                        const globalsEvent = new CustomEvent('openai:set_globals', {
-                          detail: { globals: { theme: globals.theme } }
-                        });
-                        window.dispatchEvent(globalsEvent);
-                      } catch (err) {
-                        console.error('[OpenAI Widget] Failed to dispatch theme change:', err);
-                      }
-                    }
-                  }
-                });
-              })();
-            </script>
-          `;
+          const apiScript = getOpenAiBridgeScript(
+            toolInput,
+            toolOutput,
+            toolResponseMetadata,
+            theme,
+            toolId,
+            toolName
+          );
 
           // Inject the bridge script and base tag into the HTML
           // Add base tag if we're proxying localhost URLs for dynamic resource loading
@@ -403,26 +206,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
             ? `<base href="${baseUrl}${pathname.replace(/\/widget\/[^/]+$/, `/widget-proxy/${encodeURIComponent(primaryLocalhostUrl)}`)}/">`
             : '';
 
-          let modifiedHtml;
-          if (htmlContent.includes("<html>") && htmlContent.includes("<head>")) {
-            modifiedHtml = htmlContent.replace(
-              "<head>",
-              `<head>${baseTag}${apiScript}`,
-            );
-          } else {
-            modifiedHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  ${baseTag}
-  ${apiScript}
-</head>
-<body>
-  ${htmlContent}
-</body>
-</html>`;
-          }
+          const modifiedHtml = injectBridgeScript(htmlContent, apiScript, baseTag);
 
           return c.html(modifiedHtml, 200, {
             "Content-Type": "text/html",
@@ -547,30 +331,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
             uri,
           });
 
-          let htmlContent = "";
-          const contentsArray = Array.isArray(content?.contents)
-            ? content.contents
-            : [];
-
-          const firstContent = contentsArray[0];
-          if (firstContent) {
-            if (typeof (firstContent as { text?: unknown }).text === "string") {
-              htmlContent = (firstContent as { text: string }).text;
-            } else if (
-              typeof (firstContent as { blob?: unknown }).blob === "string"
-            ) {
-              htmlContent = (firstContent as { blob: string }).blob;
-            }
-          }
-
-          if (!htmlContent && content && typeof content === "object") {
-            const recordContent = content as Record<string, unknown>;
-            if (typeof recordContent.text === "string") {
-              htmlContent = recordContent.text;
-            } else if (typeof recordContent.blob === "string") {
-              htmlContent = recordContent.blob;
-            }
-          }
+          let htmlContent = extractHtmlContent(content);
 
           if (!htmlContent) {
             return c.html(
@@ -585,229 +346,33 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
 
           // Rewrite localhost URLs to route through our proxy
           // This fixes CORS issues when widget resources are on localhost
-          const localhostUrlRegex = /(https?:\/\/localhost:\d+)/g;
-          const localhostMatches = htmlContent.match(localhostUrlRegex);
+          const requestUrl = new URL(c.req.url);
+          const forwardedProto = c.req.header('x-forwarded-proto') || c.req.header('x-forwarded-protocol');
 
-          if (localhostMatches && localhostMatches.length > 0) {
-            // Get the base URL from the request, respecting X-Forwarded-Proto for proxied requests
-            const requestUrl = new URL(c.req.url);
-            const forwardedProto = c.req.header('x-forwarded-proto') || c.req.header('x-forwarded-protocol');
-            const protocol = forwardedProto || requestUrl.protocol.replace(':', '');
-            const baseUrl = `${protocol}://${requestUrl.host}`;
+          const {
+            htmlContent: processedHtml
+          } = processLocalhostUrls(
+            htmlContent,
+            requestUrl,
+            forwardedProto,
+            pathname,
+            '/widget-content'
+          );
 
-            // Replace localhost URLs with proxy URLs
-            const uniqueLocalhosts = [...new Set(localhostMatches)];
-            for (const localhostUrl of uniqueLocalhosts) {
-              const proxyPath = pathname.replace(/\/widget-content\/[^/]+$/, `/widget-proxy/${encodeURIComponent(localhostUrl)}`);
-              const proxyUrl = `${baseUrl}${proxyPath}`;
-              htmlContent = htmlContent.replace(new RegExp(localhostUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), proxyUrl);
-            }
-          }
-
-          const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
-
-          // Serialize for inline script (XSS protection)
-          const serializeForInlineScript = (value: unknown) =>
-            JSON.stringify(value ?? null)
-              .replace(/</g, "\\u003C")
-              .replace(/>/g, "\\u003E")
-              .replace(/&/g, "\\u0026")
-              .replace(/\u2028/g, "\\u2028")
-              .replace(/\u2029/g, "\\u2029");
+          htmlContent = processedHtml;
 
           // OpenAI Apps SDK bridge script
-          const apiScript = `
-            <script>
-              (function() {
-                'use strict';
-
-                const openaiAPI = {
-                  toolInput: ${serializeForInlineScript(toolInput)},
-                  toolOutput: ${serializeForInlineScript(toolOutput)},
-                  toolResponseMetadata: ${serializeForInlineScript(toolResponseMetadata)},
-                  displayMode: 'inline',
-                  maxHeight: 600,
-                  theme: ${JSON.stringify(theme ?? "dark")},
-                  locale: 'en-US',
-                  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
-                  userAgent: {
-                    device: { type: 'desktop' },
-                    capabilities: { hover: true, touch: false }
-                  },
-                  widgetState: null,
-
-                  async setWidgetState(state) {
-                    this.widgetState = state;
-                    try {
-                      localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(state));
-                    } catch (err) {
-                    }
-                    window.parent.postMessage({
-                      type: 'openai:setWidgetState',
-                      toolId: ${JSON.stringify(toolId)},
-                      state
-                    }, '*');
-                  },
-
-                  async callTool(toolName, params = {}) {
-                    return new Promise((resolve, reject) => {
-                      const requestId = \`tool_\${Date.now()}_\${Math.random()}\`;
-                      const handler = (event) => {
-                        if (event.data.type === 'openai:callTool:response' &&
-                            event.data.requestId === requestId) {
-                          window.removeEventListener('message', handler);
-                          if (event.data.error) {
-                            reject(new Error(event.data.error));
-                          } else {
-                            resolve(event.data.result);
-                          }
-                        }
-                      };
-                      window.addEventListener('message', handler);
-                      window.parent.postMessage({
-                        type: 'openai:callTool',
-                        requestId,
-                        toolName,
-                        params
-                      }, '*');
-                      setTimeout(() => {
-                        window.removeEventListener('message', handler);
-                        reject(new Error('Tool call timeout'));
-                      }, 30000);
-                    });
-                  },
-
-                  async sendFollowupTurn(message) {
-                    const payload = typeof message === 'string'
-                      ? { prompt: message }
-                      : message;
-                    window.parent.postMessage({
-                      type: 'openai:sendFollowup',
-                      message: payload.prompt || payload
-                    }, '*');
-                  },
-
-                  async requestDisplayMode(options = {}) {
-                    const mode = options.mode || 'inline';
-                    this.displayMode = mode;
-                    window.parent.postMessage({
-                      type: 'openai:requestDisplayMode',
-                      mode
-                    }, '*');
-                    return { mode };
-                  },
-
-                  async sendFollowUpMessage(args) {
-                    const prompt = typeof args === 'string' ? args : (args?.prompt || '');
-                    return this.sendFollowupTurn(prompt);
-                  },
-
-                  async openExternal(options) {
-                    const href = typeof options === 'string' ? options : options?.href;
-                    if (!href) {
-                      throw new Error('href is required for openExternal');
-                    }
-                    window.parent.postMessage({
-                      type: 'openai:openExternal',
-                      href
-                    }, '*');
-                    window.open(href, '_blank', 'noopener,noreferrer');
-                  }
-                };
-
-                // Define window.openai
-                Object.defineProperty(window, 'openai', {
-                  value: openaiAPI,
-                  writable: false,
-                  configurable: false,
-                  enumerable: true
-                });
-
-                // Define window.webplus (alias)
-                Object.defineProperty(window, 'webplus', {
-                  value: openaiAPI,
-                  writable: false,
-                  configurable: false,
-                  enumerable: true
-                });
-
-                // Dispatch initial globals event
-                setTimeout(() => {
-                  try {
-                    const globalsEvent = new CustomEvent('openai:set_globals', {
-                      detail: {
-                        globals: {
-                          displayMode: openaiAPI.displayMode,
-                          maxHeight: openaiAPI.maxHeight,
-                          theme: openaiAPI.theme,
-                          locale: openaiAPI.locale,
-                          safeArea: openaiAPI.safeArea,
-                          userAgent: openaiAPI.userAgent
-                        }
-                      }
-                    });
-                    window.dispatchEvent(globalsEvent);
-                  } catch (err) {
-                    console.error('[OpenAI Widget] Failed to dispatch globals event:', err);
-                  }
-                }, 0);
-
-                // Restore widget state from localStorage
-                setTimeout(() => {
-                  try {
-                    const stored = localStorage.getItem(${JSON.stringify(widgetStateKey)});
-                    if (stored && window.openai) {
-                      window.openai.widgetState = JSON.parse(stored);
-                    }
-                  } catch (err) {
-                    console.error('[OpenAI Widget] Failed to restore widget state:', err);
-                  }
-                }, 0);
-
-                // Listen for theme changes from parent
-                window.addEventListener('message', (event) => {
-                  if (event.data.type === 'openai:set_globals') {
-                    const { globals } = event.data;
-
-                    if (globals?.theme && window.openai) {
-                      window.openai.theme = globals.theme;
-
-                      // Dispatch event for widgets that use useTheme() hook
-                      try {
-                        const globalsEvent = new CustomEvent('openai:set_globals', {
-                          detail: { globals: { theme: globals.theme } }
-                        });
-                        window.dispatchEvent(globalsEvent);
-                      } catch (err) {
-                        console.error('[OpenAI Widget] Failed to dispatch theme change:', err);
-                      }
-                    }
-                  }
-                });
-              })();
-            </script>
-          `;
+          const apiScript = getOpenAiBridgeScript(
+            toolInput,
+            toolOutput,
+            toolResponseMetadata,
+            theme,
+            toolId,
+            toolName
+          );
 
           // Inject the bridge script into the HTML
-          let modifiedHtml;
-          if (htmlContent.includes("<html>") && htmlContent.includes("<head>")) {
-            modifiedHtml = htmlContent.replace(
-              "<head>",
-              `<head>${apiScript}`,
-            );
-          } else {
-            modifiedHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  ${apiScript}
-</head>
-<body>
-  ${htmlContent}
-</body>
-</html>`;
-          }
+          const modifiedHtml = injectBridgeScript(htmlContent, apiScript, '<base href="/">');
 
           // Security headers
           const trustedCdns = [
@@ -904,7 +469,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           const close = () => {
             try {
               controller.close();
-            } catch {}
+            } catch { }
           };
 
           // Register session
@@ -918,10 +483,10 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           // Emit endpoint as JSON (spec-friendly) then as a plain string (compat).
           try {
             send("endpoint", JSON.stringify({ url, headers: {} }));
-          } catch {}
+          } catch { }
           try {
             send("endpoint", url);
-          } catch {}
+          } catch { }
 
           // Periodic keepalive comments so proxies don't buffer/close
           timer = setInterval(() => {
@@ -929,13 +494,13 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
               controller.enqueue(
                 encoder.encode(`: keepalive ${Date.now()}\n\n`),
               );
-            } catch {}
+            } catch { }
           }, 15000);
         },
         cancel() {
           try {
             clearInterval(timer);
-          } catch {}
+          } catch { }
           sessions.delete(`${serverId}:${sessionId}`);
           // If this session was the latest for this server, clear pointer
           if (latestSessionByServer.get(serverId) === sessionId) {
@@ -962,7 +527,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     let body: any = undefined;
     try {
       body = await c.req.json();
-    } catch {}
+    } catch { }
 
     const clientManager = c.mcpClientManager;
 
@@ -1056,7 +621,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       if (responseMessage) {
         try {
           sess.send("message", JSON.stringify(responseMessage));
-        } catch {}
+        } catch { }
       }
       // 202 Accepted per SSE transport semantics
       return c.body("Accepted", 202, {
