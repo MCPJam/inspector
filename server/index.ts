@@ -47,6 +47,8 @@ function logBox(content: string, title?: string) {
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
+import { tunnelManager } from "./services/tunnel-manager";
+import { SERVER_PORT, SERVER_HOSTNAME, CORS_ORIGINS } from "./config";
 import "./types/hono"; // Type extensions
 
 // Utility function to extract MCP server config from environment variables
@@ -177,16 +179,10 @@ app.use("*", async (c, next) => {
 
 // Middleware
 app.use("*", logger());
-const corsOrigins = [
-  "http://localhost:5173", // Vite dev server
-  "http://localhost:6274", // Hono server
-  "http://127.0.0.1:6274", // Hono server production
-];
-
 app.use(
   "*",
   cors({
-    origin: corsOrigins,
+    origin: CORS_ORIGINS,
     credentials: true,
   }),
 );
@@ -253,36 +249,37 @@ if (process.env.NODE_ENV === "production") {
   });
 } else {
   // Development mode - just API
-  app.get("/", (c) => {
-    return c.json({
-      message: "MCPJam API Server",
-      environment: "development",
-      frontend: `http://localhost:6274`,
+    app.get("/", (c) => {
+      return c.json({
+        message: "MCPJam API Server",
+        environment: "development",
+        frontend: `http://localhost:${SERVER_PORT}`,
+      });
     });
-  });
 }
 
-// Default to localhost unless explicitly running in production
-const hostname = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
-const port = process.env.ENVIRONMENT === "dev" ? 5173 : 6274;
-logBox(`http://${hostname}:${port}`, "🚀 Inspector Launched");
+// Use server configuration
+const displayPort = process.env.ENVIRONMENT === "dev" ? 5173 : SERVER_PORT;
+logBox(`http://${SERVER_HOSTNAME}:${displayPort}`, "🚀 Inspector Launched");
 
-// Hono server should be served on 6274
+// Start the Hono server
 const server = serve({
   fetch: app.fetch,
-  port: 6274,
+  port: SERVER_PORT,
   hostname: "0.0.0.0", // Bind to all interfaces for Docker
 });
 
 // Handle graceful shutdown
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
   console.log("\n🛑 Shutting down gracefully...");
+  await tunnelManager.closeAll();
   server.close();
   process.exit(0);
 });
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   console.log("\n🛑 Shutting down gracefully...");
+  await tunnelManager.closeAll();
   server.close();
   process.exit(0);
 });

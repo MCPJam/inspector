@@ -20,8 +20,9 @@ import {
   Download,
   Check,
   Edit,
-  Expand,
   ExternalLink,
+  Link,
+  Cable,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/mcp-export-api";
@@ -37,13 +38,13 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/mcp-tools-api";
 import { ServerInfoModal } from "./ServerInfoModal";
-
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
   onReconnect: (serverName: string) => void;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
+  sharedTunnelUrl?: string | null;
 }
 
 export function ServerConnectionCard({
@@ -52,6 +53,7 @@ export function ServerConnectionCard({
   onReconnect,
   onEdit,
   onRemove,
+  sharedTunnelUrl,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -96,6 +98,12 @@ export function ServerConnectionCard({
   // Check if this is an OpenAI app (has tools with metadata)
   const isOpenAIApp =
     toolsData?.toolsMetadata && Object.keys(toolsData.toolsMetadata).length > 0;
+
+  // Compute the server-specific tunnel URL from the shared tunnel
+  // Only show tunnel URL if server is connected
+  const serverTunnelUrl = sharedTunnelUrl && server.connectionStatus === "connected"
+    ? `${sharedTunnelUrl}/api/mcp/adapter-http/${server.name}`
+    : null;
 
   // Load tools when server is connected
   useEffect(() => {
@@ -355,37 +363,59 @@ export function ServerConnectionCard({
               className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
             >
               {copiedField === "command" ? (
-                <Check className="h-3 w-3 text-green-500" />
+                <Check className="h-3 w-3" />
               ) : (
                 <Copy className="h-3 w-3" />
               )}
             </button>
           </div>
 
-          {/* Server Info Button */}
-          {hasInitInfo && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsInfoModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            >
-              <Expand className="h-3 w-3" />
-              <span>
-                {isOpenAIApp
-                  ? "View server info / OpenAI Apps SDK"
-                  : "View server info"}
-              </span>
-              {isOpenAIApp && (
-                <img
-                  src="/openai_logo.png"
-                  alt="OpenAI App"
-                  className="h-4 w-4 flex-shrink-0"
-                  title="OpenAI App"
-                />
+          {/* Server Info and Tunnel URL Row */}
+          {(hasInitInfo || serverTunnelUrl) && (
+            <div className="flex items-center justify-between gap-4">
+              {hasInitInfo && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsInfoModalOpen(true);
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <span>
+                    {"View server info"}
+                  </span>
+                  {isOpenAIApp && (
+                    <img
+                      src="/openai_logo.png"
+                      alt="OpenAI App"
+                      className="h-4 w-4 flex-shrink-0"
+                      title="OpenAI App"
+                    />
+                  )}
+                </button>
               )}
-            </button>
+              {serverTunnelUrl && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyToClipboard(serverTunnelUrl, "tunnel");
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-primary hover:underline cursor-pointer"
+                >
+                  {copiedField === "tunnel" ? (
+                    <>
+                      <Check className="h-3 w-3" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Cable className="h-3 w-3" />
+                      <span>Copy Tunnel Url</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
           )}
 
           {/* Error Alert for Failed Connections */}
