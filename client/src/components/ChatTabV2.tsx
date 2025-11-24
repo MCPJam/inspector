@@ -216,7 +216,6 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
-  console.log("messages", messages);
   // Notify parent when messages change
   useEffect(() => {
     onHasMessagesChange?.(messages.length > 0);
