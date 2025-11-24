@@ -61,7 +61,6 @@ export function ActiveServerSelector({
   showOnlyOAuthServers = false,
   hasMessages = false,
 }: ActiveServerSelectorProps) {
-  console.log("serverConfigs", serverConfigs);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [pendingServer, setPendingServer] = useState<string | null>(null);
