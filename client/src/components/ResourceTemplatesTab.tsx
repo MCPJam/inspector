@@ -163,8 +163,8 @@ export function ResourceTemplatesTab({
 
     try {
       const uri = getResolvedUri();
-      const content = await readResourceTemplateApi(serverName, uri);
-      setResourceContent(content);
+      const data = await readResourceTemplateApi(serverName, uri);
+      setResourceContent(data?.content ?? null);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : `Error reading resource: ${err}`;
