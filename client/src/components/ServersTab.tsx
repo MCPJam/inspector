@@ -8,6 +8,7 @@ import { ServerConnectionDetails } from "./connection/ServerConnectionDetails";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
+import { TunnelExplanationModal, TUNNEL_EXPLANATION_DISMISSED_KEY } from "./connection/TunnelExplanationModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
@@ -55,6 +56,7 @@ export function ServersTab({
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [isTunnelUrlCopied, setIsTunnelUrlCopied] = useState(false);
+  const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
 
   useEffect(() => {
     posthog.capture("servers_tab_viewed", {
@@ -130,7 +132,16 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
-  const handleCreateTunnel = async () => {
+  const handleCreateTunnel = () => {
+    const isDismissed = localStorage.getItem(TUNNEL_EXPLANATION_DISMISSED_KEY) === "true";
+    if (isDismissed) {
+      handleConfirmCreateTunnel();
+    } else {
+      setShowTunnelExplanation(true);
+    }
+  };
+
+  const handleConfirmCreateTunnel = async () => {
     setIsCreatingTunnel(true);
     try {
       const accessToken = await getAccessToken();
@@ -151,6 +162,8 @@ export function ServersTab({
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
+
+      setShowTunnelExplanation(false);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Failed to create tunnel";
@@ -498,6 +511,14 @@ export function ServersTab({
         isOpen={isImportingJson}
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
+      />
+
+      {/* Tunnel Explanation Modal */}
+      <TunnelExplanationModal
+        isOpen={showTunnelExplanation}
+        onClose={() => setShowTunnelExplanation(false)}
+        onConfirm={handleConfirmCreateTunnel}
+        isCreating={isCreatingTunnel}
       />
     </div>
   );
