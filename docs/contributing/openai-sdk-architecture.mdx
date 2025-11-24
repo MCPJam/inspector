@@ -468,6 +468,16 @@ const openaiAPI = {
       href
     }, '*');
     window.open(href, '_blank', 'noopener,noreferrer');
+  },
+
+  // Request modal dialog
+  async requestModal(options) {
+    window.parent.postMessage({
+      type: 'openai:requestModal',
+      title: options.title,
+      params: options.params,
+      anchor: options.anchor
+    }, '*');
   }
 };
 
