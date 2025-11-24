@@ -140,3 +140,33 @@ export async function closeTunnel(accessToken?: string): Promise<void> {
     throw new Error(error.error || 'Failed to close tunnel');
   }
 }
+
+/**
+ * Cleanup all orphaned tunnels for the current user
+ * @param accessToken - Optional WorkOS access token for authenticated requests
+ */
+export async function cleanupOrphanedTunnels(accessToken?: string): Promise<void> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/api/mcp/tunnels/cleanup-orphaned`, {
+      method: 'POST',
+      headers,
+    });
+
+    if (response.ok) {
+      console.log('[tunnels] Orphaned tunnels cleanup completed');
+    } else {
+      console.warn('[tunnels] Failed to cleanup orphaned tunnels');
+    }
+  } catch (error) {
+    console.error('[tunnels] Error during tunnel cleanup:', error);
+    // Don't throw - cleanup is best-effort
+  }
+}

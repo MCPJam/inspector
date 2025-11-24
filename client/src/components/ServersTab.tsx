@@ -20,7 +20,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { createTunnel, getTunnel, closeTunnel } from "@/lib/mcp-tunnels-api";
+import { createTunnel, getTunnel, closeTunnel, cleanupOrphanedTunnels } from "@/lib/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 
@@ -145,8 +145,16 @@ export function ServersTab({
     setIsCreatingTunnel(true);
     try {
       const accessToken = await getAccessToken();
+
+      // Cleanup orphaned tunnels BEFORE creating new one
+      await cleanupOrphanedTunnels(accessToken);
+
       const result = await createTunnel(accessToken);
       setTunnelUrl(result.url);
+
+      // Cleanup again AFTER creation to catch the tunnel that was just closed
+      // (recordTunnel marks the old tunnel as closed)
+      await cleanupOrphanedTunnels(accessToken);
 
       // Copy URL to clipboard
       await navigator.clipboard.writeText(result.url);
