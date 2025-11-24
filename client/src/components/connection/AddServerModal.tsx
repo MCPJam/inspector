@@ -39,16 +39,10 @@ export function AddServerModal({
   useEffect(() => {
     if (initialData && isOpen) {
       if (initialData.name) {
-        formState.setServerFormData((prev) => ({
-          ...prev,
-          name: initialData.name || "",
-        }));
+        formState.setName(initialData.name);
       }
       if (initialData.type) {
-        formState.setServerFormData((prev) => ({
-          ...prev,
-          type: initialData.type || "stdio",
-        }));
+        formState.setType(initialData.type);
       }
       if (initialData.command) {
         const fullCommand = initialData.args
@@ -57,10 +51,7 @@ export function AddServerModal({
         formState.setCommandInput(fullCommand);
       }
       if (initialData.url) {
-        formState.setServerFormData((prev) => ({
-          ...prev,
-          url: initialData.url || "",
-        }));
+        formState.setUrl(initialData.url);
       }
       if (initialData.env) {
         const envArray = Object.entries(initialData.env).map(
@@ -78,10 +69,6 @@ export function AddServerModal({
       if (initialData.useOAuth) {
         formState.setAuthType("oauth");
         formState.setShowAuthSettings(true);
-        formState.setServerFormData((prev) => ({
-          ...prev,
-          useOAuth: true,
-        }));
       } else if (
         initialData.headers &&
         initialData.headers["Authorization"] !== undefined
@@ -122,20 +109,17 @@ export function AddServerModal({
       }
     }
 
-    if (formState.serverFormData.name) {
-      const finalFormData = formState.buildFormData();
-
-      // Validate form
-      const validationError = formState.validateForm(finalFormData);
-      if (validationError) {
-        toast.error(validationError);
-        return;
-      }
-
-      onSubmit(finalFormData);
-      formState.resetForm();
-      onClose();
+    // Validate form
+    const validationError = formState.validateForm();
+    if (validationError) {
+      toast.error(validationError);
+      return;
     }
+
+    const finalFormData = formState.buildFormData();
+    onSubmit(finalFormData);
+    formState.resetForm();
+    onClose();
   };
 
   return (
@@ -154,13 +138,8 @@ export function AddServerModal({
               Server Name
             </label>
             <Input
-              value={formState.serverFormData.name}
-              onChange={(e) =>
-                formState.setServerFormData((prev) => ({
-                  ...prev,
-                  name: e.target.value,
-                }))
-              }
+              value={formState.name}
+              onChange={(e) => formState.setName(e.target.value)}
               placeholder="my-mcp-server"
               required
               className="h-10"
@@ -172,16 +151,17 @@ export function AddServerModal({
             <label className="block text-sm font-medium text-foreground">
               Connection Type
             </label>
-            {formState.serverFormData.type === "stdio" ? (
+            {formState.type === "stdio" ? (
               <div className="flex">
                 <Select
-                  value={formState.serverFormData.type}
-                  onValueChange={(value: "stdio" | "http") =>
-                    formState.setServerFormData((prev) => ({
-                      ...prev,
-                      type: value,
-                    }))
-                  }
+                  value={formState.type}
+                  onValueChange={(value: "stdio" | "http") => {
+                    const currentValue = formState.commandInput;
+                    formState.setType(value);
+                    if (value === "http" && currentValue) {
+                      formState.setUrl(currentValue);
+                    }
+                  }}
                 >
                   <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
                     <SelectValue />
@@ -202,13 +182,14 @@ export function AddServerModal({
             ) : (
               <div className="flex">
                 <Select
-                  value={formState.serverFormData.type}
-                  onValueChange={(value: "stdio" | "http") =>
-                    formState.setServerFormData((prev) => ({
-                      ...prev,
-                      type: value,
-                    }))
-                  }
+                  value={formState.type}
+                  onValueChange={(value: "stdio" | "http") => {
+                    const currentValue = formState.url;
+                    formState.setType(value);
+                    if (value === "stdio" && currentValue) {
+                      formState.setCommandInput(currentValue);
+                    }
+                  }}
                 >
                   <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
                     <SelectValue />
@@ -219,13 +200,8 @@ export function AddServerModal({
                   </SelectContent>
                 </Select>
                 <Input
-                  value={formState.serverFormData.url}
-                  onChange={(e) =>
-                    formState.setServerFormData((prev) => ({
-                      ...prev,
-                      url: e.target.value,
-                    }))
-                  }
+                  value={formState.url}
+                  onChange={(e) => formState.setUrl(e.target.value)}
                   placeholder="http://localhost:8080/mcp"
                   required
                   className="flex-1 rounded-l-none"
@@ -235,7 +211,7 @@ export function AddServerModal({
           </div>
 
           {/* STDIO: Environment Variables */}
-          {formState.serverFormData.type === "stdio" && (
+          {formState.type === "stdio" && (
             <EnvVarsSection
               envVars={formState.envVars}
               showEnvVars={formState.showEnvVars}
@@ -247,23 +223,12 @@ export function AddServerModal({
           )}
 
           {/* HTTP: Authentication */}
-          {formState.serverFormData.type === "http" && (
+          {formState.type === "http" && (
             <AuthenticationSection
               authType={formState.authType}
               onAuthTypeChange={(value) => {
                 formState.setAuthType(value);
                 formState.setShowAuthSettings(value !== "none");
-                if (value === "oauth") {
-                  formState.setServerFormData((prev) => ({
-                    ...prev,
-                    useOAuth: true,
-                  }));
-                } else {
-                  formState.setServerFormData((prev) => ({
-                    ...prev,
-                    useOAuth: false,
-                  }));
-                }
               }}
               showAuthSettings={formState.showAuthSettings}
               bearerToken={formState.bearerToken}
@@ -298,7 +263,7 @@ export function AddServerModal({
           )}
 
           {/* HTTP: Custom Headers */}
-          {formState.serverFormData.type === "http" && (
+          {formState.type === "http" && (
             <CustomHeadersSection
               customHeaders={formState.customHeaders}
               onAdd={formState.addCustomHeader}
