@@ -59,6 +59,18 @@ export function Thread({
   toolServerMap,
   onWidgetStateChange,
 }: ThreadProps) {
+  const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
+
+  const handleRequestPip = (toolCallId: string) => {
+    setPipWidgetId(toolCallId);
+  };
+
+  const handleExitPip = (toolCallId: string) => {
+    if (pipWidgetId === toolCallId) {
+      setPipWidgetId(null);
+    }
+  };
+
   return (
     <div className="flex-1 min-h-0 pb-4">
       <div className="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8">
@@ -71,6 +83,9 @@ export function Thread({
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
             onWidgetStateChange={onWidgetStateChange}
+            pipWidgetId={pipWidgetId}
+            onRequestPip={handleRequestPip}
+            onExitPip={handleExitPip}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -86,6 +101,9 @@ function MessageView({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  pipWidgetId,
+  onRequestPip,
+  onExitPip,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -93,6 +111,9 @@ function MessageView({
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipWidgetId: string | null;
+  onRequestPip: (toolCallId: string) => void;
+  onExitPip: (toolCallId: string) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -114,6 +135,9 @@ function MessageView({
               toolsMetadata={toolsMetadata}
               toolServerMap={toolServerMap}
               onWidgetStateChange={onWidgetStateChange}
+              pipWidgetId={pipWidgetId}
+              onRequestPip={onRequestPip}
+              onExitPip={onExitPip}
             />
           ))}
         </div>
@@ -148,6 +172,9 @@ function MessageView({
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={onWidgetStateChange}
+                pipWidgetId={pipWidgetId}
+                onRequestPip={onRequestPip}
+                onExitPip={onExitPip}
               />
             ))}
           </div>
@@ -181,6 +208,9 @@ function PartSwitch({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  pipWidgetId,
+  onRequestPip,
+  onExitPip,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -188,6 +218,9 @@ function PartSwitch({
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipWidgetId: string | null;
+  onRequestPip: (toolCallId: string) => void;
+  onExitPip: (toolCallId: string) => void;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     let maybeUiResource: any;
@@ -271,6 +304,9 @@ function PartSwitch({
               callTool(serverId, toolName, params)
             }
             onWidgetStateChange={onWidgetStateChange}
+            pipWidgetId={pipWidgetId}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
           />
         </>
       );
