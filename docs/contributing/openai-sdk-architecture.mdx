@@ -658,9 +658,13 @@ Located in `client/src/components/chat-v2/openai-app-renderer.tsx:172-290`:
 ```typescript
 useEffect(() => {
   const handleMessage = async (event: MessageEvent) => {
-    // Only accept messages from our iframe
-    if (!iframeRef.current ||
-        event.source !== iframeRef.current.contentWindow) {
+    // Accept messages from inline or modal iframe
+    const inlineWindow = iframeRef.current?.contentWindow;
+    const modalWindow = modalIframeRef.current?.contentWindow;
+    const isFromInline = inlineWindow != null && event.source === inlineWindow;
+    const isFromModal = modalWindow != null && event.source === modalWindow;
+
+    if (!isFromInline && !isFromModal) {
       return;
     }
 
