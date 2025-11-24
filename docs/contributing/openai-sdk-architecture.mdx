@@ -653,6 +653,22 @@ useEffect(() => {
 }, [widgetUrl, onCallTool, onSendFollowup, pipWidgetId, onRequestPip, onExitPip, resolvedToolCallId]);
 ```
 
+#### Display Mode Synchronization
+
+The component automatically resets to inline mode if another widget takes over PiP mode:
+
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:368-372`:
+
+```typescript
+useEffect(() => {
+  if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId) {
+    setDisplayMode("inline");
+  }
+}, [displayMode, pipWidgetId, resolvedToolCallId]);
+```
+
+This ensures only one widget can be in PiP mode at a time, preventing overlapping floating widgets.
+
 #### Theme Synchronization
 
 The parent component automatically sends theme updates to widgets when the user changes between light and dark mode:
