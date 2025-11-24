@@ -688,6 +688,78 @@ const metadata = mcpClientManager.getAllToolsMetadata("server1");
 // Returns: { tool1: { _meta: {...} }, tool2: { _meta: {...} } }
 ```
 
+### Server Instructions Integration
+
+As of PR #948, MCP server instructions are automatically included in the chat context as system messages. This enables the LLM to understand server-specific guidance and capabilities.
+
+**Flow**:
+
+1. Extract instructions from `connectedServerConfigs[serverName]?.initializationInfo?.instructions`
+2. Create system messages with metadata `{ source: "server-instruction", serverName }`
+3. Keep instruction messages in sync with selected servers via `useEffect`
+4. Filter out old instruction messages when servers change
+5. Prepend instruction messages to conversation history
+
+**Implementation** (`client/src/components/ChatTabV2.tsx:170-182`):
+
+```typescript
+const selectedServerInstructions = useMemo(() => {
+  const instructions: Record<string, string> = {};
+
+  for (const serverName of selectedServerNames) {
+    const server = connectedServerConfigs[serverName];
+    const instruction = server?.initializationInfo?.instructions;
+    if (instruction) {
+      instructions[serverName] = instruction;
+    }
+  }
+
+  return instructions;
+}, [connectedServerConfigs, selectedServerNames]);
+```
+
+**Synchronization** (`client/src/components/ChatTabV2.tsx:252-279`):
+
+```typescript
+useEffect(() => {
+  setMessages((prev) => {
+    // Remove old server instruction messages
+    const filtered = prev.filter(
+      (msg) =>
+        !(
+          msg.role === "system" &&
+          (msg as any)?.metadata?.source === "server-instruction"
+        ),
+    );
+
+    // Create new instruction messages sorted by server name
+    const instructionMessages = Object.entries(selectedServerInstructions)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([serverName, instruction]) => ({
+        id: `server-instruction-${serverName}`,
+        role: "system" as const,
+        parts: [
+          {
+            type: "text" as const,
+            text: `Server ${serverName} instructions: ${instruction}`,
+          },
+        ],
+        metadata: { source: "server-instruction", serverName },
+      }));
+
+    // Prepend instruction messages to conversation
+    return [...instructionMessages, ...filtered];
+  });
+}, [selectedServerInstructions, setMessages]);
+```
+
+**Use Cases**:
+
+- LLM understanding server-specific capabilities and constraints
+- Contextual guidance for tool usage patterns
+- Server-defined best practices and limitations
+- Multi-server coordination with distinct instruction sets
+
 ### Widget State Propagation to Model
 
 As of PR #891, widget state changes from OpenAI Apps are automatically propagated to the LLM model as hidden assistant messages. This enables the AI to understand and reason about widget interactions.
