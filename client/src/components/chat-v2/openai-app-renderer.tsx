@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { X } from "lucide-react";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 
@@ -21,6 +22,9 @@ interface OpenAIAppRendererProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipWidgetId?: string | null;
+  onRequestPip?: (toolCallId: string) => void;
+  onExitPip?: (toolCallId: string) => void;
 }
 
 export function OpenAIAppRenderer({
@@ -34,6 +38,9 @@ export function OpenAIAppRenderer({
   onSendFollowUp,
   onCallTool,
   onWidgetStateChange,
+  pipWidgetId,
+  onRequestPip,
+  onExitPip,
 }: OpenAIAppRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -201,10 +208,14 @@ export function OpenAIAppRenderer({
   );
 
   const iframeHeight = useMemo(() => {
-    if (displayMode === "fullscreen") return "80vh";
-    if (displayMode === "pip") return "400px";
+    if (displayMode === "fullscreen") return "100%";
+    if (displayMode === "pip") {
+      return pipWidgetId === resolvedToolCallId
+        ? "400px"
+        : `${appliedHeight}px`;
+    }
     return `${appliedHeight}px`;
-  }, [appliedHeight, displayMode]);
+  }, [appliedHeight, displayMode, pipWidgetId, resolvedToolCallId]);
 
   // Handle messages from iframe
   const handleMessage = useCallback(
@@ -312,7 +323,15 @@ export function OpenAIAppRenderer({
 
         case "openai:requestDisplayMode": {
           if (event.data.mode) {
-            setDisplayMode(event.data.mode);
+            const mode = event.data.mode;
+            setDisplayMode(mode);
+            if (mode === "pip") {
+              onRequestPip?.(resolvedToolCallId);
+            } else if (mode === "inline" || mode === "fullscreen") {
+              if (pipWidgetId === resolvedToolCallId) {
+                onExitPip?.(resolvedToolCallId);
+              }
+            }
           }
           if (typeof event.data.maxHeight === "number") {
             setMaxHeight(event.data.maxHeight);
@@ -328,7 +347,15 @@ export function OpenAIAppRenderer({
         }
       }
     },
-    [onCallTool, onSendFollowUp, onWidgetStateChange, resolvedToolCallId],
+    [
+      onCallTool,
+      onSendFollowUp,
+      onWidgetStateChange,
+      resolvedToolCallId,
+      pipWidgetId,
+      onRequestPip,
+      onExitPip,
+    ],
   );
 
   useEffect(() => {
@@ -337,6 +364,12 @@ export function OpenAIAppRenderer({
       window.removeEventListener("message", handleMessage);
     };
   }, [handleMessage]);
+
+  useEffect(() => {
+    if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId) {
+      setDisplayMode("inline");
+    }
+  }, [displayMode, pipWidgetId, resolvedToolCallId]);
 
   // Send theme updates to iframe when theme changes
   useEffect(() => {
@@ -404,9 +437,61 @@ export function OpenAIAppRenderer({
     );
   }
 
+  const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
+  const isFullscreen = displayMode === "fullscreen";
+
+  let containerClassName = "mt-3 space-y-2 relative group";
+
+  if (isFullscreen) {
+    containerClassName = [
+      "fixed",
+      "inset-0",
+      "z-50",
+      "w-full",
+      "h-full",
+      "bg-background",
+      "flex",
+      "flex-col",
+    ].join(" ");
+  } else if (isPip) {
+    containerClassName = [
+      "fixed",
+      "top-4",
+      "inset-x-0",
+      "z-40",
+      "w-full",
+      "max-w-4xl",
+      "mx-auto",
+      "space-y-2",
+      "bg-background/95",
+      "backdrop-blur",
+      "supports-[backdrop-filter]:bg-background/80",
+      "shadow-xl",
+      "border",
+      "border-border/60",
+      "rounded-xl",
+      "p-3",
+    ].join(" ");
+  }
+
+  const shouldShowExitButton = isPip || isFullscreen;
+
   // Render iframe
   return (
-    <div className="mt-3 space-y-2">
+    <div className={containerClassName}>
+      {shouldShowExitButton && (
+        <button
+          onClick={() => {
+            setDisplayMode("inline");
+            onExitPip?.(resolvedToolCallId);
+          }}
+          className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          aria-label="Close PiP mode"
+          title="Close PiP mode"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
       {loadError && (
         <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
           Failed to load widget: {loadError}

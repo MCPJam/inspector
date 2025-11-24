@@ -655,7 +655,7 @@ export function ChatTabV2({
         className="flex-1 min-h-0 h-full"
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
-          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
+          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden [transform:translateZ(0)]">
             {messages.length === 0 ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
