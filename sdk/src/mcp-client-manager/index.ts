@@ -1186,6 +1186,11 @@ export type MCPResource = MCPResourceListResult["resources"][number];
 export type MCPReadResourceResult = Awaited<
   ReturnType<MCPClientManager["readResource"]>
 >;
+export type MCPResourceTemplateListResult = Awaited<
+  ReturnType<MCPClientManager["listResourceTemplates"]>
+>;
+export type MCPResourceTemplate =
+  MCPResourceTemplateListResult["resourceTemplates"][number];
 export type MCPServerSummary = ServerSummary;
 export type MCPConvertedToolSet<
   SCHEMAS extends ToolSchemaOverrides | "automatic",

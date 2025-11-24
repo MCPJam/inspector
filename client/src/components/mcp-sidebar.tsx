@@ -9,6 +9,7 @@ import {
   HandMetal,
   Workflow,
   Box,
+  FileCode,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -53,6 +54,11 @@ const navigationSections = [
         title: "Resources",
         url: "#resources",
         icon: BookOpen,
+      },
+      {
+        title: "Resource Templates",
+        url: "#resource-templates",
+        icon: FileCode,
       },
       {
         title: "Prompts",
