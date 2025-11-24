@@ -22,6 +22,7 @@ import {
   Edit,
   ExternalLink,
   Link,
+  Cable,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/mcp-export-api";
@@ -362,7 +363,7 @@ export function ServerConnectionCard({
               className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
             >
               {copiedField === "command" ? (
-                <Check className="h-3 w-3 text-green-500" />
+                <Check className="h-3 w-3" />
               ) : (
                 <Copy className="h-3 w-3" />
               )}
@@ -371,7 +372,7 @@ export function ServerConnectionCard({
 
           {/* Server Info and Tunnel URL Row */}
           {(hasInitInfo || serverTunnelUrl) && (
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-4">
               {hasInitInfo && (
                 <button
                   onClick={(e) => {
@@ -394,27 +395,25 @@ export function ServerConnectionCard({
                 </button>
               )}
               {serverTunnelUrl && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground flex-shrink-0">
-                    Tunnel:
-                  </span>
-                  <div
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 px-2 py-1 rounded border border-border/30 relative group cursor-pointer hover:text-foreground transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      copyToClipboard(serverTunnelUrl, "tunnel");
-                    }}
-                    title={serverTunnelUrl}
-                  >
-                    <Link className="h-3 w-3 flex-shrink-0" />
-                    <span className="truncate max-w-[200px]">{serverTunnelUrl}</span>
-                    {copiedField === "tunnel" ? (
-                      <Check className="h-3 w-3 text-green-500 flex-shrink-0" />
-                    ) : (
-                      <Copy className="h-3 w-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    )}
-                  </div>
-                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    copyToClipboard(serverTunnelUrl, "tunnel");
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-primary hover:underline cursor-pointer"
+                >
+                  {copiedField === "tunnel" ? (
+                    <>
+                      <Check className="h-3 w-3" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Cable className="h-3 w-3" />
+                      <span>Copy Tunnel Url</span>
+                    </>
+                  )}
+                </button>
               )}
             </div>
           )}
