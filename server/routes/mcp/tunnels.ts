@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { tunnelManager } from '../../services/tunnel-manager';
+import { LOCAL_SERVER_ADDR } from '../../config';
 import '../../types/hono';
 
 const tunnels = new Hono();
@@ -25,11 +26,11 @@ async function fetchNgrokToken(authHeader?: string): Promise<string> {
   });
 
   if (!response.ok) {
-    const error = await response.json();
+    const error = await response.json() as { error?: string };
     throw new Error(error.error || 'Failed to fetch ngrok token');
   }
 
-  const data = await response.json();
+  const data = await response.json() as { ok?: boolean; token?: string };
   if (!data.ok || !data.token) {
     throw new Error('Invalid response from tunnel service');
   }
@@ -111,8 +112,8 @@ tunnels.post('/create', async (c) => {
       tunnelManager.setNgrokToken(token);
     }
 
-    // Create the tunnel
-    const url = await tunnelManager.createTunnel();
+    // Create the tunnel pointing to the local server
+    const url = await tunnelManager.createTunnel(LOCAL_SERVER_ADDR);
 
     // Record the tunnel in Convex backend (use a fixed serverId for the shared tunnel)
     await recordTunnel('shared', url, authHeader);

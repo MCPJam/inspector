@@ -12,7 +12,7 @@ class TunnelManager {
   }
 
   // Create a single shared tunnel to the Hono server
-  async createTunnel(): Promise<string> {
+  async createTunnel(localAddr?: string): Promise<string> {
     // Return existing tunnel if already created
     if (this.baseUrl) {
       return this.baseUrl;
@@ -22,16 +22,19 @@ class TunnelManager {
       throw new Error('Ngrok token not configured. Please fetch token first.');
     }
 
+    // Default to localhost:6274 if not provided for backward compatibility
+    const addr = localAddr || 'http://localhost:6274';
+
     try {
       // Create a single tunnel pointing to the Hono server
       this.listener = await ngrok.forward({
-        addr: 'http://localhost:6274',
+        addr,
         authtoken: this.ngrokToken,
       });
 
       this.baseUrl = this.listener.url()!;
 
-      console.log(`✓ Created shared tunnel: ${this.baseUrl}`);
+      console.log(`✓ Created shared tunnel: ${this.baseUrl} -> ${addr}`);
       return this.baseUrl;
     } catch (error: any) {
       console.error(`✗ Failed to create tunnel:`, error.message);
