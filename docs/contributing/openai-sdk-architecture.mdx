@@ -437,10 +437,15 @@ const openaiAPI = {
   // Request display mode change
   async requestDisplayMode(options = {}) {
     const mode = options.mode || 'inline';
+    const maxHeight = options.maxHeight;
     this.displayMode = mode;
+    if (typeof maxHeight === 'number') {
+      this.maxHeight = maxHeight;
+    }
     window.parent.postMessage({
       type: 'openai:requestDisplayMode',
-      mode
+      mode,
+      maxHeight
     }, '*');
     return { mode };
   },
