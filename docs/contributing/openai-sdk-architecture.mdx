@@ -520,7 +520,7 @@ graph TB
     Parent -->|Opens| Dialog
     Dialog -->|Mounts| ModalWidget
     ModalCode -->|Receives view.mode='modal'| ModalAPI
-    
+
     InlineAPI -->|setWidgetState| StateSync
     StateSync -->|pushWidgetState| ModalAPI
     ModalAPI -->|setWidgetState| StateSync
@@ -561,7 +561,7 @@ Widgets receive view context via `window.openai.view`:
 
 ```javascript
 // In widget code
-if (window.openai.view.mode === 'modal') {
+if (window.openai.view.mode === "modal") {
   // Render modal-specific UI
   const params = window.openai.view.params;
   renderModalView(params);
@@ -602,27 +602,33 @@ The receiving view updates its local state and dispatches a `openai:widget_state
 Located in `server/routes/mcp/openai.ts:410-428`:
 
 ```javascript
-if (event.data.type === 'openai:pushWidgetState' && event.data.toolId === toolId) {
+if (
+  event.data.type === "openai:pushWidgetState" &&
+  event.data.toolId === toolId
+) {
   try {
     const nextState = event.data.state ?? null;
     window.openai.widgetState = nextState;
-    
+
     // Update localStorage
     try {
       localStorage.setItem(widgetStateKey, JSON.stringify(nextState));
     } catch (err) {}
-    
+
     // Dispatch event for widget to listen
     try {
-      const stateEvent = new CustomEvent('openai:widget_state', {
-        detail: { state: nextState }
+      const stateEvent = new CustomEvent("openai:widget_state", {
+        detail: { state: nextState },
       });
       window.dispatchEvent(stateEvent);
     } catch (err) {
-      console.error('[OpenAI Widget] Failed to dispatch widget state event:', err);
+      console.error(
+        "[OpenAI Widget] Failed to dispatch widget state event:",
+        err,
+      );
     }
   } catch (err) {
-    console.error('[OpenAI Widget] Failed to apply pushed widget state:', err);
+    console.error("[OpenAI Widget] Failed to apply pushed widget state:", err);
   }
 }
 ```
@@ -631,15 +637,15 @@ if (event.data.type === 'openai:pushWidgetState' && event.data.toolId === toolId
 
 ```javascript
 // In inline widget
-document.getElementById('details-btn').addEventListener('click', () => {
+document.getElementById("details-btn").addEventListener("click", () => {
   window.openai.requestModal({
-    title: 'Detailed View',
-    params: { itemId: 123, view: 'details' }
+    title: "Detailed View",
+    params: { itemId: 123, view: "details" },
   });
 });
 
 // Widget code handles both views
-if (window.openai.view.mode === 'modal') {
+if (window.openai.view.mode === "modal") {
   const { itemId, view } = window.openai.view.params;
   renderDetailedView(itemId, view);
 } else {
