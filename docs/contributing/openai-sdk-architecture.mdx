@@ -36,6 +36,7 @@ MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://develop
 - **Theme Synchronization**: Widgets automatically receive theme updates (light/dark mode)
 - **Secure Isolation**: Components run in sandboxed iframes with CSP headers
 - **Server-Side Storage**: Widget context stored server-side with 1-hour TTL for iframe access
+- **Modal Support**: Widgets can open modal dialogs with separate view contexts
 - **Dual Mode Support**:
   - `ui://` URIs for server-provided HTML content
   - External URLs for remotely hosted components
@@ -315,9 +316,10 @@ Key steps:
 
 1. Retrieve widget data from store
 2. Read HTML from MCP server via `readResource(uri)`
-3. Inject `window.openai` API script with bridge implementation
-4. Add security headers (CSP, X-Frame-Options)
-5. Set cache control headers (no-cache for fresh content)
+3. Parse view mode and params from query string (`view_mode`, `view_params`)
+4. Inject `window.openai` API script with bridge implementation
+5. Add security headers (CSP, X-Frame-Options)
+6. Set cache control headers (no-cache for fresh content)
 
 ### 4. window.openai API Bridge
 
@@ -375,6 +377,10 @@ const openaiAPI = {
   userAgent: {
     device: { type: 'desktop' },
     capabilities: { hover: true, touch: false }
+  },
+  view: {
+    mode: ${JSON.stringify(viewMode)},  // 'inline' or 'modal'
+    params: ${serializeForInlineScript(viewParams)}
   },
   widgetState: null,
 
@@ -467,6 +473,16 @@ const openaiAPI = {
       href
     }, '*');
     window.open(href, '_blank', 'noopener,noreferrer');
+  },
+
+  // Request modal dialog
+  async requestModal(options) {
+    window.parent.postMessage({
+      type: 'openai:requestModal',
+      title: options.title,
+      params: options.params,
+      anchor: options.anchor
+    }, '*');
   }
 };
 
@@ -481,7 +497,172 @@ window.webplus = openaiAPI; // Compatibility alias
 - 30-second timeout on tool calls prevents hanging requests
 - Origin validation in parent ensures only iframe messages are processed
 
-### 5. Display Mode Support
+### 5. Modal Support
+
+As of PR #931, widgets can request modal dialogs using `window.openai.requestModal()`. This enables widgets to display secondary views or detailed information in a separate modal context.
+
+#### Modal Architecture
+
+```mermaid
+graph TB
+    subgraph InlineWidget[Inline Widget Iframe]
+        InlineCode[Widget Code]
+        InlineAPI[window.openai]
+    end
+
+    subgraph ModalWidget[Modal Widget Iframe]
+        ModalCode[Widget Code]
+        ModalAPI[window.openai]
+    end
+
+    subgraph Parent[OpenAIComponentRenderer]
+        Dialog[Dialog Component]
+        StateSync[State Synchronization]
+    end
+
+    InlineCode -->|requestModal| InlineAPI
+    InlineAPI -->|postMessage| Parent
+    Parent -->|Opens| Dialog
+    Dialog -->|Mounts| ModalWidget
+    ModalCode -->|Receives view.mode='modal'| ModalAPI
+
+    InlineAPI -->|setWidgetState| StateSync
+    StateSync -->|pushWidgetState| ModalAPI
+    ModalAPI -->|setWidgetState| StateSync
+    StateSync -->|pushWidgetState| InlineAPI
+
+    classDef inline fill:#e1f5ff,stroke:#0288d1
+    classDef modal fill:#fff3e0,stroke:#f57c00
+    classDef parent fill:#f3e5f5,stroke:#7b1fa2
+
+    class InlineCode,InlineAPI inline
+    class ModalCode,ModalAPI modal
+    class Dialog,StateSync parent
+```
+
+#### Modal Request Flow
+
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:380-388`:
+
+```typescript
+case "openai:requestModal": {
+  setModalTitle(event.data.title || "Modal");
+  setModalParams(event.data.params || {});
+  setModalOpen(true);
+  break;
+}
+```
+
+When a widget calls `window.openai.requestModal()`, the parent:
+
+1. Extracts modal title and params from the message
+2. Opens a Dialog component
+3. Mounts a new iframe with the same widget URL
+4. Appends query params: `?view_mode=modal&view_params=<encoded_json>`
+
+#### View Mode Detection
+
+Widgets receive view context via `window.openai.view`:
+
+```javascript
+// In widget code
+if (window.openai.view.mode === "modal") {
+  // Render modal-specific UI
+  const params = window.openai.view.params;
+  renderModalView(params);
+} else {
+  // Render inline UI
+  renderInlineView();
+}
+```
+
+#### Widget State Synchronization
+
+Modal and inline views share widget state automatically. When either view calls `setWidgetState()`, the state is propagated to the other view via `openai:pushWidgetState` messages.
+
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:269-284`:
+
+```typescript
+// After state is set, push to other view
+const targetWindow = isFromInline
+  ? modalWindow
+  : isFromModal
+    ? inlineWindow
+    : null;
+
+if (targetWindow) {
+  targetWindow.postMessage(
+    {
+      type: "openai:pushWidgetState",
+      toolId: resolvedToolCallId,
+      state: event.data.state,
+    },
+    "*",
+  );
+}
+```
+
+The receiving view updates its local state and dispatches a `openai:widget_state` event:
+
+Located in `server/routes/mcp/openai.ts:410-428`:
+
+```javascript
+if (
+  event.data.type === "openai:pushWidgetState" &&
+  event.data.toolId === toolId
+) {
+  try {
+    const nextState = event.data.state ?? null;
+    window.openai.widgetState = nextState;
+
+    // Update localStorage
+    try {
+      localStorage.setItem(widgetStateKey, JSON.stringify(nextState));
+    } catch (err) {}
+
+    // Dispatch event for widget to listen
+    try {
+      const stateEvent = new CustomEvent("openai:widget_state", {
+        detail: { state: nextState },
+      });
+      window.dispatchEvent(stateEvent);
+    } catch (err) {
+      console.error(
+        "[OpenAI Widget] Failed to dispatch widget state event:",
+        err,
+      );
+    }
+  } catch (err) {
+    console.error("[OpenAI Widget] Failed to apply pushed widget state:", err);
+  }
+}
+```
+
+**Example Usage:**
+
+```javascript
+// In inline widget
+document.getElementById("details-btn").addEventListener("click", () => {
+  window.openai.requestModal({
+    title: "Detailed View",
+    params: { itemId: 123, view: "details" },
+  });
+});
+
+// Widget code handles both views
+if (window.openai.view.mode === "modal") {
+  const { itemId, view } = window.openai.view.params;
+  renderDetailedView(itemId, view);
+} else {
+  renderSummaryView();
+}
+
+// State changes sync automatically
+window.openai.setWidgetState({ selectedItem: 123 });
+// Both inline and modal views receive the update
+```
+
+### 6. Display Mode Support
 
 As of PR #927, widgets can request different display modes to optimize their presentation:
 
@@ -603,16 +784,20 @@ await window.openai.requestDisplayMode({
 
 The parent component handles these requests and updates the widget's display mode accordingly.
 
-### 6. Parent-Side Message Handling
+### 7. Parent-Side Message Handling
 
 Located in `client/src/components/chat-v2/openai-app-renderer.tsx:312-347`:
 
 ```typescript
 useEffect(() => {
   const handleMessage = async (event: MessageEvent) => {
-    // Only accept messages from our iframe
-    if (!iframeRef.current ||
-        event.source !== iframeRef.current.contentWindow) {
+    // Accept messages from inline or modal iframe
+    const inlineWindow = iframeRef.current?.contentWindow;
+    const modalWindow = modalIframeRef.current?.contentWindow;
+    const isFromInline = inlineWindow != null && event.source === inlineWindow;
+    const isFromModal = modalWindow != null && event.source === modalWindow;
+
+    if (!isFromInline && !isFromModal) {
       return;
     }
 
@@ -628,13 +813,15 @@ useEffect(() => {
               event.data.toolName,
               event.data.params || {}
             );
-            iframeRef.current?.contentWindow?.postMessage({
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage({
               type: \"openai:callTool:response\",
               requestId: event.data.requestId,
               result: result
             }, \"*\");
           } catch (err) {
-            iframeRef.current?.contentWindow?.postMessage({
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage({
               type: \"openai:callTool:response\",
               requestId: event.data.requestId,
               error: err instanceof Error ? err.message : \"Unknown error\"
@@ -1139,6 +1326,18 @@ server.connect(transport);
    - Verify widget has event listener for theme changes
    - Inspect `window.openai.theme` value in widget console
 
+8. **Modal not opening**
+   - Verify `requestModal` postMessage is being sent
+   - Check that Dialog component state is updating (`modalOpen`)
+   - Inspect modal iframe URL includes `view_mode=modal` query param
+   - Confirm `window.openai.view.mode` is `'modal'` in modal iframe
+
+9. **State not syncing between inline and modal**
+   - Check that both iframes are mounted and have valid contentWindow
+   - Verify `openai:pushWidgetState` messages are being sent
+   - Inspect localStorage for widget state key
+   - Confirm both views have `openai:widget_state` event listener
+
 **Debug Tools:**
 
 ```javascript
@@ -1168,20 +1367,20 @@ console.log("toolOutput:", window.openai?.toolOutput);
 2. Add postMessage handler in parent (`client/src/components/chat/openai-component-renderer.tsx:118-196`)
 3. Update TypeScript types if needed
 
-**Example: Adding `openExternal` method:**
+**Example: Adding a custom method:**
 
 ```typescript
-// 1. Server-side API injection
-openaiAPI.openExternal = async function({ href }) {
+// 1. Server-side API injection (server/routes/mcp/openai.ts)
+openaiAPI.customMethod = async function(options) {
   window.parent.postMessage({
-    type: 'openai:openExternal',
-    href
+    type: 'openai:customMethod',
+    data: options
   }, '*');
 };
 
-// 2. Parent-side handler
-case \"openai:openExternal\":
-  window.open(event.data.href, \"_blank\", \"noopener,noreferrer\");
+// 2. Parent-side handler (client/src/components/chat-v2/openai-app-renderer.tsx)
+case \"openai:customMethod\":
+  handleCustomMethod(event.data.data);
   break;
 ```
 
