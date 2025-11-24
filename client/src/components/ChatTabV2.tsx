@@ -7,6 +7,7 @@ import {
   useRef,
 } from "react";
 import { useChat } from "@ai-sdk/react";
+import { ArrowDown } from "lucide-react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
@@ -47,6 +48,7 @@ import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
+import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
 import {
   DEFAULT_SYSTEM_PROMPT,
@@ -59,6 +61,24 @@ interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
+}
+
+function ScrollToBottomButton() {
+  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+
+  if (isAtBottom) return null;
+
+  return (
+    <div className="pointer-events-none absolute inset-x-0 flex bottom-12 justify-center animate-in slide-in-from-bottom fade-in duration-200">
+      <button
+        type="button"
+        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-2 text-xs font-medium shadow-sm transition hover:bg-accent"
+        onClick={() => scrollToBottom({ animation: "smooth" })}
+      >
+        <ArrowDown className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }
 
 export function ChatTabV2({
@@ -687,9 +707,13 @@ export function ChatTabV2({
                 </div>
               </div>
             ) : (
-              <>
-                <div className="flex flex-1 flex-col min-h-0 animate-in fade-in duration-300">
-                  <div className="flex-1 overflow-y-auto">
+              <StickToBottom
+                className="relative flex flex-1 flex-col min-h-0 animate-in fade-in duration-300"
+                resize="smooth"
+                initial="smooth"
+              >
+                <div className="relative flex-1 min-h-0">
+                  <StickToBottom.Content className="flex flex-col min-h-0">
                     <Thread
                       messages={messages}
                       sendFollowUpMessage={(text: string) =>
@@ -701,16 +725,17 @@ export function ChatTabV2({
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}
                     />
-                  </div>
-                  {errorMessage && (
-                    <div className="px-4 pb-4 pt-4">
-                      <ErrorBox
-                        message={errorMessage.message}
-                        errorDetails={errorMessage.details}
-                        onResetChat={resetChat}
-                      />
-                    </div>
-                  )}
+                    {errorMessage && (
+                      <div className="px-4 pb-4 pt-4">
+                        <ErrorBox
+                          message={errorMessage.message}
+                          errorDetails={errorMessage.details}
+                          onResetChat={resetChat}
+                        />
+                      </div>
+                    )}
+                  </StickToBottom.Content>
+                  <ScrollToBottomButton />
                 </div>
 
                 <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0 animate-in slide-in-from-bottom duration-500">
@@ -718,7 +743,7 @@ export function ChatTabV2({
                     <ChatInput {...sharedChatInputProps} hasMessages />
                   </div>
                 </div>
-              </>
+              </StickToBottom>
             )}
 
             <ElicitationDialog
