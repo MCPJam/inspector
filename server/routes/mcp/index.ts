@@ -3,6 +3,7 @@ import connect from "./connect";
 import servers from "./servers";
 import tools from "./tools";
 import resources from "./resources";
+import resourceTemplates from "./resource-templates";
 import prompts from "./prompts";
 import chatV2 from "./chat-v2";
 import oauth from "./oauth";
@@ -50,6 +51,9 @@ mcp.route("/evals", evals);
 
 // Resources endpoints - REAL IMPLEMENTATION
 mcp.route("/resources", resources);
+
+// Resource Templates endpoints - REAL IMPLEMENTATION
+mcp.route("/resource-templates", resourceTemplates);
 
 // OpenAI Apps SDK widget endpoints
 mcp.route("/openai", openai);
