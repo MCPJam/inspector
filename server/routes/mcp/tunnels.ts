@@ -6,7 +6,7 @@ import '../../types/hono';
 const tunnels = new Hono();
 
 // Fetch ngrok token from Convex backend
-async function fetchNgrokToken(authHeader?: string): Promise<string> {
+async function fetchNgrokToken(authHeader?: string): Promise<{ token: string; credentialId: string; domain: string; domainId: string }> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     throw new Error('CONVEX_HTTP_URL not configured');
@@ -30,16 +30,28 @@ async function fetchNgrokToken(authHeader?: string): Promise<string> {
     throw new Error(error.error || 'Failed to fetch ngrok token');
   }
 
-  const data = await response.json() as { ok?: boolean; token?: string };
-  if (!data.ok || !data.token) {
+  const data = await response.json() as { ok?: boolean; token?: string; credentialId?: string; domain?: string; domainId?: string };
+  if (!data.ok || !data.token || !data.credentialId || !data.domain || !data.domainId) {
     throw new Error('Invalid response from tunnel service');
   }
 
-  return data.token;
+  return {
+    token: data.token,
+    credentialId: data.credentialId,
+    domain: data.domain,
+    domainId: data.domainId,
+  };
 }
 
 // Report tunnel creation to Convex backend
-async function recordTunnel(serverId: string, url: string, authHeader?: string): Promise<void> {
+async function recordTunnel(
+  serverId: string,
+  url: string,
+  credentialId?: string,
+  domainId?: string,
+  domain?: string,
+  authHeader?: string
+): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     console.warn('CONVEX_HTTP_URL not configured, skipping tunnel recording');
@@ -58,7 +70,7 @@ async function recordTunnel(serverId: string, url: string, authHeader?: string):
     await fetch(`${convexUrl}/tunnels/record`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ serverId, url }),
+      body: JSON.stringify({ serverId, url, credentialId, domainId, domain }),
     });
   } catch (error) {
     console.error('Failed to record tunnel:', error);
@@ -92,6 +104,32 @@ async function reportTunnelClosure(serverId: string, authHeader?: string): Promi
   }
 }
 
+// Cleanup ngrok credential and domain
+async function cleanupCredential(credentialId: string, domainId?: string, authHeader?: string): Promise<void> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexUrl) {
+    return;
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (authHeader) {
+    headers['Authorization'] = authHeader;
+  }
+
+  try {
+    await fetch(`${convexUrl}/tunnels/cleanup`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ credentialId, domainId }),
+    });
+  } catch (error) {
+    console.error('Failed to cleanup credential:', error);
+  }
+}
+
 // Create a shared tunnel
 tunnels.post('/create', async (c) => {
   const authHeader = c.req.header('authorization');
@@ -106,17 +144,11 @@ tunnels.post('/create', async (c) => {
       });
     }
 
-    // Fetch ngrok token from Convex if not already set
-    if (!tunnelManager.hasTunnel()) {
-      const token = await fetchNgrokToken(authHeader);
-      tunnelManager.setNgrokToken(token);
-    }
+    const { token, credentialId, domain, domainId } = await fetchNgrokToken(authHeader);
+    tunnelManager.setNgrokToken(token, credentialId, domainId, domain);
 
-    // Create the tunnel pointing to the local server
     const url = await tunnelManager.createTunnel(LOCAL_SERVER_ADDR);
-
-    // Record the tunnel in Convex backend (use a fixed serverId for the shared tunnel)
-    await recordTunnel('shared', url, authHeader);
+    await recordTunnel('shared', url, credentialId, domainId, domain, authHeader);
 
     return c.json({
       url,
@@ -161,9 +193,17 @@ tunnels.delete('/', async (c) => {
   const authHeader = c.req.header('authorization');
 
   try {
+    const credentialId = tunnelManager.getCredentialId();
+    const domainId = tunnelManager.getDomainId();
+
     await tunnelManager.closeTunnel();
     await reportTunnelClosure('shared', authHeader);
 
+    if (credentialId) {
+      await cleanupCredential(credentialId, domainId || undefined, authHeader);
+    }
+
+    tunnelManager.clearCredentials();
     return c.json({ success: true });
   } catch (error: any) {
     console.error('Error closing tunnel:', error);
