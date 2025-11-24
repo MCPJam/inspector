@@ -6,21 +6,23 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:6274';
 
 export interface TunnelResponse {
   url: string;
-  serverId: string;
   existed?: boolean;
+}
+
+export interface ServerTunnelResponse {
+  url: string;
+  serverId: string;
 }
 
 export interface TunnelError {
   error: string;
-  serverId: string;
 }
 
 /**
- * Create a tunnel for an MCP server
- * @param serverId - The MCP server ID
+ * Create a shared tunnel for all MCP servers
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
-export async function createTunnel(serverId: string, accessToken?: string): Promise<TunnelResponse> {
+export async function createTunnel(accessToken?: string): Promise<TunnelResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -30,7 +32,7 @@ export async function createTunnel(serverId: string, accessToken?: string): Prom
   }
 
   const response = await fetch(
-    `${API_BASE}/api/mcp/tunnels/${encodeURIComponent(serverId)}/create`,
+    `${API_BASE}/api/mcp/tunnels/create`,
     {
       method: 'POST',
       headers,
@@ -46,11 +48,10 @@ export async function createTunnel(serverId: string, accessToken?: string): Prom
 }
 
 /**
- * Get existing tunnel URL for a server
- * @param serverId - The MCP server ID
+ * Get existing shared tunnel URL
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
-export async function getTunnel(serverId: string, accessToken?: string): Promise<TunnelResponse | null> {
+export async function getTunnel(accessToken?: string): Promise<TunnelResponse | null> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -60,7 +61,7 @@ export async function getTunnel(serverId: string, accessToken?: string): Promise
   }
 
   const response = await fetch(
-    `${API_BASE}/api/mcp/tunnels/${encodeURIComponent(serverId)}`,
+    `${API_BASE}/api/mcp/tunnels`,
     {
       method: 'GET',
       headers,
@@ -80,11 +81,11 @@ export async function getTunnel(serverId: string, accessToken?: string): Promise
 }
 
 /**
- * Close a tunnel for a server
+ * Get server-specific tunnel URL
  * @param serverId - The MCP server ID
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
-export async function closeTunnel(serverId: string, accessToken?: string): Promise<void> {
+export async function getServerTunnel(serverId: string, accessToken?: string): Promise<ServerTunnelResponse | null> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -94,7 +95,40 @@ export async function closeTunnel(serverId: string, accessToken?: string): Promi
   }
 
   const response = await fetch(
-    `${API_BASE}/api/mcp/tunnels/${encodeURIComponent(serverId)}`,
+    `${API_BASE}/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
+    {
+      method: 'GET',
+      headers,
+    }
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to get server tunnel');
+  }
+
+  return response.json();
+}
+
+/**
+ * Close the shared tunnel
+ * @param accessToken - Optional WorkOS access token for authenticated requests
+ */
+export async function closeTunnel(accessToken?: string): Promise<void> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  const response = await fetch(
+    `${API_BASE}/api/mcp/tunnels`,
     {
       method: 'DELETE',
       headers,
@@ -105,30 +139,4 @@ export async function closeTunnel(serverId: string, accessToken?: string): Promi
     const error = await response.json();
     throw new Error(error.error || 'Failed to close tunnel');
   }
-}
-
-/**
- * List all active tunnels
- * @param accessToken - Optional WorkOS access token for authenticated requests
- */
-export async function listTunnels(accessToken?: string): Promise<{ tunnels: Array<{ serverId: string; url: string }> }> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
-  }
-
-  const response = await fetch(`${API_BASE}/api/mcp/tunnels`, {
-    method: 'GET',
-    headers,
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to list tunnels');
-  }
-
-  return response.json();
 }
