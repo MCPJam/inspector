@@ -182,3 +182,13 @@ This enables MCP server developers to create custom user experiences beyond plai
 The playground supports rendering custom UI components from MCP tools using the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk). When a tool includes an `openai/outputTemplate` metadata field pointing to a resource URI, the playground will render the custom HTML interface in an isolated iframe with access to the `window.openai` API.
 
 This enables MCP servers to provide rich, interactive visualizations for tool results, including charts, forms, and custom widgets that can call other tools or send followup messages to the chat.
+
+### Display modes
+
+OpenAI Apps can request different display modes to optimize their presentation:
+
+- **Inline** (default) - Widget renders within the chat message flow
+- **Picture-in-Picture** - Widget floats at the top of the screen, staying visible while you scroll through the chat
+- **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
+
+Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-left corner of the widget.

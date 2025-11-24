@@ -437,10 +437,15 @@ const openaiAPI = {
   // Request display mode change
   async requestDisplayMode(options = {}) {
     const mode = options.mode || 'inline';
+    const maxHeight = options.maxHeight;
     this.displayMode = mode;
+    if (typeof maxHeight === 'number') {
+      this.maxHeight = maxHeight;
+    }
     window.parent.postMessage({
       type: 'openai:requestDisplayMode',
-      mode
+      mode,
+      maxHeight
     }, '*');
     return { mode };
   },
@@ -476,9 +481,131 @@ window.webplus = openaiAPI; // Compatibility alias
 - 30-second timeout on tool calls prevents hanging requests
 - Origin validation in parent ensures only iframe messages are processed
 
-### 5. Parent-Side Message Handling
+### 5. Display Mode Support
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:172-290`:
+As of PR #927, widgets can request different display modes to optimize their presentation:
+
+- **Inline** (default) - Widget renders within the chat message flow with configurable height
+- **Picture-in-Picture (PiP)** - Widget floats at the top of the screen in a fixed overlay
+- **Fullscreen** - Widget expands to fill the entire viewport
+
+#### Display Mode Implementation
+
+The display mode system uses React state to track which widget (if any) is in PiP mode, and applies different CSS classes based on the current mode:
+
+**State Management** (`client/src/components/chat-v2/thread.tsx:62-72`):
+
+```typescript
+const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
+
+const handleRequestPip = (toolCallId: string) => {
+  setPipWidgetId(toolCallId);
+};
+
+const handleExitPip = (toolCallId: string) => {
+  if (pipWidgetId === toolCallId) {
+    setPipWidgetId(null);
+  }
+};
+```
+
+**Mode Detection** (`client/src/components/chat-v2/openai-app-renderer.tsx:440-442`):
+
+```typescript
+const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
+const isFullscreen = displayMode === "fullscreen";
+```
+
+**CSS Classes** (`client/src/components/chat-v2/openai-app-renderer.tsx:444-476`):
+
+```typescript
+let containerClassName = "mt-3 space-y-2 relative group";
+
+if (isFullscreen) {
+  containerClassName = [
+    "fixed",
+    "inset-0",
+    "z-50",
+    "w-full",
+    "h-full",
+    "bg-background",
+    "flex",
+    "flex-col",
+  ].join(" ");
+} else if (isPip) {
+  containerClassName = [
+    "fixed",
+    "top-4",
+    "inset-x-0",
+    "z-40",
+    "w-full",
+    "max-w-4xl",
+    "mx-auto",
+    "space-y-2",
+    "bg-background/95",
+    "backdrop-blur",
+    "supports-[backdrop-filter]:bg-background/80",
+    "shadow-xl",
+    "border",
+    "border-border/60",
+    "rounded-xl",
+    "p-3",
+  ].join(" ");
+}
+```
+
+**Exit Button** (`client/src/components/chat-v2/openai-app-renderer.tsx:481-493`):
+
+```typescript
+{shouldShowExitButton && (
+  <button
+    onClick={() => {
+      setDisplayMode("inline");
+      onExitPip?.(resolvedToolCallId);
+    }}
+    className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+    aria-label="Close PiP mode"
+    title="Close PiP mode"
+  >
+    <X className="w-4 h-4" />
+  </button>
+)}
+```
+
+**Key Features:**
+
+- **Single PiP Widget**: Only one widget can be in PiP mode at a time. Requesting PiP on a different widget automatically exits the current PiP widget.
+- **Automatic Inline Fallback**: If a widget is in PiP mode but another widget becomes the active PiP, the first widget automatically returns to inline mode.
+- **Z-Index Layering**: Fullscreen widgets use `z-50`, PiP widgets use `z-40`, ensuring proper stacking order.
+- **Transform Isolation**: The chat container uses `transform: translateZ(0)` to create a new stacking context, preventing z-index conflicts.
+- **Backdrop Blur**: PiP widgets use backdrop blur for a modern floating effect with semi-transparent background.
+
+#### Requesting Display Mode from Widgets
+
+Widgets can request display mode changes using the `window.openai.requestDisplayMode()` API:
+
+```javascript
+// Request Picture-in-Picture mode
+await window.openai.requestDisplayMode({ mode: "pip" });
+
+// Request Fullscreen mode
+await window.openai.requestDisplayMode({ mode: "fullscreen" });
+
+// Return to inline mode
+await window.openai.requestDisplayMode({ mode: "inline" });
+
+// Set inline mode with custom height
+await window.openai.requestDisplayMode({
+  mode: "inline",
+  maxHeight: 800,
+});
+```
+
+The parent component handles these requests and updates the widget's display mode accordingly.
+
+### 6. Parent-Side Message Handling
+
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:312-347`:
 
 ```typescript
 useEffect(() => {
@@ -521,13 +648,44 @@ useEffect(() => {
           onSendFollowup(event.data.message);
         }
         break;
+
+      case \"openai:requestDisplayMode\":
+        const mode = event.data.mode;
+        setDisplayMode(mode);
+        if (mode === \"pip\") {
+          onRequestPip?.(resolvedToolCallId);
+        } else if (mode === \"inline\" || mode === \"fullscreen\") {
+          if (pipWidgetId === resolvedToolCallId) {
+            onExitPip?.(resolvedToolCallId);
+          }
+        }
+        if (typeof event.data.maxHeight === \"number\") {
+          setMaxHeight(event.data.maxHeight);
+        }
+        break;
     }
   };
 
   window.addEventListener(\"message\", handleMessage);
   return () => window.removeEventListener(\"message\", handleMessage);
-}, [widgetUrl, onCallTool, onSendFollowup]);
+}, [widgetUrl, onCallTool, onSendFollowup, pipWidgetId, onRequestPip, onExitPip, resolvedToolCallId]);
 ```
+
+#### Display Mode Synchronization
+
+The component automatically resets to inline mode if another widget takes over PiP mode:
+
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:368-372`:
+
+```typescript
+useEffect(() => {
+  if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId) {
+    setDisplayMode("inline");
+  }
+}, [displayMode, pipWidgetId, resolvedToolCallId]);
+```
+
+This ensures only one widget can be in PiP mode at a time, preventing overlapping floating widgets.
 
 #### Theme Synchronization
 
@@ -725,7 +883,7 @@ c.header(\"Content-Security-Policy\", [
 
 ### Iframe Sandbox
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:379-391`:
+Located in `client/src/components/chat-v2/openai-app-renderer.tsx:518-530`:
 
 ```typescript
 <iframe
@@ -1087,8 +1245,9 @@ case \"openai:openExternal\":
 ## Related Files
 
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
-- `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes and handles widget lifecycle
-- `client/src/components/ChatTab.tsx` - Chat integration
+- `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
+- `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
+- `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
 - `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
 - `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
