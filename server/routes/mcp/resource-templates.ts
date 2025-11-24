@@ -27,45 +27,4 @@ resourceTemplates.post("/list", async (c) => {
   }
 });
 
-// Read resource endpoint (using the resolved URI from a template)
-resourceTemplates.post("/read", async (c) => {
-  try {
-    const { serverId, uri } = (await c.req.json()) as {
-      serverId?: string;
-      uri?: string;
-    };
-
-    if (!serverId) {
-      return c.json({ success: false, error: "serverId is required" }, 400);
-    }
-
-    if (!uri) {
-      return c.json(
-        {
-          success: false,
-          error: "Resource URI is required",
-        },
-        400,
-      );
-    }
-
-    const mcpClientManager = c.mcpClientManager;
-
-    const content = await mcpClientManager.readResource(serverId, {
-      uri,
-    });
-
-    return c.json({ content });
-  } catch (error) {
-    console.error("Error reading resource from template:", error);
-    return c.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      500,
-    );
-  }
-});
-
 export default resourceTemplates;
