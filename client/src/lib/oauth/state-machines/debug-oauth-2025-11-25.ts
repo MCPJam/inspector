@@ -15,6 +15,7 @@ import type {
   OAuthFlowStep,
   OAuthFlowState,
   OAuthStateMachine,
+  HttpHistoryEntry,
   RegistrationStrategy2025_11_25,
 } from "./types";
 import type { DiagramAction } from "./shared/types";
@@ -28,6 +29,7 @@ import {
   markLatestHttpEntryAsError,
   toLogErrorDetails,
 } from "./shared/helpers";
+import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
 
 /**
  * Canonicalize a URL for use as a resource parameter per RFC 8707
@@ -788,88 +790,122 @@ export const createDebugOAuthStateMachine = (
             return;
 
           case "request_resource_metadata":
-            // Step 2: Fetch and parse resource metadata via backend proxy
-            if (!state.resourceMetadataUrl) {
-              throw new Error("No resource metadata URL available");
+            // Step 2: Fetch and parse resource metadata using official SDK helper
+            if (!state.serverUrl) {
+              throw new Error("No server URL available");
             }
 
-            try {
-              // Use backend proxy to bypass CORS
-              const response = await proxyFetch(state.resourceMetadataUrl, {
-                method: "GET",
-                headers: mergeHeaders({}),
-              });
+            const historyWithoutPlaceholder = [...(state.httpHistory || [])];
+            let pendingHistoryEntry =
+              historyWithoutPlaceholder.length > 0 &&
+              historyWithoutPlaceholder[historyWithoutPlaceholder.length - 1]
+                ?.step === "request_resource_metadata" &&
+              !historyWithoutPlaceholder[historyWithoutPlaceholder.length - 1]
+                ?.response
+                ? historyWithoutPlaceholder.pop()
+                : undefined;
 
-              if (!response.ok) {
-                // Capture failed response
-                const failedResponseData = {
+            const attempts: HttpHistoryEntry[] = [];
+
+            const normalizeHeaders = (
+              headers?: HeadersInit,
+            ): Record<string, string> => {
+              if (!headers) return {};
+              if (headers instanceof Headers) {
+                return Object.fromEntries(headers.entries());
+              }
+              if (Array.isArray(headers)) {
+                return Object.fromEntries(headers);
+              }
+              return Object.fromEntries(
+                Object.entries(headers).map(([key, value]) => [
+                  key,
+                  String(value),
+                ]),
+              );
+            };
+
+            const loggingFetch: typeof fetch = async (url, init = {}) => {
+              const requestUrl = typeof url === "string" ? url : url.toString();
+              const mergedHeaders = mergeHeaders(
+                normalizeHeaders(init.headers as HeadersInit | undefined),
+              );
+
+              const historyEntry: HttpHistoryEntry = pendingHistoryEntry
+                ? {
+                    ...pendingHistoryEntry,
+                    timestamp: Date.now(),
+                    request: {
+                      method: init.method || "GET",
+                      url: requestUrl,
+                      headers: mergedHeaders,
+                      body: init.body,
+                    },
+                  }
+                : {
+                    step: "request_resource_metadata",
+                    timestamp: Date.now(),
+                    request: {
+                      method: init.method || "GET",
+                      url: requestUrl,
+                      headers: mergedHeaders,
+                      body: init.body,
+                    },
+                  };
+
+              pendingHistoryEntry = undefined;
+              attempts.push(historyEntry);
+
+              try {
+                const response = await proxyFetch(requestUrl, {
+                  method: init.method || "GET",
+                  headers: mergedHeaders,
+                  body: init.body as any,
+                });
+
+                historyEntry.response = {
                   status: response.status,
                   statusText: response.statusText,
                   headers: response.headers,
                   body: response.body,
                 };
+                historyEntry.duration = Date.now() - historyEntry.timestamp;
 
-                // Update the last history entry with the failed response
-                const updatedHistoryFailed = [...(state.httpHistory || [])];
-                if (updatedHistoryFailed.length > 0) {
-                  const lastEntry =
-                    updatedHistoryFailed[updatedHistoryFailed.length - 1];
-                  lastEntry.response = failedResponseData;
-                  lastEntry.duration =
-                    Date.now() - (lastEntry.timestamp || Date.now());
-                }
-
-                updateState({
-                  lastResponse: failedResponseData,
-                  httpHistory: updatedHistoryFailed,
-                });
-
-                if (response.status === 404) {
-                  throw new Error(
-                    "Server does not implement OAuth 2.0 Protected Resource Metadata (404)",
-                  );
-                }
-                throw new Error(
-                  `Failed to fetch resource metadata: HTTP ${response.status}`,
-                );
+                const responseInit: ResponseInit = {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: response.headers,
+                };
+                const responseBody =
+                  typeof response.body === "string"
+                    ? response.body
+                    : JSON.stringify(response.body ?? {});
+                return new Response(responseBody, responseInit);
+              } catch (fetchError) {
+                historyEntry.error = toLogErrorDetails(fetchError);
+                historyEntry.duration = Date.now() - historyEntry.timestamp;
+                throw fetchError;
               }
+            };
 
-              const resourceMetadata = response.body;
+            try {
+              const metadataOptions =
+                state.wwwAuthenticateHeader && state.resourceMetadataUrl
+                  ? { resourceMetadataUrl: state.resourceMetadataUrl }
+                  : undefined;
 
-              // Validate required fields per RFC 9728
-              if (!resourceMetadata.resource) {
-                throw new Error(
-                  "Resource metadata missing required 'resource' field",
+              const resourceMetadata =
+                await discoverOAuthProtectedResourceMetadata(
+                  state.serverUrl,
+                  metadataOptions,
+                  loggingFetch,
                 );
-              }
-              if (
-                !resourceMetadata.authorization_servers ||
-                resourceMetadata.authorization_servers.length === 0
-              ) {
-                throw new Error(
-                  "Resource metadata missing 'authorization_servers'",
-                );
-              }
 
-              // Extract authorization server URL (use first one if multiple, fallback to server URL)
+              const finalHistory = [...historyWithoutPlaceholder, ...attempts];
+
+              const lastAttempt = attempts[attempts.length - 1];
               const authorizationServerUrl =
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
-
-              const successResponseData = {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
-                body: resourceMetadata,
-              };
-
-              // Update the last history entry with the response and calculate duration
-              const updatedHistory = [...(state.httpHistory || [])];
-              if (updatedHistory.length > 0) {
-                const lastEntry = updatedHistory[updatedHistory.length - 1];
-                lastEntry.response = successResponseData;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
-              }
 
               // Add info log for Authorization Servers
               const infoLogs = addInfoLog(
@@ -887,13 +923,26 @@ export const createDebugOAuthStateMachine = (
               updateState({
                 currentStep: "received_resource_metadata",
                 resourceMetadata,
+                resourceMetadataUrl:
+                  lastAttempt?.request?.url || state.resourceMetadataUrl,
                 authorizationServerUrl,
-                lastResponse: successResponseData,
-                httpHistory: updatedHistory,
+                lastRequest: lastAttempt?.request,
+                lastResponse: lastAttempt?.response,
+                httpHistory: finalHistory,
                 infoLogs,
                 isInitiatingAuth: false,
               });
             } catch (error) {
+              const updatedHistory = markLatestHttpEntryAsError(
+                [...historyWithoutPlaceholder, ...attempts],
+                toLogErrorDetails(error),
+              );
+
+              updateState({
+                lastResponse: attempts[attempts.length - 1]?.response,
+                httpHistory: updatedHistory,
+              });
+
               throw new Error(
                 `Failed to request resource metadata: ${error instanceof Error ? error.message : String(error)}`,
               );

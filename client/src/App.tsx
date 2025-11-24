@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
+import { ResourceTemplatesTab } from "./components/ResourceTemplatesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
@@ -176,9 +177,10 @@ export default function App() {
           onDeleteWorkspace={handleDeleteWorkspace}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {/* Active Server Selector - Only show on Tools, Resources, Prompts, OAuth Flow, Chat, and Chat v2 pages */}
+          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, OAuth Flow, Chat, and Chat v2 pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
+            activeTab === "resource-templates" ||
             activeTab === "prompts" ||
             activeTab === "oauth-flow" ||
             activeTab === "chat" ||
@@ -225,6 +227,13 @@ export default function App() {
           {activeTab === "evals" && <EvalsTab />}
           {activeTab === "resources" && (
             <ResourcesTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+            />
+          )}
+
+          {activeTab === "resource-templates" && (
+            <ResourceTemplatesTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
             />
