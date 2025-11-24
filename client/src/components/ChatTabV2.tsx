@@ -250,6 +250,11 @@ export function ChatTabV2({
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
 
+  // Check if thread is empty (no user or assistant messages; system messages don't count)
+  const isThreadEmpty = !messages.some(
+    (msg) => msg.role === "user" || msg.role === "assistant",
+  );
+
   // Keep server instruction system messages in sync with selected servers
   useEffect(() => {
     setMessages((prev) => {
@@ -281,8 +286,8 @@ export function ChatTabV2({
 
   // Notify parent when messages change
   useEffect(() => {
-    onHasMessagesChange?.(messages.length > 0);
-  }, [messages.length, onHasMessagesChange]);
+    onHasMessagesChange?.(!isThreadEmpty);
+  }, [isThreadEmpty, onHasMessagesChange]);
 
   // Sum token usage from all assistant messages with metadata
   const tokenUsage = useMemo(() => {
@@ -601,7 +606,7 @@ export function ChatTabV2({
   const shouldShowConnectCallout =
     disableForServers && !shouldShowUpsell && !isAuthLoading;
   const showDisabledCallout =
-    messages.length === 0 && (shouldShowUpsell || shouldShowConnectCallout);
+    isThreadEmpty && (shouldShowUpsell || shouldShowConnectCallout);
 
   const errorMessage = formatErrorMessage(error);
 
@@ -689,7 +694,7 @@ export function ChatTabV2({
   };
 
   const showStarterPrompts =
-    !showDisabledCallout && messages.length === 0 && !isAuthLoading;
+    !showDisabledCallout && isThreadEmpty && !isAuthLoading;
 
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
@@ -699,7 +704,7 @@ export function ChatTabV2({
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden [transform:translateZ(0)]">
-            {messages.length === 0 ? (
+            {isThreadEmpty ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
                   {isAuthLoading ? (
