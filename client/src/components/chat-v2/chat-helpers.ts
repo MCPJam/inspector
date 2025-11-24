@@ -1,4 +1,6 @@
 import { ModelDefinition } from "@/shared/types.js";
+import { generateId, type UIMessage } from "ai";
+import type { MCPPromptResult } from "./mcp-prompts-popover";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import deepseekLogo from "/deepseek_logo.svg";
@@ -108,3 +110,117 @@ export const getProviderColor = (provider: string) => {
       return "text-blue-600 dark:text-blue-400";
   }
 };
+
+export const DEFAULT_SYSTEM_PROMPT =
+  "You are a helpful assistant with access to MCP tools.";
+
+export const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
+  {
+    label: "Show me connected tools",
+    text: "List my connected MCP servers and their available tools.",
+  },
+  {
+    label: "Suggest an automation",
+    text: "Suggest an automation I can build with my current MCP setup.",
+  },
+  {
+    label: "Summarize recent activity",
+    text: "Summarize the most recent activity across my MCP servers.",
+  },
+];
+
+export function formatErrorMessage(
+  error: unknown,
+): { message: string; details?: string } | null {
+  if (!error) return null;
+
+  let errorString: string;
+  if (typeof error === "string") {
+    errorString = error;
+  } else if (error instanceof Error) {
+    errorString = error.message;
+  } else {
+    try {
+      errorString = JSON.stringify(error);
+    } catch {
+      errorString = String(error);
+    }
+  }
+
+  // Try to parse as JSON to extract message and details
+  try {
+    const parsed = JSON.parse(errorString);
+    if (parsed && typeof parsed === "object" && parsed.message) {
+      return {
+        message: parsed.message,
+        details: parsed.details,
+      };
+    }
+  } catch {
+    // Return as-is
+  }
+
+  return { message: errorString };
+}
+
+export const VALID_MESSAGE_ROLES: UIMessage["role"][] = [
+  "system",
+  "user",
+  "assistant",
+];
+
+export function extractPromptMessageText(content: any): string | null {
+  if (!content) return null;
+  if (Array.isArray(content)) {
+    const combined = content
+      .map((block) =>
+        block?.text && typeof block.text === "string" ? block.text : "",
+      )
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    return combined || null;
+  }
+  if (typeof content === "object" && typeof content.text === "string") {
+    const text = content.text.trim();
+    return text ? text : null;
+  }
+  if (typeof content === "string") {
+    const text = content.trim();
+    return text ? text : null;
+  }
+  return null;
+}
+
+export function buildMcpPromptMessages(
+  promptResults: MCPPromptResult[],
+): UIMessage[] {
+  const messages: UIMessage[] = [];
+
+  for (const result of promptResults) {
+    const promptMessages = result.result?.content?.messages;
+    if (!Array.isArray(promptMessages)) continue;
+
+    promptMessages.forEach((promptMessage: any, index: number) => {
+      const text = extractPromptMessageText(promptMessage?.content);
+      if (!text) return;
+
+      const role = VALID_MESSAGE_ROLES.includes(promptMessage?.role)
+        ? (promptMessage.role as UIMessage["role"])
+        : ("user" as UIMessage["role"]);
+
+      messages.push({
+        id: `mcp-prompt-${result.namespacedName}-${index}-${generateId()}`,
+        role,
+        parts: [
+          {
+            type: "text",
+            text: `[${result.namespacedName}] ${text}`,
+          },
+        ],
+      });
+    });
+  }
+
+  return messages;
+}

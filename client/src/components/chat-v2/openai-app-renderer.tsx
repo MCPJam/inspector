@@ -1,5 +1,12 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { X } from "lucide-react";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 
@@ -21,6 +28,9 @@ interface OpenAIAppRendererProps {
   onSendFollowUp?: (text: string) => void;
   onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  pipWidgetId?: string | null;
+  onRequestPip?: (toolCallId: string) => void;
+  onExitPip?: (toolCallId: string) => void;
 }
 
 export function OpenAIAppRenderer({
@@ -34,8 +44,12 @@ export function OpenAIAppRenderer({
   onSendFollowUp,
   onCallTool,
   onWidgetStateChange,
+  pipWidgetId,
+  onRequestPip,
+  onExitPip,
 }: OpenAIAppRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const modalIframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
   const [maxHeight, setMaxHeight] = useState<number>(600);
@@ -45,6 +59,9 @@ export function OpenAIAppRenderer({
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalParams, setModalParams] = useState<Record<string, any>>({});
+  const [modalTitle, setModalTitle] = useState<string>("");
   const previousWidgetStateRef = useRef<string | null>(null);
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
@@ -229,19 +246,25 @@ export function OpenAIAppRenderer({
   );
 
   const iframeHeight = useMemo(() => {
-    if (displayMode === "fullscreen") return "80vh";
-    if (displayMode === "pip") return "400px";
+    if (displayMode === "fullscreen") return "100%";
+    if (displayMode === "pip") {
+      return pipWidgetId === resolvedToolCallId
+        ? "400px"
+        : `${appliedHeight}px`;
+    }
     return `${appliedHeight}px`;
-  }, [appliedHeight, displayMode]);
+  }, [appliedHeight, displayMode, pipWidgetId, resolvedToolCallId]);
 
   // Handle messages from iframe
   const handleMessage = useCallback(
     async (event: MessageEvent) => {
-      if (
-        !iframeRef.current ||
-        event.source !== iframeRef.current.contentWindow
-      )
-        return;
+      const inlineWindow = iframeRef.current?.contentWindow;
+      const modalWindow = modalIframeRef.current?.contentWindow;
+      const isFromInline =
+        inlineWindow != null && event.source === inlineWindow;
+      const isFromModal = modalWindow != null && event.source === modalWindow;
+
+      if (!isFromInline && !isFromModal) return;
 
       console.log("[OpenAI App] Received message from iframe:", event.data);
 
@@ -271,6 +294,23 @@ export function OpenAIAppRenderer({
               onWidgetStateChange(resolvedToolCallId, newState);
             }
           }
+
+          const targetWindow = isFromInline
+            ? modalWindow
+            : isFromModal
+              ? inlineWindow
+              : null;
+
+          if (targetWindow) {
+            targetWindow.postMessage(
+              {
+                type: "openai:pushWidgetState",
+                toolId: resolvedToolCallId,
+                state: event.data.state,
+              },
+              "*",
+            );
+          }
           break;
         }
 
@@ -279,7 +319,8 @@ export function OpenAIAppRenderer({
             console.warn(
               "[OpenAI App] callTool received but handler not available",
             );
-            iframeRef.current?.contentWindow?.postMessage(
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage(
               {
                 type: "openai:callTool:response",
                 requestId: event.data.requestId,
@@ -295,7 +336,8 @@ export function OpenAIAppRenderer({
               event.data.toolName,
               event.data.params || {},
             );
-            iframeRef.current?.contentWindow?.postMessage(
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage(
               {
                 type: "openai:callTool:response",
                 requestId: event.data.requestId,
@@ -304,7 +346,8 @@ export function OpenAIAppRenderer({
               "*",
             );
           } catch (err) {
-            iframeRef.current?.contentWindow?.postMessage(
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage(
               {
                 type: "openai:callTool:response",
                 requestId: event.data.requestId,
@@ -340,7 +383,15 @@ export function OpenAIAppRenderer({
 
         case "openai:requestDisplayMode": {
           if (event.data.mode) {
-            setDisplayMode(event.data.mode);
+            const mode = event.data.mode;
+            setDisplayMode(mode);
+            if (mode === "pip") {
+              onRequestPip?.(resolvedToolCallId);
+            } else if (mode === "inline" || mode === "fullscreen") {
+              if (pipWidgetId === resolvedToolCallId) {
+                onExitPip?.(resolvedToolCallId);
+              }
+            }
           }
           if (typeof event.data.maxHeight === "number") {
             setMaxHeight(event.data.maxHeight);
@@ -354,9 +405,25 @@ export function OpenAIAppRenderer({
           }
           break;
         }
+
+        case "openai:requestModal": {
+          setModalTitle(event.data.title || "Modal");
+          setModalParams(event.data.params || {});
+          setModalOpen(true);
+          break;
+        }
       }
     },
-    [onCallTool, onSendFollowUp, onWidgetStateChange, resolvedToolCallId],
+    [
+      onCallTool,
+      onSendFollowUp,
+      onWidgetStateChange,
+      resolvedToolCallId,
+      pipWidgetId,
+      modalIframeRef,
+      onRequestPip,
+      onExitPip,
+    ],
   );
 
   useEffect(() => {
@@ -365,6 +432,12 @@ export function OpenAIAppRenderer({
       window.removeEventListener("message", handleMessage);
     };
   }, [handleMessage]);
+
+  useEffect(() => {
+    if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId) {
+      setDisplayMode("inline");
+    }
+  }, [displayMode, pipWidgetId, resolvedToolCallId]);
 
   // Send theme updates to iframe when theme changes
   useEffect(() => {
@@ -432,9 +505,61 @@ export function OpenAIAppRenderer({
     );
   }
 
+  const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
+  const isFullscreen = displayMode === "fullscreen";
+
+  let containerClassName = "mt-3 space-y-2 relative group";
+
+  if (isFullscreen) {
+    containerClassName = [
+      "fixed",
+      "inset-0",
+      "z-50",
+      "w-full",
+      "h-full",
+      "bg-background",
+      "flex",
+      "flex-col",
+    ].join(" ");
+  } else if (isPip) {
+    containerClassName = [
+      "fixed",
+      "top-4",
+      "inset-x-0",
+      "z-40",
+      "w-full",
+      "max-w-4xl",
+      "mx-auto",
+      "space-y-2",
+      "bg-background/95",
+      "backdrop-blur",
+      "supports-[backdrop-filter]:bg-background/80",
+      "shadow-xl",
+      "border",
+      "border-border/60",
+      "rounded-xl",
+      "p-3",
+    ].join(" ");
+  }
+
+  const shouldShowExitButton = isPip || isFullscreen;
+
   // Render iframe
   return (
-    <div className="mt-3 space-y-2">
+    <div className={containerClassName}>
+      {shouldShowExitButton && (
+        <button
+          onClick={() => {
+            setDisplayMode("inline");
+            onExitPip?.(resolvedToolCallId);
+          }}
+          className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          aria-label="Close PiP mode"
+          title="Close PiP mode"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
       {loadError && (
         <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
           Failed to load widget: {loadError}
@@ -466,6 +591,25 @@ export function OpenAIAppRenderer({
           Template: <code>{outputTemplate}</code>
         </div>
       )}
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="sm:max-w-6xl h-[70vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{modalTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 w-full h-full min-h-0">
+            <iframe
+              ref={modalIframeRef}
+              src={`${widgetUrl}?view_mode=modal&view_params=${encodeURIComponent(
+                JSON.stringify(modalParams),
+              )}`}
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+              title={`OpenAI App Modal: ${modalTitle}`}
+              className="w-full h-full border-0 rounded-md bg-background"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

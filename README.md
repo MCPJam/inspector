@@ -94,7 +94,15 @@ Example:
 # In Docker, configure it as: http://host.docker.internal:8080/mcp
 ```
 
-# Key Features
+# Key features
+
+| Capability             | Description                                                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Multi-protocol servers | Connect to STDIO, SSE, and streamable HTTP MCP servers.                                                    |
+| Flexible auth          | Supports OAuth 2.1 and bearer tokens, including custom scopes and client credentials.                      |
+| Rich configuration     | Configure environment variables, custom headers, and timeouts.                                             |
+| Manual tool invocation | Manually invoke MCP tools, resources, resource templates, and elicitation flows.                           |
+| Server info            | View server icons, version, capabilities, instructions, and ChatGPT widget metadata exposed by the server. |
 
 ## OpenAI Apps & MCP-UI
 

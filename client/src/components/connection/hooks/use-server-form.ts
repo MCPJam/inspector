@@ -1,34 +1,26 @@
 import { useState, useEffect } from "react";
-import { toast } from "sonner";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/mcp-oauth";
 
 export function useServerForm(server?: ServerWithName) {
-  const [serverFormData, setServerFormData] = useState<ServerFormData>({
-    name: "",
-    type: "stdio",
-    command: "",
-    args: [],
-    url: "",
-    headers: {},
-    env: {},
-    useOAuth: true,
-    oauthScopes: [],
-    clientId: "",
-  });
-
+  const [name, setName] = useState("");
+  const [type, setType] = useState<"stdio" | "http">("stdio");
   const [commandInput, setCommandInput] = useState("");
+  const [url, setUrl] = useState("");
+
   const [oauthScopesInput, setOauthScopesInput] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [bearerToken, setBearerToken] = useState("");
   const [authType, setAuthType] = useState<"oauth" | "bearer" | "none">("none");
   const [useCustomClientId, setUseCustomClientId] = useState(false);
+
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
     null,
   );
+
   const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>(
     [],
   );
@@ -36,6 +28,7 @@ export function useServerForm(server?: ServerWithName) {
     Array<{ key: string; value: string }>
   >([]);
   const [requestTimeout, setRequestTimeout] = useState<string>("10000");
+
   const [showConfiguration, setShowConfiguration] = useState<boolean>(false);
   const [showEnvVars, setShowEnvVars] = useState<boolean>(false);
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
@@ -56,11 +49,9 @@ export function useServerForm(server?: ServerWithName) {
         // Check if OAuth is configured by looking at multiple sources:
         // 1. Check if server has oauth tokens
         // 2. Check if there's stored OAuth data
-        // 3. Check if the config has an oauth field
         const hasOAuthTokens = server.oauthTokens != null;
         const hasStoredOAuthConfig = hasOAuthConfig(server.name);
-        const hasOAuthInConfig = "oauth" in config && config.oauth != null;
-        hasOAuth = hasOAuthTokens || hasStoredOAuthConfig || hasOAuthInConfig;
+        hasOAuth = hasOAuthTokens || hasStoredOAuthConfig;
 
         const storedOAuthConfig = localStorage.getItem(
           `mcp-oauth-config-${server.name}`,
@@ -75,47 +66,22 @@ export function useServerForm(server?: ServerWithName) {
           ? JSON.parse(storedOAuthConfig)
           : {};
 
-        // Retrieve scopes from multiple sources (prioritize config over tokens/storage)
+        // Retrieve scopes from multiple sources (prioritize stored tokens/storage)
         scopes =
-          config.oauthScopes ||
           server.oauthTokens?.scope?.split(" ") ||
           storedTokens?.scope?.split(" ") ||
           oauthConfig.scopes ||
           [];
 
-        // Get client ID and secret from multiple sources (prioritize config)
-        clientIdValue =
-          (typeof config.clientId === "string" ? config.clientId : "") ||
-          storedTokens?.client_id ||
-          clientInfo?.client_id ||
-          "";
+        // Get client ID and secret from multiple sources (prioritize stored)
+        clientIdValue = storedTokens?.client_id || clientInfo?.client_id || "";
 
-        clientSecretValue =
-          (typeof config.clientSecret === "string"
-            ? config.clientSecret
-            : "") ||
-          clientInfo?.client_secret ||
-          "";
+        clientSecretValue = clientInfo?.client_secret || "";
       }
 
-      setServerFormData({
-        name: server.name,
-        type: server.config.command ? "stdio" : "http",
-        command: server.config.command || "",
-        args: server.config.args || [],
-        url: server.config.url
-          ? typeof server.config.url === "string"
-            ? server.config.url
-            : server.config.url.toString()
-          : "",
-        headers: server.config.headers || {},
-        env: server.config.env || {},
-        useOAuth: hasOAuth,
-        oauthScopes: scopes,
-        clientId: clientIdValue,
-        clientSecret: clientSecretValue,
-        requestTimeout: server.config.requestTimeout,
-      });
+      setName(server.name);
+      setType(server.config.command ? "stdio" : "http");
+      setUrl(isHttpServer && config.url ? config.url.toString() : "");
 
       // For STDIO servers, combine command and args into commandInput
       if (server.config.command) {
@@ -131,18 +97,23 @@ export function useServerForm(server?: ServerWithName) {
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
       setOauthScopesInput(scopes.join(" "));
-      setRequestTimeout(String(server.config.requestTimeout || 10000));
+      setRequestTimeout(String(config.timeout || 10000));
 
       // Set auth type based on multiple OAuth detection sources
       if (hasOAuth) {
         setAuthType("oauth");
         setShowAuthSettings(true);
       } else if (
-        server.config.headers?.["Authorization"]?.startsWith("Bearer ")
+        isHttpServer &&
+        config.requestInit?.headers &&
+        typeof config.requestInit.headers === "object" &&
+        "Authorization" in config.requestInit.headers &&
+        typeof config.requestInit.headers.Authorization === "string" &&
+        config.requestInit.headers.Authorization.startsWith("Bearer ")
       ) {
         setAuthType("bearer");
         setBearerToken(
-          server.config.headers["Authorization"].replace("Bearer ", ""),
+          config.requestInit.headers.Authorization.replace("Bearer ", ""),
         );
         setShowAuthSettings(true);
       } else {
@@ -157,17 +128,22 @@ export function useServerForm(server?: ServerWithName) {
         setClientSecret(clientSecretValue);
       }
 
-      // Initialize env vars
-      if (server.config.env) {
-        const envArray = Object.entries(server.config.env).map(
-          ([key, value]) => ({ key, value: String(value) }),
-        );
+      // Initialize env vars for STDIO servers
+      if (!isHttpServer && config.env) {
+        const envArray = Object.entries(config.env).map(([key, value]) => ({
+          key,
+          value: String(value),
+        }));
         setEnvVars(envArray);
       }
 
-      // Initialize custom headers (excluding Authorization)
-      if (server.config.headers) {
-        const headersArray = Object.entries(server.config.headers)
+      // Initialize custom headers for HTTP servers (excluding Authorization)
+      if (
+        isHttpServer &&
+        config.requestInit?.headers &&
+        typeof config.requestInit.headers === "object"
+      ) {
+        const headersArray = Object.entries(config.requestInit.headers)
           .filter(([key]) => key !== "Authorization")
           .map(([key, value]) => ({ key, value: String(value) }));
         setCustomHeaders(headersArray);
@@ -193,17 +169,17 @@ export function useServerForm(server?: ServerWithName) {
     return null;
   };
 
-  const validateForm = (formData: ServerFormData): string | null => {
-    if (!formData.name || formData.name.trim() === "") {
+  const validateForm = (): string | null => {
+    if (!name || name.trim() === "") {
       return "Server name is required";
     }
 
-    if (formData.type === "stdio") {
-      if (!formData.command || formData.command.trim() === "") {
+    if (type === "stdio") {
+      if (!commandInput || commandInput.trim() === "") {
         return "Command is required for STDIO servers";
       }
-    } else if (formData.type === "http") {
-      if (!formData.url || formData.url.trim() === "") {
+    } else if (type === "http") {
+      if (!url || url.trim() === "") {
         return "URL is required for HTTP servers";
       }
     }
@@ -250,17 +226,10 @@ export function useServerForm(server?: ServerWithName) {
   };
 
   const buildFormData = (): ServerFormData => {
-    let finalFormData = { ...serverFormData };
-
-    // Add timeout configuration
     const reqTimeout = parseInt(requestTimeout) || 10000;
-    finalFormData = {
-      ...finalFormData,
-      requestTimeout: reqTimeout,
-    };
 
     // Handle stdio-specific data
-    if (serverFormData.type === "stdio") {
+    if (type === "stdio") {
       // Parse commandInput to extract command and args
       const parts = commandInput
         .trim()
@@ -269,89 +238,66 @@ export function useServerForm(server?: ServerWithName) {
       const command = parts[0] || "";
       const args = parts.slice(1);
 
-      finalFormData = {
-        ...finalFormData,
-        command: command.trim(),
-        args,
-        url: undefined,
-        headers: undefined,
-      };
-
-      // Add environment variables
+      // Build environment variables
       const env: Record<string, string> = {};
       envVars.forEach(({ key, value }) => {
         if (key.trim()) {
           env[key.trim()] = value;
         }
       });
-      finalFormData.env = env;
+
+      return {
+        name: name.trim(),
+        type: "stdio",
+        command: command.trim(),
+        args,
+        env,
+        requestTimeout: reqTimeout,
+      };
     }
 
     // Handle http-specific data
-    if (serverFormData.type === "http") {
-      const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {};
 
-      // Add custom headers
-      customHeaders.forEach(({ key, value }) => {
-        if (key.trim()) {
-          headers[key.trim()] = value;
-        }
-      });
-
-      // Parse OAuth scopes from input (preserve them even when not using OAuth)
-      const scopes = oauthScopesInput
-        .trim()
-        .split(/\s+/)
-        .filter((s) => s.length > 0);
-      if (scopes.length > 0) {
-        finalFormData.oauthScopes = scopes;
+    // Add custom headers
+    customHeaders.forEach(({ key, value }) => {
+      if (key.trim()) {
+        headers[key.trim()] = value;
       }
+    });
 
-      // Preserve client credentials
-      if (clientId.trim()) {
-        finalFormData.clientId = clientId.trim();
-      }
-      if (clientSecret.trim()) {
-        finalFormData.clientSecret = clientSecret.trim();
-      }
+    // Parse OAuth scopes from input
+    const scopes = oauthScopesInput
+      .trim()
+      .split(/\s+/)
+      .filter((s) => s.length > 0);
 
-      // Handle authentication
-      if (authType === "bearer" && bearerToken) {
-        headers["Authorization"] = `Bearer ${bearerToken.trim()}`;
-        finalFormData.useOAuth = false;
-      } else if (authType === "oauth") {
-        finalFormData.useOAuth = true;
-        // Don't add default scopes - let the OAuth server use its defaults
-        // This prevents invalid_scope errors when the server doesn't recognize "mcp:*"
-      } else {
-        finalFormData.useOAuth = false;
-      }
-
-      finalFormData.url =
-        typeof serverFormData.url === "string" ? serverFormData.url.trim() : ""; // Trim URL to remove trailing/leading spaces
-      finalFormData.headers = headers;
-      finalFormData.env = undefined;
-      finalFormData.command = undefined;
-      finalFormData.args = undefined;
+    // Handle authentication
+    let useOAuth = false;
+    if (authType === "bearer" && bearerToken) {
+      headers["Authorization"] = `Bearer ${bearerToken.trim()}`;
+    } else if (authType === "oauth") {
+      useOAuth = true;
     }
 
-    return finalFormData;
+    return {
+      name: name.trim(),
+      type: "http",
+      url: url.trim(),
+      headers,
+      useOAuth,
+      oauthScopes: scopes.length > 0 ? scopes : undefined,
+      clientId: clientId.trim() || undefined,
+      clientSecret: clientSecret.trim() || undefined,
+      requestTimeout: reqTimeout,
+    };
   };
 
   const resetForm = () => {
-    setServerFormData({
-      name: "",
-      type: "stdio",
-      command: "",
-      args: [],
-      url: "",
-      headers: {},
-      env: {},
-      useOAuth: true,
-      oauthScopes: [],
-      clientId: "",
-    });
+    setName("");
+    setType("stdio");
     setCommandInput("");
+    setUrl("");
     setOauthScopesInput("");
     setClientId("");
     setClientSecret("");
@@ -370,12 +316,16 @@ export function useServerForm(server?: ServerWithName) {
 
   return {
     // Form data
-    serverFormData,
-    setServerFormData,
-
-    // Input states
+    name,
+    setName,
+    type,
+    setType,
     commandInput,
     setCommandInput,
+    url,
+    setUrl,
+
+    // Auth states
     oauthScopesInput,
     setOauthScopesInput,
     clientId,
