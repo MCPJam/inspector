@@ -1203,20 +1203,20 @@ console.log("toolOutput:", window.openai?.toolOutput);
 2. Add postMessage handler in parent (`client/src/components/chat/openai-component-renderer.tsx:118-196`)
 3. Update TypeScript types if needed
 
-**Example: Adding `openExternal` method:**
+**Example: Adding a custom method:**
 
 ```typescript
-// 1. Server-side API injection
-openaiAPI.openExternal = async function({ href }) {
+// 1. Server-side API injection (server/routes/mcp/openai.ts)
+openaiAPI.customMethod = async function(options) {
   window.parent.postMessage({
-    type: 'openai:openExternal',
-    href
+    type: 'openai:customMethod',
+    data: options
   }, '*');
 };
 
-// 2. Parent-side handler
-case \"openai:openExternal\":
-  window.open(event.data.href, \"_blank\", \"noopener,noreferrer\");
+// 2. Parent-side handler (client/src/components/chat-v2/openai-app-renderer.tsx)
+case \"openai:customMethod\":
+  handleCustomMethod(event.data.data);
   break;
 ```
 
