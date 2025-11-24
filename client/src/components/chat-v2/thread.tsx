@@ -104,7 +104,7 @@ function MessageView({
   if (role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-3xl space-y-3 rounded-xl bg-primary px-4 py-3 text-sm leading-6 text-primary-foreground shadow-sm">
+        <div className="max-w-3xl max-h-[70vh] space-y-3 overflow-auto overscroll-contain rounded-xl border border-[#e5e7ec] bg-[#f9fafc] px-4 py-3 text-sm leading-6 text-[#1f2733] shadow-sm dark:border-[#4a5261] dark:bg-[#2f343e] dark:text-[#e6e8ed]">
           {message.parts?.map((part, i) => (
             <PartSwitch
               key={i}
@@ -304,11 +304,11 @@ function PartSwitch({
 
 function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
   const textColorClass =
-    role === "user" ? "text-primary-foreground" : "text-foreground";
+    role === "user" ? "text-black dark:text-neutral-900" : "text-foreground";
   return (
     <MemoizedMarkdown
       content={text}
-      className={`break-words ${textColorClass}`}
+      className={`max-w-full break-words overflow-auto ${textColorClass}`}
     />
   );
 }

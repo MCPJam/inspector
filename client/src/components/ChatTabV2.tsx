@@ -49,64 +49,18 @@ import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
-
-const DEFAULT_SYSTEM_PROMPT =
-  "You are a helpful assistant with access to MCP tools.";
-
-const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
-  {
-    label: "Show me connected tools",
-    text: "List my connected MCP servers and their available tools.",
-  },
-  {
-    label: "Suggest an automation",
-    text: "Suggest an automation I can build with my current MCP setup.",
-  },
-  {
-    label: "Summarize recent activity",
-    text: "Summarize the most recent activity across my MCP servers.",
-  },
-];
+import { type MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  STARTER_PROMPTS,
+  formatErrorMessage,
+  buildMcpPromptMessages,
+} from "@/components/chat-v2/chat-helpers";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
-}
-
-function formatErrorMessage(
-  error: unknown,
-): { message: string; details?: string } | null {
-  console.log(error);
-  if (!error) return null;
-
-  let errorString: string;
-  if (typeof error === "string") {
-    errorString = error;
-  } else if (error instanceof Error) {
-    errorString = error.message;
-  } else {
-    try {
-      errorString = JSON.stringify(error);
-    } catch {
-      errorString = String(error);
-    }
-  }
-
-  // Try to parse as JSON to extract message and details
-  try {
-    const parsed = JSON.parse(errorString);
-    if (parsed && typeof parsed === "object" && parsed.message) {
-      return {
-        message: parsed.message,
-        details: parsed.details,
-      };
-    }
-  } catch {
-    // Return as-is
-  }
-
-  return { message: errorString };
 }
 
 function ScrollToBottomButton() {
@@ -163,6 +117,12 @@ export function ChatTabV2({
   > | null>(null);
   const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
     useState(false);
+  const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
+    [],
+  );
+  const [widgetStateQueue, setWidgetStateQueue] = useState<
+    { toolCallId: string; state: any }[]
+  >([]);
   const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
     number | null
   >(null);
@@ -276,7 +236,6 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
-
   // Notify parent when messages change
   useEffect(() => {
     onHasMessagesChange?.(messages.length > 0);
@@ -320,55 +279,89 @@ export function ChatTabV2({
     setChatSessionId(generateId());
     setMessages([]);
     setInput("");
+    setWidgetStateQueue([]);
   }, [setMessages]);
 
-  const handleWidgetStateChange = useCallback(
-    (toolCallId: string, state: any) => {
-      setMessages((prevMessages) => {
+  const applyWidgetStateUpdates = useCallback(
+    (
+      prevMessages: typeof messages,
+      updates: { toolCallId: string; state: any }[],
+    ) => {
+      let nextMessages = prevMessages;
+
+      for (const { toolCallId, state } of updates) {
         const messageId = `widget-state-${toolCallId}`;
 
-        // If state is null, remove the widget state message
         if (state === null) {
-          return prevMessages.filter((msg) => msg.id !== messageId);
+          const filtered = nextMessages.filter((msg) => msg.id !== messageId);
+          nextMessages = filtered;
+          continue;
         }
 
         const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
-
-        const existingIndex = prevMessages.findIndex(
+        const existingIndex = nextMessages.findIndex(
           (msg) => msg.id === messageId,
         );
 
         if (existingIndex !== -1) {
-          const existingMessage = prevMessages[existingIndex];
+          const existingMessage = nextMessages[existingIndex];
           const existingText =
             existingMessage.parts?.[0]?.type === "text"
               ? (existingMessage.parts[0] as any).text
               : null;
+
           if (existingText === stateText) {
-            return prevMessages;
+            continue;
           }
 
-          const newMessages = [...prevMessages];
-          newMessages[existingIndex] = {
+          const updatedMessages = [...nextMessages];
+          updatedMessages[existingIndex] = {
             id: messageId,
             role: "assistant",
             parts: [{ type: "text", text: stateText }],
           };
-          return newMessages;
+          nextMessages = updatedMessages;
+          continue;
         }
 
-        return [
-          ...prevMessages,
+        nextMessages = [
+          ...nextMessages,
           {
             id: messageId,
             role: "assistant",
             parts: [{ type: "text", text: stateText }],
           },
         ];
-      });
+      }
+
+      return nextMessages;
     },
-    [setMessages],
+    [],
   );
+
+  const handleWidgetStateChange = useCallback(
+    (toolCallId: string, state: any) => {
+      // Avoid mutating the messages array while a response is streaming;
+      // queue updates and apply once the chat is back to "ready".
+      if (status === "ready") {
+        setMessages((prevMessages) =>
+          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }]),
+        );
+      } else {
+        setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
+      }
+    },
+    [status, setMessages, applyWidgetStateUpdates],
+  );
+
+  useEffect(() => {
+    if (status !== "ready" || widgetStateQueue.length === 0) return;
+
+    setMessages((prevMessages) =>
+      applyWidgetStateUpdates(prevMessages, widgetStateQueue),
+    );
+    setWidgetStateQueue([]);
+  }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
 
   useEffect(() => {
     resetChat();
@@ -552,7 +545,7 @@ export function ChatTabV2({
   const submitBlocked = disableForAuthentication || disableForServers;
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  let placeholder = "Ask something…";
+  let placeholder = 'Ask something… Use Slash "/" commands for MCP prompts';
   if (disableForServers) {
     placeholder = "Connect an MCP server to send your first message";
   }
@@ -581,7 +574,7 @@ export function ChatTabV2({
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (
-      input.trim() &&
+      (input.trim() || mcpPromptResults.length > 0) &&
       status === "ready" &&
       !disableForAuthentication &&
       !disableForServers
@@ -594,8 +587,13 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
+      const promptMessages = buildMcpPromptMessages(mcpPromptResults);
+      if (promptMessages.length > 0) {
+        setMessages((prev) => [...prev, ...promptMessages]);
+      }
       sendMessage({ text: input });
       setInput("");
+      setMcpPromptResults([]);
     }
   };
 
@@ -643,6 +641,8 @@ export function ChatTabV2({
     connectedServerConfigs,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
+    mcpPromptResults,
+    onChangeMcpPromptResults: setMcpPromptResults,
   };
 
   const showStarterPrompts =
