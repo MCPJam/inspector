@@ -16,6 +16,7 @@ import registry from "./registry";
 import models from "./models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
+import tunnelsRoute from "./tunnels";
 
 const mcp = new Hono();
 
@@ -79,5 +80,8 @@ mcp.route("/models", models);
 
 // Tokenizer endpoints - count tokens for MCP tools
 mcp.route("/tokenizer", tokenizer);
+
+// Tunnel management endpoints - create ngrok tunnels for servers
+mcp.route("/tunnels", tunnelsRoute);
 
 export default mcp;

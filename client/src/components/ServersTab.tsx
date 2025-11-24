@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, FileText, Layers } from "lucide-react";
+import { Plus, FileText, Layers, Cable, Link, Loader2, X, Copy, Check } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { ServerConnectionDetails } from "./connection/ServerConnectionDetails";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
+import { TunnelExplanationModal, TUNNEL_EXPLANATION_DISMISSED_KEY } from "./connection/TunnelExplanationModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
@@ -19,6 +20,9 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
+import { createTunnel, getTunnel, closeTunnel, cleanupOrphanedTunnels } from "@/lib/mcp-tunnels-api";
+import { useAuth } from "@workos-inc/authkit-react";
+import { toast } from "sonner";
 
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -42,11 +46,17 @@ export function ServersTab({
   onRemove,
 }: ServersTabProps) {
   const posthog = usePostHog();
+  const { getAccessToken } = useAuth();
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isEditingServer, setIsEditingServer] = useState(false);
   const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
+  const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
+  const [isClosingTunnel, setIsClosingTunnel] = useState(false);
+  const [isTunnelUrlCopied, setIsTunnelUrlCopied] = useState(false);
+  const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
 
   useEffect(() => {
     posthog.capture("servers_tab_viewed", {
@@ -56,6 +66,23 @@ export function ServersTab({
       num_servers: Object.keys(connectedServerConfigs).length,
     });
   }, []);
+
+  // Check for existing tunnel on mount
+  useEffect(() => {
+    const checkExistingTunnel = async () => {
+      try {
+        const accessToken = await getAccessToken();
+        const existingTunnel = await getTunnel(accessToken);
+        if (existingTunnel) {
+          setTunnelUrl(existingTunnel.url);
+        }
+      } catch (err) {
+        console.debug("No existing tunnel found:", err);
+      }
+    };
+
+    checkExistingTunnel();
+  }, [getAccessToken]);
 
   const connectedCount = Object.keys(connectedServerConfigs).length;
 
@@ -105,6 +132,89 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
+  const handleCreateTunnel = () => {
+    const isDismissed = localStorage.getItem(TUNNEL_EXPLANATION_DISMISSED_KEY) === "true";
+    if (isDismissed) {
+      handleConfirmCreateTunnel();
+    } else {
+      setShowTunnelExplanation(true);
+    }
+  };
+
+  const handleConfirmCreateTunnel = async () => {
+    setIsCreatingTunnel(true);
+    try {
+      const accessToken = await getAccessToken();
+
+      // Cleanup orphaned tunnels BEFORE creating new one
+      await cleanupOrphanedTunnels(accessToken);
+
+      const result = await createTunnel(accessToken);
+      setTunnelUrl(result.url);
+
+      // Cleanup again AFTER creation to catch the tunnel that was just closed
+      // (recordTunnel marks the old tunnel as closed)
+      await cleanupOrphanedTunnels(accessToken);
+
+      // Copy URL to clipboard
+      await navigator.clipboard.writeText(result.url);
+
+      toast.success(
+        result.existed
+          ? "Tunnel URL copied to clipboard!"
+          : "Tunnel created! URL copied to clipboard."
+      );
+
+      posthog.capture("tunnel_created", {
+        location: "servers_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
+
+      setShowTunnelExplanation(false);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to create tunnel";
+      toast.error(`Tunnel creation failed: ${errorMessage}`);
+    } finally {
+      setIsCreatingTunnel(false);
+    }
+  };
+
+  const handleCloseTunnel = async () => {
+    setIsClosingTunnel(true);
+    try {
+      const accessToken = await getAccessToken();
+      await closeTunnel(accessToken);
+      setTunnelUrl(null);
+
+      toast.success("Tunnel closed successfully");
+
+      posthog.capture("tunnel_closed", {
+        location: "servers_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to close tunnel";
+      toast.error(`Failed to close tunnel: ${errorMessage}`);
+    } finally {
+      setIsClosingTunnel(false);
+    }
+  };
+
+  const copyTunnelUrl = async () => {
+    if (!tunnelUrl) return;
+    try {
+      await navigator.clipboard.writeText(tunnelUrl);
+      setIsTunnelUrlCopied(true);
+      setTimeout(() => setIsTunnelUrlCopied(false), 2000);
+    } catch (error) {
+      console.error("Failed to copy tunnel URL:", error);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       {connectedCount > 0 ? (
@@ -113,59 +223,102 @@ export function ServersTab({
           <ResizablePanel defaultSize={65} minSize={70}>
             <div className="space-y-6 p-8 h-full overflow-auto">
               {/* Header Section */}
-              <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold tracking-tight">
-                  MCP Servers
-                </h2>
-                <div className="flex items-center gap-2">
-                  <HoverCard
-                    open={isActionMenuOpen}
-                    onOpenChange={setIsActionMenuOpen}
-                    openDelay={150}
-                    closeDelay={100}
-                  >
-                    <HoverCardTrigger asChild>
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-6">
+                    <h2 className="text-2xl font-bold tracking-tight">
+                      MCP Servers
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {tunnelUrl ? (
                       <Button
-                        onClick={handleAddServerClick}
+                        variant="destructive"
+                        size="sm"
+                        onClick={handleCloseTunnel}
+                        disabled={isClosingTunnel}
+                        className="cursor-pointer relative"
+                      >
+                        {isClosingTunnel ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Close Tunnel
+                          </>
+                        ) : (
+                          <>
+                            <span className="relative flex h-2 w-2 mr-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-50"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                            </span>
+                            Close Tunnel
+                          </>
+                        )}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleCreateTunnel}
+                        disabled={isCreatingTunnel}
                         className="cursor-pointer"
                       >
-                        <Plus className="h-4 w-4 mr-2" />
-                        Add Server
+                        {isCreatingTunnel ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Cable className="h-4 w-4 mr-2" />
+                        )}
+                        Create Tunnel
                       </Button>
-                    </HoverCardTrigger>
-                    <HoverCardContent
-                      align="end"
-                      sideOffset={8}
-                      className="w-56 p-3"
+                    )}
+                    <HoverCard
+                      open={isActionMenuOpen}
+                      onOpenChange={setIsActionMenuOpen}
+                      openDelay={150}
+                      closeDelay={100}
                     >
-                      <div className="flex flex-col gap-2">
+                      <HoverCardTrigger asChild>
                         <Button
-                          variant="ghost"
-                          className="justify-start"
                           onClick={handleAddServerClick}
+                          className="cursor-pointer"
                         >
                           <Plus className="h-4 w-4 mr-2" />
-                          Add manually
+                          Add Server
                         </Button>
-                        <Button
-                          variant="ghost"
-                          className="justify-start"
-                          onClick={handleImportJsonClick}
-                        >
-                          <FileText className="h-4 w-4 mr-2" />
-                          Import JSON
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          className="justify-start"
-                          onClick={handleAddFromRegistryClick}
-                        >
-                          <Layers className="h-4 w-4 mr-2" />
-                          Add from Registry
-                        </Button>
-                      </div>
-                    </HoverCardContent>
-                  </HoverCard>
+                      </HoverCardTrigger>
+                      <HoverCardContent
+                        align="end"
+                        sideOffset={8}
+                        className="w-56 p-3"
+                      >
+                        <div className="flex flex-col gap-2">
+                          <Button
+                            variant="ghost"
+                            className="justify-start"
+                            onClick={handleAddServerClick}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add manually
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            className="justify-start"
+                            onClick={handleImportJsonClick}
+                          >
+                            <FileText className="h-4 w-4 mr-2" />
+                            Import JSON
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            className="justify-start"
+                            onClick={handleAddFromRegistryClick}
+                          >
+                            <Layers className="h-4 w-4 mr-2" />
+                            Add from Registry
+                          </Button>
+                        </div>
+                      </HoverCardContent>
+                    </HoverCard>
+                  </div>
                 </div>
               </div>
 
@@ -180,6 +333,7 @@ export function ServersTab({
                       onReconnect={onReconnect}
                       onEdit={handleEditServer}
                       onRemove={onRemove}
+                      sharedTunnelUrl={tunnelUrl}
                     />
                   ),
                 )}
@@ -197,8 +351,68 @@ export function ServersTab({
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
           <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+            <div className="flex items-center gap-6">
+              <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+              {tunnelUrl && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground">Tunnel:</span>
+                  <button
+                    onClick={copyTunnelUrl}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground bg-muted/20 px-1.5 py-0.5 rounded border border-border/20 transition-colors cursor-pointer"
+                  >
+                    <Link className="h-2.5 w-2.5 flex-shrink-0" />
+                    {isTunnelUrlCopied ? (
+                      <>
+                        <Check className="h-2.5 w-2.5 text-green-500" />
+                        <span className="text-green-500">Copied!</span>
+                      </>
+                    ) : (
+                      <Copy className="h-2.5 w-2.5" />
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-2">
+              {tunnelUrl ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleCloseTunnel}
+                  disabled={isClosingTunnel}
+                  className="cursor-pointer relative"
+                >
+                  {isClosingTunnel ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Close Tunnel
+                    </>
+                  ) : (
+                    <>
+                      <span className="relative flex h-2 w-2 mr-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-50"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                      </span>
+                      Close Tunnel
+                    </>
+                  )}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCreateTunnel}
+                  disabled={isCreatingTunnel}
+                  className="cursor-pointer"
+                >
+                  {isCreatingTunnel ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Cable className="h-4 w-4 mr-2" />
+                  )}
+                  Create Tunnel
+                </Button>
+              )}
               <HoverCard
                 open={isActionMenuOpen}
                 onOpenChange={setIsActionMenuOpen}
@@ -305,6 +519,14 @@ export function ServersTab({
         isOpen={isImportingJson}
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
+      />
+
+      {/* Tunnel Explanation Modal */}
+      <TunnelExplanationModal
+        isOpen={showTunnelExplanation}
+        onClose={() => setShowTunnelExplanation(false)}
+        onConfirm={handleConfirmCreateTunnel}
+        isCreating={isCreatingTunnel}
       />
     </div>
   );

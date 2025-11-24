@@ -1,6 +1,13 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { handleJsonRpc, BridgeMode } from "../../services/mcp-http-bridge";
+import {
+  widgetDataStore,
+  getOpenAiBridgeScript,
+  extractHtmlContent,
+  processLocalhostUrls,
+  injectBridgeScript,
+} from "./widget-utils";
 
 // In-memory SSE session store per serverId:sessionId
 type Session = {
@@ -42,6 +49,381 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
   async function handleHttp(c: any) {
     const serverId = c.req.param("serverId");
     const method = c.req.method;
+    const url = new URL(c.req.url);
+    const pathname = url.pathname;
+
+    // Check if this is a widget-related request and handle it specially
+    if (pathname.includes('/widget/store') && method === 'POST') {
+      try {
+        const body = await c.req.json();
+        const {
+          uri,
+          toolInput,
+          toolOutput,
+          toolResponseMetadata,
+          toolId,
+          toolName,
+          theme,
+        } = body;
+
+        if (!serverId || !uri || !toolId || !toolName) {
+          return c.json({ success: false, error: "Missing required fields" }, 400);
+        }
+
+        // Store widget data directly in the shared widget data store
+        widgetDataStore.set(toolId, {
+          serverId,
+          uri,
+          toolInput,
+          toolOutput,
+          toolResponseMetadata: toolResponseMetadata ?? null,
+          toolId,
+          toolName,
+          theme: theme ?? "dark",
+          timestamp: Date.now(),
+        });
+
+        return c.json({ success: true }, 200, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Expose-Headers": "*",
+        });
+      } catch (error: any) {
+        console.error("Error storing widget data:", error);
+        return c.json({ success: false, error: error.message }, 500);
+      }
+    }
+
+    // Check for widget container request
+    // For ChatGPT compatibility, we need to return the widget HTML directly, not a JS loader
+    if (pathname.includes('/widget/') && !pathname.includes('/widget-content/') && !pathname.includes('/widget/store') && method === 'GET') {
+      try {
+        const match = pathname.match(/\/widget\/([^/]+)$/);
+        if (match) {
+          const toolId = match[1];
+
+          // Retrieve widget data from storage
+          const widgetData = widgetDataStore.get(toolId);
+          if (!widgetData) {
+            return c.html(
+              "<html><body>Error: Widget data not found or expired</body></html>",
+              404,
+              {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Expose-Headers": "*",
+              }
+            );
+          }
+
+          const {
+            serverId: widgetServerId,
+            uri,
+            toolInput,
+            toolOutput,
+            toolResponseMetadata,
+            toolName,
+            theme,
+          } = widgetData;
+
+          const mcpClientManager = c.mcpClientManager;
+          const availableServers = mcpClientManager
+            .listServers()
+            .filter((id: string) => Boolean(mcpClientManager.getClient(id)));
+
+          // Normalize serverId
+          let actualServerId = widgetServerId;
+          if (!availableServers.includes(widgetServerId)) {
+            const match = availableServers.find(
+              (name: string) => name.toLowerCase() === widgetServerId.toLowerCase(),
+            );
+            if (match) {
+              actualServerId = match;
+            } else {
+              return c.html(
+                `<html><body>
+                  <h3>Error: Server not connected</h3>
+                  <p>Requested server: ${widgetServerId}</p>
+                  <p>Available servers: ${availableServers.join(", ")}</p>
+                </body></html>`,
+                404,
+                {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Expose-Headers": "*",
+                }
+              );
+            }
+          }
+
+          // Read the widget HTML from MCP server
+          const content = await mcpClientManager.readResource(actualServerId, {
+            uri,
+          });
+
+          let htmlContent = extractHtmlContent(content);
+
+          if (!htmlContent) {
+            return c.html(
+              "<html><body>Error: No HTML content found</body></html>",
+              404,
+              {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Expose-Headers": "*",
+              }
+            );
+          }
+
+          // Rewrite localhost URLs to route through our proxy
+          const requestUrl = new URL(c.req.url);
+          const forwardedProto = c.req.header('x-forwarded-proto') || c.req.header('x-forwarded-protocol');
+
+          const {
+            htmlContent: processedHtml,
+            hasLocalhostUrls,
+            primaryLocalhostUrl,
+            baseUrl
+          } = processLocalhostUrls(
+            htmlContent,
+            requestUrl,
+            forwardedProto,
+            pathname,
+            '/widget'
+          );
+
+          htmlContent = processedHtml;
+
+          // OpenAI Apps SDK bridge script - complete implementation
+          const apiScript = getOpenAiBridgeScript(
+            toolInput,
+            toolOutput,
+            toolResponseMetadata,
+            theme,
+            toolId,
+            toolName
+          );
+
+          // Inject the bridge script and base tag into the HTML
+          // Add base tag if we're proxying localhost URLs for dynamic resource loading
+          const baseTag = hasLocalhostUrls && primaryLocalhostUrl
+            ? `<base href="${baseUrl}${pathname.replace(/\/widget\/[^/]+$/, `/widget-proxy/${encodeURIComponent(primaryLocalhostUrl)}`)}/">`
+            : '';
+
+          const modifiedHtml = injectBridgeScript(htmlContent, apiScript, baseTag);
+
+          return c.html(modifiedHtml, 200, {
+            "Content-Type": "text/html",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "*",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+          });
+        }
+      } catch (error: any) {
+        console.error("Error serving widget container:", error);
+        return c.html(`<html><body>Error: ${error.message}</body></html>`, 500, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Expose-Headers": "*",
+        });
+      }
+    }
+
+    // Check for widget proxy request (proxies widget static assets from localhost)
+    if (pathname.includes('/widget-proxy/') && method === 'GET') {
+      try {
+        const match = pathname.match(/\/widget-proxy\/([^/]+)(\/.*)?$/);
+        if (match) {
+          const encodedBaseUrl = match[1];
+          const resourcePath = match[2] || '';
+          const baseUrl = decodeURIComponent(encodedBaseUrl);
+
+          // Construct the full URL to the widget server
+          const targetUrl = `${baseUrl}${resourcePath}`;
+
+          // Fetch the resource from the widget server
+          const response = await fetch(targetUrl);
+
+          if (!response.ok) {
+            return c.body(`Proxy error: ${response.statusText}`, response.status, {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Expose-Headers": "*",
+            });
+          }
+
+          // Get the content type
+          const contentType = response.headers.get('content-type') || 'application/octet-stream';
+
+          // Stream the response back
+          const body = await response.arrayBuffer();
+
+          return c.body(body, response.status, {
+            "Content-Type": contentType,
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "*",
+            "Cache-Control": "public, max-age=31536000, immutable",
+          });
+        }
+      } catch (error: any) {
+        console.error("Error proxying widget resource:", error);
+        return c.text(`Proxy error: ${error.message}`, 500, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Expose-Headers": "*",
+        });
+      }
+    }
+
+    // Check for widget-content request
+    if (pathname.includes('/widget-content/') && method === 'GET') {
+      try {
+        const match = pathname.match(/\/widget-content\/([^/]+)$/);
+        if (match) {
+          const toolId = match[1];
+
+          // Retrieve widget data from storage
+          const widgetData = widgetDataStore.get(toolId);
+          if (!widgetData) {
+            return c.html(
+              "<html><body>Error: Widget data not found or expired</body></html>",
+              404,
+              {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Expose-Headers": "*",
+              }
+            );
+          }
+
+          const {
+            serverId: widgetServerId,
+            uri,
+            toolInput,
+            toolOutput,
+            toolResponseMetadata,
+            toolName,
+            theme,
+          } = widgetData;
+
+          const mcpClientManager = c.mcpClientManager;
+          const availableServers = mcpClientManager
+            .listServers()
+            .filter((id: string) => Boolean(mcpClientManager.getClient(id)));
+
+          let actualServerId = widgetServerId;
+          if (!availableServers.includes(widgetServerId)) {
+            const match = availableServers.find(
+              (name: string) => name.toLowerCase() === widgetServerId.toLowerCase(),
+            );
+            if (match) {
+              actualServerId = match;
+            } else {
+              return c.html(
+                `<html><body>
+                  <h3>Error: Server not connected</h3>
+                  <p>Requested server: ${widgetServerId}</p>
+                  <p>Available servers: ${availableServers.join(", ")}</p>
+                </body></html>`,
+                404,
+                {
+                  "Access-Control-Allow-Origin": "*",
+                  "Access-Control-Expose-Headers": "*",
+                }
+              );
+            }
+          }
+
+          // Read the widget HTML from MCP server
+          const content = await mcpClientManager.readResource(actualServerId, {
+            uri,
+          });
+
+          let htmlContent = extractHtmlContent(content);
+
+          if (!htmlContent) {
+            return c.html(
+              "<html><body>Error: No HTML content found</body></html>",
+              404,
+              {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Expose-Headers": "*",
+              }
+            );
+          }
+
+          // Rewrite localhost URLs to route through our proxy
+          // This fixes CORS issues when widget resources are on localhost
+          const requestUrl = new URL(c.req.url);
+          const forwardedProto = c.req.header('x-forwarded-proto') || c.req.header('x-forwarded-protocol');
+
+          const {
+            htmlContent: processedHtml
+          } = processLocalhostUrls(
+            htmlContent,
+            requestUrl,
+            forwardedProto,
+            pathname,
+            '/widget-content'
+          );
+
+          htmlContent = processedHtml;
+
+          // OpenAI Apps SDK bridge script
+          const apiScript = getOpenAiBridgeScript(
+            toolInput,
+            toolOutput,
+            toolResponseMetadata,
+            theme,
+            toolId,
+            toolName
+          );
+
+          // Inject the bridge script into the HTML
+          const modifiedHtml = injectBridgeScript(htmlContent, apiScript, '<base href="/">');
+
+          // Security headers
+          const trustedCdns = [
+            "https://persistent.oaistatic.com",
+            "https://*.oaistatic.com",
+            "https://unpkg.com",
+            "https://cdn.jsdelivr.net",
+            "https://cdnjs.cloudflare.com",
+            "https://cdn.skypack.dev",
+            "https://apps-sdk-widgets.vercel.app",
+            "https://dynamic.heygen.ai",
+            "https://static.heygen.ai",
+            "https://files2.heygen.ai",
+          ].join(" ");
+
+          const headers: Record<string, string> = {
+            "Content-Security-Policy": [
+              "default-src 'self'",
+              `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`,
+              "worker-src 'self' blob:",
+              "child-src 'self' blob:",
+              `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
+              "img-src 'self' data: https: blob:",
+              "media-src 'self' data: https: blob:",
+              `font-src 'self' data: ${trustedCdns}`,
+              "connect-src 'self' https: wss: ws:",
+              "frame-ancestors 'self'",
+            ].join("; "),
+            "X-Frame-Options": "SAMEORIGIN",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "*",
+          };
+
+          return c.html(modifiedHtml, 200, headers);
+        }
+      } catch (error: any) {
+        console.error("Error serving widget content:", error);
+        return c.html(
+          `<html><body>Error: ${error.message}</body></html>`,
+          500,
+          {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "*",
+          }
+        );
+      }
+    }
 
     // SSE endpoint for clients that probe/subscribe via GET; HEAD advertises event-stream
     if (method === "HEAD") {
@@ -87,7 +469,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           const close = () => {
             try {
               controller.close();
-            } catch {}
+            } catch { }
           };
 
           // Register session
@@ -101,10 +483,10 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           // Emit endpoint as JSON (spec-friendly) then as a plain string (compat).
           try {
             send("endpoint", JSON.stringify({ url, headers: {} }));
-          } catch {}
+          } catch { }
           try {
             send("endpoint", url);
-          } catch {}
+          } catch { }
 
           // Periodic keepalive comments so proxies don't buffer/close
           timer = setInterval(() => {
@@ -112,13 +494,13 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
               controller.enqueue(
                 encoder.encode(`: keepalive ${Date.now()}\n\n`),
               );
-            } catch {}
+            } catch { }
           }, 15000);
         },
         cancel() {
           try {
             clearInterval(timer);
-          } catch {}
+          } catch { }
           sessions.delete(`${serverId}:${sessionId}`);
           // If this session was the latest for this server, clear pointer
           if (latestSessionByServer.get(serverId) === sessionId) {
@@ -145,11 +527,27 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     let body: any = undefined;
     try {
       body = await c.req.json();
-    } catch {}
+    } catch { }
 
     const clientManager = c.mcpClientManager;
+
+    // Normalize serverId - try to find a case-insensitive match if exact match fails
+    let normalizedServerId = serverId;
+    const availableServers = clientManager
+      .listServers()
+      .filter((id: string) => Boolean(clientManager.getClient(id)));
+
+    if (!availableServers.includes(serverId)) {
+      const match = availableServers.find(
+        (name: string) => name.toLowerCase() === serverId.toLowerCase(),
+      );
+      if (match) {
+        normalizedServerId = match;
+      }
+    }
+
     const response = await handleJsonRpc(
-      serverId,
+      normalizedServerId,
       body as any,
       clientManager,
       mode,
@@ -196,10 +594,25 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     const method = body?.method as string | undefined;
     const params = body?.params ?? {};
 
+    // Normalize serverId - try to find a case-insensitive match if exact match fails
+    let normalizedServerId = serverId;
+    const availableServers = c.mcpClientManager
+      .listServers()
+      .filter((id: string) => Boolean(c.mcpClientManager.getClient(id)));
+
+    if (!availableServers.includes(serverId)) {
+      const match = availableServers.find(
+        (name: string) => name.toLowerCase() === serverId.toLowerCase(),
+      );
+      if (match) {
+        normalizedServerId = match;
+      }
+    }
+
     // Reuse the JSON-RPC handling via bridge
     try {
       const responseMessage = await handleJsonRpc(
-        serverId,
+        normalizedServerId,
         { id, method, params },
         c.mcpClientManager,
         mode,
@@ -208,7 +621,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       if (responseMessage) {
         try {
           sess.send("message", JSON.stringify(responseMessage));
-        } catch {}
+        } catch { }
       }
       // 202 Accepted per SSE transport semantics
       return c.body("Accepted", 202, {
@@ -224,6 +637,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
   });
 
   // Register catch-all handlers AFTER the messages route so it isn't shadowed
+  // Widget requests are handled inside handleHttp function
   router.all("/:serverId", handleHttp);
   router.all("/:serverId/*", handleHttp);
 

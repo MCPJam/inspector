@@ -12,6 +12,7 @@ import { fileURLToPath } from "url";
 import mcpRoutes from "./routes/mcp/index.js";
 import { MCPClientManager } from "@/sdk";
 import { rpcLogBus } from "./services/rpc-log-bus";
+import { CORS_ORIGINS } from "./config.js";
 import path from "path";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -90,11 +91,7 @@ export function createHonoApp() {
   app.use(
     "*",
     cors({
-      origin: [
-        "http://localhost:5173", // Vite dev server
-        "http://localhost:6274", // Hono server
-        "http://127.0.0.1:6274", // Hono server production
-      ],
+      origin: CORS_ORIGINS,
       credentials: true,
     }),
   );

@@ -84,14 +84,21 @@ export async function handleJsonRpc(
       }
       case "tools/list": {
         const list = await clientManager.listTools(serverId);
-        const tools = (list?.tools ?? []).map((tool: any) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: toJsonSchemaMaybe(tool.inputSchema),
-          outputSchema: toJsonSchemaMaybe(
-            tool.outputSchema ?? tool.resultSchema,
-          ),
-        }));
+        const tools = (list?.tools ?? []).map((tool: any) => {
+          const mappedTool: any = {
+            name: tool.name,
+            description: tool.description,
+            inputSchema: toJsonSchemaMaybe(tool.inputSchema),
+            outputSchema: toJsonSchemaMaybe(
+              tool.outputSchema ?? tool.resultSchema,
+            ),
+          };
+          // Preserve _meta field for OpenAI Apps SDK and other metadata
+          if (tool._meta) {
+            mappedTool._meta = tool._meta;
+          }
+          return mappedTool;
+        });
         return respond({ result: { tools } });
       }
       case "tools/call": {
