@@ -7,6 +7,7 @@ import {
   useRef,
 } from "react";
 import { useChat } from "@ai-sdk/react";
+import { ArrowDown } from "lucide-react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
@@ -47,24 +48,14 @@ import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
-
-const DEFAULT_SYSTEM_PROMPT =
-  "You are a helpful assistant with access to MCP tools.";
-
-const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
-  {
-    label: "Show me connected tools",
-    text: "List my connected MCP servers and their available tools.",
-  },
-  {
-    label: "Suggest an automation",
-    text: "Suggest an automation I can build with my current MCP setup.",
-  },
-  {
-    label: "Summarize recent activity",
-    text: "Summarize the most recent activity across my MCP servers.",
-  },
-];
+import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
+import { type MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  STARTER_PROMPTS,
+  formatErrorMessage,
+  buildMcpPromptMessages,
+} from "@/components/chat-v2/chat-helpers";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -72,39 +63,22 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
 }
 
-function formatErrorMessage(
-  error: unknown,
-): { message: string; details?: string } | null {
-  console.log(error);
-  if (!error) return null;
+function ScrollToBottomButton() {
+  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
 
-  let errorString: string;
-  if (typeof error === "string") {
-    errorString = error;
-  } else if (error instanceof Error) {
-    errorString = error.message;
-  } else {
-    try {
-      errorString = JSON.stringify(error);
-    } catch {
-      errorString = String(error);
-    }
-  }
+  if (isAtBottom) return null;
 
-  // Try to parse as JSON to extract message and details
-  try {
-    const parsed = JSON.parse(errorString);
-    if (parsed && typeof parsed === "object" && parsed.message) {
-      return {
-        message: parsed.message,
-        details: parsed.details,
-      };
-    }
-  } catch {
-    // Return as-is
-  }
-
-  return { message: errorString };
+  return (
+    <div className="pointer-events-none absolute inset-x-0 flex bottom-12 justify-center animate-in slide-in-from-bottom fade-in duration-200">
+      <button
+        type="button"
+        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-2 text-xs font-medium shadow-sm transition hover:bg-accent"
+        onClick={() => scrollToBottom({ animation: "smooth" })}
+      >
+        <ArrowDown className="h-4 w-4" />
+      </button>
+    </div>
+  );
 }
 
 export function ChatTabV2({
@@ -123,7 +97,6 @@ export function ChatTabV2({
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
   } = useAiProviderKeys();
-
   const [input, setInput] = useState("");
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
@@ -143,6 +116,12 @@ export function ChatTabV2({
   > | null>(null);
   const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
     useState(false);
+  const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
+    [],
+  );
+  const [widgetStateQueue, setWidgetStateQueue] = useState<
+    { toolCallId: string; state: any }[]
+  >([]);
   const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
     number | null
   >(null);
@@ -187,6 +166,20 @@ export function ChatTabV2({
     [selectedServerNames, connectedServerConfigs],
   );
   const noServersConnected = selectedConnectedServerNames.length === 0;
+
+  const selectedServerInstructions = useMemo(() => {
+    const instructions: Record<string, string> = {};
+
+    for (const serverName of selectedServerNames) {
+      const server = connectedServerConfigs[serverName];
+      const instruction = server?.initializationInfo?.instructions;
+      if (instruction) {
+        instructions[serverName] = instruction;
+      }
+    }
+
+    return instructions;
+  }, [connectedServerConfigs, selectedServerNames]);
 
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
@@ -257,10 +250,44 @@ export function ChatTabV2({
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
 
+  // Check if thread is empty (no user or assistant messages; system messages don't count)
+  const isThreadEmpty = !messages.some(
+    (msg) => msg.role === "user" || msg.role === "assistant",
+  );
+
+  // Keep server instruction system messages in sync with selected servers
+  useEffect(() => {
+    setMessages((prev) => {
+      const filtered = prev.filter(
+        (msg) =>
+          !(
+            msg.role === "system" &&
+            (msg as any)?.metadata?.source === "server-instruction"
+          ),
+      );
+
+      const instructionMessages = Object.entries(selectedServerInstructions)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([serverName, instruction]) => ({
+          id: `server-instruction-${serverName}`,
+          role: "system" as const,
+          parts: [
+            {
+              type: "text" as const,
+              text: `Server ${serverName} instructions: ${instruction}`,
+            },
+          ],
+          metadata: { source: "server-instruction", serverName },
+        }));
+
+      return [...instructionMessages, ...filtered];
+    });
+  }, [selectedServerInstructions, setMessages]);
+
   // Notify parent when messages change
   useEffect(() => {
-    onHasMessagesChange?.(messages.length > 0);
-  }, [messages.length, onHasMessagesChange]);
+    onHasMessagesChange?.(!isThreadEmpty);
+  }, [isThreadEmpty, onHasMessagesChange]);
 
   // Sum token usage from all assistant messages with metadata
   const tokenUsage = useMemo(() => {
@@ -300,55 +327,89 @@ export function ChatTabV2({
     setChatSessionId(generateId());
     setMessages([]);
     setInput("");
+    setWidgetStateQueue([]);
   }, [setMessages]);
 
-  const handleWidgetStateChange = useCallback(
-    (toolCallId: string, state: any) => {
-      setMessages((prevMessages) => {
+  const applyWidgetStateUpdates = useCallback(
+    (
+      prevMessages: typeof messages,
+      updates: { toolCallId: string; state: any }[],
+    ) => {
+      let nextMessages = prevMessages;
+
+      for (const { toolCallId, state } of updates) {
         const messageId = `widget-state-${toolCallId}`;
 
-        // If state is null, remove the widget state message
         if (state === null) {
-          return prevMessages.filter((msg) => msg.id !== messageId);
+          const filtered = nextMessages.filter((msg) => msg.id !== messageId);
+          nextMessages = filtered;
+          continue;
         }
 
         const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
-
-        const existingIndex = prevMessages.findIndex(
+        const existingIndex = nextMessages.findIndex(
           (msg) => msg.id === messageId,
         );
 
         if (existingIndex !== -1) {
-          const existingMessage = prevMessages[existingIndex];
+          const existingMessage = nextMessages[existingIndex];
           const existingText =
             existingMessage.parts?.[0]?.type === "text"
               ? (existingMessage.parts[0] as any).text
               : null;
+
           if (existingText === stateText) {
-            return prevMessages;
+            continue;
           }
 
-          const newMessages = [...prevMessages];
-          newMessages[existingIndex] = {
+          const updatedMessages = [...nextMessages];
+          updatedMessages[existingIndex] = {
             id: messageId,
             role: "assistant",
-            parts: [{ type: "text", text: stateText }],
+            parts: [{ type: "text" as const, text: stateText }],
           };
-          return newMessages;
+          nextMessages = updatedMessages;
+          continue;
         }
 
-        return [
-          ...prevMessages,
+        nextMessages = [
+          ...nextMessages,
           {
             id: messageId,
             role: "assistant",
-            parts: [{ type: "text", text: stateText }],
+            parts: [{ type: "text" as const, text: stateText }],
           },
         ];
-      });
+      }
+
+      return nextMessages;
     },
-    [setMessages],
+    [],
   );
+
+  const handleWidgetStateChange = useCallback(
+    (toolCallId: string, state: any) => {
+      // Avoid mutating the messages array while a response is streaming;
+      // queue updates and apply once the chat is back to "ready".
+      if (status === "ready") {
+        setMessages((prevMessages) =>
+          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }]),
+        );
+      } else {
+        setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
+      }
+    },
+    [status, setMessages, applyWidgetStateUpdates],
+  );
+
+  useEffect(() => {
+    if (status !== "ready" || widgetStateQueue.length === 0) return;
+
+    setMessages((prevMessages) =>
+      applyWidgetStateUpdates(prevMessages, widgetStateQueue),
+    );
+    setWidgetStateQueue([]);
+  }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
 
   useEffect(() => {
     resetChat();
@@ -532,7 +593,7 @@ export function ChatTabV2({
   const submitBlocked = disableForAuthentication || disableForServers;
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  let placeholder = "Ask something…";
+  let placeholder = 'Ask something… Use Slash "/" commands for MCP prompts';
   if (disableForServers) {
     placeholder = "Connect an MCP server to send your first message";
   }
@@ -545,7 +606,7 @@ export function ChatTabV2({
   const shouldShowConnectCallout =
     disableForServers && !shouldShowUpsell && !isAuthLoading;
   const showDisabledCallout =
-    messages.length === 0 && (shouldShowUpsell || shouldShowConnectCallout);
+    isThreadEmpty && (shouldShowUpsell || shouldShowConnectCallout);
 
   const errorMessage = formatErrorMessage(error);
 
@@ -561,7 +622,7 @@ export function ChatTabV2({
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (
-      input.trim() &&
+      (input.trim() || mcpPromptResults.length > 0) &&
       status === "ready" &&
       !disableForAuthentication &&
       !disableForServers
@@ -574,8 +635,13 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
+      const promptMessages = buildMcpPromptMessages(mcpPromptResults);
+      if (promptMessages.length > 0) {
+        setMessages((prev) => [...prev, ...promptMessages]);
+      }
       sendMessage({ text: input });
       setInput("");
+      setMcpPromptResults([]);
     }
   };
 
@@ -623,10 +689,12 @@ export function ChatTabV2({
     connectedServerConfigs,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
+    mcpPromptResults,
+    onChangeMcpPromptResults: setMcpPromptResults,
   };
 
   const showStarterPrompts =
-    !showDisabledCallout && messages.length === 0 && !isAuthLoading;
+    !showDisabledCallout && isThreadEmpty && !isAuthLoading;
 
   return (
     <div className="flex flex-1 h-full min-h-0 flex-col overflow-hidden">
@@ -635,8 +703,8 @@ export function ChatTabV2({
         className="flex-1 min-h-0 h-full"
       >
         <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
-          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
-            {messages.length === 0 ? (
+          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden [transform:translateZ(0)]">
+            {isThreadEmpty ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
                   {isAuthLoading ? (
@@ -687,9 +755,13 @@ export function ChatTabV2({
                 </div>
               </div>
             ) : (
-              <>
-                <div className="flex flex-1 flex-col min-h-0 animate-in fade-in duration-300">
-                  <div className="flex-1 overflow-y-auto">
+              <StickToBottom
+                className="relative flex flex-1 flex-col min-h-0 animate-in fade-in duration-300"
+                resize="smooth"
+                initial="smooth"
+              >
+                <div className="relative flex-1 min-h-0">
+                  <StickToBottom.Content className="flex flex-col min-h-0">
                     <Thread
                       messages={messages}
                       sendFollowUpMessage={(text: string) =>
@@ -701,16 +773,17 @@ export function ChatTabV2({
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}
                     />
-                  </div>
-                  {errorMessage && (
-                    <div className="px-4 pb-4 pt-4">
-                      <ErrorBox
-                        message={errorMessage.message}
-                        errorDetails={errorMessage.details}
-                        onResetChat={resetChat}
-                      />
-                    </div>
-                  )}
+                    {errorMessage && (
+                      <div className="px-4 pb-4 pt-4">
+                        <ErrorBox
+                          message={errorMessage.message}
+                          errorDetails={errorMessage.details}
+                          onResetChat={resetChat}
+                        />
+                      </div>
+                    )}
+                  </StickToBottom.Content>
+                  <ScrollToBottomButton />
                 </div>
 
                 <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0 animate-in slide-in-from-bottom duration-500">
@@ -718,7 +791,7 @@ export function ChatTabV2({
                     <ChatInput {...sharedChatInputProps} hasMessages />
                   </div>
                 </div>
-              </>
+              </StickToBottom>
             )}
 
             <ElicitationDialog
