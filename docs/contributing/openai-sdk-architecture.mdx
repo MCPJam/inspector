@@ -378,6 +378,10 @@ const openaiAPI = {
     device: { type: 'desktop' },
     capabilities: { hover: true, touch: false }
   },
+  view: {
+    mode: ${JSON.stringify(viewMode)},  // 'inline' or 'modal'
+    params: ${serializeForInlineScript(viewParams)}
+  },
   widgetState: null,
 
   // Persist widget state (localStorage + propagate to model)
