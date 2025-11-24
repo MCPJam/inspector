@@ -1,5 +1,11 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { X } from "lucide-react";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
@@ -43,6 +49,7 @@ export function OpenAIAppRenderer({
   onExitPip,
 }: OpenAIAppRendererProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const modalIframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
   const [maxHeight, setMaxHeight] = useState<number>(600);
@@ -52,6 +59,9 @@ export function OpenAIAppRenderer({
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalParams, setModalParams] = useState<Record<string, any>>({});
+  const [modalTitle, setModalTitle] = useState<string>("");
   const previousWidgetStateRef = useRef<string | null>(null);
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
@@ -220,11 +230,13 @@ export function OpenAIAppRenderer({
   // Handle messages from iframe
   const handleMessage = useCallback(
     async (event: MessageEvent) => {
-      if (
-        !iframeRef.current ||
-        event.source !== iframeRef.current.contentWindow
-      )
-        return;
+      const inlineWindow = iframeRef.current?.contentWindow;
+      const modalWindow = modalIframeRef.current?.contentWindow;
+      const isFromInline =
+        inlineWindow != null && event.source === inlineWindow;
+      const isFromModal = modalWindow != null && event.source === modalWindow;
+
+      if (!isFromInline && !isFromModal) return;
 
       console.log("[OpenAI App] Received message from iframe:", event.data);
 
@@ -254,6 +266,23 @@ export function OpenAIAppRenderer({
               onWidgetStateChange(resolvedToolCallId, newState);
             }
           }
+
+          const targetWindow = isFromInline
+            ? modalWindow
+            : isFromModal
+              ? inlineWindow
+              : null;
+
+          if (targetWindow) {
+            targetWindow.postMessage(
+              {
+                type: "openai:pushWidgetState",
+                toolId: resolvedToolCallId,
+                state: event.data.state,
+              },
+              "*",
+            );
+          }
           break;
         }
 
@@ -262,7 +291,8 @@ export function OpenAIAppRenderer({
             console.warn(
               "[OpenAI App] callTool received but handler not available",
             );
-            iframeRef.current?.contentWindow?.postMessage(
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage(
               {
                 type: "openai:callTool:response",
                 requestId: event.data.requestId,
@@ -278,7 +308,8 @@ export function OpenAIAppRenderer({
               event.data.toolName,
               event.data.params || {},
             );
-            iframeRef.current?.contentWindow?.postMessage(
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage(
               {
                 type: "openai:callTool:response",
                 requestId: event.data.requestId,
@@ -287,7 +318,8 @@ export function OpenAIAppRenderer({
               "*",
             );
           } catch (err) {
-            iframeRef.current?.contentWindow?.postMessage(
+            const targetWindow = event.source as Window | null;
+            targetWindow?.postMessage(
               {
                 type: "openai:callTool:response",
                 requestId: event.data.requestId,
@@ -345,6 +377,13 @@ export function OpenAIAppRenderer({
           }
           break;
         }
+
+        case "openai:requestModal": {
+          setModalTitle(event.data.title || "Modal");
+          setModalParams(event.data.params || {});
+          setModalOpen(true);
+          break;
+        }
       }
     },
     [
@@ -353,6 +392,7 @@ export function OpenAIAppRenderer({
       onWidgetStateChange,
       resolvedToolCallId,
       pipWidgetId,
+      modalIframeRef,
       onRequestPip,
       onExitPip,
     ],
@@ -523,6 +563,25 @@ export function OpenAIAppRenderer({
           Template: <code>{outputTemplate}</code>
         </div>
       )}
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="sm:max-w-6xl h-[70vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{modalTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 w-full h-full min-h-0">
+            <iframe
+              ref={modalIframeRef}
+              src={`${widgetUrl}?view_mode=modal&view_params=${encodeURIComponent(
+                JSON.stringify(modalParams),
+              )}`}
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+              title={`OpenAI App Modal: ${modalTitle}`}
+              className="w-full h-full border-0 rounded-md bg-background"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
