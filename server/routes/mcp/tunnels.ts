@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { tunnelManager } from '../../services/tunnel-manager';
 import { LOCAL_SERVER_ADDR } from '../../config';
+import { cleanupOrphanedTunnels } from '../../services/tunnel-cleanup';
 import '../../types/hono';
 
 const tunnels = new Hono();
@@ -210,6 +211,24 @@ tunnels.delete('/', async (c) => {
     return c.json(
       {
         error: error.message || 'Failed to close tunnel',
+      },
+      500
+    );
+  }
+});
+
+// Cleanup all orphaned tunnels for the current user
+tunnels.post('/cleanup-orphaned', async (c) => {
+  const authHeader = c.req.header('authorization');
+
+  try {
+    await cleanupOrphanedTunnels(authHeader);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error('Error cleaning up orphaned tunnels:', error);
+    return c.json(
+      {
+        error: error.message || 'Failed to cleanup orphaned tunnels',
       },
       500
     );
