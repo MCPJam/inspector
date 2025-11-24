@@ -97,7 +97,6 @@ export function ChatTabV2({
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
   } = useAiProviderKeys();
-
   const [input, setInput] = useState("");
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
   const [isOllamaRunning, setIsOllamaRunning] = useState(false);
@@ -168,6 +167,20 @@ export function ChatTabV2({
   );
   const noServersConnected = selectedConnectedServerNames.length === 0;
 
+  const selectedServerInstructions = useMemo(() => {
+    const instructions: Record<string, string> = {};
+
+    for (const serverName of selectedServerNames) {
+      const server = connectedServerConfigs[serverName];
+      const instruction = server?.initializationInfo?.instructions;
+      if (instruction) {
+        instructions[serverName] = instruction;
+      }
+    }
+
+    return instructions;
+  }, [connectedServerConfigs, selectedServerNames]);
+
   const transport = useMemo(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     const isGpt5 = isGPT5Model(selectedModel.id);
@@ -236,6 +249,36 @@ export function ChatTabV2({
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  // Keep server instruction system messages in sync with selected servers
+  useEffect(() => {
+    setMessages((prev) => {
+      const filtered = prev.filter(
+        (msg) =>
+          !(
+            msg.role === "system" &&
+            (msg as any)?.metadata?.source === "server-instruction"
+          ),
+      );
+
+      const instructionMessages = Object.entries(selectedServerInstructions)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([serverName, instruction]) => ({
+          id: `server-instruction-${serverName}`,
+          role: "system" as const,
+          parts: [
+            {
+              type: "text" as const,
+              text: `Server ${serverName} instructions: ${instruction}`,
+            },
+          ],
+          metadata: { source: "server-instruction", serverName },
+        }));
+
+      return [...instructionMessages, ...filtered];
+    });
+  }, [selectedServerInstructions, setMessages]);
+
   // Notify parent when messages change
   useEffect(() => {
     onHasMessagesChange?.(messages.length > 0);
@@ -318,7 +361,7 @@ export function ChatTabV2({
           updatedMessages[existingIndex] = {
             id: messageId,
             role: "assistant",
-            parts: [{ type: "text", text: stateText }],
+            parts: [{ type: "text" as const, text: stateText }],
           };
           nextMessages = updatedMessages;
           continue;
@@ -329,7 +372,7 @@ export function ChatTabV2({
           {
             id: messageId,
             role: "assistant",
-            parts: [{ type: "text", text: stateText }],
+            parts: [{ type: "text" as const, text: stateText }],
           },
         ];
       }
