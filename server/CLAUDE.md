@@ -94,7 +94,6 @@ The backend is built with modern technologies:
       /sse          # SSE implementation
       /http         # HTTP streaming
   /utils            # Utility functions
-    /mcp-utils.ts   # MCP helpers
     /validation.ts  # Schema validation
     /transform.ts   # Data transformers
   /types            # TypeScript types

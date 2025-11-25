@@ -18,7 +18,6 @@ export default defineConfig({
     // External packages that should not be bundled
     "@hono/node-server",
     "hono",
-    "@mastra/mcp",
     "@modelcontextprotocol/sdk",
     "ai",
     "@ai-sdk/anthropic",

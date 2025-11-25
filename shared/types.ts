@@ -1,6 +1,5 @@
 // Shared types between client and server
 
-import { LogHandler } from "@mastra/mcp";
 import { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
@@ -541,7 +540,6 @@ export const isModelSupported = (id: string): boolean => {
 // MCP Server Definition Types
 export type BaseServerOptions = {
   name?: string;
-  logger?: LogHandler;
   timeout?: number;
   capabilities?: ClientCapabilities;
   enableServerLogs?: boolean;
