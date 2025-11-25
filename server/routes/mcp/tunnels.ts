@@ -7,9 +7,7 @@ import "../../types/hono";
 const tunnels = new Hono();
 
 // Fetch ngrok token from Convex backend
-async function fetchNgrokToken(
-  authHeader?: string,
-): Promise<{
+async function fetchNgrokToken(authHeader?: string): Promise<{
   token: string;
   credentialId: string;
   domain: string;
