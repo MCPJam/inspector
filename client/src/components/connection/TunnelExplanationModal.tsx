@@ -9,7 +9,7 @@ import {
 } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { Cable, Lock, Shield, X } from "lucide-react";
+import { AlertTriangle, Cable, Copy, FlaskConical } from "lucide-react";
 
 export const TUNNEL_EXPLANATION_DISMISSED_KEY =
   "mcpjam_tunnel_explanation_dismissed";
@@ -41,8 +41,7 @@ export function TunnelExplanationModal({
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Cable className="h-5 w-5" />
-            Create Secure Tunnel
+            Create Tunnel
           </DialogTitle>
           <DialogDescription className="pt-4">
             Tunneling allows you to expose your local MCP servers over HTTPS for
@@ -53,45 +52,49 @@ export function TunnelExplanationModal({
         <div className="space-y-4 py-4">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 rounded-full bg-primary/10 p-2">
-              <Shield className="h-4 w-4 text-primary" />
+              <FlaskConical className="h-4 w-4 text-primary" />
             </div>
             <div className="flex-1">
-              <h4 className="font-medium text-sm mb-1">HTTPS Access</h4>
+              <h4 className="font-medium text-sm mb-1">Test with ChatGPT</h4>
               <p className="text-sm text-muted-foreground">
-                Your servers will be available via a secure HTTPS URL that you
-                can share with clients and applications.
+                Get an HTTPS URL to test your MCP server with ChatGPT Developer
+                Mode or other remote clients.
               </p>
             </div>
           </div>
 
           <div className="flex items-start gap-3">
             <div className="mt-0.5 rounded-full bg-primary/10 p-2">
-              <Lock className="h-4 w-4 text-primary" />
+              <Copy className="h-4 w-4 text-primary" />
             </div>
             <div className="flex-1">
-              <h4 className="font-medium text-sm mb-1">
-                No Authentication Required
-              </h4>
+              <h4 className="font-medium text-sm mb-1">No Setup Required</h4>
               <p className="text-sm text-muted-foreground">
-                Connect to a server, copy the tunnel url and add it to your
-                favorite client with no authentication required.
+                Copy the tunnel URL and paste it directly into ChatGPT settings.
+                No authentication configuration needed.
               </p>
             </div>
           </div>
 
           <div className="flex items-start gap-3">
             <div className="mt-0.5 rounded-full bg-primary/10 p-2">
-              <X className="h-4 w-4 text-primary" />
+              <Cable className="h-4 w-4 text-primary" />
             </div>
             <div className="flex-1">
-              <h4 className="font-medium text-sm mb-1">Close Anytime</h4>
+              <h4 className="font-medium text-sm mb-1">Close When Done</h4>
               <p className="text-sm text-muted-foreground">
-                You have full control - close the tunnel at any time to stop
-                remote access to your servers.
+                Close the tunnel when you're finished testing to disable remote
+                access.
               </p>
             </div>
           </div>
         </div>
+
+        <p className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Anyone with the tunnel URL can access your MCP servers. Close the
+          tunnel when done.
+        </p>
 
         <DialogFooter className="sm:justify-between">
           <div className="flex items-center space-x-2">
