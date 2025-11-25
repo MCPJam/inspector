@@ -1,79 +1,81 @@
-import type { KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { PassCriteriaSelector } from "../pass-criteria-selector";
+import { cn } from "@/lib/utils";
 import type { ModelDefinition } from "@/shared/types";
 import type { TestTemplate } from "@/components/evals/eval-runner/types";
 
 interface ReviewStepProps {
   suiteName: string;
   suiteDescription: string;
-  isEditingSuiteName: boolean;
-  editedSuiteName: string;
   minimumPassRate: number;
   selectedServers: string[];
   selectedModels: ModelDefinition[];
   validTestTemplates: TestTemplate[];
-  onSuiteNameClick: () => void;
-  onSuiteNameBlur: () => void;
-  onSuiteNameKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
-  onEditedSuiteNameChange: (value: string) => void;
+  onSuiteNameChange: (value: string) => void;
   onSuiteDescriptionChange: (value: string) => void;
   onMinimumPassRateChange: (value: number) => void;
   onEditStep: (stepIndex: number) => void;
+  showNameError?: boolean;
 }
 
 export function ReviewStep({
   suiteName,
   suiteDescription,
-  isEditingSuiteName,
-  editedSuiteName,
   minimumPassRate,
   selectedServers,
   selectedModels,
   validTestTemplates,
-  onSuiteNameClick,
-  onSuiteNameBlur,
-  onSuiteNameKeyDown,
-  onEditedSuiteNameChange,
+  onSuiteNameChange,
   onSuiteDescriptionChange,
   onMinimumPassRateChange,
   onEditStep,
+  showNameError = false,
 }: ReviewStepProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-4">
-        {isEditingSuiteName ? (
-          <input
+        <div className="space-y-2">
+          <Label htmlFor="suite-name" className="text-sm font-medium">
+            Test Suite Name <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id="suite-name"
             type="text"
-            value={editedSuiteName}
-            onChange={(event) => onEditedSuiteNameChange(event.target.value)}
-            onBlur={onSuiteNameBlur}
-            onKeyDown={onSuiteNameKeyDown}
-            autoFocus
-            className="w-full px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring bg-background"
-            placeholder="New Test Suite"
-          />
-        ) : (
-          <Button
-            variant="ghost"
-            onClick={onSuiteNameClick}
-            className="w-full justify-start px-3 py-2 h-auto text-lg font-semibold hover:bg-accent border border-transparent hover:border-input rounded-md"
-          >
-            {suiteName || (
-              <span className="text-muted-foreground">New Test Suite</span>
+            value={suiteName}
+            onChange={(event) => onSuiteNameChange(event.target.value)}
+            placeholder="e.g., Weather API Integration Tests"
+            className={cn(
+              "text-lg font-semibold",
+              showNameError &&
+                !suiteName.trim() &&
+                "border-destructive focus-visible:ring-destructive",
             )}
-          </Button>
-        )}
-        <Textarea
-          value={suiteDescription}
-          onChange={(event) => onSuiteDescriptionChange(event.target.value)}
-          rows={3}
-          placeholder="What does this suite cover?"
-          className="resize-none"
-        />
+            autoFocus
+          />
+          {showNameError && !suiteName.trim() && (
+            <p className="text-sm text-red-600 font-medium">
+              Please provide a name for this test suite
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="suite-description" className="text-sm font-medium">
+            Description (optional)
+          </Label>
+          <Textarea
+            id="suite-description"
+            value={suiteDescription}
+            onChange={(event) => onSuiteDescriptionChange(event.target.value)}
+            rows={3}
+            placeholder="What does this suite cover?"
+            className="resize-none"
+          />
+        </div>
       </div>
 
       <PassCriteriaSelector
