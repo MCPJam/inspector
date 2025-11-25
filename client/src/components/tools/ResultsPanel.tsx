@@ -95,12 +95,8 @@ export function ResultsPanel({
   toolMeta,
 }: ResultsPanelProps) {
   const rawResult = result as unknown as Record<string, unknown> | null;
-
-  // Check for OpenAI component using tool metadata from definition OR response _meta
-  const responseMetadata = rawResult?._meta as Record<string, any> | undefined;
-  const openaiOutputTemplate =
-    responseMetadata?.["openai/outputTemplate"] ||
-    toolMeta?.["openai/outputTemplate"];
+  // Check for OpenAI component using tool metadata from definition
+  const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
   const hasOpenAIComponent =
     openaiOutputTemplate && typeof openaiOutputTemplate === "string";
   const uiResource = resolveUIResource(result);
@@ -232,12 +228,6 @@ export function ResultsPanel({
         ) : rawResult ? (
           (() => {
             if (!showStructured && hasOpenAIComponent && openaiOutputTemplate) {
-              // Merge tool definition metadata with response metadata
-              const mergedMetadata = {
-                ...toolMeta,
-                ...responseMetadata,
-              };
-
               return (
                 <OpenAIAppRenderer
                   serverId={serverId || "unknown-server"}
@@ -246,7 +236,7 @@ export function ResultsPanel({
                   toolState="output-available"
                   toolInput={toolParameters || null}
                   toolOutput={rawResult}
-                  toolMetadata={mergedMetadata}
+                  toolMetadata={toolMeta}
                   onSendFollowUp={onSendFollowup}
                   onCallTool={async (invocationToolName, params) => {
                     const toolResponse = await onExecuteFromUI(
