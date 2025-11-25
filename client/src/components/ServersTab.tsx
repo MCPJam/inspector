@@ -227,276 +227,196 @@ export function ServersTab({
     }
   };
 
-  return (
-    <div className="h-full flex flex-col">
-      {connectedCount > 0 ? (
-        <ResizablePanelGroup direction="horizontal" className="flex-1">
-          {/* Main Server List Panel */}
-          <ResizablePanel defaultSize={65} minSize={70}>
-            <div className="space-y-6 p-8 h-full overflow-auto">
-              {/* Header Section */}
-              <div className="flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-6">
-                    <h2 className="text-2xl font-bold tracking-tight">
-                      MCP Servers
-                    </h2>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {tunnelUrl ? (
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={handleCloseTunnel}
-                        disabled={isClosingTunnel}
-                        className="cursor-pointer relative"
-                      >
-                        {isClosingTunnel ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Close Tunnel
-                          </>
-                        ) : (
-                          <>
-                            <span className="relative flex h-2 w-2 mr-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-50"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
-                            </span>
-                            Close Tunnel
-                          </>
-                        )}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleCreateTunnel}
-                        disabled={isCreatingTunnel}
-                        className="cursor-pointer"
-                      >
-                        {isCreatingTunnel ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <Cable className="h-4 w-4 mr-2" />
-                        )}
-                        Create Tunnel
-                      </Button>
-                    )}
-                    <HoverCard
-                      open={isActionMenuOpen}
-                      onOpenChange={setIsActionMenuOpen}
-                      openDelay={150}
-                      closeDelay={100}
-                    >
-                      <HoverCardTrigger asChild>
-                        <Button
-                          onClick={handleAddServerClick}
-                          className="cursor-pointer"
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          Add Server
-                        </Button>
-                      </HoverCardTrigger>
-                      <HoverCardContent
-                        align="end"
-                        sideOffset={8}
-                        className="w-56 p-3"
-                      >
-                        <div className="flex flex-col gap-2">
-                          <Button
-                            variant="ghost"
-                            className="justify-start"
-                            onClick={handleAddServerClick}
-                          >
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add manually
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            className="justify-start"
-                            onClick={handleImportJsonClick}
-                          >
-                            <FileText className="h-4 w-4 mr-2" />
-                            Import JSON
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            className="justify-start"
-                            onClick={handleAddFromRegistryClick}
-                          >
-                            <Layers className="h-4 w-4 mr-2" />
-                            Add from Registry
-                          </Button>
-                        </div>
-                      </HoverCardContent>
-                    </HoverCard>
-                  </div>
-                </div>
-              </div>
+  const renderTunnelButton = () => {
+    if (tunnelUrl) {
+      return (
+        <Button
+          variant="destructive"
+          size="sm"
+          onClick={handleCloseTunnel}
+          disabled={isClosingTunnel}
+          className="cursor-pointer relative"
+        >
+          {isClosingTunnel ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Close Tunnel
+            </>
+          ) : (
+            <>
+              <span className="relative flex h-2 w-2 mr-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-50"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+              </span>
+              Close Tunnel
+            </>
+          )}
+        </Button>
+      );
+    }
 
-              {/* Server Cards Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
-                {Object.entries(connectedServerConfigs).map(
-                  ([name, server]) => (
-                    <ServerConnectionCard
-                      key={name}
-                      server={server}
-                      onDisconnect={onDisconnect}
-                      onReconnect={onReconnect}
-                      onEdit={handleEditServer}
-                      onRemove={onRemove}
-                      sharedTunnelUrl={tunnelUrl}
-                    />
-                  ),
-                )}
-              </div>
-            </div>
-          </ResizablePanel>
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleCreateTunnel}
+        disabled={isCreatingTunnel}
+        className="cursor-pointer"
+      >
+        {isCreatingTunnel ? (
+          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+        ) : (
+          <Cable className="h-4 w-4 mr-2" />
+        )}
+        Create Tunnel
+      </Button>
+    );
+  };
 
-          {/* JSON-RPC Traces Panel - Always visible on the right */}
-          <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={35} minSize={20} maxSize={30}>
-            <ServerConnectionDetails serverCount={connectedCount} />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      ) : (
+  const renderServerActionsMenu = () => (
+    <HoverCard
+      open={isActionMenuOpen}
+      onOpenChange={setIsActionMenuOpen}
+      openDelay={150}
+      closeDelay={100}
+    >
+      <HoverCardTrigger asChild>
+        <Button onClick={handleAddServerClick} className="cursor-pointer">
+          <Plus className="h-4 w-4 mr-2" />
+          Add Server
+        </Button>
+      </HoverCardTrigger>
+      <HoverCardContent align="end" sideOffset={8} className="w-56 p-3">
+        <div className="flex flex-col gap-2">
+          <Button
+            variant="ghost"
+            className="justify-start"
+            onClick={handleAddServerClick}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add manually
+          </Button>
+          <Button
+            variant="ghost"
+            className="justify-start"
+            onClick={handleImportJsonClick}
+          >
+            <FileText className="h-4 w-4 mr-2" />
+            Import JSON
+          </Button>
+          <Button
+            variant="ghost"
+            className="justify-start"
+            onClick={handleAddFromRegistryClick}
+          >
+            <Layers className="h-4 w-4 mr-2" />
+            Add from Registry
+          </Button>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
+
+  const renderConnectedContent = () => (
+    <ResizablePanelGroup direction="horizontal" className="flex-1">
+      {/* Main Server List Panel */}
+      <ResizablePanel defaultSize={65} minSize={70}>
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-6">
-              <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
-              {tunnelUrl && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground">Tunnel:</span>
-                  <button
-                    onClick={copyTunnelUrl}
-                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground bg-muted/20 px-1.5 py-0.5 rounded border border-border/20 transition-colors cursor-pointer"
-                  >
-                    <Link className="h-2.5 w-2.5 flex-shrink-0" />
-                    {isTunnelUrlCopied ? (
-                      <>
-                        <Check className="h-2.5 w-2.5 text-green-500" />
-                        <span className="text-green-500">Copied!</span>
-                      </>
-                    ) : (
-                      <Copy className="h-2.5 w-2.5" />
-                    )}
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {tunnelUrl ? (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleCloseTunnel}
-                  disabled={isClosingTunnel}
-                  className="cursor-pointer relative"
-                >
-                  {isClosingTunnel ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Close Tunnel
-                    </>
-                  ) : (
-                    <>
-                      <span className="relative flex h-2 w-2 mr-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-50"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
-                      </span>
-                      Close Tunnel
-                    </>
-                  )}
-                </Button>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCreateTunnel}
-                  disabled={isCreatingTunnel}
-                  className="cursor-pointer"
-                >
-                  {isCreatingTunnel ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Cable className="h-4 w-4 mr-2" />
-                  )}
-                  Create Tunnel
-                </Button>
-              )}
-              <HoverCard
-                open={isActionMenuOpen}
-                onOpenChange={setIsActionMenuOpen}
-                openDelay={150}
-                closeDelay={100}
-              >
-                <HoverCardTrigger asChild>
-                  <Button
-                    onClick={handleAddServerClick}
-                    className="cursor-pointer"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Server
-                  </Button>
-                </HoverCardTrigger>
-                <HoverCardContent
-                  align="end"
-                  sideOffset={8}
-                  className="w-56 p-3"
-                >
-                  <div className="flex flex-col gap-2">
-                    <Button
-                      variant="ghost"
-                      className="justify-start"
-                      onClick={handleAddServerClick}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add manually
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="justify-start"
-                      onClick={handleImportJsonClick}
-                    >
-                      <FileText className="h-4 w-4 mr-2" />
-                      Import JSON
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="justify-start"
-                      onClick={handleAddFromRegistryClick}
-                    >
-                      <Layers className="h-4 w-4 mr-2" />
-                      Add from Registry
-                    </Button>
-                  </div>
-                </HoverCardContent>
-              </HoverCard>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <h2 className="text-2xl font-bold tracking-tight">
+                  MCP Servers
+                </h2>
+              </div>
+              <div className="flex items-center gap-2">
+                {renderTunnelButton()}
+                {renderServerActionsMenu()}
+              </div>
             </div>
           </div>
 
-          {/* Empty State */}
-          <Card className="p-12 text-center">
-            <div className="mx-auto max-w-sm">
-              <MCPIcon className="mx-auto h-12 w-12 text-muted-foreground" />
-              <h3 className="mt-4 text-lg font-semibold">
-                No servers connected
-              </h3>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Get started by connecting to your first MCP server
-              </p>
-              <Button
-                onClick={() => setIsAddingServer(true)}
-                className="mt-4 cursor-pointer"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Your First Server
-              </Button>
-            </div>
-          </Card>
+          {/* Server Cards Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
+            {Object.entries(connectedServerConfigs).map(([name, server]) => (
+              <ServerConnectionCard
+                key={name}
+                server={server}
+                onDisconnect={onDisconnect}
+                onReconnect={onReconnect}
+                onEdit={handleEditServer}
+                onRemove={onRemove}
+                sharedTunnelUrl={tunnelUrl}
+              />
+            ))}
+          </div>
         </div>
-      )}
+      </ResizablePanel>
+
+      {/* JSON-RPC Traces Panel - Always visible on the right */}
+      <ResizableHandle withHandle />
+      <ResizablePanel defaultSize={35} minSize={20} maxSize={30}>
+        <ServerConnectionDetails serverCount={connectedCount} />
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  );
+
+  const renderEmptyContent = () => (
+    <div className="space-y-6 p-8 h-full overflow-auto">
+      {/* Header Section */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-6">
+          <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+          {tunnelUrl && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Tunnel:</span>
+              <button
+                onClick={copyTunnelUrl}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground bg-muted/20 px-1.5 py-0.5 rounded border border-border/20 transition-colors cursor-pointer"
+              >
+                <Link className="h-2.5 w-2.5 flex-shrink-0" />
+                {isTunnelUrlCopied ? (
+                  <>
+                    <Check className="h-2.5 w-2.5 text-green-500" />
+                    <span className="text-green-500">Copied!</span>
+                  </>
+                ) : (
+                  <Copy className="h-2.5 w-2.5" />
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {renderTunnelButton()}
+          {renderServerActionsMenu()}
+        </div>
+      </div>
+
+      {/* Empty State */}
+      <Card className="p-12 text-center">
+        <div className="mx-auto max-w-sm">
+          <MCPIcon className="mx-auto h-12 w-12 text-muted-foreground" />
+          <h3 className="mt-4 text-lg font-semibold">No servers connected</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Get started by connecting to your first MCP server
+          </p>
+          <Button
+            onClick={() => setIsAddingServer(true)}
+            className="mt-4 cursor-pointer"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Your First Server
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+
+  return (
+    <div className="h-full flex flex-col">
+      {connectedCount > 0 ? renderConnectedContent() : renderEmptyContent()}
 
       {/* Add Server Modal */}
       <AddServerModal
