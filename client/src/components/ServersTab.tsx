@@ -156,14 +156,7 @@ export function ServersTab({
       // (recordTunnel marks the old tunnel as closed)
       await cleanupOrphanedTunnels(accessToken);
 
-      // Copy URL to clipboard
-      await navigator.clipboard.writeText(result.url);
-
-      toast.success(
-        result.existed
-          ? "Tunnel URL copied to clipboard!"
-          : "Tunnel created! URL copied to clipboard."
-      );
+      toast.success("Tunnel is ready to use!");
 
       posthog.capture("tunnel_created", {
         location: "servers_tab",
