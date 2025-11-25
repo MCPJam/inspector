@@ -2,7 +2,7 @@
  * API client for MCP server tunnel management
  */
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:6274';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
 
 export interface TunnelResponse {
   url: string;
@@ -22,26 +22,25 @@ export interface TunnelError {
  * Create a shared tunnel for all MCP servers
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
-export async function createTunnel(accessToken?: string): Promise<TunnelResponse> {
+export async function createTunnel(
+  accessToken?: string,
+): Promise<TunnelResponse> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
   if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
+    headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
-  const response = await fetch(
-    `${API_BASE}/api/mcp/tunnels/create`,
-    {
-      method: 'POST',
-      headers,
-    }
-  );
+  const response = await fetch(`${API_BASE}/api/mcp/tunnels/create`, {
+    method: "POST",
+    headers,
+  });
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.error || 'Failed to create tunnel');
+    throw new Error(error.error || "Failed to create tunnel");
   }
 
   return response.json();
@@ -51,22 +50,21 @@ export async function createTunnel(accessToken?: string): Promise<TunnelResponse
  * Get existing shared tunnel URL
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
-export async function getTunnel(accessToken?: string): Promise<TunnelResponse | null> {
+export async function getTunnel(
+  accessToken?: string,
+): Promise<TunnelResponse | null> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
   if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
+    headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
-  const response = await fetch(
-    `${API_BASE}/api/mcp/tunnels`,
-    {
-      method: 'GET',
-      headers,
-    }
-  );
+  const response = await fetch(`${API_BASE}/api/mcp/tunnels`, {
+    method: "GET",
+    headers,
+  });
 
   if (response.status === 404) {
     return null;
@@ -74,7 +72,7 @@ export async function getTunnel(accessToken?: string): Promise<TunnelResponse | 
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.error || 'Failed to get tunnel');
+    throw new Error(error.error || "Failed to get tunnel");
   }
 
   return response.json();
@@ -85,21 +83,24 @@ export async function getTunnel(accessToken?: string): Promise<TunnelResponse | 
  * @param serverId - The MCP server ID
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
-export async function getServerTunnel(serverId: string, accessToken?: string): Promise<ServerTunnelResponse | null> {
+export async function getServerTunnel(
+  serverId: string,
+  accessToken?: string,
+): Promise<ServerTunnelResponse | null> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
   if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
+    headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
   const response = await fetch(
     `${API_BASE}/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
     {
-      method: 'GET',
+      method: "GET",
       headers,
-    }
+    },
   );
 
   if (response.status === 404) {
@@ -108,7 +109,7 @@ export async function getServerTunnel(serverId: string, accessToken?: string): P
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.error || 'Failed to get server tunnel');
+    throw new Error(error.error || "Failed to get server tunnel");
   }
 
   return response.json();
@@ -120,24 +121,21 @@ export async function getServerTunnel(serverId: string, accessToken?: string): P
  */
 export async function closeTunnel(accessToken?: string): Promise<void> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
   if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
+    headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
-  const response = await fetch(
-    `${API_BASE}/api/mcp/tunnels`,
-    {
-      method: 'DELETE',
-      headers,
-    }
-  );
+  const response = await fetch(`${API_BASE}/api/mcp/tunnels`, {
+    method: "DELETE",
+    headers,
+  });
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.error || 'Failed to close tunnel');
+    throw new Error(error.error || "Failed to close tunnel");
   }
 }
 
@@ -145,28 +143,33 @@ export async function closeTunnel(accessToken?: string): Promise<void> {
  * Cleanup all orphaned tunnels for the current user
  * @param accessToken - Optional WorkOS access token for authenticated requests
  */
-export async function cleanupOrphanedTunnels(accessToken?: string): Promise<void> {
+export async function cleanupOrphanedTunnels(
+  accessToken?: string,
+): Promise<void> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
   if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
+    headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
   try {
-    const response = await fetch(`${API_BASE}/api/mcp/tunnels/cleanup-orphaned`, {
-      method: 'POST',
-      headers,
-    });
+    const response = await fetch(
+      `${API_BASE}/api/mcp/tunnels/cleanup-orphaned`,
+      {
+        method: "POST",
+        headers,
+      },
+    );
 
     if (response.ok) {
-      console.log('[tunnels] Orphaned tunnels cleanup completed');
+      console.log("[tunnels] Orphaned tunnels cleanup completed");
     } else {
-      console.warn('[tunnels] Failed to cleanup orphaned tunnels');
+      console.warn("[tunnels] Failed to cleanup orphaned tunnels");
     }
   } catch (error) {
-    console.error('[tunnels] Error during tunnel cleanup:', error);
+    console.error("[tunnels] Error during tunnel cleanup:", error);
     // Don't throw - cleanup is best-effort
   }
 }

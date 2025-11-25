@@ -101,9 +101,10 @@ export function ServerConnectionCard({
 
   // Compute the server-specific tunnel URL from the shared tunnel
   // Only show tunnel URL if server is connected
-  const serverTunnelUrl = sharedTunnelUrl && server.connectionStatus === "connected"
-    ? `${sharedTunnelUrl}/api/mcp/adapter-http/${server.name}`
-    : null;
+  const serverTunnelUrl =
+    sharedTunnelUrl && server.connectionStatus === "connected"
+      ? `${sharedTunnelUrl}/api/mcp/adapter-http/${server.name}`
+      : null;
 
   // Load tools when server is connected
   useEffect(() => {
@@ -381,9 +382,7 @@ export function ServerConnectionCard({
                   }}
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
-                  <span>
-                    {"View server info"}
-                  </span>
+                  <span>{"View server info"}</span>
                   {isOpenAIApp && (
                     <img
                       src="/openai_logo.png"

@@ -87,7 +87,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           const close = () => {
             try {
               controller.close();
-            } catch { }
+            } catch {}
           };
 
           // Register session
@@ -101,10 +101,10 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           // Emit endpoint as JSON (spec-friendly) then as a plain string (compat).
           try {
             send("endpoint", JSON.stringify({ url, headers: {} }));
-          } catch { }
+          } catch {}
           try {
             send("endpoint", url);
-          } catch { }
+          } catch {}
 
           // Periodic keepalive comments so proxies don't buffer/close
           timer = setInterval(() => {
@@ -112,13 +112,13 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
               controller.enqueue(
                 encoder.encode(`: keepalive ${Date.now()}\n\n`),
               );
-            } catch { }
+            } catch {}
           }, 15000);
         },
         cancel() {
           try {
             clearInterval(timer);
-          } catch { }
+          } catch {}
           sessions.delete(`${serverId}:${sessionId}`);
           // If this session was the latest for this server, clear pointer
           if (latestSessionByServer.get(serverId) === sessionId) {
@@ -145,7 +145,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     let body: any = undefined;
     try {
       body = await c.req.json();
-    } catch { }
+    } catch {}
 
     const clientManager = c.mcpClientManager;
 
@@ -239,7 +239,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       if (responseMessage) {
         try {
           sess.send("message", JSON.stringify(responseMessage));
-        } catch { }
+        } catch {}
       }
       // 202 Accepted per SSE transport semantics
       return c.body("Accepted", 202, {

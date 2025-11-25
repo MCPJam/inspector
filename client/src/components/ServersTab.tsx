@@ -1,14 +1,27 @@
 import { useEffect, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, FileText, Layers, Cable, Link, Loader2, X, Copy, Check } from "lucide-react";
+import {
+  Plus,
+  FileText,
+  Layers,
+  Cable,
+  Link,
+  Loader2,
+  X,
+  Copy,
+  Check,
+} from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { ServerConnectionDetails } from "./connection/ServerConnectionDetails";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
-import { TunnelExplanationModal, TUNNEL_EXPLANATION_DISMISSED_KEY } from "./connection/TunnelExplanationModal";
+import {
+  TunnelExplanationModal,
+  TUNNEL_EXPLANATION_DISMISSED_KEY,
+} from "./connection/TunnelExplanationModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
@@ -20,7 +33,12 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { createTunnel, getTunnel, closeTunnel, cleanupOrphanedTunnels } from "@/lib/mcp-tunnels-api";
+import {
+  createTunnel,
+  getTunnel,
+  closeTunnel,
+  cleanupOrphanedTunnels,
+} from "@/lib/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 
@@ -133,7 +151,8 @@ export function ServersTab({
   };
 
   const handleCreateTunnel = () => {
-    const isDismissed = localStorage.getItem(TUNNEL_EXPLANATION_DISMISSED_KEY) === "true";
+    const isDismissed =
+      localStorage.getItem(TUNNEL_EXPLANATION_DISMISSED_KEY) === "true";
     if (isDismissed) {
       handleConfirmCreateTunnel();
     } else {
