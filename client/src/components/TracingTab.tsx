@@ -107,21 +107,34 @@ export function TracingTab() {
             const dir =
               typeof direction === "string" ? direction.toUpperCase() : "";
             const msg: any = payload as any;
-            const methodName: string =
-              typeof msg?.method === "string"
-                ? msg.method
-                : msg?.result !== undefined
-                  ? "result"
-                  : msg?.error !== undefined
-                    ? "error"
-                    : "unknown";
-            const summary = `[${serverId}] ${dir} - ${methodName}`;
-            rpcLogger.info(summary, {
+            let methodName: string;
+            if (direction === "disconnect" || direction === "error") {
+              methodName = direction === "disconnect" ? "disconnect" : "error";
+            } else {
+              methodName =
+                typeof msg?.method === "string"
+                  ? msg.method
+                  : msg?.result !== undefined
+                    ? "result"
+                    : msg?.error !== undefined
+                      ? "error"
+                      : "unknown";
+            }
+            const errorMsg = data.error ? ` - ${data.error}` : "";
+            const summary = `[${serverId}] ${dir} - ${methodName}${errorMsg}`;
+            const logLevel =
+              direction === "error"
+                ? "error"
+                : direction === "disconnect"
+                  ? "warn"
+                  : "info";
+            rpcLogger[logLevel](summary, {
               serverId,
               direction,
               method: methodName,
               timestamp: ts,
               message: payload,
+              error: data.error,
             });
           }
         } catch {}

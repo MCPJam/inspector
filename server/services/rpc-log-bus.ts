@@ -2,9 +2,10 @@ import { EventEmitter } from "events";
 
 export type RpcLogEvent = {
   serverId: string;
-  direction: "send" | "receive";
+  direction: "send" | "receive" | "disconnect" | "error";
   timestamp: string; // ISO
   message: unknown;
+  error?: string; // Optional error message for disconnect/error events
 };
 
 class RpcLogBus {

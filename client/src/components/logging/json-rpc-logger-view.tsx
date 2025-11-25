@@ -20,6 +20,7 @@ interface RpcEventMessage {
   direction: RpcDirection;
   message: unknown; // raw JSON-RPC payload (request/response/error)
   timestamp?: string;
+  error?: string; // Optional error message for disconnect/error events
 }
 
 interface RenderableRpcItem {
@@ -78,23 +79,31 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
           } & RpcEventMessage;
           if (!data || data.type !== "rpc") return;
 
-          const { serverId, direction, message, timestamp } = data;
+          const { serverId, direction, message, timestamp, error } = data;
           const msg: any = message as any;
-          const method: string =
-            typeof msg?.method === "string"
-              ? msg.method
-              : msg?.result !== undefined
-                ? "result"
-                : msg?.error !== undefined
-                  ? "error"
-                  : "unknown";
+          let method: string;
+          if (direction === "disconnect" || direction === "error") {
+            method = direction === "disconnect" ? "disconnect" : "error";
+          } else {
+            method =
+              typeof msg?.method === "string"
+                ? msg.method
+                : msg?.result !== undefined
+                  ? "result"
+                  : msg?.error !== undefined
+                    ? "error"
+                    : "unknown";
+          }
+
+          // Include error message in method display if present
+          const methodDisplay = error ? `${method} (${error})` : method;
 
           const item: RenderableRpcItem = {
             id: `${timestamp ?? Date.now()}-${Math.random().toString(36).slice(2)}`,
             serverId: typeof serverId === "string" ? serverId : "unknown",
             direction:
               typeof direction === "string" ? direction.toUpperCase() : "",
-            method,
+            method: methodDisplay,
             timestamp: timestamp ?? new Date().toISOString(),
             payload: message,
           };
@@ -215,14 +224,27 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
                       className={`flex items-center justify-center px-1 py-0.5 rounded ${
                         it.direction === "RECEIVE"
                           ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                          : "bg-green-500/10 text-green-600 dark:text-green-400"
+                          : it.direction === "DISCONNECT"
+                            ? "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
+                            : it.direction === "ERROR"
+                              ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                              : "bg-green-500/10 text-green-600 dark:text-green-400"
                       }`}
                       title={
-                        it.direction === "RECEIVE" ? "Incoming" : "Outgoing"
+                        it.direction === "RECEIVE"
+                          ? "Incoming"
+                          : it.direction === "DISCONNECT"
+                            ? "Disconnected"
+                            : it.direction === "ERROR"
+                              ? "Error"
+                              : "Outgoing"
                       }
                     >
                       {it.direction === "RECEIVE" ? (
                         <ArrowDownToLine className="h-3 w-3" />
+                      ) : it.direction === "DISCONNECT" ||
+                        it.direction === "ERROR" ? (
+                        <span className="text-[10px] font-semibold">!</span>
                       ) : (
                         <ArrowUpFromLine className="h-3 w-3" />
                       )}

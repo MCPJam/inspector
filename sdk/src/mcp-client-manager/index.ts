@@ -42,9 +42,10 @@ type BaseServerConfig = {
   logJsonRpc?: boolean;
   // Custom logger for JSON-RPC traffic; overrides logJsonRpc when provided
   rpcLogger?: (event: {
-    direction: "send" | "receive";
+    direction: "send" | "receive" | "disconnect" | "error";
     message: unknown;
     serverId: string;
+    error?: string;
   }) => void;
 };
 
@@ -133,9 +134,10 @@ export class MCPClientManager {
   private defaultLogJsonRpc: boolean = false;
 
   private defaultRpcLogger?: (event: {
-    direction: "send" | "receive";
+    direction: "send" | "receive" | "disconnect" | "error";
     message: unknown;
     serverId: string;
+    error?: string;
   }) => void;
   private elicitationCallback?: (request: {
     requestId: string;
@@ -289,13 +291,17 @@ export class MCPClientManager {
       this.applyNotificationHandlers(serverId, client);
       this.applyElicitationHandler(serverId, client);
 
-      if (config.onError) {
-        client.onerror = (error) => {
+      client.onerror = (error) => {
+        const errorObj =
+          error instanceof Error ? error : new Error(String(error));
+        this.logDisconnectEvent(serverId, "Client error", errorObj);
+        if (config.onError) {
           config.onError?.(error);
-        };
-      }
+        }
+      };
 
       client.onclose = () => {
+        this.logDisconnectEvent(serverId, "Connection closed by client");
         this.resetState(serverId);
       };
 
@@ -341,6 +347,7 @@ export class MCPClientManager {
     const client = this.getClientById(serverId);
     try {
       await client.close();
+      this.logDisconnectEvent(serverId, "Disconnected by user");
     } finally {
       if (client.transport) {
         await this.safeCloseTransport(client.transport);
@@ -1019,6 +1026,30 @@ export class MCPClientManager {
     }
   }
 
+  // Log disconnect/error events to the RPC logger
+  private logDisconnectEvent(
+    serverId: string,
+    reason: string,
+    error?: Error,
+  ): void {
+    const state = this.clientStates.get(serverId);
+    if (!state) return;
+
+    const logger = this.resolveRpcLogger(serverId, state.config);
+    if (!logger) return;
+
+    try {
+      logger({
+        direction: error ? "error" : "disconnect",
+        message: { reason, error: error?.message },
+        serverId,
+        error: error?.message || reason,
+      });
+    } catch {
+      // ignore logger errors
+    }
+  }
+
   // Returns a transport that logs JSON-RPC traffic if enabled for this server
   private wrapTransportForLogging(
     serverId: string,
@@ -1028,9 +1059,10 @@ export class MCPClientManager {
     const logger = this.resolveRpcLogger(serverId, config);
     if (!logger) return transport;
     const log: (event: {
-      direction: "send" | "receive";
+      direction: "send" | "receive" | "disconnect" | "error";
       message: unknown;
       serverId: string;
+      error?: string;
     }) => void = logger;
 
     // Wrapper that proxies to the underlying transport while emitting logs
@@ -1052,9 +1084,29 @@ export class MCPClientManager {
           this.onmessage?.(message, extra);
         };
         this.inner.onclose = () => {
+          try {
+            log({
+              direction: "disconnect",
+              message: { reason: "Transport closed" },
+              serverId,
+              error: "Transport closed",
+            });
+          } catch {
+            // ignore logger errors
+          }
           this.onclose?.();
         };
         this.inner.onerror = (error: Error) => {
+          try {
+            log({
+              direction: "error",
+              message: { reason: "Transport error", error: error.message },
+              serverId,
+              error: error.message,
+            });
+          } catch {
+            // ignore logger errors
+          }
           this.onerror?.(error);
         };
       }
@@ -1095,14 +1147,15 @@ export class MCPClientManager {
     config: MCPServerConfig,
   ):
     | ((event: {
-        direction: "send" | "receive";
+        direction: "send" | "receive" | "disconnect" | "error";
         message: unknown;
         serverId: string;
+        error?: string;
       }) => void)
     | undefined {
     if (config.rpcLogger) return config.rpcLogger;
     if (config.logJsonRpc || this.defaultLogJsonRpc) {
-      return ({ direction, message, serverId: id }) => {
+      return ({ direction, message, serverId: id, error }) => {
         let printable: string;
         try {
           printable =
@@ -1110,8 +1163,11 @@ export class MCPClientManager {
         } catch {
           printable = String(message);
         }
+        const errorMsg = error ? ` - ${error}` : "";
         // eslint-disable-next-line no-console
-        console.debug(`[MCP:${id}] ${direction.toUpperCase()} ${printable}`);
+        console.debug(
+          `[MCP:${id}] ${direction.toUpperCase()}${errorMsg} ${printable}`,
+        );
       };
     }
     if (this.defaultRpcLogger) return this.defaultRpcLogger;

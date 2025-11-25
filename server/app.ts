@@ -65,12 +65,13 @@ export function createHonoApp() {
   const mcpClientManager = new MCPClientManager(
     {},
     {
-      rpcLogger: ({ direction, message, serverId }) => {
+      rpcLogger: ({ direction, message, serverId, error }) => {
         rpcLogBus.publish({
           serverId,
           direction,
           timestamp: new Date().toISOString(),
           message,
+          error,
         });
       },
     },
