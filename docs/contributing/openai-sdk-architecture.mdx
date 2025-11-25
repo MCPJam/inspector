@@ -1443,11 +1443,12 @@ case \"openai:customMethod\":
 
 ## Related Files
 
-- `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
+- `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components using tool definition metadata
 - `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
 - `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
 - `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
-- `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
+- `server/routes/mcp/openai.ts` - Widget storage, serving, OpenAI bridge injection, and all widget utilities
+- `server/routes/mcp/http-adapters.ts` - HTTP adapter routes (widget handling removed, uses centralized openai.ts)
 - `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
 
