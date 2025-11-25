@@ -19,7 +19,6 @@ export default defineConfig({
     "@hono/node-server",
     "hono",
     "@mastra/mcp",
-    "@mastra/core",
     "@modelcontextprotocol/sdk",
     "ai",
     "@ai-sdk/anthropic",

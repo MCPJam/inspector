@@ -33,7 +33,6 @@
     "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/openai": "^2.0.32",
     "@hono/node-server": "^1.13.7",
-    "@mastra/core": "^0.18.0",
     "@mastra/mcp": "^0.13.1",
     "@modelcontextprotocol/sdk": "^1.20.2",
     "@openrouter/ai-sdk-provider": "^1.2.0",
