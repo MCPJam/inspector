@@ -709,7 +709,7 @@ export function ChatTabV2({
                 <div className="w-full max-w-3xl space-y-6 py-8">
                   {isAuthLoading ? (
                     <div className="text-center space-y-4">
-                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-primary" />
+                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
                       <p className="text-sm text-muted-foreground">
                         Loading...
                       </p>

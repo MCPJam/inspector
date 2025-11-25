@@ -180,7 +180,7 @@ export function EvalsTab() {
   if (isLoading) {
     return (
       <div className="p-6">
-        <div className="flex h-64 items-center justify-center">
+        <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
           <div className="text-center">
             <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
             <p className="mt-4 text-muted-foreground">Loading...</p>
@@ -208,7 +208,7 @@ export function EvalsTab() {
   if (isOverviewLoading && enableOverviewQuery && route.type !== "create") {
     return (
       <div className="p-6">
-        <div className="flex h-64 items-center justify-center">
+        <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
           <div className="text-center">
             <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
             <p className="mt-4 text-muted-foreground">
