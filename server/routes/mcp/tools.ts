@@ -147,7 +147,8 @@ tools.post("/list", async (c) => {
     )) as ListToolsResult;
 
     // Get cached metadata map for O(1) frontend lookups
-    const toolsMetadata = c.mcpClientManager.getAllToolsMetadata(normalizedServerId);
+    const toolsMetadata =
+      c.mcpClientManager.getAllToolsMetadata(normalizedServerId);
 
     return c.json({ ...result, toolsMetadata });
   } catch (error) {

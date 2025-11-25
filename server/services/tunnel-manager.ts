@@ -1,5 +1,5 @@
-import ngrok from '@ngrok/ngrok';
-import type { Listener } from '@ngrok/ngrok';
+import ngrok from "@ngrok/ngrok";
+import type { Listener } from "@ngrok/ngrok";
 
 class TunnelManager {
   private listener: Listener | null = null;
@@ -9,7 +9,12 @@ class TunnelManager {
   private domainId: string | null = null;
   private domain: string | null = null;
 
-  setNgrokToken(token: string, credentialId?: string, domainId?: string, domain?: string) {
+  setNgrokToken(
+    token: string,
+    credentialId?: string,
+    domainId?: string,
+    domain?: string,
+  ) {
     this.ngrokToken = token;
     if (credentialId) this.credentialId = credentialId;
     if (domainId) this.domainId = domainId;
@@ -28,10 +33,10 @@ class TunnelManager {
     }
 
     if (!this.ngrokToken) {
-      throw new Error('Ngrok token not configured. Please fetch token first.');
+      throw new Error("Ngrok token not configured. Please fetch token first.");
     }
 
-    const addr = localAddr || 'http://localhost:6274';
+    const addr = localAddr || "http://localhost:6274";
 
     try {
       const config: any = {

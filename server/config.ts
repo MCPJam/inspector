@@ -3,12 +3,13 @@
  */
 
 // Server port - can be overridden via environment variable
-export const SERVER_PORT = process.env.SERVER_PORT 
-  ? parseInt(process.env.SERVER_PORT, 10) 
+export const SERVER_PORT = process.env.SERVER_PORT
+  ? parseInt(process.env.SERVER_PORT, 10)
   : 6274;
 
 // Server hostname
-export const SERVER_HOSTNAME = process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
+export const SERVER_HOSTNAME =
+  process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
 
 // Local server address for tunneling
 export const LOCAL_SERVER_ADDR = `http://localhost:${SERVER_PORT}`;
@@ -20,4 +21,3 @@ export const CORS_ORIGINS = [
   `http://localhost:${SERVER_PORT}`, // Hono server
   `http://127.0.0.1:${SERVER_PORT}`, // Hono server production
 ];
-

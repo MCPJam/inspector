@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:6274';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
 
 /**
  * Cleanup orphaned tunnels when the user logs in
@@ -34,28 +34,34 @@ export function useTunnelCleanup() {
         const accessToken = await getAccessToken();
 
         const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         };
 
         // Add authorization if available
         if (accessToken) {
-          headers['Authorization'] = `Bearer ${accessToken}`;
+          headers["Authorization"] = `Bearer ${accessToken}`;
         }
 
         // Call the local server endpoint which will call the backend
-        const response = await fetch(`${API_BASE}/api/mcp/tunnels/cleanup-orphaned`, {
-          method: 'POST',
-          headers,
-        });
+        const response = await fetch(
+          `${API_BASE}/api/mcp/tunnels/cleanup-orphaned`,
+          {
+            method: "POST",
+            headers,
+          },
+        );
 
         if (response.ok) {
-          console.log('[tunnels] Orphaned tunnels cleanup completed');
+          console.log("[tunnels] Orphaned tunnels cleanup completed");
           hasRunCleanupRef.current = user.id;
         } else {
-          console.warn('[tunnels] Failed to cleanup orphaned tunnels:', await response.text());
+          console.warn(
+            "[tunnels] Failed to cleanup orphaned tunnels:",
+            await response.text(),
+          );
         }
       } catch (error) {
-        console.error('[tunnels] Error during tunnel cleanup:', error);
+        console.error("[tunnels] Error during tunnel cleanup:", error);
         // Don't throw - this is a best-effort cleanup
       }
     };

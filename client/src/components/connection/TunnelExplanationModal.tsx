@@ -11,7 +11,8 @@ import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Cable, Lock, Shield, X } from "lucide-react";
 
-export const TUNNEL_EXPLANATION_DISMISSED_KEY = "mcpjam_tunnel_explanation_dismissed";
+export const TUNNEL_EXPLANATION_DISMISSED_KEY =
+  "mcpjam_tunnel_explanation_dismissed";
 
 interface TunnelExplanationModalProps {
   isOpen: boolean;
@@ -68,9 +69,12 @@ export function TunnelExplanationModal({
               <Lock className="h-4 w-4 text-primary" />
             </div>
             <div className="flex-1">
-              <h4 className="font-medium text-sm mb-1">No Authentication Required</h4>
+              <h4 className="font-medium text-sm mb-1">
+                No Authentication Required
+              </h4>
               <p className="text-sm text-muted-foreground">
-                Connect to a server, copy the tunnel url and add it to your favorite client with no authentication required.
+                Connect to a server, copy the tunnel url and add it to your
+                favorite client with no authentication required.
               </p>
             </div>
           </div>

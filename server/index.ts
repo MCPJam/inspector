@@ -249,13 +249,13 @@ if (process.env.NODE_ENV === "production") {
   });
 } else {
   // Development mode - just API
-    app.get("/", (c) => {
-      return c.json({
-        message: "MCPJam API Server",
-        environment: "development",
-        frontend: `http://localhost:${SERVER_PORT}`,
-      });
+  app.get("/", (c) => {
+    return c.json({
+      message: "MCPJam API Server",
+      environment: "development",
+      frontend: `http://localhost:${SERVER_PORT}`,
     });
+  });
 }
 
 // Use server configuration
