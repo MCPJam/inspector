@@ -151,35 +151,7 @@ export function OpenAIAppRenderer({
       setStoreError(null);
 
       try {
-        // First, fetch server info to determine if this is an adapter-http connection
-        const serversResponse = await fetch("/api/mcp/servers");
-        const serversData = await serversResponse.json();
-
-        let widgetStoreUrl = "/api/mcp/openai/widget/store";
-        let widgetBaseUrl = "/api/mcp/openai/widget";
-
-        // Find the server config
-        if (serversData.success && serversData.servers) {
-          const server = serversData.servers.find((s: any) => s.id === serverId);
-          if (server && server.config) {
-            const serverUrl = server.config.url || "";
-            // Check if this is an adapter-http connection (tunneled)
-            if (serverUrl.includes("/adapter-http/")) {
-              // Extract the base URL and serverId from the adapter-http URL
-              // Format: https://xxx.ngrok-free.dev/api/mcp/adapter-http/{serverId}
-              const match = serverUrl.match(/(.*)\/api\/mcp\/adapter-http\/([^/?]+)/);
-              if (match) {
-                const baseUrl = match[1];
-                const adapterId = match[2];
-                // Use adapter-http widget endpoints through the tunnel
-                widgetStoreUrl = `${baseUrl}/api/mcp/adapter-http/${adapterId}/widget/store`;
-                widgetBaseUrl = `${baseUrl}/api/mcp/adapter-http/${adapterId}/widget`;
-              }
-            }
-          }
-        }
-
-        const response = await fetch(widgetStoreUrl, {
+        const response = await fetch("/api/mcp/openai/widget/store", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -205,7 +177,7 @@ export function OpenAIAppRenderer({
         if (isCancelled) return;
 
         // Set the widget URL after successful storage
-        const url = `${widgetBaseUrl}/${resolvedToolCallId}`;
+        const url = `/api/mcp/openai/widget/${resolvedToolCallId}`;
         setWidgetUrl(url);
       } catch (err) {
         if (isCancelled) return;
