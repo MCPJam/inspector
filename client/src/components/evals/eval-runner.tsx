@@ -110,8 +110,7 @@ export function EvalRunner({
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
   const [suiteName, setSuiteName] = useState("");
   const [suiteDescription, setSuiteDescription] = useState("");
-  const [isEditingSuiteName, setIsEditingSuiteName] = useState(false);
-  const [editedSuiteName, setEditedSuiteName] = useState("");
+  const [showNameError, setShowNameError] = useState(false);
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
 
@@ -407,37 +406,12 @@ export function EvalRunner({
   const handleNext = () => {
     if (currentStep >= WIZARD_STEPS.length - 1) return;
     if (!canAdvance) return;
-    setIsEditingSuiteName(false);
     setCurrentStep((prev) => Math.min(prev + 1, WIZARD_STEPS.length - 1));
   };
 
   const handleBack = () => {
     if (currentStep === 0) return;
-    setIsEditingSuiteName(false);
     setCurrentStep((prev) => Math.max(prev - 1, 0));
-  };
-
-  const handleSuiteNameClick = () => {
-    setIsEditingSuiteName(true);
-    setEditedSuiteName(suiteName);
-  };
-
-  const handleSuiteNameBlur = () => {
-    setIsEditingSuiteName(false);
-    if (editedSuiteName.trim() && editedSuiteName !== suiteName) {
-      setSuiteName(editedSuiteName.trim());
-    } else {
-      setEditedSuiteName(suiteName);
-    }
-  };
-
-  const handleSuiteNameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      handleSuiteNameBlur();
-    } else if (e.key === "Escape") {
-      setIsEditingSuiteName(false);
-      setEditedSuiteName(suiteName);
-    }
   };
 
   const handleSubmit = async () => {
@@ -481,10 +455,13 @@ export function EvalRunner({
     }
 
     if (!suiteName.trim()) {
-      toast.error("Please provide a name for this test suite");
-      setCurrentStep(3);
+      setShowNameError(true);
+      // Stay on current step (step 3 - review)
       return;
     }
+
+    // Clear error state if we got this far
+    setShowNameError(false);
 
     // Switch view immediately before starting the API call
     if (!inline) {
@@ -564,8 +541,7 @@ export function EvalRunner({
       setTestTemplates([buildBlankTestTemplate()]);
       setSuiteName("");
       setSuiteDescription("");
-      setIsEditingSuiteName(false);
-      setEditedSuiteName("");
+      setShowNameError(false);
       setCurrentStep(3);
     } catch (error) {
       toast.error(
@@ -620,19 +596,15 @@ export function EvalRunner({
           <ReviewStep
             suiteName={suiteName}
             suiteDescription={suiteDescription}
-            isEditingSuiteName={isEditingSuiteName}
-            editedSuiteName={editedSuiteName}
             minimumPassRate={minimumPassRate}
             selectedServers={selectedServers}
             selectedModels={selectedModels}
             validTestTemplates={validTestTemplates}
-            onSuiteNameClick={handleSuiteNameClick}
-            onSuiteNameBlur={handleSuiteNameBlur}
-            onSuiteNameKeyDown={handleSuiteNameKeyDown}
-            onEditedSuiteNameChange={setEditedSuiteName}
+            onSuiteNameChange={setSuiteName}
             onSuiteDescriptionChange={setSuiteDescription}
             onMinimumPassRateChange={setMinimumPassRate}
             onEditStep={setCurrentStep}
+            showNameError={showNameError}
           />
         );
       default:
