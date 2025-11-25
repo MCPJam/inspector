@@ -41,7 +41,7 @@ export function TunnelExplanationModal({
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            Create Tunnel
+            Create ngrok tunnel
           </DialogTitle>
           <DialogDescription className="pt-4">
             Tunneling allows you to expose your local MCP servers over HTTPS for
@@ -116,7 +116,7 @@ export function TunnelExplanationModal({
               Cancel
             </Button>
             <Button onClick={handleConfirm} disabled={isCreating}>
-              {isCreating ? "Creating..." : "Create Tunnel"}
+              {isCreating ? "Creating..." : "Create ngrok tunnel"}
             </Button>
           </div>
         </DialogFooter>
