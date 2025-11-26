@@ -40,7 +40,14 @@ import {
   cleanupOrphanedTunnels,
 } from "@/lib/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
+import { useConvexAuth } from "convex/react";
 import { toast } from "sonner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./ui/tooltip";
 
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -65,6 +72,7 @@ export function ServersTab({
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
+  const { isAuthenticated } = useConvexAuth();
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isEditingServer, setIsEditingServer] = useState(false);
@@ -255,12 +263,12 @@ export function ServersTab({
       );
     }
 
-    return (
+    const button = (
       <Button
         variant="outline"
         size="sm"
         onClick={handleCreateTunnel}
-        disabled={isCreatingTunnel}
+        disabled={isCreatingTunnel || !isAuthenticated}
         className="cursor-pointer"
       >
         {isCreatingTunnel ? (
@@ -271,6 +279,23 @@ export function ServersTab({
         Create ngrok tunnel
       </Button>
     );
+
+    if (!isAuthenticated) {
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0}>{button}</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Sign in to create tunnels</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    }
+
+    return button;
   };
 
   const renderServerActionsMenu = () => (

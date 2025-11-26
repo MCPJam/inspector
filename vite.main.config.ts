@@ -20,6 +20,8 @@ export default defineConfig({
       external: [
         // Core Electron & Node modules only
         "electron",
+        // Native modules that can't be bundled
+        "@ngrok/ngrok",
         // Bundle everything else including electron-log, update-electron-app, etc.
       ],
       output: {
