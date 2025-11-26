@@ -82,7 +82,6 @@ function createMainWindow(serverUrl: string): BrowserWindow {
       // Vite plugin outputs main.js and preload.js into the same directory (.vite/build)
       preload: path.join(__dirname, "preload.js"),
     },
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     show: false, // Don't show until ready
   });
 
