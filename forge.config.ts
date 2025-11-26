@@ -74,6 +74,21 @@ const config: ForgeConfig = {
     ],
     osxSign: osxSignOptions,
     osxNotarize: osxNotarizeOptions,
+    // Copy @ngrok native module before signing (afterCopy runs before osxSign)
+    afterCopy: [
+      (buildPath, _electronVersion, _platform, _arch, callback) => {
+        const ngrokSrc = resolve(__dirname, "node_modules", "@ngrok");
+        if (!existsSync(ngrokSrc)) {
+          console.warn("[forge] @ngrok not found, skipping copy");
+          callback();
+          return;
+        }
+        const dest = join(buildPath, "node_modules", "@ngrok");
+        console.log(`[forge] Copying @ngrok to ${dest} (before signing)`);
+        cpSync(ngrokSrc, dest, { recursive: true });
+        callback();
+      },
+    ],
   },
   rebuildConfig: {},
   makers: [
@@ -162,27 +177,6 @@ const config: ForgeConfig = {
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],
-  hooks: {
-    postPackage: async (_config, options) => {
-      // Copy @ngrok native module to Resources/node_modules so Node.js can find it
-      const ngrokSrc = resolve(__dirname, "node_modules", "@ngrok");
-      if (!existsSync(ngrokSrc)) {
-        console.warn("[forge] @ngrok not found, skipping copy");
-        return;
-      }
-
-      for (const outputPath of options.outputPaths) {
-        const resourcesPath =
-          process.platform === "darwin"
-            ? join(outputPath, "MCPJam Inspector.app", "Contents", "Resources")
-            : join(outputPath, "resources");
-
-        const dest = join(resourcesPath, "node_modules", "@ngrok");
-        console.log(`[forge] Copying @ngrok to ${dest}`);
-        cpSync(ngrokSrc, dest, { recursive: true });
-      }
-    },
-  },
 };
 
 export default config;
