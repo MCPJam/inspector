@@ -427,6 +427,7 @@ export function OpenAIAppRenderer({
       if (typeof maxHeight === "number" && Number.isFinite(maxHeight)) {
         globals.maxHeight = maxHeight;
       }
+      globals.displayMode = displayMode;
 
       console.log("[OpenAI App] Sending globals update to iframe:", globals);
       target.contentWindow.postMessage(
@@ -440,7 +441,7 @@ export function OpenAIAppRenderer({
 
     postGlobals(iframeRef.current);
     postGlobals(modalIframeRef.current);
-  }, [themeMode, maxHeight, isReady]);
+  }, [themeMode, maxHeight, displayMode, isReady]);
 
   // Kick off an early manual resize measurement while the widget is mounting.
   useEffect(() => {
