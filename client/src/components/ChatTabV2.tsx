@@ -712,7 +712,11 @@ export function ChatTabV2({
         direction="horizontal"
         className="flex-1 min-h-0 h-full"
       >
-        <ResizablePanel defaultSize={isJsonRpcPanelVisible ? 70 : 100} minSize={40} className="min-w-0">
+        <ResizablePanel
+          defaultSize={isJsonRpcPanelVisible ? 70 : 100}
+          minSize={40}
+          className="min-w-0"
+        >
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden [transform:translateZ(0)]">
             {isThreadEmpty ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
