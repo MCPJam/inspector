@@ -417,6 +417,18 @@ openai.get("/widget-content/:toolId", async (c) => {
                   console.error('[OpenAI Widget] Failed to dispatch maxHeight change:', err);
                 }
               }
+
+              if (globals?.displayMode && window.openai) {
+                window.openai.displayMode = globals.displayMode;
+                try {
+                  const globalsEvent = new CustomEvent('openai:set_globals', {
+                    detail: { globals: { displayMode: globals.displayMode } }
+                  });
+                  window.dispatchEvent(globalsEvent);
+                } catch (err) {
+                  console.error('[OpenAI Widget] Failed to dispatch displayMode change:', err);
+                }
+              }
             }
 
             if (event.data.type === 'openai:pushWidgetState' && event.data.toolId === ${JSON.stringify(toolId)}) {
