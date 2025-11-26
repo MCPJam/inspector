@@ -417,7 +417,7 @@ export function OpenAIAppRenderer({
     }
   }, [displayMode, pipWidgetId, resolvedToolCallId]);
 
-  // Send theme updates to iframe when theme changes
+  // Send global updates to server
   useEffect(() => {
     if (!isReady) return;
 
