@@ -52,8 +52,8 @@ export function OpenAIAppRenderer({
   const modalIframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
-  const [maxHeight, setMaxHeight] = useState<number>(600);
-  const [contentHeight, setContentHeight] = useState<number>(600);
+  const [maxHeight, setMaxHeight] = useState<number | null>(null);
+  const [contentHeight, setContentHeight] = useState<number>(320);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
@@ -63,6 +63,7 @@ export function OpenAIAppRenderer({
   const [modalParams, setModalParams] = useState<Record<string, any>>({});
   const [modalTitle, setModalTitle] = useState<string>("");
   const previousWidgetStateRef = useRef<string | null>(null);
+  const rafIdRef = useRef<number | null>(null);
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `${toolName || "openai-app"}-${Date.now()}`,
     [toolCallId, toolName],
@@ -212,10 +213,13 @@ export function OpenAIAppRenderer({
     themeMode,
   ]);
 
-  const appliedHeight = useMemo(
-    () => Math.min(Math.max(contentHeight, 320), maxHeight),
-    [contentHeight, maxHeight],
-  );
+  const appliedHeight = useMemo(() => {
+    const baseHeight = contentHeight > 0 ? contentHeight : 320;
+    if (typeof maxHeight === "number" && Number.isFinite(maxHeight)) {
+      return Math.min(baseHeight, maxHeight);
+    }
+    return baseHeight;
+  }, [contentHeight, maxHeight]);
 
   const iframeHeight = useMemo(() => {
     if (displayMode === "fullscreen") return "100%";
@@ -367,6 +371,8 @@ export function OpenAIAppRenderer({
           }
           if (typeof event.data.maxHeight === "number") {
             setMaxHeight(event.data.maxHeight);
+          } else if (event.data.maxHeight == null) {
+            setMaxHeight(null);
           }
           break;
         }
@@ -411,21 +417,72 @@ export function OpenAIAppRenderer({
     }
   }, [displayMode, pipWidgetId, resolvedToolCallId]);
 
-  // Send theme updates to iframe when theme changes
+  // Send global updates to server
   useEffect(() => {
-    if (!isReady || !iframeRef.current?.contentWindow) return;
+    if (!isReady) return;
 
-    console.log("[OpenAI App] Sending theme update to iframe:", themeMode);
-    iframeRef.current.contentWindow.postMessage(
-      {
-        type: "openai:set_globals",
-        globals: {
-          theme: themeMode,
+    const postGlobals = (target: HTMLIFrameElement | null) => {
+      if (!target?.contentWindow) return;
+      const globals: Record<string, unknown> = { theme: themeMode };
+      if (typeof maxHeight === "number" && Number.isFinite(maxHeight)) {
+        globals.maxHeight = maxHeight;
+      }
+      globals.displayMode = displayMode;
+
+      console.log("[OpenAI App] Sending globals update to iframe:", globals);
+      target.contentWindow.postMessage(
+        {
+          type: "openai:set_globals",
+          globals,
         },
-      },
-      "*",
-    );
-  }, [themeMode, isReady]);
+        "*",
+      );
+    };
+
+    postGlobals(iframeRef.current);
+    postGlobals(modalIframeRef.current);
+  }, [themeMode, maxHeight, displayMode, isReady]);
+
+  // Kick off an early manual resize measurement while the widget is mounting.
+  useEffect(() => {
+    if (!isReady) return;
+
+    let attempts = 0;
+    const maxAttempts = 12; // a handful of frames to settle height
+
+    const measureHeight = () => {
+      try {
+        const doc = iframeRef.current?.contentDocument;
+        if (doc) {
+          const bodyHeight = doc.body?.scrollHeight ?? 0;
+          const docHeight = doc.documentElement?.scrollHeight ?? 0;
+          const measured = Math.max(bodyHeight, docHeight);
+          if (measured > 0) {
+            setContentHeight((prev) =>
+              Math.abs(prev - measured) > 1 ? measured : prev,
+            );
+          }
+        }
+      } catch (err) {
+        // Cross-origin guard; if we can't read the iframe, just stop polling.
+        attempts = maxAttempts;
+      }
+
+      attempts += 1;
+      if (attempts <= maxAttempts) {
+        rafIdRef.current = requestAnimationFrame(measureHeight);
+      }
+    };
+
+    measureHeight();
+
+    return () => {
+      if (rafIdRef.current != null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
+  }, [isReady, widgetUrl]);
 
   // Loading state
   if (isStoringWidget) {
@@ -545,7 +602,6 @@ export function OpenAIAppRenderer({
         allow="web-share"
         className="w-full border border-border/40 rounded-md bg-background"
         style={{
-          minHeight: "320px",
           height: iframeHeight,
           maxHeight: displayMode === "fullscreen" ? "90vh" : undefined,
         }}
