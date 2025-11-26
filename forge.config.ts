@@ -62,7 +62,11 @@ const osxNotarizeOptions =
 
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    asar: {
+      // Unpack native modules so they can be properly signed
+      // This prevents the "different Team IDs" error on macOS
+      unpack: "**/*.node",
+    },
     appBundleId: "com.mcpjam.inspector",
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
