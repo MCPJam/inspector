@@ -1,15 +1,17 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { RegistryServerCard } from "./registry/RegistryServerCard";
 import { RegistryServerDetailModal } from "./registry/ServerDetailModal";
+import { RegistrySelector } from "./registry/RegistrySelector";
 import { SearchInput } from "./ui/search-input";
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
-import { Loader2, Package, RefreshCw } from "lucide-react";
+import { Loader2, Lock, Package, RefreshCw } from "lucide-react";
 import type { RegistryServer, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "./connection/AddServerModal";
 import { parseSearchQuery, createRegistrySearch } from "@/lib/registry-search";
 import { useRegistryStore } from "@/stores/registry/registry-provider";
+import { useRegistrySourcesStore } from "@/stores/registry/registry-sources-store";
 
 interface RegistryTabProps {
   onConnect: (formData: ServerFormData) => void;
@@ -23,7 +25,13 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   const isFullyLoaded = useRegistryStore((state) => state.isFullyLoaded);
   const lastFetchTime = useRegistryStore((state) => state.lastFetchTime);
   const isRefreshing = useRegistryStore((state) => state.isRefreshing);
+  const authRequired = useRegistryStore((state) => state.authRequired);
   const fetchAllPages = useRegistryStore((state) => state.fetchAllPages);
+
+  // Get active registry source
+  const activeSource = useRegistrySourcesStore((state) =>
+    state.sources.find((s) => s.id === state.activeSourceId),
+  );
 
   // Local state
   const [searchQuery, setSearchQuery] = useState("");
@@ -197,8 +205,16 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
   };
 
   const handleRefresh = () => {
-    fetchAllPages(true); // Force refresh
+    fetchAllPages(true, activeSource?.url); // Force refresh with current registry
   };
+
+  // Handle registry source change
+  const handleRegistryChange = useCallback(
+    (registryUrl: string) => {
+      fetchAllPages(false, registryUrl);
+    },
+    [fetchAllPages],
+  );
 
   // Format last update time
   const getLastUpdateText = () => {
@@ -378,20 +394,67 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
     );
   }
 
+  // Handle auth required state
+  if (authRequired && allServers.length === 0) {
+    return (
+      <div className="flex flex-col h-full">
+        {/* Header with registry selector */}
+        <div className="border-b border-border p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">MCP Server Registry</h2>
+              <p className="text-sm text-muted-foreground">
+                {activeSource?.name || "Select a registry"}
+              </p>
+            </div>
+            <RegistrySelector onRegistryChange={handleRegistryChange} />
+          </div>
+        </div>
+        <div className="flex items-center justify-center flex-1 p-4">
+          <EmptyState
+            icon={Lock}
+            title="Authentication Required"
+            description="This registry requires authentication to access. OAuth support for private registries is coming soon."
+            action={
+              <Button onClick={handleRefresh} variant="outline">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Try Again
+              </Button>
+            }
+          />
+        </div>
+      </div>
+    );
+  }
+
   if (error && allServers.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full p-4">
-        <EmptyState
-          icon={Package}
-          title="Failed to Load Registry"
-          description={error}
-          action={
-            <Button onClick={handleRefresh} variant="outline">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Try Again
-            </Button>
-          }
-        />
+      <div className="flex flex-col h-full">
+        {/* Header with registry selector */}
+        <div className="border-b border-border p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">MCP Server Registry</h2>
+              <p className="text-sm text-muted-foreground">
+                {activeSource?.name || "Select a registry"}
+              </p>
+            </div>
+            <RegistrySelector onRegistryChange={handleRegistryChange} />
+          </div>
+        </div>
+        <div className="flex items-center justify-center flex-1 p-4">
+          <EmptyState
+            icon={Package}
+            title="Failed to Load Registry"
+            description={error}
+            action={
+              <Button onClick={handleRefresh} variant="outline">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Try Again
+              </Button>
+            }
+          />
+        </div>
       </div>
     );
   }
@@ -418,17 +481,20 @@ export function RegistryTab({ onConnect }: RegistryTabProps) {
               )}
             </div>
           </div>
-          <Button
-            onClick={handleRefresh}
-            variant="outline"
-            size="sm"
-            disabled={isRefreshing}
-          >
-            <RefreshCw
-              className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
-            />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <RegistrySelector onRegistryChange={handleRegistryChange} />
+            <Button
+              onClick={handleRefresh}
+              variant="outline"
+              size="sm"
+              disabled={isRefreshing}
+            >
+              <RefreshCw
+                className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
+              />
+              Refresh
+            </Button>
+          </div>
         </div>
         <SearchInput
           placeholder="Search servers..."
