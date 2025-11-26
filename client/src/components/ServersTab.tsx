@@ -11,6 +11,8 @@ import {
   X,
   Copy,
   Check,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
@@ -48,6 +50,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./ui/tooltip";
+import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -73,6 +76,8 @@ export function ServersTab({
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
+  const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
+    useJsonRpcPanelVisibility();
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isEditingServer, setIsEditingServer] = useState(false);
@@ -345,7 +350,10 @@ export function ServersTab({
   const renderConnectedContent = () => (
     <ResizablePanelGroup direction="horizontal" className="flex-1">
       {/* Main Server List Panel */}
-      <ResizablePanel defaultSize={65} minSize={70}>
+      <ResizablePanel
+        defaultSize={isJsonRpcPanelVisible ? 65 : 100}
+        minSize={70}
+      >
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
           <div className="flex flex-col gap-4">
@@ -358,6 +366,29 @@ export function ServersTab({
               <div className="flex items-center gap-2">
                 {renderTunnelButton()}
                 {renderServerActionsMenu()}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={toggleJsonRpcPanel}
+                        className="cursor-pointer"
+                      >
+                        {isJsonRpcPanelVisible ? (
+                          <PanelRightClose className="h-4 w-4" />
+                        ) : (
+                          <PanelRightOpen className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>
+                        {isJsonRpcPanelVisible ? "Hide" : "Show"} JSON-RPC panel
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
             </div>
           </div>
@@ -379,11 +410,15 @@ export function ServersTab({
         </div>
       </ResizablePanel>
 
-      {/* JSON-RPC Traces Panel - Always visible on the right */}
-      <ResizableHandle withHandle />
-      <ResizablePanel defaultSize={35} minSize={20} maxSize={30}>
-        <ServerConnectionDetails serverCount={connectedCount} />
-      </ResizablePanel>
+      {/* JSON-RPC Traces Panel */}
+      {isJsonRpcPanelVisible && (
+        <>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={35} minSize={20} maxSize={30}>
+            <ServerConnectionDetails serverCount={connectedCount} />
+          </ResizablePanel>
+        </>
+      )}
     </ResizablePanelGroup>
   );
 
