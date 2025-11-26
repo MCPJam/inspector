@@ -133,7 +133,10 @@ export function MCPSidebar({
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <div className="flex items-center justify-center px-4 py-4">
+        <button
+          onClick={() => handleNavClick("#servers")}
+          className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
+        >
           <img
             src={
               themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png"
@@ -141,7 +144,7 @@ export function MCPSidebar({
             alt="MCP Jam"
             className="h-4 w-auto"
           />
-        </div>
+        </button>
       </SidebarHeader>
       <SidebarContent>
         {navigationSections.map((section, sectionIndex) => (
