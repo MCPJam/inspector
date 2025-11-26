@@ -7,7 +7,8 @@ import { MakerDMG } from "@electron-forge/maker-dmg";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
-import { resolve } from "path";
+import { resolve, join } from "path";
+import { cpSync, existsSync } from "fs";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -161,6 +162,27 @@ const config: ForgeConfig = {
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],
+  hooks: {
+    postPackage: async (_config, options) => {
+      // Copy @ngrok native module to Resources/node_modules so Node.js can find it
+      const ngrokSrc = resolve(__dirname, "node_modules", "@ngrok");
+      if (!existsSync(ngrokSrc)) {
+        console.warn("[forge] @ngrok not found, skipping copy");
+        return;
+      }
+
+      for (const outputPath of options.outputPaths) {
+        const resourcesPath =
+          process.platform === "darwin"
+            ? join(outputPath, "MCPJam Inspector.app", "Contents", "Resources")
+            : join(outputPath, "resources");
+
+        const dest = join(resourcesPath, "node_modules", "@ngrok");
+        console.log(`[forge] Copying @ngrok to ${dest}`);
+        cpSync(ngrokSrc, dest, { recursive: true });
+      }
+    },
+  },
 };
 
 export default config;
