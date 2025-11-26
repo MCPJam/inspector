@@ -164,6 +164,12 @@ export function ServersTab({
   };
 
   const handleCreateTunnel = () => {
+    posthog.capture("create_tunnel_button_clicked", {
+      location: "servers_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+
     const isDismissed =
       localStorage.getItem(TUNNEL_EXPLANATION_DISMISSED_KEY) === "true";
     if (isDismissed) {
@@ -231,6 +237,13 @@ export function ServersTab({
 
   const copyTunnelUrl = async () => {
     if (!tunnelUrl) return;
+
+    posthog.capture("copy_tunnel_url_clicked", {
+      location: "servers_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+
     try {
       await navigator.clipboard.writeText(tunnelUrl);
       setIsTunnelUrlCopied(true);
