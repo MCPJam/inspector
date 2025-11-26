@@ -7,7 +7,7 @@ import {
   useRef,
 } from "react";
 import { useChat } from "@ai-sdk/react";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, PanelRightClose, PanelRightOpen } from "lucide-react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
@@ -56,6 +56,14 @@ import {
   formatErrorMessage,
   buildMcpPromptMessages,
 } from "@/components/chat-v2/chat-helpers";
+import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -88,6 +96,8 @@ export function ChatTabV2({
 }: ChatTabProps) {
   const { getAccessToken, signUp } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
+    useJsonRpcPanelVisibility();
   const posthog = usePostHog();
   const {
     hasToken,
@@ -702,7 +712,11 @@ export function ChatTabV2({
         direction="horizontal"
         className="flex-1 min-h-0 h-full"
       >
-        <ResizablePanel defaultSize={70} minSize={40} className="min-w-0">
+        <ResizablePanel
+          defaultSize={isJsonRpcPanelVisible ? 70 : 100}
+          minSize={40}
+          className="min-w-0"
+        >
           <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden [transform:translateZ(0)]">
             {isThreadEmpty ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
@@ -802,18 +816,58 @@ export function ChatTabV2({
           </div>
         </ResizablePanel>
 
-        <ResizableHandle withHandle />
-
-        <ResizablePanel
-          defaultSize={30}
-          minSize={20}
-          maxSize={50}
-          className="min-w-[260px] min-h-0 overflow-hidden"
-        >
-          <div className="h-full minh-0 overflow-hidden">
-            <JsonRpcLoggerView />
+        {isJsonRpcPanelVisible ? (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              defaultSize={30}
+              minSize={20}
+              maxSize={50}
+              className="min-w-[260px] min-h-0 overflow-hidden"
+            >
+              <div className="h-full min-h-0 overflow-hidden relative">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleJsonRpcPanel}
+                        className="absolute top-2 right-2 z-10 h-7 w-7 p-0 cursor-pointer"
+                      >
+                        <PanelRightClose className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Hide JSON-RPC panel</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <JsonRpcLoggerView />
+              </div>
+            </ResizablePanel>
+          </>
+        ) : (
+          <div className="flex items-center border-l border-border">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={toggleJsonRpcPanel}
+                    className="h-full px-1 rounded-none cursor-pointer"
+                  >
+                    <PanelRightOpen className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">
+                  <p>Show JSON-RPC panel</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
-        </ResizablePanel>
+        )}
       </ResizablePanelGroup>
     </div>
   );

@@ -10,6 +10,7 @@ import {
   Workflow,
   Box,
   FileCode,
+  Activity,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -70,6 +71,11 @@ const navigationSections = [
   {
     id: "others",
     items: [
+      {
+        title: "Tracing",
+        url: "#tracing",
+        icon: Activity,
+      },
       {
         title: "OAuth Debugger",
         url: "#oauth-flow",
