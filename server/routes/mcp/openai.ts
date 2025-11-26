@@ -237,7 +237,6 @@ openai.get("/widget-content/:toolId", async (c) => {
             toolOutput: ${serializeForInlineScript(toolOutput)},
             toolResponseMetadata: ${serializeForInlineScript(toolResponseMetadata)},
             displayMode: 'inline',
-            maxHeight: 600,
             theme: ${JSON.stringify(theme ?? "dark")},
             locale: 'en-US',
             safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
@@ -406,6 +405,30 @@ openai.get("/widget-content/:toolId", async (c) => {
                   console.error('[OpenAI Widget] Failed to dispatch theme change:', err);
                 }
               }
+
+              if (typeof globals?.maxHeight === 'number' && window.openai) {
+                window.openai.maxHeight = globals.maxHeight;
+                try {
+                  const globalsEvent = new CustomEvent('openai:set_globals', {
+                    detail: { globals: { maxHeight: globals.maxHeight } }
+                  });
+                  window.dispatchEvent(globalsEvent);
+                } catch (err) {
+                  console.error('[OpenAI Widget] Failed to dispatch maxHeight change:', err);
+                }
+              }
+
+              if (globals?.displayMode && window.openai) {
+                window.openai.displayMode = globals.displayMode;
+                try {
+                  const globalsEvent = new CustomEvent('openai:set_globals', {
+                    detail: { globals: { displayMode: globals.displayMode } }
+                  });
+                  window.dispatchEvent(globalsEvent);
+                } catch (err) {
+                  console.error('[OpenAI Widget] Failed to dispatch displayMode change:', err);
+                }
+              }
             }
 
             if (event.data.type === 'openai:pushWidgetState' && event.data.toolId === ${JSON.stringify(toolId)}) {
@@ -427,6 +450,32 @@ openai.get("/widget-content/:toolId", async (c) => {
               } catch (err) {
                 console.error('[OpenAI Widget] Failed to apply pushed widget state:', err);
               }
+            }
+          });
+
+          // Forward resize requests from the widget to the parent so the host can grow the iframe
+          window.addEventListener('openai:resize', (event) => {
+            try {
+              let detail = {};
+              if (event && typeof event === 'object' && 'detail' in event) {
+                // event is expected to be a CustomEvent
+                // @ts-ignore - event.detail is fine at runtime
+                detail = event.detail || {};
+              }
+              const height = typeof detail?.height === 'number'
+                ? detail.height
+                : typeof detail?.size?.height === 'number'
+                  ? detail.size.height
+                  : null;
+
+              if (height && Number.isFinite(height)) {
+                window.parent.postMessage({
+                  type: 'openai:resize',
+                  height
+                }, '*');
+              }
+            } catch (err) {
+              console.error('[OpenAI Widget] Failed to forward resize event:', err);
             }
           });
         })();
