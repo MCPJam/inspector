@@ -350,7 +350,10 @@ export function ServersTab({
   const renderConnectedContent = () => (
     <ResizablePanelGroup direction="horizontal" className="flex-1">
       {/* Main Server List Panel */}
-      <ResizablePanel defaultSize={isJsonRpcPanelVisible ? 65 : 100} minSize={70}>
+      <ResizablePanel
+        defaultSize={isJsonRpcPanelVisible ? 65 : 100}
+        minSize={70}
+      >
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
           <div className="flex flex-col gap-4">
@@ -380,7 +383,9 @@ export function ServersTab({
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>{isJsonRpcPanelVisible ? "Hide" : "Show"} JSON-RPC panel</p>
+                      <p>
+                        {isJsonRpcPanelVisible ? "Hide" : "Show"} JSON-RPC panel
+                      </p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
