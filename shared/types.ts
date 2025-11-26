@@ -810,3 +810,18 @@ export interface RegistryVersionListResponse {
     count: number;
   };
 }
+
+// Multi-registry support
+export interface RegistrySource {
+  id: string;
+  name: string;
+  url: string;
+  isOfficial: boolean;
+  requiresAuth: boolean;
+}
+
+export interface RegistryAuthRequiredResponse {
+  requiresAuth: true;
+  wwwAuthenticate?: string;
+  registryUrl: string;
+}

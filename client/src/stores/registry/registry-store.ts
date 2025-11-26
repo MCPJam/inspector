@@ -1,11 +1,24 @@
 import { createStore } from "zustand/vanilla";
 import type { RegistryServer } from "@/shared/types";
-import { listRegistryServers } from "@/lib/registry-api";
+import { listRegistryServers, isAuthRequired } from "@/lib/registry-api";
 import { toast } from "sonner";
 
-const CACHE_KEY = "mcp-registry-cache";
-const CACHE_TIMESTAMP_KEY = "mcp-registry-cache-timestamp";
+const CACHE_KEY_PREFIX = "mcp-registry-cache";
+const CACHE_TIMESTAMP_KEY_PREFIX = "mcp-registry-cache-timestamp";
 const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+const DEFAULT_REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0.1";
+
+// Generate cache keys based on registry URL
+function getCacheKey(registryUrl: string): string {
+  // Use a hash-like identifier for the registry URL
+  const urlId = btoa(registryUrl).replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
+  return `${CACHE_KEY_PREFIX}-${urlId}`;
+}
+
+function getCacheTimestampKey(registryUrl: string): string {
+  const urlId = btoa(registryUrl).replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
+  return `${CACHE_TIMESTAMP_KEY_PREFIX}-${urlId}`;
+}
 
 export type RegistryState = {
   allServers: RegistryServer[];
@@ -16,8 +29,10 @@ export type RegistryState = {
   isFullyLoaded: boolean;
   lastFetchTime: number | null;
   isRefreshing: boolean;
-  fetchServers: (cursor?: string) => Promise<void>;
-  fetchAllPages: (forceRefresh?: boolean) => void;
+  currentRegistryUrl: string | null;
+  authRequired: boolean;
+  fetchServers: (cursor?: string, registryUrl?: string) => Promise<void>;
+  fetchAllPages: (forceRefresh?: boolean, registryUrl?: string) => void;
   reset: () => void;
 };
 
@@ -30,16 +45,23 @@ const initialState = {
   isFullyLoaded: false,
   lastFetchTime: null,
   isRefreshing: false,
+  currentRegistryUrl: null,
+  authRequired: false,
 };
 
-// Load cached data from localStorage
-const loadCachedData = (): {
+// Load cached data from localStorage for a specific registry
+const loadCachedData = (
+  registryUrl: string,
+): {
   servers: RegistryServer[];
   timestamp: number;
 } | null => {
   try {
-    const cachedServers = localStorage.getItem(CACHE_KEY);
-    const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+    const cacheKey = getCacheKey(registryUrl);
+    const timestampKey = getCacheTimestampKey(registryUrl);
+
+    const cachedServers = localStorage.getItem(cacheKey);
+    const cachedTimestamp = localStorage.getItem(timestampKey);
 
     if (!cachedServers || !cachedTimestamp) {
       return null;
@@ -51,8 +73,8 @@ const loadCachedData = (): {
     // Check if cache is still valid (within 24 hours)
     if (now - timestamp > CACHE_DURATION) {
       // Cache expired, clear it
-      localStorage.removeItem(CACHE_KEY);
-      localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+      localStorage.removeItem(cacheKey);
+      localStorage.removeItem(timestampKey);
       return null;
     }
 
@@ -64,45 +86,64 @@ const loadCachedData = (): {
   }
 };
 
-// Save data to localStorage cache
-const saveCachedData = (servers: RegistryServer[]) => {
+// Save data to localStorage cache for a specific registry
+const saveCachedData = (servers: RegistryServer[], registryUrl: string) => {
   try {
+    const cacheKey = getCacheKey(registryUrl);
+    const timestampKey = getCacheTimestampKey(registryUrl);
+
     const timestamp = Date.now();
-    localStorage.setItem(CACHE_KEY, JSON.stringify(servers));
-    localStorage.setItem(CACHE_TIMESTAMP_KEY, timestamp.toString());
+    localStorage.setItem(cacheKey, JSON.stringify(servers));
+    localStorage.setItem(timestampKey, timestamp.toString());
   } catch (err) {
     console.error("Error saving registry data to cache:", err);
   }
 };
 
 export const createRegistryStore = () => {
-  // Try to load cached data on store creation
-  const cachedData = loadCachedData();
+  // Try to load cached data for the default registry on store creation
+  const cachedData = loadCachedData(DEFAULT_REGISTRY_URL);
   const initialStateWithCache = cachedData
     ? {
         ...initialState,
         allServers: cachedData.servers,
         isFullyLoaded: true,
         lastFetchTime: cachedData.timestamp,
+        currentRegistryUrl: DEFAULT_REGISTRY_URL,
       }
-    : initialState;
+    : {
+        ...initialState,
+        currentRegistryUrl: DEFAULT_REGISTRY_URL,
+      };
 
   return createStore<RegistryState>()((set, get) => ({
     ...initialStateWithCache,
 
-    fetchServers: async (cursor?: string) => {
+    fetchServers: async (cursor?: string, registryUrl?: string) => {
       const state = get();
+      const targetUrl = registryUrl || state.currentRegistryUrl || DEFAULT_REGISTRY_URL;
 
       // Don't fetch if already loading
       if (state.loading) return;
 
-      set({ loading: true, error: null });
+      set({ loading: true, error: null, authRequired: false });
 
       try {
         const response = await listRegistryServers({
           limit: 100,
           cursor,
+          registryUrl: targetUrl,
         });
+
+        // Check if auth is required
+        if (isAuthRequired(response)) {
+          set({
+            loading: false,
+            authRequired: true,
+            error: "Authentication required for this registry",
+          });
+          return;
+        }
 
         // Unwrap servers from the wrapper structure
         const unwrappedServers = response.servers.map((wrapper) => ({
@@ -124,6 +165,7 @@ export const createRegistryStore = () => {
               nextCursor: response.metadata.nextCursor,
               hasMore: !!response.metadata.nextCursor,
               loading: false,
+              currentRegistryUrl: targetUrl,
             };
           } else {
             // Replace servers for initial load
@@ -132,6 +174,7 @@ export const createRegistryStore = () => {
               nextCursor: response.metadata.nextCursor,
               hasMore: !!response.metadata.nextCursor,
               loading: false,
+              currentRegistryUrl: targetUrl,
             };
           }
         });
@@ -145,11 +188,15 @@ export const createRegistryStore = () => {
       }
     },
 
-    fetchAllPages: (forceRefresh = false) => {
+    fetchAllPages: (forceRefresh = false, registryUrl?: string) => {
       const state = get();
+      const targetUrl = registryUrl || state.currentRegistryUrl || DEFAULT_REGISTRY_URL;
+
+      // If registry URL changed, always refetch
+      const registryChanged = targetUrl !== state.currentRegistryUrl;
 
       // Check if we need to fetch
-      if (!forceRefresh) {
+      if (!forceRefresh && !registryChanged) {
         // If we have cached data and it's fully loaded, skip fetching
         if (state.isFullyLoaded && state.allServers.length > 0) {
           return;
@@ -159,12 +206,36 @@ export const createRegistryStore = () => {
       // If already loading or refreshing, don't start another fetch
       if (state.loading || state.isRefreshing) return;
 
+      // Try to load cached data for this registry URL
+      const cachedData = loadCachedData(targetUrl);
+
+      // If we have valid cached data for this registry and not force refresh
+      if (cachedData && !forceRefresh) {
+        set({
+          allServers: cachedData.servers,
+          isFullyLoaded: true,
+          lastFetchTime: cachedData.timestamp,
+          currentRegistryUrl: targetUrl,
+          loading: false,
+          isRefreshing: false,
+          authRequired: false,
+        });
+        return;
+      }
+
       // For initial load (no cached data), show loading spinner
-      if (state.allServers.length === 0) {
-        set({ loading: true, error: null });
+      if (state.allServers.length === 0 || registryChanged) {
+        set({
+          loading: true,
+          error: null,
+          authRequired: false,
+          currentRegistryUrl: targetUrl,
+          // Clear servers when switching registries
+          ...(registryChanged ? { allServers: [], isFullyLoaded: false } : {}),
+        });
       } else {
         // For refresh with existing data, set refreshing flag
-        set({ isRefreshing: true, error: null });
+        set({ isRefreshing: true, error: null, authRequired: false });
       }
 
       // Start background fetch - don't await it!
@@ -179,7 +250,22 @@ export const createRegistryStore = () => {
             const response = await listRegistryServers({
               limit: 100,
               cursor,
+              registryUrl: targetUrl,
             });
+
+            // Check if auth is required
+            if (isAuthRequired(response)) {
+              set({
+                loading: false,
+                isRefreshing: false,
+                authRequired: true,
+                error: "Authentication required for this registry",
+                currentRegistryUrl: targetUrl,
+                allServers: [],
+                isFullyLoaded: false,
+              });
+              return;
+            }
 
             // Unwrap servers from the wrapper structure
             const unwrappedServers = response.servers.map((wrapper) => ({
@@ -207,10 +293,12 @@ export const createRegistryStore = () => {
             loading: false,
             isRefreshing: false,
             error: null,
+            currentRegistryUrl: targetUrl,
+            authRequired: false,
           });
 
           // Save to cache
-          saveCachedData(uniqueServers);
+          saveCachedData(uniqueServers, targetUrl);
         } catch (err) {
           console.error("Error fetching registry servers:", err);
           const message =
@@ -221,7 +309,7 @@ export const createRegistryStore = () => {
           const currentState = get();
 
           // If we have cached data, keep it and just show error for refresh
-          if (currentState.allServers.length > 0) {
+          if (currentState.allServers.length > 0 && !registryChanged) {
             set({
               loading: false,
               isRefreshing: false,
@@ -240,6 +328,7 @@ export const createRegistryStore = () => {
               isRefreshing: false,
               // Mark as loaded even on error to prevent infinite retries
               isFullyLoaded: false,
+              currentRegistryUrl: targetUrl,
             });
 
             toast.error(message);
