@@ -1,4 +1,7 @@
 import { Hono } from "hono";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import connect from "./connect";
 import servers from "./servers";
 import tools from "./tools";
@@ -12,11 +15,22 @@ import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
 import openai from "./openai";
+import apps from "./apps";
 import registry from "./registry";
 import models from "./models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
+
+// ES module equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load sandbox proxy HTML at startup
+const sandboxProxyHtml = fs.readFileSync(
+  path.join(__dirname, "sandbox-proxy.html"),
+  "utf-8",
+);
 
 const mcp = new Hono();
 
@@ -58,6 +72,16 @@ mcp.route("/resource-templates", resourceTemplates);
 
 // OpenAI Apps SDK widget endpoints
 mcp.route("/openai", openai);
+
+// MCP Apps (SEP-1865) widget endpoints
+mcp.route("/apps", apps);
+
+// Sandbox proxy for MCP Apps double-iframe architecture (SEP-1865)
+mcp.get("/sandbox-proxy", (c) => {
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.body(sandboxProxyHtml);
+});
 
 // Prompts endpoints - REAL IMPLEMENTATION
 mcp.route("/prompts", prompts);
