@@ -17,6 +17,9 @@ import {
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
 
+// Injected by Vite at build time from package.json
+declare const __APP_VERSION__: string;
+
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
   | "input-streaming"
@@ -205,7 +208,7 @@ export function MCPAppsRenderer({
             sendResponse(id, {
               protocolVersion: "2025-11-25",
               hostCapabilities: {},
-              hostInfo: { name: "mcpjam-inspector", version: "1.0.0" },
+              hostInfo: { name: "mcpjam-inspector", version: __APP_VERSION__ },
               hostContext: {
                 theme: themeMode,
                 displayMode,
