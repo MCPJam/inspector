@@ -1,6 +1,7 @@
 import { defineConfig } from "tsup";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { copyFileSync, mkdirSync } from "node:fs";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(serverDir, "..");
@@ -52,5 +53,16 @@ export default defineConfig({
     options.alias = {
       "@/sdk": join(rootDir, "sdk/dist/index.js"),
     };
+  },
+  async onSuccess() {
+    // Copy static assets to dist folder
+    // Since the bundle is at dist/server/index.js, __dirname resolves to dist/server/
+    // so the HTML file needs to be at dist/server/sandbox-proxy.html
+    const distDir = join(rootDir, "dist/server");
+    mkdirSync(distDir, { recursive: true });
+    copyFileSync(
+      join(serverDir, "routes/mcp/sandbox-proxy.html"),
+      join(distDir, "sandbox-proxy.html"),
+    );
   },
 });
