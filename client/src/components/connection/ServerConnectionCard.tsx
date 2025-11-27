@@ -95,9 +95,19 @@ export function ServerConnectionCard({
       serverCapabilities ||
       serverTitle);
 
-  // Check if this is an OpenAI app (has tools with metadata)
+  // Check if this is an MCP App (has tools with ui/resourceUri metadata)
+  const isMCPApp =
+    toolsData?.toolsMetadata &&
+    Object.values(toolsData.toolsMetadata).some(
+      (meta: any) => meta?.["ui/resourceUri"],
+    );
+
+  // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
   const isOpenAIApp =
-    toolsData?.toolsMetadata && Object.keys(toolsData.toolsMetadata).length > 0;
+    toolsData?.toolsMetadata &&
+    Object.values(toolsData.toolsMetadata).some(
+      (meta: any) => meta?.["openai/outputTemplate"],
+    );
 
   // Compute the server-specific tunnel URL from the shared tunnel
   // Only show tunnel URL if server is connected
@@ -383,7 +393,15 @@ export function ServerConnectionCard({
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
                   <span>{"View server info"}</span>
-                  {isOpenAIApp && (
+                  {isMCPApp && (
+                    <img
+                      src="/mcp.svg"
+                      alt="MCP App"
+                      className="h-4 w-4 flex-shrink-0"
+                      title="MCP App"
+                    />
+                  )}
+                  {isOpenAIApp && !isMCPApp && (
                     <img
                       src="/openai_logo.png"
                       alt="OpenAI App"

@@ -4,9 +4,16 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
+
+// Read version from package.json
+const packageJson = JSON.parse(
+  readFileSync(path.resolve(rootDir, "package.json"), "utf-8"),
+);
+const appVersion = packageJson.version;
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -105,6 +112,6 @@ export default defineConfig({
     emptyOutDir: true,
   },
   define: {
-    __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
+    __APP_VERSION__: JSON.stringify(appVersion),
   },
 });
