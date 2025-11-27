@@ -87,7 +87,8 @@ export const SandboxedIframe = forwardRef<
     (event: MessageEvent) => {
       if (event.source !== outerRef.current?.contentWindow) return;
 
-      const { jsonrpc, method } = (event.data as { jsonrpc?: string; method?: string }) || {};
+      const { jsonrpc, method } =
+        (event.data as { jsonrpc?: string; method?: string }) || {};
       if (jsonrpc !== "2.0") return;
 
       // Sandbox ready notification (per SEP-1865)
