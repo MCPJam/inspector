@@ -11,7 +11,7 @@
  *
  * Per SEP-1865, this component is designed to be reusable for MCP Apps
  * and potentially future OpenAI SDK consolidation.
-  */
+ */
 
 import {
   useRef,

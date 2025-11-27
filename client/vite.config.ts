@@ -11,7 +11,7 @@ const rootDir = path.resolve(clientDir, "..");
 
 // Read version from package.json
 const packageJson = JSON.parse(
-  readFileSync(path.resolve(rootDir, "package.json"), "utf-8")
+  readFileSync(path.resolve(rootDir, "package.json"), "utf-8"),
 );
 const appVersion = packageJson.version;
 
