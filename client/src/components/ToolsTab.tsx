@@ -238,13 +238,18 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         setStructuredResult(
           rawResult.structuredContent as Record<string, unknown>,
         );
-        // Check for OpenAI component using tool metadata from definition
+        // Check for OpenAI or MCP Apps component using tool metadata from definition
         const toolMeta = getToolMeta(toolName);
         const hasOpenAIComponent = toolMeta?.["openai/outputTemplate"];
-        setShowStructured(!hasOpenAIComponent);
+        const hasMCPAppsComponent = toolMeta?.["ui/resourceUri"];
+        // Default to showing Component view for widgets, Raw JSON otherwise
+        setShowStructured(!hasOpenAIComponent && !hasMCPAppsComponent);
       } else {
         setStructuredResult(null);
-        setShowStructured(false);
+        // Also check for MCP Apps even without structuredContent
+        const toolMeta = getToolMeta(toolName);
+        const hasMCPAppsComponent = toolMeta?.["ui/resourceUri"];
+        setShowStructured(!hasMCPAppsComponent);
       }
 
       const currentTool = tools[toolName];
