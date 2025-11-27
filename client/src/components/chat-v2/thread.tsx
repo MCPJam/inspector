@@ -29,9 +29,11 @@ import {
 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { OpenAIAppRenderer } from "./openai-app-renderer";
+import { MCPAppsRenderer } from "./mcp-apps-renderer";
 import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
 import { MemoizedMarkdown } from "./memomized-markdown";
 import { getProviderLogoFromModel } from "./chat-helpers";
+import { detectUIType } from "@/lib/mcp-apps-utils";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 type ToolState =
@@ -241,7 +243,67 @@ function PartSwitch({
       );
     }
 
-    // TODO: Confirm that this is correct.
+    // MCP Apps detection (SEP-1865) - check for ui/resourceUri in tool metadata
+    const partToolName = isDynamicTool(part)
+      ? (part as DynamicToolUIPart).toolName
+      : getToolNameFromType((part as any).type);
+    const partToolMeta = toolsMetadata[partToolName];
+    const uiType = detectUIType(partToolMeta, (part as any).output);
+
+    if (uiType === "mcp-apps" && partToolMeta?.["ui/resourceUri"]) {
+      const toolState = (part as any).state as ToolState | undefined;
+      const serverId = getToolServerId(partToolName, toolServerMap);
+
+      if (!serverId) {
+        return (
+          <>
+            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
+              Failed to load server id for MCP App.
+            </div>
+          </>
+        );
+      }
+
+      let toolInput: Record<string, unknown> | undefined;
+      let toolOutput: unknown;
+      if (isDynamicTool(part)) {
+        toolInput = (part as DynamicToolUIPart).input as Record<
+          string,
+          unknown
+        >;
+        toolOutput = (part as DynamicToolUIPart).output;
+      } else {
+        toolInput = (part as any).input;
+        toolOutput = (part as any).output?.value;
+      }
+
+      return (
+        <>
+          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <MCPAppsRenderer
+            serverId={serverId}
+            toolCallId={(part as any).toolCallId}
+            toolName={partToolName}
+            toolState={toolState}
+            toolInput={toolInput}
+            toolOutput={toolOutput}
+            resourceUri={partToolMeta["ui/resourceUri"] as string}
+            toolMetadata={partToolMeta}
+            onSendFollowUp={onSendFollowUp}
+            onCallTool={(toolName, params) =>
+              callTool(serverId, toolName, params)
+            }
+            onWidgetStateChange={onWidgetStateChange}
+            pipWidgetId={pipWidgetId}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
+          />
+        </>
+      );
+    }
+
+    // OpenAI Apps detection - check for openai/outputTemplate in tool metadata
     if (
       (isDynamicTool(part) || isToolPart(part)) &&
       isPartOpenAIApp(part, toolsMetadata)
