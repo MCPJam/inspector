@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolExecutionResponse } from "@/lib/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
@@ -95,6 +96,12 @@ export function ResultsPanel({
   toolParameters,
   toolMeta,
 }: ResultsPanelProps) {
+  // Generate a stable fallback toolCallId to avoid re-renders causing ID mismatches
+  const resolvedToolCallId = useMemo(
+    () => toolCallId ?? `tools-tab-${toolName || "unknown"}-${Date.now()}`,
+    [toolCallId, toolName],
+  );
+
   const rawResult = result as unknown as Record<string, unknown> | null;
   // Check for OpenAI component using tool metadata from definition
   const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
@@ -242,7 +249,7 @@ export function ResultsPanel({
               return (
                 <MCPAppsRenderer
                   serverId={serverId || "unknown-server"}
-                  toolCallId={toolCallId || `tools-tab-${Date.now()}`}
+                  toolCallId={resolvedToolCallId}
                   toolName={toolName || "unknown-tool"}
                   toolState="output-available"
                   toolInput={toolParameters}
