@@ -1,8 +1,25 @@
-import { defineConfig } from "vite";
+import { defineConfig, Plugin } from "vite";
 import { resolve } from "path";
+import { copyFileSync, mkdirSync } from "fs";
+
+// Plugin to copy sandbox-proxy.html to build output
+function copySandboxProxy(): Plugin {
+  return {
+    name: "copy-sandbox-proxy",
+    writeBundle(options) {
+      const outDir = options.dir || ".vite/build";
+      mkdirSync(outDir, { recursive: true });
+      copyFileSync(
+        resolve(__dirname, "server/routes/mcp/sandbox-proxy.html"),
+        resolve(outDir, "sandbox-proxy.html"),
+      );
+    },
+  };
+}
 
 // https://vitejs.dev/config
 export default defineConfig({
+  plugins: [copySandboxProxy()],
   resolve: {
     alias: {
       "@/sdk": resolve(__dirname, "sdk/src/index.ts"),
