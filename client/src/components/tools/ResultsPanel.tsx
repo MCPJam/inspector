@@ -128,24 +128,29 @@ export function ResultsPanel({
               </Badge>
             ))}
         </div>
-        {rawResult && (structuredResult || hasOpenAIComponent || hasMCPAppsComponent) && (
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant={!showStructured ? "default" : "outline"}
-              onClick={() => onToggleStructured(false)}
-            >
-              {hasOpenAIComponent || hasMCPAppsComponent ? "Component" : "Raw Output"}
-            </Button>
-            <Button
-              size="sm"
-              variant={showStructured ? "default" : "outline"}
-              onClick={() => onToggleStructured(true)}
-            >
-              {hasOpenAIComponent || hasMCPAppsComponent ? "Raw JSON" : "Structured Output"}
-            </Button>
-          </div>
-        )}
+        {rawResult &&
+          (structuredResult || hasOpenAIComponent || hasMCPAppsComponent) && (
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={!showStructured ? "default" : "outline"}
+                onClick={() => onToggleStructured(false)}
+              >
+                {hasOpenAIComponent || hasMCPAppsComponent
+                  ? "Component"
+                  : "Raw Output"}
+              </Button>
+              <Button
+                size="sm"
+                variant={showStructured ? "default" : "outline"}
+                onClick={() => onToggleStructured(true)}
+              >
+                {hasOpenAIComponent || hasMCPAppsComponent
+                  ? "Raw JSON"
+                  : "Structured Output"}
+              </Button>
+            </div>
+          )}
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -263,7 +268,9 @@ export function ResultsPanel({
                       };
                     }
 
-                    throw new Error("Elicitation not supported in this context");
+                    throw new Error(
+                      "Elicitation not supported in this context",
+                    );
                   }}
                 />
               );

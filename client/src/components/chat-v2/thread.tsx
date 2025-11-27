@@ -268,7 +268,10 @@ function PartSwitch({
       let toolInput: Record<string, unknown> | undefined;
       let toolOutput: unknown;
       if (isDynamicTool(part)) {
-        toolInput = (part as DynamicToolUIPart).input as Record<string, unknown>;
+        toolInput = (part as DynamicToolUIPart).input as Record<
+          string,
+          unknown
+        >;
         toolOutput = (part as DynamicToolUIPart).output;
       } else {
         toolInput = (part as any).input;

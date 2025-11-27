@@ -110,7 +110,9 @@ export function MCPAppsRenderer({
         });
 
         if (!storeResponse.ok) {
-          throw new Error(`Failed to store widget: ${storeResponse.statusText}`);
+          throw new Error(
+            `Failed to store widget: ${storeResponse.statusText}`,
+          );
         }
 
         // Fetch the processed HTML with injected script
@@ -158,7 +160,11 @@ export function MCPAppsRenderer({
   );
 
   const sendResponse = useCallback(
-    (id: number | string, result?: unknown, error?: { code: number; message: string }) => {
+    (
+      id: number | string,
+      result?: unknown,
+      error?: { code: number; message: string },
+    ) => {
       postMessage({
         jsonrpc: "2.0",
         id,
@@ -197,7 +203,7 @@ export function MCPAppsRenderer({
           case "ui/initialize": {
             // Respond with host context (per SEP-1865)
             sendResponse(id, {
-              protocolVersion: "2025-06-18",
+              protocolVersion: "2025-11-25",
               hostCapabilities: {},
               hostInfo: { name: "mcpjam-inspector", version: "1.0.0" },
               hostContext: {
@@ -221,7 +227,10 @@ export function MCPAppsRenderer({
               break;
             }
             try {
-              const callParams = params as { name: string; arguments?: Record<string, unknown> };
+              const callParams = params as {
+                name: string;
+                arguments?: Record<string, unknown>;
+              };
               const result = await onCallTool(
                 callParams.name,
                 callParams.arguments || {},
@@ -230,7 +239,8 @@ export function MCPAppsRenderer({
             } catch (err) {
               sendResponse(id, undefined, {
                 code: -32000,
-                message: err instanceof Error ? err.message : "Tool call failed",
+                message:
+                  err instanceof Error ? err.message : "Tool call failed",
               });
             }
             break;
