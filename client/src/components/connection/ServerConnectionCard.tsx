@@ -99,14 +99,14 @@ export function ServerConnectionCard({
   const isMCPApp =
     toolsData?.toolsMetadata &&
     Object.values(toolsData.toolsMetadata).some(
-      (meta: any) => meta?.["ui/resourceUri"]
+      (meta: any) => meta?.["ui/resourceUri"],
     );
 
   // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
   const isOpenAIApp =
     toolsData?.toolsMetadata &&
     Object.values(toolsData.toolsMetadata).some(
-      (meta: any) => meta?.["openai/outputTemplate"]
+      (meta: any) => meta?.["openai/outputTemplate"],
     );
 
   // Compute the server-specific tunnel URL from the shared tunnel

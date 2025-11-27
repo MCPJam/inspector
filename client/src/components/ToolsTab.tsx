@@ -246,10 +246,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         setShowStructured(!hasOpenAIComponent && !hasMCPAppsComponent);
       } else {
         setStructuredResult(null);
-        // Also check for MCP Apps even without structuredContent
+        // Also check for OpenAI or MCP Apps even without structuredContent
         const toolMeta = getToolMeta(toolName);
+        const hasOpenAIComponent = toolMeta?.["openai/outputTemplate"];
         const hasMCPAppsComponent = toolMeta?.["ui/resourceUri"];
-        setShowStructured(!hasMCPAppsComponent);
+        setShowStructured(!hasOpenAIComponent && !hasMCPAppsComponent);
       }
 
       const currentTool = tools[toolName];
