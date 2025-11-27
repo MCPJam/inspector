@@ -258,7 +258,8 @@ export function MCPAppsRenderer({
                 body: JSON.stringify({ serverId, uri: readParams.uri }),
               });
               const result = await response.json();
-              sendResponse(id, result);
+              // API returns { content: { contents: [...] } }, SDK expects { contents: [...] }
+              sendResponse(id, result.content);
             } catch (err) {
               sendResponse(id, undefined, {
                 code: -32000,
@@ -279,9 +280,16 @@ export function MCPAppsRenderer({
           }
 
           case "ui/message": {
-            const messageParams = params as { content?: { text?: string } };
-            if (onSendFollowUp && messageParams.content?.text) {
-              onSendFollowUp(messageParams.content.text);
+            // SDK sends { role: "user", content: [{ type: "text", text: "..." }] }
+            const messageParams = params as {
+              role?: string;
+              content?: Array<{ type: string; text?: string }>;
+            };
+            const textContent = messageParams.content?.find(
+              (c) => c.type === "text",
+            )?.text;
+            if (onSendFollowUp && textContent) {
+              onSendFollowUp(textContent);
             }
             sendResponse(id, {});
             break;
