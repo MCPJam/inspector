@@ -1,8 +1,10 @@
+import { useMemo } from "react";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolExecutionResponse } from "@/lib/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { CheckCircle, XCircle } from "lucide-react";
 import { OpenAIAppRenderer } from "../chat-v2/openai-app-renderer";
+import { MCPAppsRenderer } from "../chat-v2/mcp-apps-renderer";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -94,11 +96,21 @@ export function ResultsPanel({
   toolParameters,
   toolMeta,
 }: ResultsPanelProps) {
+  // Generate a stable fallback toolCallId to avoid re-renders causing ID mismatches
+  const resolvedToolCallId = useMemo(
+    () => toolCallId ?? `tools-tab-${toolName || "unknown"}-${Date.now()}`,
+    [toolCallId, toolName],
+  );
+
   const rawResult = result as unknown as Record<string, unknown> | null;
   // Check for OpenAI component using tool metadata from definition
   const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
   const hasOpenAIComponent =
     openaiOutputTemplate && typeof openaiOutputTemplate === "string";
+  // Check for MCP Apps (SEP-1865) using ui/resourceUri in tool metadata
+  const mcpAppsResourceUri = toolMeta?.["ui/resourceUri"];
+  const hasMCPAppsComponent =
+    mcpAppsResourceUri && typeof mcpAppsResourceUri === "string";
   const uiResource = resolveUIResource(result);
 
   return (
@@ -123,24 +135,29 @@ export function ResultsPanel({
               </Badge>
             ))}
         </div>
-        {rawResult && (structuredResult || hasOpenAIComponent) && (
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant={!showStructured ? "default" : "outline"}
-              onClick={() => onToggleStructured(false)}
-            >
-              {hasOpenAIComponent ? "Component" : "Raw Output"}
-            </Button>
-            <Button
-              size="sm"
-              variant={showStructured ? "default" : "outline"}
-              onClick={() => onToggleStructured(true)}
-            >
-              {hasOpenAIComponent ? "Raw JSON" : "Structured Output"}
-            </Button>
-          </div>
-        )}
+        {rawResult &&
+          (structuredResult || hasOpenAIComponent || hasMCPAppsComponent) && (
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={!showStructured ? "default" : "outline"}
+                onClick={() => onToggleStructured(false)}
+              >
+                {hasOpenAIComponent || hasMCPAppsComponent
+                  ? "Component"
+                  : "Raw Output"}
+              </Button>
+              <Button
+                size="sm"
+                variant={showStructured ? "default" : "outline"}
+                onClick={() => onToggleStructured(true)}
+              >
+                {hasOpenAIComponent || hasMCPAppsComponent
+                  ? "Raw JSON"
+                  : "Structured Output"}
+              </Button>
+            </div>
+          )}
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -227,6 +244,45 @@ export function ResultsPanel({
           </ScrollArea>
         ) : rawResult ? (
           (() => {
+            // MCP Apps (SEP-1865) rendering - check first before OpenAI
+            if (!showStructured && hasMCPAppsComponent && mcpAppsResourceUri) {
+              return (
+                <MCPAppsRenderer
+                  serverId={serverId || "unknown-server"}
+                  toolCallId={resolvedToolCallId}
+                  toolName={toolName || "unknown-tool"}
+                  toolState="output-available"
+                  toolInput={toolParameters}
+                  toolOutput={rawResult}
+                  resourceUri={mcpAppsResourceUri}
+                  toolMetadata={toolMeta}
+                  onSendFollowUp={onSendFollowup}
+                  onCallTool={async (invocationToolName, params) => {
+                    const toolResponse = await onExecuteFromUI(
+                      invocationToolName,
+                      params,
+                    );
+
+                    if ("error" in toolResponse) {
+                      throw new Error(toolResponse.error);
+                    }
+
+                    if (toolResponse.status === "completed") {
+                      const result = toolResponse.result as any;
+                      return {
+                        content: result?.content || [],
+                        structuredContent: result?.structuredContent || result,
+                      };
+                    }
+
+                    throw new Error(
+                      "Elicitation not supported in this context",
+                    );
+                  }}
+                />
+              );
+            }
+
             if (!showStructured && hasOpenAIComponent && openaiOutputTemplate) {
               return (
                 <OpenAIAppRenderer

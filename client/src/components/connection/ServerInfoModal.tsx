@@ -62,9 +62,22 @@ export function ServerInfoModal({
   if (serverCapabilities?.prompts) capabilities.push("Prompts");
   if (serverCapabilities?.resources) capabilities.push("Resources");
 
-  // Check if this is an OpenAI app
+  // Check if this is an MCP App (has tools with ui/resourceUri metadata)
+  const isMCPApp =
+    toolsData?.toolsMetadata &&
+    Object.values(toolsData.toolsMetadata).some(
+      (meta: any) => meta?.["ui/resourceUri"],
+    );
+
+  // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
   const isOpenAIApp =
-    toolsData?.toolsMetadata && Object.keys(toolsData.toolsMetadata).length > 0;
+    toolsData?.toolsMetadata &&
+    Object.values(toolsData.toolsMetadata).some(
+      (meta: any) => meta?.["openai/outputTemplate"],
+    );
+
+  // Has any widget metadata (either MCP App or OpenAI App)
+  const hasWidgetMetadata = isMCPApp || isOpenAIApp;
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -221,7 +234,15 @@ export function ServerInfoModal({
                 v{version}
               </span>
             )}
-            {isOpenAIApp && (
+            {isMCPApp && (
+              <img
+                src="/mcp.svg"
+                alt="MCP App"
+                className="h-5 w-5 flex-shrink-0"
+                title="MCP App"
+              />
+            )}
+            {isOpenAIApp && !isMCPApp && (
               <img
                 src="/openai_logo.png"
                 alt="OpenAI App"
@@ -232,11 +253,11 @@ export function ServerInfoModal({
           </DialogTitle>
         </DialogHeader>
 
-        {isOpenAIApp ? (
+        {hasWidgetMetadata ? (
           <Tabs defaultValue="info" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="info">Server Info</TabsTrigger>
-              <TabsTrigger value="metadata">OpenAI Metadata</TabsTrigger>
+              <TabsTrigger value="metadata">Tools Metadata</TabsTrigger>
             </TabsList>
 
             <TabsContent value="info" className="space-y-4 mt-4">

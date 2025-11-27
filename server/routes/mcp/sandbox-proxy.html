@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!-- Permissive CSP so nested content is not constrained by host CSP -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src * data: blob: 'unsafe-inline'; media-src * blob: data:; font-src * blob: data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com http://localhost:* https://localhost:*; style-src * blob: data: 'unsafe-inline'; connect-src *; frame-src * blob: data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; base-uri 'self';"
+    />
+    <title>MCP Apps Sandbox Proxy</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100vh;
+        width: 100vw;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      iframe {
+        background-color: transparent;
+        border: 0px none transparent;
+        padding: 0px;
+        overflow: hidden;
+        flex-grow: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      /**
+       * MCP Apps Sandbox Proxy (SEP-1865)
+       *
+       * Double-iframe architecture for security isolation:
+       * Host Page → Sandbox Proxy (this page, different origin) → Guest UI
+       *
+       * This proxy:
+       * 1. Creates inner iframe immediately
+       * 2. Waits for HTML content via ui/notifications/sandbox-resource-ready
+       * 3. Loads HTML via srcdoc with configurable sandbox attributes
+       * 4. Forwards all non-sandbox messages between host and guest
+       *
+       * Reference: https://gist.github.com/ochafik/a9603ba2d6757d6038ce066eded4c354
+       */
+
+      // Create inner iframe immediately (before HTML arrives)
+      const inner = document.createElement("iframe");
+      inner.style = "width:100%; height:100%; border:none;";
+      // Default minimal sandbox before HTML arrives
+      inner.setAttribute(
+        "sandbox",
+        "allow-scripts allow-same-origin allow-forms",
+      );
+      document.body.appendChild(inner);
+
+      // Handle messages from parent (host) and inner (guest UI)
+      window.addEventListener("message", async (event) => {
+        if (event.source === window.parent) {
+          // Message from host
+          if (
+            event.data &&
+            event.data.method === "ui/notifications/sandbox-resource-ready"
+          ) {
+            // Load HTML into inner iframe
+            const { html, sandbox } = event.data.params || {};
+            if (typeof sandbox === "string") {
+              inner.setAttribute("sandbox", sandbox);
+            }
+            if (typeof html === "string") {
+              inner.srcdoc = html;
+            }
+          } else {
+            // Forward other messages to inner iframe (guest UI)
+            if (inner && inner.contentWindow) {
+              inner.contentWindow.postMessage(event.data, "*");
+            }
+          }
+        } else if (event.source === inner.contentWindow) {
+          // Relay messages from inner (guest UI) to parent (host)
+          window.parent.postMessage(event.data, "*");
+        }
+      });
+
+      // Notify parent that sandbox is ready (per SEP-1865)
+      window.parent.postMessage(
+        {
+          jsonrpc: "2.0",
+          method: "ui/notifications/sandbox-ready",
+          params: {},
+        },
+        "*",
+      );
+    </script>
+  </body>
+</html>
