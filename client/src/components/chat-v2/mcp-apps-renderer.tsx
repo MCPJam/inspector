@@ -280,14 +280,20 @@ export function MCPAppsRenderer({
           }
 
           case "ui/message": {
-            // SDK sends { role: "user", content: [{ type: "text", text: "..." }] }
+            // SEP-1865 specifies: { role: "user", content: { type: "text", text: "..." } }
+            // SDK sends array:    { role: "user", content: [{ type: "text", text: "..." }] }
+            // Support both formats for compatibility
             const messageParams = params as {
               role?: string;
-              content?: Array<{ type: string; text?: string }>;
+              content?:
+                | { type: string; text?: string }
+                | Array<{ type: string; text?: string }>;
             };
-            const textContent = messageParams.content?.find(
-              (c) => c.type === "text",
-            )?.text;
+            const textContent = Array.isArray(messageParams.content)
+              ? messageParams.content.find((c) => c.type === "text")?.text
+              : messageParams.content?.type === "text"
+                ? messageParams.content.text
+                : undefined;
             if (onSendFollowUp && textContent) {
               onSendFollowUp(textContent);
             }
