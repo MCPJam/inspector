@@ -355,10 +355,10 @@ export function MCPAppsRenderer({
     ],
   );
 
-  // Send theme updates when theme changes (per SEP-1865: ui/host-context-change)
+  // Send theme updates when theme changes (SDK uses ui/notifications/host-context-changed)
   useEffect(() => {
     if (!isReady) return;
-    sendNotification("ui/host-context-change", { theme: themeMode });
+    sendNotification("ui/notifications/host-context-changed", { theme: themeMode });
   }, [themeMode, isReady, sendNotification]);
 
   // Loading states (same patterns as openai-app-renderer.tsx)
