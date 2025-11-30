@@ -18,3 +18,25 @@ MCPJam Inspector provides powerful debugging and monitoring capabilities to help
 ## Logs
 
 View all messages being sent back and forth between MCPJam and your MCP server. We're working on building support to view all JSON-RPC messages. Tracing message levels are `ERROR`, `WARNING`, and `TRACE`.
+
+## Widget debugging
+
+When using OpenAI Apps or MCP Apps in the playground, you can debug widget state and globals directly from tool call results.
+
+### Debugging in the chat
+
+Click on any tool call in the chat to expand its debug panel. For widgets, you'll see three tabs:
+
+- **Data** - The tool's input arguments and output result
+- **Widget State** - The current state persisted by the widget (updated in real-time as the widget calls `setWidgetState`)
+- **Globals** - Environment information passed to the widget including theme, display mode, locale, and device capabilities
+
+A "Click to debug" hint appears on tool calls that have widget debug information available.
+
+### Debugging in the Tools tab
+
+When testing OpenAI Apps or MCP Apps from the Tools tab, the results panel includes a **State/Globals** button alongside the Component and Raw JSON views. This shows the same widget state and globals information in a dedicated panel.
+
+<Tip>
+Widget state persists across follow-up turns in a conversation. Keep state under 4k tokens for optimal performance.
+</Tip>
