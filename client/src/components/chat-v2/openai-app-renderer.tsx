@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { X } from "lucide-react";
 import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 
@@ -235,6 +236,38 @@ export function OpenAIAppRenderer({
   // UI logging
   const addUiLog = useUiLogStore((s) => s.addLog);
 
+  // Widget debug store
+  const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
+  const setWidgetState = useWidgetDebugStore((s) => s.setWidgetState);
+  const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+
+  // Initialize widget debug info
+  useEffect(() => {
+    if (!toolName) return;
+    setWidgetDebugInfo(resolvedToolCallId, {
+      toolName,
+      protocol: "openai-apps",
+      widgetState: null,
+      globals: {
+        theme: themeMode,
+        displayMode,
+        maxHeight: maxHeight ?? undefined,
+        locale: "en-US",
+        safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+        userAgent: { device: { type: "desktop" }, capabilities: { hover: true, touch: false } },
+      },
+    });
+  }, [resolvedToolCallId, toolName, setWidgetDebugInfo, themeMode, displayMode, maxHeight]);
+
+  // Update globals in debug store when they change
+  useEffect(() => {
+    setWidgetGlobals(resolvedToolCallId, {
+      theme: themeMode,
+      displayMode,
+      maxHeight: maxHeight ?? undefined,
+    });
+  }, [resolvedToolCallId, themeMode, displayMode, maxHeight, setWidgetGlobals]);
+
   // Helper to post message to widget and log it
   const postToWidget = useCallback(
     (target: Window | null, data: unknown) => {
@@ -293,14 +326,17 @@ export function OpenAIAppRenderer({
           // Widget state is already persisted by the iframe script
           console.log("[OpenAI App] Widget state updated:", event.data.state);
 
-          if (onWidgetStateChange && event.data.toolId === resolvedToolCallId) {
+          if (event.data.toolId === resolvedToolCallId) {
             const newState = event.data.state;
             const newStateStr =
               newState === null ? null : JSON.stringify(newState);
 
             if (newStateStr !== previousWidgetStateRef.current) {
               previousWidgetStateRef.current = newStateStr;
-              onWidgetStateChange(resolvedToolCallId, newState);
+              // Update debug store
+              setWidgetState(resolvedToolCallId, newState);
+              // Notify parent
+              onWidgetStateChange?.(resolvedToolCallId, newState);
             }
           }
 
@@ -420,6 +456,7 @@ export function OpenAIAppRenderer({
       addUiLog,
       postToWidget,
       serverId,
+      setWidgetState,
     ],
   );
 

@@ -9,6 +9,7 @@ import {
   Server,
   AppWindow,
   Layers,
+  PanelRightClose,
 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -47,6 +48,7 @@ interface RenderableRpcItem {
 
 interface LoggerViewProps {
   serverIds?: string[]; // Optional filter for specific server IDs
+  onClose?: () => void; // Optional callback to close/hide the panel
 }
 
 function normalizePayload(
@@ -210,7 +212,7 @@ function WidgetDebugPanel() {
   );
 }
 
-export function LoggerView({ serverIds }: LoggerViewProps = {}) {
+export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
   const [mcpServerItems, setMcpServerItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -247,6 +249,7 @@ export function LoggerView({ serverIds }: LoggerViewProps = {}) {
   const clearMessages = () => {
     setMcpServerItems([]);
     clearUiLogs();
+    clearWidgets();
     setExpanded(new Set());
   };
 
@@ -338,8 +341,9 @@ export function LoggerView({ serverIds }: LoggerViewProps = {}) {
     return result;
   }, [allItems, searchQuery, serverIds]);
 
-  // Get widget count for tab badge
+  // Get widget count for tab badge and clear function
   const widgetCount = useWidgetDebugStore((s) => s.widgets.size);
+  const clearWidgets = useWidgetDebugStore((s) => s.clear);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -364,16 +368,29 @@ export function LoggerView({ serverIds }: LoggerViewProps = {}) {
                 )}
               </TabsTrigger>
             </TabsList>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearMessages}
-              disabled={allItems.length === 0}
-              className="h-7 px-2"
-              title="Clear all messages"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearMessages}
+                disabled={allItems.length === 0 && widgetCount === 0}
+                className="h-7 px-2"
+                title="Clear all messages"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+              {onClose && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onClose}
+                  className="h-7 px-2"
+                  title="Hide JSON-RPC panel"
+                >
+                  <PanelRightClose className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
