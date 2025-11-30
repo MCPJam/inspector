@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolExecutionResponse } from "@/lib/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
@@ -8,6 +8,10 @@ import { MCPAppsRenderer } from "../chat-v2/mcp-apps-renderer";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
+import {
+  useWidgetDebugStore,
+  type WidgetDebugInfo,
+} from "@/stores/widget-debug-store";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 
@@ -21,6 +25,79 @@ type UIResource = {
   uri: string;
   [key: string]: unknown;
 };
+
+// Full-page widget debug view for showing state and globals
+function WidgetDebugView({
+  widgetDebugInfo,
+}: {
+  widgetDebugInfo: WidgetDebugInfo;
+}) {
+  return (
+    <ScrollArea className="h-full">
+      <div className="p-4 space-y-4">
+        {/* Globals Section */}
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+            Globals
+          </h4>
+          <div className="bg-muted/30 rounded-lg border border-border p-3">
+            <JsonView
+              src={widgetDebugInfo.globals}
+              dark={true}
+              theme="atom"
+              enableClipboard={true}
+              displaySize={false}
+              style={{
+                fontSize: "12px",
+                fontFamily:
+                  "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                backgroundColor: "transparent",
+                padding: "0",
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Widget State Section */}
+        {widgetDebugInfo.widgetState !== null &&
+          widgetDebugInfo.widgetState !== undefined && (
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Widget State
+              </h4>
+              <div className="bg-muted/30 rounded-lg border border-border p-3">
+                <JsonView
+                  src={widgetDebugInfo.widgetState as object}
+                  dark={true}
+                  theme="atom"
+                  enableClipboard={true}
+                  displaySize={false}
+                  style={{
+                    fontSize: "12px",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                    backgroundColor: "transparent",
+                    padding: "0",
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+        {/* Metadata */}
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <Badge variant="outline" className="text-[10px]">
+            {widgetDebugInfo.protocol}
+          </Badge>
+          <span>Tool: {widgetDebugInfo.toolName}</span>
+          <span>
+            Updated: {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
+          </span>
+        </div>
+      </div>
+    </ScrollArea>
+  );
+}
 
 function resolveUIResource(
   rawResult: CallToolResult | null,
@@ -96,10 +173,17 @@ export function ResultsPanel({
   toolParameters,
   toolMeta,
 }: ResultsPanelProps) {
+  const [showDebug, setShowDebug] = useState(false);
+
   // Generate a stable fallback toolCallId to avoid re-renders causing ID mismatches
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `tools-tab-${toolName || "unknown"}-${Date.now()}`,
     [toolCallId, toolName],
+  );
+
+  // Get widget debug info from store
+  const widgetDebugInfo = useWidgetDebugStore((s) =>
+    s.widgets.get(resolvedToolCallId),
   );
 
   const rawResult = result as unknown as Record<string, unknown> | null;
@@ -112,6 +196,7 @@ export function ResultsPanel({
   const hasMCPAppsComponent =
     mcpAppsResourceUri && typeof mcpAppsResourceUri === "string";
   const uiResource = resolveUIResource(result);
+  const hasWidgetComponent = hasOpenAIComponent || hasMCPAppsComponent;
 
   return (
     <div className="h-full flex flex-col border-t border-border bg-background break-all">
@@ -119,6 +204,7 @@ export function ResultsPanel({
         <div className="flex items-center gap-4">
           <h2 className="text-xs font-semibold text-foreground">Response</h2>
           {showStructured &&
+            !showDebug &&
             validationErrors !== undefined &&
             (validationErrors === null ? (
               <Badge
@@ -136,26 +222,37 @@ export function ResultsPanel({
             ))}
         </div>
         {rawResult &&
-          (structuredResult || hasOpenAIComponent || hasMCPAppsComponent) && (
+          (structuredResult || hasWidgetComponent) && (
             <div className="flex gap-2">
               <Button
                 size="sm"
-                variant={!showStructured ? "default" : "outline"}
-                onClick={() => onToggleStructured(false)}
+                variant={!showStructured && !showDebug ? "default" : "outline"}
+                onClick={() => {
+                  setShowDebug(false);
+                  onToggleStructured(false);
+                }}
               >
-                {hasOpenAIComponent || hasMCPAppsComponent
-                  ? "Component"
-                  : "Raw Output"}
+                {hasWidgetComponent ? "Component" : "Raw Output"}
               </Button>
               <Button
                 size="sm"
-                variant={showStructured ? "default" : "outline"}
-                onClick={() => onToggleStructured(true)}
+                variant={showStructured && !showDebug ? "default" : "outline"}
+                onClick={() => {
+                  setShowDebug(false);
+                  onToggleStructured(true);
+                }}
               >
-                {hasOpenAIComponent || hasMCPAppsComponent
-                  ? "Raw JSON"
-                  : "Structured Output"}
+                {hasWidgetComponent ? "Raw JSON" : "Structured Output"}
               </Button>
+              {hasWidgetComponent && widgetDebugInfo && (
+                <Button
+                  size="sm"
+                  variant={showDebug ? "default" : "outline"}
+                  onClick={() => setShowDebug(true)}
+                >
+                  State/Globals
+                </Button>
+              )}
             </div>
           )}
       </div>
@@ -167,6 +264,8 @@ export function ResultsPanel({
               {error}
             </div>
           </div>
+        ) : showDebug && widgetDebugInfo ? (
+          <WidgetDebugView widgetDebugInfo={widgetDebugInfo} />
         ) : showStructured && validationErrors ? (
           <div className="p-4">
             <h3 className="text-sm font-semibold text-destructive mb-2">
@@ -287,7 +386,7 @@ export function ResultsPanel({
               return (
                 <OpenAIAppRenderer
                   serverId={serverId || "unknown-server"}
-                  toolCallId={toolCallId}
+                  toolCallId={resolvedToolCallId}
                   toolName={toolName}
                   toolState="output-available"
                   toolInput={toolParameters || null}
