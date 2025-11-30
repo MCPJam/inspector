@@ -16,6 +16,7 @@ import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
+import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -150,10 +151,24 @@ export function MCPAppsRenderer({
     themeMode,
   ]);
 
+  // UI logging
+  const addUiLog = useUiLogStore((s) => s.addLog);
+
   // JSON-RPC helpers
-  const postMessage = useCallback((data: unknown) => {
-    sandboxRef.current?.postMessage(data);
-  }, []);
+  const postMessage = useCallback(
+    (data: unknown) => {
+      // Log outgoing message
+      addUiLog({
+        widgetId: toolCallId,
+        serverId,
+        direction: "host-to-ui",
+        method: extractMethod(data),
+        message: data,
+      });
+      sandboxRef.current?.postMessage(data);
+    },
+    [addUiLog, toolCallId, serverId],
+  );
 
   const sendNotification = useCallback(
     (method: string, params: unknown) => {
@@ -185,6 +200,15 @@ export function MCPAppsRenderer({
 
       // Not a JSON-RPC message
       if (jsonrpc !== "2.0") return;
+
+      // Log incoming message
+      addUiLog({
+        widgetId: toolCallId,
+        serverId,
+        direction: "ui-to-host",
+        method: extractMethod(event.data),
+        message: event.data,
+      });
 
       // Handle responses to our requests
       if (id !== undefined && !method) {
@@ -347,18 +371,35 @@ export function MCPAppsRenderer({
       onCallTool,
       onSendFollowUp,
       serverId,
+      toolCallId,
       toolInput,
       toolOutput,
       toolState,
       sendResponse,
       sendNotification,
+      addUiLog,
     ],
   );
 
-  // Send theme updates when theme changes (SDK uses ui/notifications/host-context-changed)
+  // Track previous theme to avoid sending redundant notifications on mount
+  // (theme is already included in McpUiInitializeResult.hostContext)
+  const prevThemeRef = useRef<string | null>(null);
+
+  // Send theme updates only when theme actually changes (not on initial mount)
   useEffect(() => {
     if (!isReady) return;
-    sendNotification("ui/notifications/host-context-changed", { theme: themeMode });
+
+    // Skip initial mount - theme was already sent in initialize response
+    if (prevThemeRef.current === null) {
+      prevThemeRef.current = themeMode;
+      return;
+    }
+
+    // Only send notification if theme actually changed
+    if (prevThemeRef.current !== themeMode) {
+      prevThemeRef.current = themeMode;
+      sendNotification("ui/notifications/host-context-changed", { theme: themeMode });
+    }
   }, [themeMode, isReady, sendNotification]);
 
   // Loading states (same patterns as openai-app-renderer.tsx)
