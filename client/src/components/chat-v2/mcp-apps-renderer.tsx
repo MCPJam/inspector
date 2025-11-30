@@ -162,7 +162,8 @@ export function MCPAppsRenderer({
         widgetId: toolCallId,
         serverId,
         direction: "host-to-ui",
-        method: extractMethod(data),
+        protocol: "mcp-apps",
+        method: extractMethod(data, "mcp-apps"),
         message: data,
       });
       sandboxRef.current?.postMessage(data);
@@ -206,7 +207,8 @@ export function MCPAppsRenderer({
         widgetId: toolCallId,
         serverId,
         direction: "ui-to-host",
-        method: extractMethod(event.data),
+        protocol: "mcp-apps",
+        method: extractMethod(event.data, "mcp-apps"),
         message: event.data,
       });
 

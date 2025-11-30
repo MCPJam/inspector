@@ -14,7 +14,7 @@ import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useUiLogStore, type UiLogEvent } from "@/stores/ui-log-store";
+import { useUiLogStore, type UiLogEvent, type UiProtocol } from "@/stores/ui-log-store";
 
 type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps";
@@ -34,6 +34,7 @@ interface RenderableRpcItem {
   timestamp: string;
   payload: unknown;
   source: TrafficSource;
+  protocol?: UiProtocol;
   widgetId?: string;
 }
 
@@ -69,6 +70,7 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
       timestamp: item.timestamp,
       payload: item.message,
       source: "mcp-apps" as TrafficSource,
+      protocol: item.protocol,
       widgetId: item.widgetId,
     }));
   }, [uiLogItems]);
@@ -222,15 +224,19 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
         ) : (
           filteredItems.map((it) => {
             const isExpanded = expanded.has(it.id);
-            const isMcpApps = it.source === "mcp-apps";
+            const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
             const isIncoming =
               it.direction === "RECEIVE" || it.direction === "UI→HOST";
+
+            // Border color: purple for Apps traffic, none for MCP Server
+            const borderClass = isAppsTraffic
+              ? "border-l-2 border-l-purple-500/50"
+              : "";
+
             return (
               <div
                 key={it.id}
-                className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${
-                  isMcpApps ? "border-l-2 border-l-purple-500/50" : ""
-                }`}
+                className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
               >
                 <div
                   className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
@@ -247,13 +253,13 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
                     {/* Source indicator */}
                     <span
                       className={`flex items-center justify-center p-0.5 rounded ${
-                        isMcpApps
+                        isAppsTraffic
                           ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
                           : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
                       }`}
-                      title={isMcpApps ? "MCP Apps (UI)" : "MCP Server"}
+                      title={isAppsTraffic ? "Apps (UI)" : "MCP Server"}
                     >
-                      {isMcpApps ? (
+                      {isAppsTraffic ? (
                         <AppWindow className="h-3 w-3" />
                       ) : (
                         <Server className="h-3 w-3" />

@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { X } from "lucide-react";
+import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 
@@ -231,6 +232,26 @@ export function OpenAIAppRenderer({
     return `${appliedHeight}px`;
   }, [appliedHeight, displayMode, pipWidgetId, resolvedToolCallId]);
 
+  // UI logging
+  const addUiLog = useUiLogStore((s) => s.addLog);
+
+  // Helper to post message to widget and log it
+  const postToWidget = useCallback(
+    (target: Window | null, data: unknown) => {
+      if (!target) return;
+      addUiLog({
+        widgetId: resolvedToolCallId,
+        serverId,
+        direction: "host-to-ui",
+        protocol: "openai-apps",
+        method: extractMethod(data, "openai-apps"),
+        message: data,
+      });
+      target.postMessage(data, "*");
+    },
+    [addUiLog, resolvedToolCallId, serverId],
+  );
+
   // Handle messages from iframe
   const handleMessage = useCallback(
     async (event: MessageEvent) => {
@@ -241,6 +262,18 @@ export function OpenAIAppRenderer({
       const isFromModal = modalWindow != null && event.source === modalWindow;
 
       if (!isFromInline && !isFromModal) return;
+
+      // Log incoming message
+      if (event.data?.type) {
+        addUiLog({
+          widgetId: resolvedToolCallId,
+          serverId,
+          direction: "ui-to-host",
+          protocol: "openai-apps",
+          method: extractMethod(event.data, "openai-apps"),
+          message: event.data,
+        });
+      }
 
       console.log("[OpenAI App] Received message from iframe:", event.data);
 
@@ -277,16 +310,11 @@ export function OpenAIAppRenderer({
               ? inlineWindow
               : null;
 
-          if (targetWindow) {
-            targetWindow.postMessage(
-              {
-                type: "openai:pushWidgetState",
-                toolId: resolvedToolCallId,
-                state: event.data.state,
-              },
-              "*",
-            );
-          }
+          postToWidget(targetWindow, {
+            type: "openai:pushWidgetState",
+            toolId: resolvedToolCallId,
+            state: event.data.state,
+          });
           break;
         }
 
@@ -295,15 +323,11 @@ export function OpenAIAppRenderer({
             console.warn(
               "[OpenAI App] callTool received but handler not available",
             );
-            const targetWindow = event.source as Window | null;
-            targetWindow?.postMessage(
-              {
-                type: "openai:callTool:response",
-                requestId: event.data.requestId,
-                error: "callTool is not supported in this context",
-              },
-              "*",
-            );
+            postToWidget(event.source as Window | null, {
+              type: "openai:callTool:response",
+              requestId: event.data.requestId,
+              error: "callTool is not supported in this context",
+            });
             break;
           }
 
@@ -312,25 +336,17 @@ export function OpenAIAppRenderer({
               event.data.toolName,
               event.data.params || {},
             );
-            const targetWindow = event.source as Window | null;
-            targetWindow?.postMessage(
-              {
-                type: "openai:callTool:response",
-                requestId: event.data.requestId,
-                result,
-              },
-              "*",
-            );
+            postToWidget(event.source as Window | null, {
+              type: "openai:callTool:response",
+              requestId: event.data.requestId,
+              result,
+            });
           } catch (err) {
-            const targetWindow = event.source as Window | null;
-            targetWindow?.postMessage(
-              {
-                type: "openai:callTool:response",
-                requestId: event.data.requestId,
-                error: err instanceof Error ? err.message : "Unknown error",
-              },
-              "*",
-            );
+            postToWidget(event.source as Window | null, {
+              type: "openai:callTool:response",
+              requestId: event.data.requestId,
+              error: err instanceof Error ? err.message : "Unknown error",
+            });
           }
           break;
         }
@@ -401,6 +417,9 @@ export function OpenAIAppRenderer({
       modalIframeRef,
       onRequestPip,
       onExitPip,
+      addUiLog,
+      postToWidget,
+      serverId,
     ],
   );
 
@@ -430,18 +449,15 @@ export function OpenAIAppRenderer({
       globals.displayMode = displayMode;
 
       console.log("[OpenAI App] Sending globals update to iframe:", globals);
-      target.contentWindow.postMessage(
-        {
-          type: "openai:set_globals",
-          globals,
-        },
-        "*",
-      );
+      postToWidget(target.contentWindow, {
+        type: "openai:set_globals",
+        globals,
+      });
     };
 
     postGlobals(iframeRef.current);
     postGlobals(modalIframeRef.current);
-  }, [themeMode, maxHeight, displayMode, isReady]);
+  }, [themeMode, maxHeight, displayMode, isReady, postToWidget]);
 
   // Kick off an early manual resize measurement while the widget is mounting.
   useEffect(() => {
