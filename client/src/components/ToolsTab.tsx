@@ -210,6 +210,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     );
   };
 
+  const updateFieldIsSet = (fieldName: string, isSet: boolean) => {
+    setFormFields((prev) =>
+      prev.map((field) =>
+        field.name === fieldName ? { ...field, isSet } : field,
+      ),
+    );
+  };
+
   const applyParametersToFields = (params: Record<string, unknown>) => {
     setFormFields((prev) => applyParamsToFields(prev, params));
   };
@@ -491,6 +499,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 selectedTool={selectedTool}
                 toolDescription={tools[selectedTool]?.description}
                 formFields={formFields}
+                onToggleField={updateFieldIsSet}
                 loading={loading}
                 waitingOnElicitation={!!activeElicitation}
                 onExecute={executeTool}
