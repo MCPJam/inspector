@@ -25,7 +25,7 @@ import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,
 } from "@/lib/mcp-prompts-api";
-import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { LoggerView } from "./logging/logger-view";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
@@ -532,7 +532,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView
+              <LoggerView
                 serverIds={serverName ? [serverName] : undefined}
               />
             </ResizablePanel>

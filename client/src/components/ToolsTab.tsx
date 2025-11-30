@@ -15,7 +15,7 @@ import {
 } from "./ui/resizable";
 import { ParametersPanel } from "./tools/ParametersPanel";
 import { ResultsPanel } from "./tools/ResultsPanel";
-import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { LoggerView } from "./logging/logger-view";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
@@ -522,7 +522,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView
+              <LoggerView
                 serverIds={serverName ? [serverName] : undefined}
               />
             </ResizablePanel>

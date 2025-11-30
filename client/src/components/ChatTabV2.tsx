@@ -20,7 +20,7 @@ import {
   ProviderTokens,
   useAiProviderKeys,
 } from "@/hooks/use-ai-provider-keys";
-import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { LoggerView } from "./logging/logger-view";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -842,7 +842,7 @@ export function ChatTabV2({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-                <JsonRpcLoggerView />
+                <LoggerView />
               </div>
             </ResizablePanel>
           </>
