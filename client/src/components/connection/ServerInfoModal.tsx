@@ -238,7 +238,7 @@ export function ServerInfoModal({
               <img
                 src="/mcp.svg"
                 alt="MCP App"
-                className="h-5 w-5 flex-shrink-0"
+                className="h-5 w-5 flex-shrink-0 dark:invert"
                 title="MCP App"
               />
             )}
