@@ -462,6 +462,11 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
           </span>
         </span>
         <span className="inline-flex items-center gap-2 text-muted-foreground">
+          {hasWidgetDebug && !isExpanded && (
+            <span className="text-[10px] text-muted-foreground/60 font-normal normal-case">
+              Click to debug
+            </span>
+          )}
           {toolState && StatusIcon && (
             <span
               className="inline-flex h-5 w-5 items-center justify-center"
