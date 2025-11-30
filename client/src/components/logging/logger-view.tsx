@@ -218,10 +218,10 @@ export function LoggerView({ serverIds }: LoggerViewProps = {}) {
         {filteredItems.length === 0 ? (
           <div className="text-center py-8">
             <div className="text-xs text-muted-foreground">
-              {"No messages yet"}
+              {"No logs yet"}
             </div>
             <div className="text-[10px] text-muted-foreground mt-1">
-              {"JSON-RPC messages will appear here"}
+              {"Logs will appear here"}
             </div>
           </div>
         ) : (
