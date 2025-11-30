@@ -38,7 +38,7 @@ interface RenderableRpcItem {
   widgetId?: string;
 }
 
-interface JsonRpcLoggerViewProps {
+interface LoggerViewProps {
   serverIds?: string[]; // Optional filter for specific server IDs
 }
 
@@ -50,7 +50,7 @@ function normalizePayload(
   return { value: payload } as Record<string, unknown>;
 }
 
-export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
+export function LoggerView({ serverIds }: LoggerViewProps = {}) {
   const [mcpServerItems, setMcpServerItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -181,13 +181,13 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
         <h2 className="text-xs font-semibold text-foreground">
-          JSON-RPC Messages
+          Logs
         </h2>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
-              placeholder="Search messages..."
+              placeholder="Search logs"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-7 pl-7 text-xs"
@@ -325,4 +325,4 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
   );
 }
 
-export default JsonRpcLoggerView;
+export default LoggerView;

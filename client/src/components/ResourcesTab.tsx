@@ -16,7 +16,7 @@ import {
   type MCPReadResourceResult,
   type MCPResource,
 } from "@/sdk";
-import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { LoggerView } from "./logging/logger-view";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -323,7 +323,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView
+              <LoggerView
                 serverIds={serverName ? [serverName] : undefined}
               />
             </ResizablePanel>
