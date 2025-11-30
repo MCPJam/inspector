@@ -159,7 +159,7 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2025-06-18": {
-    label: "2025-06-18 (Latest)",
+    label: "2025-06-18",
     description: "Current MCP OAuth specification with resource metadata",
     features: [
       "Dynamic Client Registration (DCR) SHOULD be supported",
@@ -169,7 +169,7 @@ export const PROTOCOL_VERSION_INFO = {
     ],
   },
   "2025-11-25": {
-    label: "2025-11-25 (Draft)",
+    label: "2025-11-25 (Latest)",
     description: "Proposed MCP OAuth specification with CIMD support",
     features: [
       "Client ID Metadata Documents (CIMD) SHOULD be supported",

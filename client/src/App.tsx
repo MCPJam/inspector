@@ -108,6 +108,8 @@ export default function App() {
     handleUpdateWorkspace,
     handleDeleteWorkspace,
     saveServerConfigWithoutConnecting,
+    handleConnectWithTokensFromOAuthFlow,
+    handleRefreshTokensFromOAuthFlow,
   } = useAppState();
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -260,6 +262,8 @@ export default function App() {
               selectedServerName={appState.selectedServer}
               onSelectServer={setSelectedServer}
               onSaveServerConfig={saveServerConfigWithoutConnecting}
+              onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
+              onRefreshTokens={handleRefreshTokensFromOAuthFlow}
             />
           )}
           {activeTab === "chat-v2" && (

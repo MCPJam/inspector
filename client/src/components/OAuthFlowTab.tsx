@@ -21,6 +21,16 @@ import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { deriveOAuthProfileFromServer } from "./oauth/utils";
+import { RefreshTokensConfirmModal } from "./oauth/RefreshTokensConfirmModal";
+
+export interface OAuthTokensFromFlow {
+  accessToken: string;
+  refreshToken?: string;
+  tokenType?: string;
+  expiresIn?: number;
+  clientId?: string;
+  clientSecret?: string;
+}
 
 const deriveServerIdentifier = (profile: OAuthTestProfile): string => {
   const trimmedUrl = profile.serverUrl.trim();
@@ -70,6 +80,16 @@ interface OAuthFlowTabProps {
     formData: ServerFormData,
     options?: { oauthProfile?: OAuthTestProfile },
   ) => void;
+  onConnectWithTokens?: (
+    serverName: string,
+    tokens: OAuthTokensFromFlow,
+    serverUrl: string,
+  ) => Promise<void>;
+  onRefreshTokens?: (
+    serverName: string,
+    tokens: OAuthTokensFromFlow,
+    serverUrl: string,
+  ) => Promise<void>;
 }
 
 export const OAuthFlowTab = ({
@@ -77,6 +97,8 @@ export const OAuthFlowTab = ({
   selectedServerName,
   onSelectServer,
   onSaveServerConfig,
+  onConnectWithTokens,
+  onRefreshTokens,
 }: OAuthFlowTabProps) => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [pendingServerSelection, setPendingServerSelection] = useState<
@@ -87,6 +109,8 @@ export const OAuthFlowTab = ({
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isRefreshTokensModalOpen, setIsRefreshTokensModalOpen] = useState(false);
+  const [isApplyingTokens, setIsApplyingTokens] = useState(false);
 
   const httpServers = useMemo(
     () => Object.values(serverConfigs).filter((server) => isHttpServer(server)),
@@ -156,6 +180,23 @@ export const OAuthFlowTab = ({
 
   const processedCodeRef = useRef<string | null>(null);
   const exchangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Reset OAuth flow state when switching servers
+  const prevServerNameRef = useRef(selectedServerName);
+  useEffect(() => {
+    if (prevServerNameRef.current !== selectedServerName) {
+      prevServerNameRef.current = selectedServerName;
+      setOAuthFlowState({
+        ...EMPTY_OAUTH_FLOW_STATE_V2,
+        serverUrl: profile.serverUrl || undefined,
+      });
+      processedCodeRef.current = null;
+      if (exchangeTimeoutRef.current) {
+        clearTimeout(exchangeTimeoutRef.current);
+        exchangeTimeoutRef.current = null;
+      }
+    }
+  }, [selectedServerName, profile.serverUrl]);
 
   const resetOAuthFlow = useCallback(
     (serverUrlOverride?: string) => {
@@ -267,6 +308,61 @@ export const OAuthFlowTab = ({
     !oauthStateMachine ||
     oauthFlowState.isInitiatingAuth ||
     oauthFlowState.currentStep === "complete";
+
+  // Determine if we can apply tokens (flow complete with access token)
+  const isServerConnected = activeServer?.connectionStatus === "connected";
+  const canApplyTokens =
+    oauthFlowState.currentStep === "complete" &&
+    oauthFlowState.accessToken &&
+    activeServer;
+
+  // Extract tokens from flow state
+  const extractTokensFromFlowState = useCallback((): OAuthTokensFromFlow => ({
+    accessToken: oauthFlowState.accessToken!,
+    refreshToken: oauthFlowState.refreshToken,
+    tokenType: oauthFlowState.tokenType,
+    expiresIn: oauthFlowState.expiresIn,
+    clientId: oauthFlowState.clientId,
+    clientSecret: oauthFlowState.clientSecret,
+  }), [
+    oauthFlowState.accessToken,
+    oauthFlowState.refreshToken,
+    oauthFlowState.tokenType,
+    oauthFlowState.expiresIn,
+    oauthFlowState.clientId,
+    oauthFlowState.clientSecret,
+  ]);
+
+  // Handler for connecting server with new tokens
+  const handleConnectServer = useCallback(async () => {
+    if (!activeServer || !onConnectWithTokens) return;
+    setIsApplyingTokens(true);
+    try {
+      await onConnectWithTokens(
+        activeServer.name,
+        extractTokensFromFlowState(),
+        profile.serverUrl,
+      );
+    } finally {
+      setIsApplyingTokens(false);
+    }
+  }, [activeServer, onConnectWithTokens, extractTokensFromFlowState, profile.serverUrl]);
+
+  // Handler for refreshing tokens (called after modal confirmation)
+  const handleRefreshTokensConfirm = useCallback(async () => {
+    if (!activeServer || !onRefreshTokens) return;
+    setIsApplyingTokens(true);
+    try {
+      await onRefreshTokens(
+        activeServer.name,
+        extractTokensFromFlowState(),
+        profile.serverUrl,
+      );
+      setIsRefreshTokensModalOpen(false);
+    } finally {
+      setIsApplyingTokens(false);
+    }
+  }, [activeServer, onRefreshTokens, extractTokensFromFlowState, profile.serverUrl]);
 
   useEffect(() => {
     const processOAuthCallback = (code: string, state: string | undefined) => {
@@ -392,10 +488,14 @@ export const OAuthFlowTab = ({
               actions={{
                 onConfigure: () => setIsProfileModalOpen(true),
                 onReset: hasProfile ? () => resetOAuthFlow() : undefined,
-                onContinue: continueDisabled ? undefined : handleAdvance,
+                // Hide Continue button when showing Connect/Refresh buttons
+                onContinue: canApplyTokens || continueDisabled ? undefined : handleAdvance,
                 continueLabel,
-                continueDisabled,
+                continueDisabled: canApplyTokens || continueDisabled,
                 resetDisabled: !hasProfile || oauthFlowState.isInitiatingAuth,
+                onConnectServer: canApplyTokens && !isServerConnected ? handleConnectServer : undefined,
+                onRefreshTokens: canApplyTokens && isServerConnected ? () => setIsRefreshTokensModalOpen(true) : undefined,
+                isApplyingTokens,
               }}
             />
           </ResizablePanel>
@@ -421,6 +521,16 @@ export const OAuthFlowTab = ({
           resetOAuthFlow(formData.url);
         }}
       />
+
+      {activeServer && (
+        <RefreshTokensConfirmModal
+          open={isRefreshTokensModalOpen}
+          onOpenChange={setIsRefreshTokensModalOpen}
+          serverName={activeServer.name}
+          onConfirm={handleRefreshTokensConfirm}
+          isLoading={isApplyingTokens}
+        />
+      )}
     </div>
   );
 };
