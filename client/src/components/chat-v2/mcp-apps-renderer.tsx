@@ -400,7 +400,9 @@ export function MCPAppsRenderer({
     // Only send notification if theme actually changed
     if (prevThemeRef.current !== themeMode) {
       prevThemeRef.current = themeMode;
-      sendNotification("ui/notifications/host-context-changed", { theme: themeMode });
+      sendNotification("ui/notifications/host-context-changed", {
+        theme: themeMode,
+      });
     }
   }, [themeMode, isReady, sendNotification]);
 
