@@ -49,6 +49,9 @@ interface OAuthFlowLoggerProps {
     continueLabel?: string;
     continueDisabled?: boolean;
     resetDisabled?: boolean;
+    onConnectServer?: () => void;
+    onRefreshTokens?: () => void;
+    isApplyingTokens?: boolean;
   };
 }
 
@@ -270,25 +273,42 @@ export function OAuthFlowLogger({
     <div className="h-full border-l border-border flex flex-col">
       <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
         {summary && (
-          <div className="flex flex-wrap items-start justify-between gap-3 text-xs">
-            <div className="space-y-1 text-muted-foreground">
-              <p className="text-sm font-medium text-foreground">
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3 min-w-0 text-muted-foreground">
+              <p className="text-sm font-medium text-foreground truncate">
                 {summary.label}
               </p>
-              <div className="flex flex-wrap gap-2">
-                {summary.protocol && (
-                  <span className="rounded-full bg-background px-2 py-1">
-                    Protocol {summary.protocol}
-                  </span>
-                )}
-                {summary.registration && (
-                  <span className="rounded-full bg-background px-2 py-1">
-                    {summary.registration}
-                  </span>
-                )}
-              </div>
+              {summary.protocol && (
+                <span className="rounded-full bg-background px-2 py-1 whitespace-nowrap">
+                  {summary.protocol}
+                </span>
+              )}
+              {summary.registration && (
+                <span className="rounded-full bg-background px-2 py-1 whitespace-nowrap">
+                  {summary.registration}
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
+              {actions?.onConnectServer && (
+                <Button
+                  size="sm"
+                  onClick={actions.onConnectServer}
+                  disabled={actions.isApplyingTokens}
+                >
+                  {actions.isApplyingTokens ? "Connecting..." : "Connect Server"}
+                </Button>
+              )}
+              {actions?.onRefreshTokens && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={actions.onRefreshTokens}
+                  disabled={actions.isApplyingTokens}
+                >
+                  {actions.isApplyingTokens ? "Refreshing..." : "Refresh Tokens"}
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -307,13 +327,15 @@ export function OAuthFlowLogger({
               >
                 <RotateCcw className="h-4 w-4" />
               </Button>
-              <Button
-                size="sm"
-                onClick={actions?.onContinue}
-                disabled={actions?.continueDisabled || !actions?.onContinue}
-              >
-                {actions?.continueLabel || "Continue"}
-              </Button>
+              {actions?.onContinue && (
+                <Button
+                  size="sm"
+                  onClick={actions.onContinue}
+                  disabled={actions.continueDisabled}
+                >
+                  {actions.continueLabel || "Continue"}
+                </Button>
+              )}
             </div>
           </div>
         )}

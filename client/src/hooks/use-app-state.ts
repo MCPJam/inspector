@@ -453,6 +453,156 @@ export function useAppState() {
     [appState.activeWorkspaceId, appState.servers, appState.workspaces, logger],
   );
 
+  // Apply tokens from OAuth flow to a server and connect
+  const applyTokensFromOAuthFlow = useCallback(
+    async (
+      serverName: string,
+      tokens: {
+        accessToken: string;
+        refreshToken?: string;
+        tokenType?: string;
+        expiresIn?: number;
+        clientId?: string;
+        clientSecret?: string;
+      },
+      serverUrl: string,
+    ): Promise<{ success: boolean; error?: string }> => {
+      // 1. Store tokens in localStorage
+      const tokenData = {
+        access_token: tokens.accessToken,
+        refresh_token: tokens.refreshToken,
+        token_type: tokens.tokenType || "Bearer",
+        expires_in: tokens.expiresIn,
+      };
+      localStorage.setItem(
+        `mcp-tokens-${serverName}`,
+        JSON.stringify(tokenData),
+      );
+
+      // 2. Store client info if available
+      if (tokens.clientId) {
+        localStorage.setItem(
+          `mcp-client-${serverName}`,
+          JSON.stringify({
+            client_id: tokens.clientId,
+            client_secret: tokens.clientSecret,
+          }),
+        );
+      }
+
+      // 3. Store server URL
+      localStorage.setItem(`mcp-serverUrl-${serverName}`, serverUrl);
+
+      // 4. Create server config with OAuth
+      const serverConfig = {
+        url: new URL(serverUrl),
+        requestInit: {
+          headers: { Authorization: `Bearer ${tokens.accessToken}` },
+        },
+        oauth: tokenData,
+      };
+
+      // 5. Mark as connecting
+      dispatch({
+        type: "CONNECT_REQUEST",
+        name: serverName,
+        config: serverConfig as MCPServerConfig,
+        select: true,
+      });
+
+      const token = nextOpToken(serverName);
+
+      // 6. Connect using reconnect (which disconnects first if needed)
+      try {
+        const result = await reconnectServer(
+          serverName,
+          serverConfig as MCPServerConfig,
+        );
+        if (isStaleOp(serverName, token)) {
+          return { success: false, error: "Operation cancelled" };
+        }
+        if (result.success) {
+          dispatch({
+            type: "CONNECT_SUCCESS",
+            name: serverName,
+            config: serverConfig as MCPServerConfig,
+            tokens: getStoredTokens(serverName),
+          });
+          await fetchAndStoreInitInfo(serverName);
+          return { success: true };
+        } else {
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: result.error || "Connection failed",
+          });
+          return { success: false, error: result.error };
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        if (isStaleOp(serverName, token)) {
+          return { success: false, error: "Operation cancelled" };
+        }
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: serverName,
+          error: errorMessage,
+        });
+        return { success: false, error: errorMessage };
+      }
+    },
+    [fetchAndStoreInitInfo],
+  );
+
+  // Connect a server with tokens from OAuth flow (for new connections)
+  const handleConnectWithTokensFromOAuthFlow = useCallback(
+    async (
+      serverName: string,
+      tokens: {
+        accessToken: string;
+        refreshToken?: string;
+        tokenType?: string;
+        expiresIn?: number;
+        clientId?: string;
+        clientSecret?: string;
+      },
+      serverUrl: string,
+    ) => {
+      const result = await applyTokensFromOAuthFlow(serverName, tokens, serverUrl);
+      if (result.success) {
+        toast.success(`Connected to ${serverName}!`);
+      } else {
+        toast.error(`Connection failed: ${result.error}`);
+      }
+    },
+    [applyTokensFromOAuthFlow],
+  );
+
+  // Refresh tokens for an already connected server (replaces existing tokens)
+  const handleRefreshTokensFromOAuthFlow = useCallback(
+    async (
+      serverName: string,
+      tokens: {
+        accessToken: string;
+        refreshToken?: string;
+        tokenType?: string;
+        expiresIn?: number;
+        clientId?: string;
+        clientSecret?: string;
+      },
+      serverUrl: string,
+    ) => {
+      const result = await applyTokensFromOAuthFlow(serverName, tokens, serverUrl);
+      if (result.success) {
+        toast.success(`Tokens refreshed for ${serverName}!`);
+      } else {
+        toast.error(`Token refresh failed: ${result.error}`);
+      }
+    },
+    [applyTokensFromOAuthFlow],
+  );
+
   // CLI config processing guard
   const cliConfigProcessedRef = useRef<boolean>(false);
 
@@ -933,6 +1083,8 @@ export function useAppState() {
     getValidAccessToken,
     setSelectedMultipleServersToAllServers,
     saveServerConfigWithoutConnecting,
+    handleConnectWithTokensFromOAuthFlow,
+    handleRefreshTokensFromOAuthFlow,
 
     // Workspace actions
     handleSwitchWorkspace,
