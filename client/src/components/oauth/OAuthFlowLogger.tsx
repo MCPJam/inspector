@@ -296,7 +296,9 @@ export function OAuthFlowLogger({
                   onClick={actions.onConnectServer}
                   disabled={actions.isApplyingTokens}
                 >
-                  {actions.isApplyingTokens ? "Connecting..." : "Connect Server"}
+                  {actions.isApplyingTokens
+                    ? "Connecting..."
+                    : "Connect Server"}
                 </Button>
               )}
               {actions?.onRefreshTokens && (
@@ -306,7 +308,9 @@ export function OAuthFlowLogger({
                   onClick={actions.onRefreshTokens}
                   disabled={actions.isApplyingTokens}
                 >
-                  {actions.isApplyingTokens ? "Refreshing..." : "Refresh Tokens"}
+                  {actions.isApplyingTokens
+                    ? "Refreshing..."
+                    : "Refresh Tokens"}
                 </Button>
               )}
               <Button

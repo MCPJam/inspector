@@ -172,7 +172,14 @@ export function MCPAppsRenderer({
         locale: navigator.language,
       },
     });
-  }, [toolCallId, toolName, setWidgetDebugInfo, themeMode, displayMode, maxHeight]);
+  }, [
+    toolCallId,
+    toolName,
+    setWidgetDebugInfo,
+    themeMode,
+    displayMode,
+    maxHeight,
+  ]);
 
   // Update globals in debug store when they change
   useEffect(() => {

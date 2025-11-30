@@ -235,111 +235,109 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
       >
         {filteredItems.length === 0 ? (
           <div className="text-center py-8">
-            <div className="text-xs text-muted-foreground">
-              {"No logs yet"}
-            </div>
+            <div className="text-xs text-muted-foreground">{"No logs yet"}</div>
             <div className="text-[10px] text-muted-foreground mt-1">
               {"Logs will appear here"}
             </div>
           </div>
         ) : (
           filteredItems.map((it) => {
-              const isExpanded = expanded.has(it.id);
-              const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
-              const isIncoming =
-                it.direction === "RECEIVE" || it.direction === "UI→HOST";
+            const isExpanded = expanded.has(it.id);
+            const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
+            const isIncoming =
+              it.direction === "RECEIVE" || it.direction === "UI→HOST";
 
-              // Border color: purple for Apps traffic, none for MCP Server
-              const borderClass = isAppsTraffic
-                ? "border-l-2 border-l-purple-500/50"
-                : "";
+            // Border color: purple for Apps traffic, none for MCP Server
+            const borderClass = isAppsTraffic
+              ? "border-l-2 border-l-purple-500/50"
+              : "";
 
-              return (
+            return (
+              <div
+                key={it.id}
+                className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
+              >
                 <div
-                  key={it.id}
-                  className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
+                  className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => toggleExpanded(it.id)}
                 >
-                  <div
-                    className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => toggleExpanded(it.id)}
-                  >
-                    <div className="flex-shrink-0">
-                      {isExpanded ? (
-                        <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                      ) : (
-                        <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      {/* Source indicator */}
-                      <span
-                        className={`flex items-center justify-center p-0.5 rounded ${
-                          isAppsTraffic
-                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                            : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
-                        }`}
-                        title={isAppsTraffic ? "Apps (UI)" : "MCP Server"}
-                      >
-                        {isAppsTraffic ? (
-                          <AppWindow className="h-3 w-3" />
-                        ) : (
-                          <Server className="h-3 w-3" />
-                        )}
-                      </span>
-                      <span className="text-muted-foreground font-mono text-xs">
-                        {new Date(it.timestamp).toLocaleTimeString()}
-                      </span>
-                      <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50">
-                        {it.serverId}
-                      </span>
-                      {/* Direction indicator */}
-                      <span
-                        className={`flex items-center justify-center px-1 py-0.5 rounded ${
-                          isIncoming
-                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                            : "bg-green-500/10 text-green-600 dark:text-green-400"
-                        }`}
-                        title={it.direction}
-                      >
-                        {isIncoming ? (
-                          <ArrowDownToLine className="h-3 w-3" />
-                        ) : (
-                          <ArrowUpFromLine className="h-3 w-3" />
-                        )}
-                      </span>
-                      <span className="text-xs font-mono text-foreground truncate">
-                        {it.method}
-                      </span>
-                    </div>
+                  <div className="flex-shrink-0">
+                    {isExpanded ? (
+                      <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                    )}
                   </div>
-                  {isExpanded && (
-                    <div className="border-t bg-muted/20">
-                      <div className="p-3">
-                        <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                          <JsonView
-                            src={normalizePayload(it.payload) as object}
-                            dark={true}
-                            theme="atom"
-                            enableClipboard={true}
-                            displaySize={false}
-                            collapseStringsAfterLength={100}
-                            style={{
-                              fontSize: "11px",
-                              fontFamily:
-                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                              backgroundColor: "transparent",
-                              padding: "0",
-                              borderRadius: "0",
-                              border: "none",
-                            }}
-                          />
-                        </div>
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {/* Source indicator */}
+                    <span
+                      className={`flex items-center justify-center p-0.5 rounded ${
+                        isAppsTraffic
+                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                          : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                      }`}
+                      title={isAppsTraffic ? "Apps (UI)" : "MCP Server"}
+                    >
+                      {isAppsTraffic ? (
+                        <AppWindow className="h-3 w-3" />
+                      ) : (
+                        <Server className="h-3 w-3" />
+                      )}
+                    </span>
+                    <span className="text-muted-foreground font-mono text-xs">
+                      {new Date(it.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50">
+                      {it.serverId}
+                    </span>
+                    {/* Direction indicator */}
+                    <span
+                      className={`flex items-center justify-center px-1 py-0.5 rounded ${
+                        isIncoming
+                          ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                          : "bg-green-500/10 text-green-600 dark:text-green-400"
+                      }`}
+                      title={it.direction}
+                    >
+                      {isIncoming ? (
+                        <ArrowDownToLine className="h-3 w-3" />
+                      ) : (
+                        <ArrowUpFromLine className="h-3 w-3" />
+                      )}
+                    </span>
+                    <span className="text-xs font-mono text-foreground truncate">
+                      {it.method}
+                    </span>
+                  </div>
+                </div>
+                {isExpanded && (
+                  <div className="border-t bg-muted/20">
+                    <div className="p-3">
+                      <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                        <JsonView
+                          src={normalizePayload(it.payload) as object}
+                          dark={true}
+                          theme="atom"
+                          enableClipboard={true}
+                          displaySize={false}
+                          collapseStringsAfterLength={100}
+                          style={{
+                            fontSize: "11px",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            backgroundColor: "transparent",
+                            padding: "0",
+                            borderRadius: "0",
+                            border: "none",
+                          }}
+                        />
                       </div>
                     </div>
-                  )}
-                </div>
-              );
-            })
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
     </div>
