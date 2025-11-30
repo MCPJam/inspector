@@ -14,7 +14,11 @@ import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useUiLogStore, type UiLogEvent, type UiProtocol } from "@/stores/ui-log-store";
+import {
+  useUiLogStore,
+  type UiLogEvent,
+  type UiProtocol,
+} from "@/stores/ui-log-store";
 
 type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps";
@@ -148,7 +152,8 @@ export function LoggerView({ serverIds }: LoggerViewProps = {}) {
   const allItems = useMemo(() => {
     const combined = [...mcpServerItems, ...mcpAppsItems];
     return combined.sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
     );
   }, [mcpServerItems, mcpAppsItems]);
 
@@ -180,9 +185,7 @@ export function LoggerView({ serverIds }: LoggerViewProps = {}) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
-        <h2 className="text-xs font-semibold text-foreground">
-          Logs
-        </h2>
+        <h2 className="text-xs font-semibold text-foreground">Logs</h2>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />

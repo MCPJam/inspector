@@ -462,9 +462,7 @@ export function ResourceTemplatesTab({
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView
-                serverIds={serverName ? [serverName] : undefined}
-              />
+              <LoggerView serverIds={serverName ? [serverName] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>
