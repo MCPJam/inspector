@@ -397,7 +397,7 @@ export function ServerConnectionCard({
                     <img
                       src="/mcp.svg"
                       alt="MCP App"
-                      className="h-4 w-4 flex-shrink-0"
+                      className="h-4 w-4 flex-shrink-0 dark:invert"
                       title="MCP App"
                     />
                   )}
