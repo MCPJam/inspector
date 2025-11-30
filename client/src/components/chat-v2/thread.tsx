@@ -544,7 +544,8 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
                     Widget State
                   </div>
                   <div className="text-[9px] text-muted-foreground/50">
-                    Updated: {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
+                    Updated:{" "}
+                    {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
                   </div>
                 </div>
                 <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
@@ -553,7 +554,8 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
                     : "null (no state set)"}
                 </pre>
                 <div className="text-[9px] text-muted-foreground/50 mt-2">
-                  Tip: Widget state persists across follow-up turns. Keep under 4k tokens.
+                  Tip: Widget state persists across follow-up turns. Keep under
+                  4k tokens.
                 </div>
               </TabsContent>
 

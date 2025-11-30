@@ -254,10 +254,20 @@ export function OpenAIAppRenderer({
         maxHeight: maxHeight ?? undefined,
         locale: "en-US",
         safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
-        userAgent: { device: { type: "desktop" }, capabilities: { hover: true, touch: false } },
+        userAgent: {
+          device: { type: "desktop" },
+          capabilities: { hover: true, touch: false },
+        },
       },
     });
-  }, [resolvedToolCallId, toolName, setWidgetDebugInfo, themeMode, displayMode, maxHeight]);
+  }, [
+    resolvedToolCallId,
+    toolName,
+    setWidgetDebugInfo,
+    themeMode,
+    displayMode,
+    maxHeight,
+  ]);
 
   // Update globals in debug store when they change
   useEffect(() => {
@@ -288,8 +298,8 @@ export function OpenAIAppRenderer({
   // Handle messages from iframe
   const handleMessage = useCallback(
     async (event: MessageEvent) => {
-      const inlineWindow = iframeRef.current?.contentWindow;
-      const modalWindow = modalIframeRef.current?.contentWindow;
+      const inlineWindow = iframeRef.current?.contentWindow ?? null;
+      const modalWindow = modalIframeRef.current?.contentWindow ?? null;
       const isFromInline =
         inlineWindow != null && event.source === inlineWindow;
       const isFromModal = modalWindow != null && event.source === modalWindow;

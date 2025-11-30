@@ -109,7 +109,8 @@ export const OAuthFlowTab = ({
   );
   const [focusedStep, setFocusedStep] = useState<OAuthFlowStep | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [isRefreshTokensModalOpen, setIsRefreshTokensModalOpen] = useState(false);
+  const [isRefreshTokensModalOpen, setIsRefreshTokensModalOpen] =
+    useState(false);
   const [isApplyingTokens, setIsApplyingTokens] = useState(false);
 
   const httpServers = useMemo(
@@ -317,21 +318,24 @@ export const OAuthFlowTab = ({
     activeServer;
 
   // Extract tokens from flow state
-  const extractTokensFromFlowState = useCallback((): OAuthTokensFromFlow => ({
-    accessToken: oauthFlowState.accessToken!,
-    refreshToken: oauthFlowState.refreshToken,
-    tokenType: oauthFlowState.tokenType,
-    expiresIn: oauthFlowState.expiresIn,
-    clientId: oauthFlowState.clientId,
-    clientSecret: oauthFlowState.clientSecret,
-  }), [
-    oauthFlowState.accessToken,
-    oauthFlowState.refreshToken,
-    oauthFlowState.tokenType,
-    oauthFlowState.expiresIn,
-    oauthFlowState.clientId,
-    oauthFlowState.clientSecret,
-  ]);
+  const extractTokensFromFlowState = useCallback(
+    (): OAuthTokensFromFlow => ({
+      accessToken: oauthFlowState.accessToken!,
+      refreshToken: oauthFlowState.refreshToken,
+      tokenType: oauthFlowState.tokenType,
+      expiresIn: oauthFlowState.expiresIn,
+      clientId: oauthFlowState.clientId,
+      clientSecret: oauthFlowState.clientSecret,
+    }),
+    [
+      oauthFlowState.accessToken,
+      oauthFlowState.refreshToken,
+      oauthFlowState.tokenType,
+      oauthFlowState.expiresIn,
+      oauthFlowState.clientId,
+      oauthFlowState.clientSecret,
+    ],
+  );
 
   // Handler for connecting server with new tokens
   const handleConnectServer = useCallback(async () => {
@@ -346,7 +350,12 @@ export const OAuthFlowTab = ({
     } finally {
       setIsApplyingTokens(false);
     }
-  }, [activeServer, onConnectWithTokens, extractTokensFromFlowState, profile.serverUrl]);
+  }, [
+    activeServer,
+    onConnectWithTokens,
+    extractTokensFromFlowState,
+    profile.serverUrl,
+  ]);
 
   // Handler for refreshing tokens (called after modal confirmation)
   const handleRefreshTokensConfirm = useCallback(async () => {
@@ -362,7 +371,12 @@ export const OAuthFlowTab = ({
     } finally {
       setIsApplyingTokens(false);
     }
-  }, [activeServer, onRefreshTokens, extractTokensFromFlowState, profile.serverUrl]);
+  }, [
+    activeServer,
+    onRefreshTokens,
+    extractTokensFromFlowState,
+    profile.serverUrl,
+  ]);
 
   useEffect(() => {
     const processOAuthCallback = (code: string, state: string | undefined) => {
@@ -489,12 +503,21 @@ export const OAuthFlowTab = ({
                 onConfigure: () => setIsProfileModalOpen(true),
                 onReset: hasProfile ? () => resetOAuthFlow() : undefined,
                 // Hide Continue button when showing Connect/Refresh buttons
-                onContinue: canApplyTokens || continueDisabled ? undefined : handleAdvance,
+                onContinue:
+                  canApplyTokens || continueDisabled
+                    ? undefined
+                    : handleAdvance,
                 continueLabel,
                 continueDisabled: canApplyTokens || continueDisabled,
                 resetDisabled: !hasProfile || oauthFlowState.isInitiatingAuth,
-                onConnectServer: canApplyTokens && !isServerConnected ? handleConnectServer : undefined,
-                onRefreshTokens: canApplyTokens && isServerConnected ? () => setIsRefreshTokensModalOpen(true) : undefined,
+                onConnectServer:
+                  canApplyTokens && !isServerConnected
+                    ? handleConnectServer
+                    : undefined,
+                onRefreshTokens:
+                  canApplyTokens && isServerConnected
+                    ? () => setIsRefreshTokensModalOpen(true)
+                    : undefined,
                 isApplyingTokens,
               }}
             />

@@ -12,8 +12,13 @@ export interface WidgetGlobals {
   displayMode: "inline" | "pip" | "fullscreen";
   maxHeight?: number;
   locale?: string;
-  safeArea?: { insets: { top: number; bottom: number; left: number; right: number } };
-  userAgent?: { device: { type: string }; capabilities: { hover: boolean; touch: boolean } };
+  safeArea?: {
+    insets: { top: number; bottom: number; left: number; right: number };
+  };
+  userAgent?: {
+    device: { type: string };
+    capabilities: { hover: boolean; touch: boolean };
+  };
 }
 
 export interface WidgetDebugInfo {
@@ -29,13 +34,19 @@ interface WidgetDebugStore {
   widgets: Map<string, WidgetDebugInfo>;
 
   // Update widget debug info
-  setWidgetDebugInfo: (toolCallId: string, info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>) => void;
+  setWidgetDebugInfo: (
+    toolCallId: string,
+    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>,
+  ) => void;
 
   // Update just the widget state
   setWidgetState: (toolCallId: string, state: unknown) => void;
 
   // Update just the globals
-  setWidgetGlobals: (toolCallId: string, globals: Partial<WidgetGlobals>) => void;
+  setWidgetGlobals: (
+    toolCallId: string,
+    globals: Partial<WidgetGlobals>,
+  ) => void;
 
   // Get debug info for a specific widget
   getWidgetDebugInfo: (toolCallId: string) => WidgetDebugInfo | undefined;
@@ -58,11 +69,15 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         toolCallId,
         toolName: info.toolName ?? existing?.toolName ?? "unknown",
         protocol: info.protocol ?? existing?.protocol ?? "openai-apps",
-        widgetState: info.widgetState !== undefined ? info.widgetState : existing?.widgetState ?? null,
-        globals: info.globals ?? existing?.globals ?? {
-          theme: "dark",
-          displayMode: "inline",
-        },
+        widgetState:
+          info.widgetState !== undefined
+            ? info.widgetState
+            : (existing?.widgetState ?? null),
+        globals: info.globals ??
+          existing?.globals ?? {
+            theme: "dark",
+            displayMode: "inline",
+          },
         updatedAt: Date.now(),
       });
       return { widgets };
