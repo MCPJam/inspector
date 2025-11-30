@@ -47,7 +47,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
-import { countMCPToolsTokens, countTextTokens } from "@/lib/mcp-tokenizer-api";
+import { countTextTokens } from "@/lib/mcp-tokenizer-api";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
 import {
@@ -524,48 +524,47 @@ export function ChatTabV2({
 
   useEffect(() => {
     const fetchToolsMetadata = async () => {
-      const { metadata, toolServerMap } = await getToolsMetadata(
-        selectedConnectedServerNames,
-      );
-      setToolsMetadata(metadata);
-      setToolServerMap(toolServerMap);
-    };
-    fetchToolsMetadata();
-  }, [selectedConnectedServerNames]);
-
-  useEffect(() => {
-    const fetchMcpToolsTokenCount = async () => {
-      if (
-        selectedConnectedServerNames.length === 0 ||
-        !selectedModel?.id ||
-        !selectedModel?.provider
-      ) {
+      if (selectedConnectedServerNames.length === 0) {
+        setToolsMetadata({});
+        setToolServerMap({});
         setMcpToolsTokenCount(null);
         setMcpToolsTokenCountLoading(false);
         return;
       }
 
-      setMcpToolsTokenCountLoading(true);
-      try {
-        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+      // Only count tokens if we have a valid model
+      const shouldCountTokens = selectedModel?.id && selectedModel?.provider;
+      const modelIdForTokens = shouldCountTokens
+        ? isMCPJamProvidedModel(String(selectedModel.id))
           ? String(selectedModel.id)
-          : `${selectedModel.provider}/${selectedModel.id}`;
-        const counts = await countMCPToolsTokens(
+          : `${selectedModel.provider}/${selectedModel.id}`
+        : undefined;
+
+      setMcpToolsTokenCountLoading(!!modelIdForTokens);
+
+      try {
+        const { metadata, toolServerMap, tokenCounts } = await getToolsMetadata(
           selectedConnectedServerNames,
-          modelId,
+          modelIdForTokens,
         );
+        setToolsMetadata(metadata);
+        setToolServerMap(toolServerMap);
         setMcpToolsTokenCount(
-          counts && Object.keys(counts).length > 0 ? counts : null,
+          tokenCounts && Object.keys(tokenCounts).length > 0
+            ? tokenCounts
+            : null,
         );
       } catch (error) {
-        console.warn("[ChatTabV2] Failed to count MCP tools tokens:", error);
+        console.warn("[ChatTabV2] Failed to fetch tools metadata:", error);
+        setToolsMetadata({});
+        setToolServerMap({});
         setMcpToolsTokenCount(null);
       } finally {
         setMcpToolsTokenCountLoading(false);
       }
     };
 
-    fetchMcpToolsTokenCount();
+    fetchToolsMetadata();
   }, [selectedConnectedServerNames, selectedModel]);
 
   useEffect(() => {

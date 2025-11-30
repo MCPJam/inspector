@@ -5,8 +5,52 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import "../../types/hono"; // Type extensions
+import {
+  mapModelIdToTokenizerBackend,
+  estimateTokensFromChars,
+} from "../../utils/tokenizer-helpers";
 
 const tools = new Hono();
+
+/**
+ * Count tokens for tools, using backend tokenizer or char fallback.
+ * Accepts already-fetched tools to avoid duplicate listTools calls.
+ */
+async function countToolsTokens(
+  tools: ListToolsResult["tools"],
+  modelId: string,
+): Promise<number> {
+  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+  const mappedModelId = mapModelIdToTokenizerBackend(modelId);
+  const useBackendTokenizer = mappedModelId !== null && !!convexHttpUrl;
+
+  try {
+    const toolsText = JSON.stringify(tools);
+
+    if (useBackendTokenizer && mappedModelId) {
+      const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: toolsText, model: mappedModelId }),
+      });
+
+      if (response.ok) {
+        const data = (await response.json()) as {
+          ok?: boolean;
+          tokenCount?: number;
+        };
+        if (data.ok) {
+          return data.tokenCount || 0;
+        }
+      }
+    }
+
+    return estimateTokensFromChars(toolsText);
+  } catch (error) {
+    console.warn("[tools] Error counting tokens:", error);
+    return 0;
+  }
+}
 
 type ElicitationPayload = {
   executionId: string;
@@ -122,7 +166,10 @@ function jsonError(c: any, error: unknown, fallbackStatus = 500) {
 
 tools.post("/list", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
+    const { serverId, modelId } = (await c.req.json()) as {
+      serverId?: string;
+      modelId?: string;
+    };
     if (!serverId) {
       return c.json({ error: "serverId is required" }, 400);
     }
@@ -150,7 +197,13 @@ tools.post("/list", async (c) => {
     const toolsMetadata =
       c.mcpClientManager.getAllToolsMetadata(normalizedServerId);
 
-    return c.json({ ...result, toolsMetadata });
+    // If modelId provided, also compute token count using already-fetched tools
+    let tokenCount: number | undefined;
+    if (modelId) {
+      tokenCount = await countToolsTokens(result.tools, modelId);
+    }
+
+    return c.json({ ...result, toolsMetadata, tokenCount });
   } catch (error) {
     return jsonError(c, error, 500);
   }
