@@ -8,7 +8,7 @@ import {
   Trash2,
   Server,
   AppWindow,
-  Layers,
+  PanelRightClose,
 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -20,8 +20,6 @@ import {
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/ui-log-store";
-import { useWidgetDebugStore, type WidgetDebugInfo } from "@/stores/widget-debug-store";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps";
@@ -47,6 +45,7 @@ interface RenderableRpcItem {
 
 interface LoggerViewProps {
   serverIds?: string[]; // Optional filter for specific server IDs
+  onClose?: () => void; // Optional callback to close/hide the panel
 }
 
 function normalizePayload(
@@ -57,160 +56,7 @@ function normalizePayload(
   return { value: payload } as Record<string, unknown>;
 }
 
-function WidgetDebugPanel() {
-  const widgets = useWidgetDebugStore((s) => s.widgets);
-  const [expandedWidgets, setExpandedWidgets] = useState<Set<string>>(new Set());
-
-  const widgetArray = useMemo(() => {
-    return Array.from(widgets.values()).sort(
-      (a, b) => b.updatedAt - a.updatedAt
-    );
-  }, [widgets]);
-
-  const toggleWidget = (id: string) => {
-    setExpandedWidgets((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  if (widgetArray.length === 0) {
-    return (
-      <div className="text-center py-8">
-        <Layers className="h-8 w-8 mx-auto text-muted-foreground/30 mb-2" />
-        <div className="text-xs text-muted-foreground">No active widgets</div>
-        <div className="text-[10px] text-muted-foreground mt-1">
-          Widget state will appear here when you use OpenAI Apps or MCP Apps
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      {widgetArray.map((widget) => {
-        const isExpanded = expandedWidgets.has(widget.toolCallId);
-        const protocolColor =
-          widget.protocol === "openai-apps"
-            ? "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30"
-            : "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30";
-
-        return (
-          <div
-            key={widget.toolCallId}
-            className="border rounded-lg bg-card overflow-hidden"
-          >
-            <div
-              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-              onClick={() => toggleWidget(widget.toolCallId)}
-            >
-              <div className="flex-shrink-0">
-                {isExpanded ? (
-                  <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                )}
-              </div>
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <span
-                  className={`text-[9px] font-medium px-1.5 py-0.5 rounded border ${protocolColor}`}
-                >
-                  {widget.protocol === "openai-apps" ? "OpenAI" : "MCP"}
-                </span>
-                <span className="text-xs font-mono text-foreground truncate">
-                  {widget.toolName}
-                </span>
-                <span className="text-[10px] text-muted-foreground ml-auto">
-                  {new Date(widget.updatedAt).toLocaleTimeString()}
-                </span>
-              </div>
-            </div>
-
-            {isExpanded && (
-              <div className="border-t bg-muted/20 p-3 space-y-3">
-                {/* Widget State */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                      Widget State
-                    </div>
-                    {widget.widgetState && (
-                      <div className="text-[9px] text-muted-foreground/50">
-                        ~{JSON.stringify(widget.widgetState).length} chars
-                      </div>
-                    )}
-                  </div>
-                  <div className="max-h-[200px] overflow-auto rounded-sm bg-background/60 p-2">
-                    {widget.widgetState ? (
-                      <JsonView
-                        src={normalizePayload(widget.widgetState) as object}
-                        dark={true}
-                        theme="atom"
-                        enableClipboard={true}
-                        displaySize={false}
-                        collapseStringsAfterLength={80}
-                        collapsed={2}
-                        style={{
-                          fontSize: "11px",
-                          fontFamily:
-                            "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                          backgroundColor: "transparent",
-                          padding: "0",
-                          borderRadius: "0",
-                          border: "none",
-                        }}
-                      />
-                    ) : (
-                      <span className="text-[11px] text-muted-foreground/50 font-mono">
-                        null (no state set)
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Globals */}
-                <div>
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-1">
-                    Globals
-                  </div>
-                  <div className="max-h-[200px] overflow-auto rounded-sm bg-background/60 p-2">
-                    <JsonView
-                      src={normalizePayload(widget.globals) as object}
-                      dark={true}
-                      theme="atom"
-                      enableClipboard={true}
-                      displaySize={false}
-                      collapseStringsAfterLength={80}
-                      collapsed={2}
-                      style={{
-                        fontSize: "11px",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                        backgroundColor: "transparent",
-                        padding: "0",
-                        borderRadius: "0",
-                        border: "none",
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Tool Call ID (for debugging) */}
-                <div className="text-[9px] text-muted-foreground/40 font-mono truncate">
-                  ID: {widget.toolCallId}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-export function LoggerView({ serverIds }: LoggerViewProps = {}) {
+export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
   const [mcpServerItems, setMcpServerItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -338,32 +184,12 @@ export function LoggerView({ serverIds }: LoggerViewProps = {}) {
     return result;
   }, [allItems, searchQuery, serverIds]);
 
-  // Get widget count for tab badge
-  const widgetCount = useWidgetDebugStore((s) => s.widgets.size);
-
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <Tabs defaultValue="logs" className="flex flex-col h-full">
-        <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <TabsList className="h-7">
-              <TabsTrigger value="logs" className="text-[10px] px-2 py-1">
-                Logs
-                {allItems.length > 0 && (
-                  <span className="ml-1 text-[9px] text-muted-foreground">
-                    ({allItems.length})
-                  </span>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="widgets" className="text-[10px] px-2 py-1">
-                Widgets
-                {widgetCount > 0 && (
-                  <span className="ml-1 text-[9px] text-muted-foreground">
-                    ({widgetCount})
-                  </span>
-                )}
-              </TabsTrigger>
-            </TabsList>
+      <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold text-foreground">Logs</h2>
+          <div className="flex items-center gap-1">
             <Button
               variant="ghost"
               size="sm"
@@ -374,145 +200,148 @@ export function LoggerView({ serverIds }: LoggerViewProps = {}) {
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                placeholder="Search logs"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-7 pl-7 text-xs"
-              />
-            </div>
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
-              {filteredItems.length} / {allItems.length}
-            </span>
-          </div>
-        </div>
-
-        <TabsContent value="logs" className="flex-1 min-h-0 m-0">
-          <div
-            ref={scrollRef}
-            className="h-full overflow-y-auto p-3 space-y-3"
-          >
-            {filteredItems.length === 0 ? (
-              <div className="text-center py-8">
-                <div className="text-xs text-muted-foreground">
-                  {"No logs yet"}
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-1">
-                  {"Logs will appear here"}
-                </div>
-              </div>
-            ) : (
-              filteredItems.map((it) => {
-                const isExpanded = expanded.has(it.id);
-                const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
-                const isIncoming =
-                  it.direction === "RECEIVE" || it.direction === "UI→HOST";
-
-                // Border color: purple for Apps traffic, none for MCP Server
-                const borderClass = isAppsTraffic
-                  ? "border-l-2 border-l-purple-500/50"
-                  : "";
-
-                return (
-                  <div
-                    key={it.id}
-                    className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
-                  >
-                    <div
-                      className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => toggleExpanded(it.id)}
-                    >
-                      <div className="flex-shrink-0">
-                        {isExpanded ? (
-                          <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                        ) : (
-                          <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        {/* Source indicator */}
-                        <span
-                          className={`flex items-center justify-center p-0.5 rounded ${
-                            isAppsTraffic
-                              ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                              : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
-                          }`}
-                          title={isAppsTraffic ? "Apps (UI)" : "MCP Server"}
-                        >
-                          {isAppsTraffic ? (
-                            <AppWindow className="h-3 w-3" />
-                          ) : (
-                            <Server className="h-3 w-3" />
-                          )}
-                        </span>
-                        <span className="text-muted-foreground font-mono text-xs">
-                          {new Date(it.timestamp).toLocaleTimeString()}
-                        </span>
-                        <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50">
-                          {it.serverId}
-                        </span>
-                        {/* Direction indicator */}
-                        <span
-                          className={`flex items-center justify-center px-1 py-0.5 rounded ${
-                            isIncoming
-                              ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                              : "bg-green-500/10 text-green-600 dark:text-green-400"
-                          }`}
-                          title={it.direction}
-                        >
-                          {isIncoming ? (
-                            <ArrowDownToLine className="h-3 w-3" />
-                          ) : (
-                            <ArrowUpFromLine className="h-3 w-3" />
-                          )}
-                        </span>
-                        <span className="text-xs font-mono text-foreground truncate">
-                          {it.method}
-                        </span>
-                      </div>
-                    </div>
-                    {isExpanded && (
-                      <div className="border-t bg-muted/20">
-                        <div className="p-3">
-                          <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                            <JsonView
-                              src={normalizePayload(it.payload) as object}
-                              dark={true}
-                              theme="atom"
-                              enableClipboard={true}
-                              displaySize={false}
-                              collapseStringsAfterLength={100}
-                              style={{
-                                fontSize: "11px",
-                                fontFamily:
-                                  "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                backgroundColor: "transparent",
-                                padding: "0",
-                                borderRadius: "0",
-                                border: "none",
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+            {onClose && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onClose}
+                className="h-7 px-2"
+                title="Hide JSON-RPC panel"
+              >
+                <PanelRightClose className="h-3.5 w-3.5" />
+              </Button>
             )}
           </div>
-        </TabsContent>
-
-        <TabsContent value="widgets" className="flex-1 min-h-0 m-0">
-          <div className="h-full overflow-y-auto p-3">
-            <WidgetDebugPanel />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Search logs"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-7 pl-7 text-xs"
+            />
           </div>
-        </TabsContent>
-      </Tabs>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {filteredItems.length} / {allItems.length}
+          </span>
+        </div>
+      </div>
+
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3"
+      >
+        {filteredItems.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="text-xs text-muted-foreground">
+              {"No logs yet"}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-1">
+              {"Logs will appear here"}
+            </div>
+          </div>
+        ) : (
+          filteredItems.map((it) => {
+              const isExpanded = expanded.has(it.id);
+              const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
+              const isIncoming =
+                it.direction === "RECEIVE" || it.direction === "UI→HOST";
+
+              // Border color: purple for Apps traffic, none for MCP Server
+              const borderClass = isAppsTraffic
+                ? "border-l-2 border-l-purple-500/50"
+                : "";
+
+              return (
+                <div
+                  key={it.id}
+                  className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
+                >
+                  <div
+                    className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                    onClick={() => toggleExpanded(it.id)}
+                  >
+                    <div className="flex-shrink-0">
+                      {isExpanded ? (
+                        <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      {/* Source indicator */}
+                      <span
+                        className={`flex items-center justify-center p-0.5 rounded ${
+                          isAppsTraffic
+                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                            : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                        }`}
+                        title={isAppsTraffic ? "Apps (UI)" : "MCP Server"}
+                      >
+                        {isAppsTraffic ? (
+                          <AppWindow className="h-3 w-3" />
+                        ) : (
+                          <Server className="h-3 w-3" />
+                        )}
+                      </span>
+                      <span className="text-muted-foreground font-mono text-xs">
+                        {new Date(it.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50">
+                        {it.serverId}
+                      </span>
+                      {/* Direction indicator */}
+                      <span
+                        className={`flex items-center justify-center px-1 py-0.5 rounded ${
+                          isIncoming
+                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                            : "bg-green-500/10 text-green-600 dark:text-green-400"
+                        }`}
+                        title={it.direction}
+                      >
+                        {isIncoming ? (
+                          <ArrowDownToLine className="h-3 w-3" />
+                        ) : (
+                          <ArrowUpFromLine className="h-3 w-3" />
+                        )}
+                      </span>
+                      <span className="text-xs font-mono text-foreground truncate">
+                        {it.method}
+                      </span>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="border-t bg-muted/20">
+                      <div className="p-3">
+                        <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                          <JsonView
+                            src={normalizePayload(it.payload) as object}
+                            dark={true}
+                            theme="atom"
+                            enableClipboard={true}
+                            displaySize={false}
+                            collapseStringsAfterLength={100}
+                            style={{
+                              fontSize: "11px",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                              backgroundColor: "transparent",
+                              padding: "0",
+                              borderRadius: "0",
+                              border: "none",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+        )}
+      </div>
     </div>
   );
 }

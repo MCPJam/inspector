@@ -34,6 +34,8 @@ import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
 import { MemoizedMarkdown } from "./memomized-markdown";
 import { getProviderLogoFromModel } from "./chat-helpers";
 import { detectUIType } from "@/lib/mcp-apps-utils";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 type ToolState =
@@ -416,6 +418,7 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
     ? part.toolName
     : getToolNameFromType((part as any).type);
 
+  const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
   const toolState = getToolStateMeta(state);
   const StatusIcon = toolState?.Icon;
@@ -429,6 +432,12 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
   const hasInput = inputData !== undefined && inputData !== null;
   const hasOutput = outputData !== undefined && outputData !== null;
   const hasError = state === "output-error" && !!errorText;
+
+  // Get widget debug info if this is an OpenAI/MCP App
+  const widgetDebugInfo = useWidgetDebugStore((s) =>
+    toolCallId ? s.widgets.get(toolCallId) : undefined,
+  );
+  const hasWidgetDebug = !!widgetDebugInfo;
 
   return (
     <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
@@ -453,6 +462,11 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
           </span>
         </span>
         <span className="inline-flex items-center gap-2 text-muted-foreground">
+          {hasWidgetDebug && !isExpanded && (
+            <span className="text-[10px] text-muted-foreground/60 font-normal normal-case">
+              Click to debug
+            </span>
+          )}
           {toolState && StatusIcon && (
             <span
               className="inline-flex h-5 w-5 items-center justify-center"
@@ -471,43 +485,127 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
       </button>
 
       {isExpanded && (
-        <div className="space-y-4 border-t border-border/40 px-3 py-3">
-          {hasInput && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Input
-              </div>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
-                {safeStringify(inputData)}
-              </pre>
-            </div>
-          )}
+        <div className="border-t border-border/40 px-3 py-3">
+          {hasWidgetDebug ? (
+            <Tabs defaultValue="data" className="w-full">
+              <TabsList className="mb-3 h-7">
+                <TabsTrigger value="data" className="text-[10px] px-2 py-1">
+                  Data
+                </TabsTrigger>
+                <TabsTrigger value="state" className="text-[10px] px-2 py-1">
+                  Widget State
+                </TabsTrigger>
+                <TabsTrigger value="globals" className="text-[10px] px-2 py-1">
+                  Globals
+                </TabsTrigger>
+              </TabsList>
 
-          {hasOutput && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Result
-              </div>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
-                {safeStringify(outputData)}
-              </pre>
-            </div>
-          )}
+              <TabsContent value="data" className="space-y-4">
+                {hasInput && (
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Input
+                    </div>
+                    <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                      {safeStringify(inputData)}
+                    </pre>
+                  </div>
+                )}
+                {hasOutput && (
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Result
+                    </div>
+                    <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                      {safeStringify(outputData)}
+                    </pre>
+                  </div>
+                )}
+                {hasError && (
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Error
+                    </div>
+                    <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                      {errorText}
+                    </div>
+                  </div>
+                )}
+                {!hasInput && !hasOutput && !hasError && (
+                  <div className="text-muted-foreground/70">
+                    No tool details available.
+                  </div>
+                )}
+              </TabsContent>
 
-          {hasError && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Error
-              </div>
-              <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
-                {errorText}
-              </div>
-            </div>
-          )}
+              <TabsContent value="state" className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Widget State
+                  </div>
+                  <div className="text-[9px] text-muted-foreground/50">
+                    Updated: {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
+                  </div>
+                </div>
+                <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                  {widgetDebugInfo.widgetState
+                    ? safeStringify(widgetDebugInfo.widgetState)
+                    : "null (no state set)"}
+                </pre>
+                <div className="text-[9px] text-muted-foreground/50 mt-2">
+                  Tip: Widget state persists across follow-up turns. Keep under 4k tokens.
+                </div>
+              </TabsContent>
 
-          {!hasInput && !hasOutput && !hasError && (
-            <div className="text-muted-foreground/70">
-              No tool details available.
+              <TabsContent value="globals" className="space-y-2">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                  Globals ({widgetDebugInfo.protocol})
+                </div>
+                <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                  {safeStringify(widgetDebugInfo.globals)}
+                </pre>
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <div className="space-y-4">
+              {hasInput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Input
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
+                    {safeStringify(inputData)}
+                  </pre>
+                </div>
+              )}
+
+              {hasOutput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Result
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
+                    {safeStringify(outputData)}
+                  </pre>
+                </div>
+              )}
+
+              {hasError && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Error
+                  </div>
+                  <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                    {errorText}
+                  </div>
+                </div>
+              )}
+
+              {!hasInput && !hasOutput && !hasError && (
+                <div className="text-muted-foreground/70">
+                  No tool details available.
+                </div>
+              )}
             </div>
           )}
         </div>

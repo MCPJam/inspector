@@ -7,7 +7,7 @@ import {
   useRef,
 } from "react";
 import { useChat } from "@ai-sdk/react";
-import { ArrowDown, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { ArrowDown, PanelRightOpen } from "lucide-react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
@@ -824,25 +824,8 @@ export function ChatTabV2({
               maxSize={50}
               className="min-w-[260px] min-h-0 overflow-hidden"
             >
-              <div className="h-full min-h-0 overflow-hidden relative">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={toggleJsonRpcPanel}
-                        className="absolute top-2 right-2 z-10 h-7 w-7 p-0 cursor-pointer"
-                      >
-                        <PanelRightClose className="h-4 w-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Hide JSON-RPC panel</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                <LoggerView />
+              <div className="h-full min-h-0 overflow-hidden">
+                <LoggerView onClose={toggleJsonRpcPanel} />
               </div>
             </ResizablePanel>
           </>

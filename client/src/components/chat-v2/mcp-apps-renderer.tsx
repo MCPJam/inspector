@@ -17,6 +17,7 @@ import {
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
 import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -153,6 +154,34 @@ export function MCPAppsRenderer({
 
   // UI logging
   const addUiLog = useUiLogStore((s) => s.addLog);
+
+  // Widget debug store
+  const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
+  const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+
+  // Initialize widget debug info
+  useEffect(() => {
+    setWidgetDebugInfo(toolCallId, {
+      toolName,
+      protocol: "mcp-apps",
+      widgetState: null, // MCP Apps don't have widget state in the same way
+      globals: {
+        theme: themeMode,
+        displayMode,
+        maxHeight,
+        locale: navigator.language,
+      },
+    });
+  }, [toolCallId, toolName, setWidgetDebugInfo, themeMode, displayMode, maxHeight]);
+
+  // Update globals in debug store when they change
+  useEffect(() => {
+    setWidgetGlobals(toolCallId, {
+      theme: themeMode,
+      displayMode,
+      maxHeight,
+    });
+  }, [toolCallId, themeMode, displayMode, maxHeight, setWidgetGlobals]);
 
   // JSON-RPC helpers
   const postMessage = useCallback(
