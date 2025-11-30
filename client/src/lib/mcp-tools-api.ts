@@ -7,6 +7,7 @@ import type {
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
+  tokenCount?: number;
 };
 
 export type ToolServerMap = Record<string, string>;
@@ -29,11 +30,12 @@ export type ToolExecutionResponse =
 
 export async function listTools(
   serverId: string,
+  modelId?: string,
 ): Promise<ListToolsResultWithMetadata> {
   const res = await fetch("/api/mcp/tools/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId }),
+    body: JSON.stringify({ serverId, modelId }),
   });
   let body: any = null;
   try {
@@ -111,6 +113,7 @@ export async function respondToElicitationApi(
 export interface ToolsMetadataAggregate {
   metadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
+  tokenCounts: Record<string, number> | null;
 }
 
 export function getToolServerId(
@@ -122,20 +125,27 @@ export function getToolServerId(
 
 export async function getToolsMetadata(
   serverIds: string[],
+  modelId?: string,
 ): Promise<ToolsMetadataAggregate> {
   const aggregate: ToolsMetadataAggregate = {
     metadata: {},
     toolServerMap: {},
+    tokenCounts: modelId ? {} : null,
   };
 
   await Promise.all(
     serverIds.map(async (serverId) => {
-      const data = await listTools(serverId);
+      const data = await listTools(serverId, modelId);
       const toolsMetadata = data.toolsMetadata ?? {};
 
       for (const [toolName, meta] of Object.entries(toolsMetadata)) {
         aggregate.metadata[toolName] = meta as Record<string, unknown>;
         aggregate.toolServerMap[toolName] = serverId;
+      }
+
+      // Collect token counts if modelId was provided
+      if (modelId && data.tokenCount !== undefined && aggregate.tokenCounts) {
+        aggregate.tokenCounts[serverId] = data.tokenCount;
       }
     }),
   );
