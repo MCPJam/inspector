@@ -18,6 +18,7 @@ interface ParametersPanelProps {
   onExecute: () => void;
   onSave: () => void;
   onFieldChange: (name: string, value: any) => void;
+  onToggleField?: (name: string, isSet: boolean) => void;
 }
 
 export function ParametersPanel({
@@ -29,6 +30,7 @@ export function ParametersPanel({
   onExecute,
   onSave,
   onFieldChange,
+  onToggleField,
 }: ParametersPanelProps) {
   const posthog = usePostHog();
 
@@ -142,10 +144,28 @@ export function ParametersPanel({
                               {field.name}
                             </code>
                             {field.required && (
-                              <div
-                                className="w-1.5 h-1.5 bg-amber-400 dark:bg-amber-500 rounded-full"
+                              <span
+                                className="text-[10px] font-mono uppercase tracking-wide text-amber-600 dark:text-amber-400"
                                 title="Required field"
-                              />
+                              >
+                                required
+                              </span>
+                            )}
+                            {!field.required && (
+                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
+                                <input
+                                  type="checkbox"
+                                  checked={!field.isSet}
+                                  onChange={(e) =>
+                                    onToggleField?.(
+                                      field.name,
+                                      !e.target.checked,
+                                    )
+                                  }
+                                  className="w-3 h-3 rounded border-border accent-primary"
+                                />
+                                <span>undefined</span>
+                              </label>
                             )}
                           </div>
                           {field.description && (
@@ -153,10 +173,19 @@ export function ParametersPanel({
                               {field.description}
                             </p>
                           )}
+                          {!field.required && !field.isSet && (
+                            <p className="text-[10px] text-muted-foreground/80 italic">
+                              Value is{" "}
+                              <span className="font-mono">undefined</span> and
+                              will be omitted from the request.
+                            </p>
+                          )}
                         </div>
-                        <span className="text-[10px] text-muted-foreground font-mono bg-muted/60 px-2 py-1 rounded-md border border-border">
-                          {field.type}
-                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-[10px] text-muted-foreground font-mono bg-muted/60 px-2 py-1 rounded-md border border-border">
+                            {field.type}
+                          </span>
+                        </div>
                       </div>
 
                       <div>
@@ -167,7 +196,8 @@ export function ParametersPanel({
                               onFieldChange(field.name, e.target.value)
                             }
                             onKeyDown={handleSelectKeyDown}
-                            className="w-full h-9 bg-background border border-border rounded px-2 text-xs"
+                            disabled={!field.required && !field.isSet}
+                            className="w-full h-9 bg-background border border-border rounded px-2 text-xs disabled:cursor-not-allowed disabled:bg-muted/40"
                           >
                             {field.enum?.map((v) => (
                               <option key={v} value={v}>
@@ -180,13 +210,18 @@ export function ParametersPanel({
                             <input
                               type="checkbox"
                               checked={field.value}
+                              disabled={!field.required && !field.isSet}
                               onChange={(e) =>
                                 onFieldChange(field.name, e.target.checked)
                               }
-                              className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
+                              className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60"
                             />
                             <span className="text-xs text-foreground font-medium">
-                              {field.value ? "Enabled" : "Disabled"}
+                              {!field.required && !field.isSet
+                                ? "Undefined"
+                                : field.value
+                                  ? "Enabled"
+                                  : "Disabled"}
                             </span>
                           </div>
                         ) : field.type === "array" ||
@@ -200,8 +235,13 @@ export function ParametersPanel({
                             onChange={(e) =>
                               onFieldChange(field.name, e.target.value)
                             }
-                            placeholder={`Enter ${field.type} as JSON`}
-                            className="font-mono text-xs h-20 bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 resize-none"
+                            placeholder={
+                              !field.required && !field.isSet
+                                ? "Value is undefined; enable this field to provide JSON"
+                                : `Enter ${field.type} as JSON`
+                            }
+                            disabled={!field.required && !field.isSet}
+                            className="font-mono text-xs h-20 bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 resize-none disabled:cursor-not-allowed disabled:bg-muted/40"
                           />
                         ) : (
                           <Input
@@ -217,7 +257,8 @@ export function ParametersPanel({
                             }
                             onKeyDown={handleInputKeyDown}
                             placeholder={`Enter ${field.name}`}
-                            className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs"
+                            disabled={!field.required && !field.isSet}
+                            className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs disabled:cursor-not-allowed disabled:bg-muted/40"
                           />
                         )}
                       </div>
