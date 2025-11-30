@@ -6,14 +6,18 @@ import {
   ArrowUpFromLine,
   Search,
   Trash2,
+  Server,
+  AppWindow,
 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useUiLogStore, type UiLogEvent } from "@/stores/ui-log-store";
 
 type RpcDirection = "in" | "out" | string;
+type TrafficSource = "mcp-server" | "mcp-apps";
 
 interface RpcEventMessage {
   serverId: string;
@@ -29,6 +33,8 @@ interface RenderableRpcItem {
   method: string;
   timestamp: string;
   payload: unknown;
+  source: TrafficSource;
+  widgetId?: string;
 }
 
 interface JsonRpcLoggerViewProps {
@@ -44,10 +50,28 @@ function normalizePayload(
 }
 
 export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
-  const [items, setItems] = useState<RenderableRpcItem[]>([]);
+  const [mcpServerItems, setMcpServerItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Subscribe to UI log store for MCP Apps traffic
+  const uiLogItems = useUiLogStore((s) => s.items);
+  const clearUiLogs = useUiLogStore((s) => s.clear);
+
+  // Convert UI log items to renderable format
+  const mcpAppsItems = useMemo<RenderableRpcItem[]>(() => {
+    return uiLogItems.map((item: UiLogEvent) => ({
+      id: item.id,
+      serverId: item.serverId,
+      direction: item.direction === "ui-to-host" ? "UI→HOST" : "HOST→UI",
+      method: item.method,
+      timestamp: item.timestamp,
+      payload: item.message,
+      source: "mcp-apps" as TrafficSource,
+      widgetId: item.widgetId,
+    }));
+  }, [uiLogItems]);
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -59,7 +83,8 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
   };
 
   const clearMessages = () => {
-    setItems([]);
+    setMcpServerItems([]);
+    clearUiLogs();
     setExpanded(new Set());
   };
 
@@ -97,9 +122,10 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
             method,
             timestamp: timestamp ?? new Date().toISOString(),
             payload: message,
+            source: "mcp-server",
           };
 
-          setItems((prev) => [item, ...prev].slice(0, 1000));
+          setMcpServerItems((prev) => [item, ...prev].slice(0, 1000));
         } catch {}
       };
       es.onerror = () => {
@@ -116,8 +142,16 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
     };
   }, []); // Only run once on mount
 
+  // Combine and sort all items by timestamp (newest first)
+  const allItems = useMemo(() => {
+    const combined = [...mcpServerItems, ...mcpAppsItems];
+    return combined.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
+  }, [mcpServerItems, mcpAppsItems]);
+
   const filteredItems = useMemo(() => {
-    let result = items;
+    let result = allItems;
 
     // Filter by serverIds if provided
     if (serverIds && serverIds.length > 0) {
@@ -139,7 +173,7 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
     }
 
     return result;
-  }, [items, searchQuery, serverIds]);
+  }, [allItems, searchQuery, serverIds]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -158,13 +192,13 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
             />
           </div>
           <span className="text-xs text-muted-foreground whitespace-nowrap">
-            {filteredItems.length} / {items.length}
+            {filteredItems.length} / {allItems.length}
           </span>
           <Button
             variant="ghost"
             size="sm"
             onClick={clearMessages}
-            disabled={items.length === 0}
+            disabled={allItems.length === 0}
             className="h-7 px-2"
             title="Clear all messages"
           >
@@ -188,10 +222,15 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
         ) : (
           filteredItems.map((it) => {
             const isExpanded = expanded.has(it.id);
+            const isMcpApps = it.source === "mcp-apps";
+            const isIncoming =
+              it.direction === "RECEIVE" || it.direction === "UI→HOST";
             return (
               <div
                 key={it.id}
-                className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
+                className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${
+                  isMcpApps ? "border-l-2 border-l-purple-500/50" : ""
+                }`}
               >
                 <div
                   className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
@@ -205,23 +244,37 @@ export function JsonRpcLoggerView({ serverIds }: JsonRpcLoggerViewProps = {}) {
                     )}
                   </div>
                   <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {/* Source indicator */}
+                    <span
+                      className={`flex items-center justify-center p-0.5 rounded ${
+                        isMcpApps
+                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
+                          : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
+                      }`}
+                      title={isMcpApps ? "MCP Apps (UI)" : "MCP Server"}
+                    >
+                      {isMcpApps ? (
+                        <AppWindow className="h-3 w-3" />
+                      ) : (
+                        <Server className="h-3 w-3" />
+                      )}
+                    </span>
                     <span className="text-muted-foreground font-mono text-xs">
                       {new Date(it.timestamp).toLocaleTimeString()}
                     </span>
                     <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50">
                       {it.serverId}
                     </span>
+                    {/* Direction indicator */}
                     <span
                       className={`flex items-center justify-center px-1 py-0.5 rounded ${
-                        it.direction === "RECEIVE"
+                        isIncoming
                           ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
                           : "bg-green-500/10 text-green-600 dark:text-green-400"
                       }`}
-                      title={
-                        it.direction === "RECEIVE" ? "Incoming" : "Outgoing"
-                      }
+                      title={it.direction}
                     >
-                      {it.direction === "RECEIVE" ? (
+                      {isIncoming ? (
                         <ArrowDownToLine className="h-3 w-3" />
                       ) : (
                         <ArrowUpFromLine className="h-3 w-3" />
