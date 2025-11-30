@@ -8,11 +8,6 @@ export interface FormField {
   minimum?: number;
   maximum?: number;
   pattern?: string;
-  /**
-   * Whether this field should be included when building the parameters object.
-   * - Required fields are always considered set.
-   * - Optional fields can be toggled by the user between "set" and "undefined".
-   */
   isSet: boolean;
 }
 
