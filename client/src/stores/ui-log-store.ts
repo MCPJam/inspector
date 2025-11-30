@@ -1,17 +1,20 @@
 /**
- * UI Log Store - Client-side logging for MCP Apps (SEP-1865) traffic
+ * UI Log Store - Client-side logging for MCP Apps (SEP-1865) and OpenAI Apps SDK traffic
  *
- * Captures all JSON-RPC messages between Host and MCP App UIs (iframes).
+ * Captures all messages between Host and App UIs (iframes).
  * This is a singleton store - no provider required.
  */
 
 import { create } from "zustand";
+
+export type UiProtocol = "mcp-apps" | "openai-apps";
 
 export interface UiLogEvent {
   id: string;
   widgetId: string; // toolCallId
   serverId: string;
   direction: "host-to-ui" | "ui-to-host";
+  protocol: UiProtocol;
   method: string;
   timestamp: string;
   message: unknown;
@@ -41,9 +44,19 @@ export const useUiLogStore = create<UiLogState>((set) => ({
 }));
 
 /**
- * Helper to extract method name from JSON-RPC message
+ * Helper to extract method name from message based on protocol
  */
-export function extractMethod(message: unknown): string {
+export function extractMethod(message: unknown, protocol?: UiProtocol): string {
+  // OpenAI Apps: extract from "type" field (e.g., "openai:callTool" → "callTool")
+  if (protocol === "openai-apps") {
+    const msg = message as { type?: string };
+    if (typeof msg?.type === "string") {
+      return msg.type.replace("openai:", "");
+    }
+    return "unknown";
+  }
+
+  // MCP Apps (JSON-RPC): extract from method/result/error
   const msg = message as {
     method?: string;
     result?: unknown;
