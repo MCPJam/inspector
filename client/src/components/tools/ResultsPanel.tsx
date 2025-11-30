@@ -221,40 +221,39 @@ export function ResultsPanel({
               </Badge>
             ))}
         </div>
-        {rawResult &&
-          (structuredResult || hasWidgetComponent) && (
-            <div className="flex gap-2">
+        {rawResult && (structuredResult || hasWidgetComponent) && (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant={!showStructured && !showDebug ? "default" : "outline"}
+              onClick={() => {
+                setShowDebug(false);
+                onToggleStructured(false);
+              }}
+            >
+              {hasWidgetComponent ? "Component" : "Raw Output"}
+            </Button>
+            <Button
+              size="sm"
+              variant={showStructured && !showDebug ? "default" : "outline"}
+              onClick={() => {
+                setShowDebug(false);
+                onToggleStructured(true);
+              }}
+            >
+              {hasWidgetComponent ? "Raw JSON" : "Structured Output"}
+            </Button>
+            {hasWidgetComponent && widgetDebugInfo && (
               <Button
                 size="sm"
-                variant={!showStructured && !showDebug ? "default" : "outline"}
-                onClick={() => {
-                  setShowDebug(false);
-                  onToggleStructured(false);
-                }}
+                variant={showDebug ? "default" : "outline"}
+                onClick={() => setShowDebug(true)}
               >
-                {hasWidgetComponent ? "Component" : "Raw Output"}
+                State/Globals
               </Button>
-              <Button
-                size="sm"
-                variant={showStructured && !showDebug ? "default" : "outline"}
-                onClick={() => {
-                  setShowDebug(false);
-                  onToggleStructured(true);
-                }}
-              >
-                {hasWidgetComponent ? "Raw JSON" : "Structured Output"}
-              </Button>
-              {hasWidgetComponent && widgetDebugInfo && (
-                <Button
-                  size="sm"
-                  variant={showDebug ? "default" : "outline"}
-                  onClick={() => setShowDebug(true)}
-                >
-                  State/Globals
-                </Button>
-              )}
-            </div>
-          )}
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-hidden">

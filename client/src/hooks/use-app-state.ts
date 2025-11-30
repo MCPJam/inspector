@@ -569,7 +569,11 @@ export function useAppState() {
       },
       serverUrl: string,
     ) => {
-      const result = await applyTokensFromOAuthFlow(serverName, tokens, serverUrl);
+      const result = await applyTokensFromOAuthFlow(
+        serverName,
+        tokens,
+        serverUrl,
+      );
       if (result.success) {
         toast.success(`Connected to ${serverName}!`);
       } else {
@@ -593,7 +597,11 @@ export function useAppState() {
       },
       serverUrl: string,
     ) => {
-      const result = await applyTokensFromOAuthFlow(serverName, tokens, serverUrl);
+      const result = await applyTokensFromOAuthFlow(
+        serverName,
+        tokens,
+        serverUrl,
+      );
       if (result.success) {
         toast.success(`Tokens refreshed for ${serverName}!`);
       } else {
