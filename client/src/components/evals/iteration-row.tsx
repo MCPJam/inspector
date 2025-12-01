@@ -81,7 +81,7 @@ export function CompactIterationRow({
           </span>
           {isPending && (
             <div className="flex items-center min-w-[40px]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />
             </div>
           )}
           {!isPending && iterationRun && onViewRun && (

@@ -86,21 +86,21 @@ export function SuiteRow({
   const totalIterations = aggregate?.filteredIterations.length ?? 0;
 
   const getBorderColor = () => {
-    if (!aggregate) return "bg-zinc-300/50";
+    if (!aggregate) return "bg-muted";
 
     const { passed, failed, cancelled, pending } = aggregate.totals;
     const total = passed + failed + cancelled + pending;
 
-    if (total === 0) return "bg-zinc-300/50";
+    if (total === 0) return "bg-muted";
 
     const completedTotal = passed + failed;
-    if (completedTotal === 0) return "bg-zinc-300/50";
+    if (completedTotal === 0) return "bg-muted";
 
     const failureRate = (failed / completedTotal) * 100;
 
-    if (failureRate === 0) return "bg-emerald-500/50";
-    if (failureRate <= 30) return "bg-amber-500/50";
-    return "bg-red-500/50";
+    if (failureRate === 0) return "bg-success/50";
+    if (failureRate <= 30) return "bg-warning/50";
+    return "bg-destructive/50";
   };
 
   // Check if all servers are connected

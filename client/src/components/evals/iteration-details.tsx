@@ -210,11 +210,11 @@ export function IterationDetails({
     <div className="space-y-4 py-2">
       {/* Error Display */}
       {iteration.error && (
-        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 space-y-2">
-          <div className="text-xs font-semibold text-red-600 uppercase tracking-wide">
+        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">
+          <div className="text-xs font-semibold text-destructive uppercase tracking-wide">
             Error
           </div>
-          <div className="text-xs text-red-700 whitespace-pre-wrap font-mono">
+          <div className="text-xs text-destructive whitespace-pre-wrap font-mono">
             {isMCPJamModel
               ? "An error has occurred while using an MCPJam provided model"
               : iteration.error}
@@ -224,7 +224,7 @@ export function IterationDetails({
               open={isErrorDetailsOpen}
               onOpenChange={setIsErrorDetailsOpen}
             >
-              <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-700 transition-colors">
+              <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-destructive hover:text-destructive/80 transition-colors">
                 <span>More details</span>
                 {isErrorDetailsOpen ? (
                   <ChevronDown className="h-3 w-3" />
@@ -233,7 +233,7 @@ export function IterationDetails({
                 )}
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-2">
-                <div className="rounded border border-red-500/30 bg-background/50 p-2">
+                <div className="rounded border border-destructive/30 bg-background/50 p-2">
                   {errorDetailsJson ? (
                     <JsonView
                       src={errorDetailsJson}
@@ -243,7 +243,7 @@ export function IterationDetails({
                       }}
                     />
                   ) : (
-                    <pre className="text-xs font-mono text-red-700 whitespace-pre-wrap overflow-x-auto">
+                    <pre className="text-xs font-mono text-destructive whitespace-pre-wrap overflow-x-auto">
                       {iteration.errorDetails}
                     </pre>
                   )}
@@ -403,7 +403,7 @@ export function IterationDetails({
             {loading ? (
               <div className="text-xs text-muted-foreground">Loading trace</div>
             ) : error ? (
-              <div className="text-xs text-red-600">{error}</div>
+              <div className="text-xs text-destructive">{error}</div>
             ) : (
               <TraceViewer
                 trace={blob}
