@@ -145,6 +145,16 @@ apps.get("/widget-content/:toolId", async (c) => {
     const csp = uiMeta?.csp;
     const prefersBorder = uiMeta?.prefersBorder;
 
+    // Log CSP configuration for security review (SEP-1865)
+    if (csp) {
+      console.log("[MCP Apps] CSP configuration for %s:", resourceUri, {
+        connectDomains: csp.connectDomains || [],
+        resourceDomains: csp.resourceDomains || [],
+      });
+    } else {
+      console.log("[MCP Apps] No CSP declared for %s - using restrictive defaults", resourceUri);
+    }
+
     // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
