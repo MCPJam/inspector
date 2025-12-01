@@ -276,13 +276,13 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                       >
                         {loading ? (
                           <>
-                            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                            <span className="font-mono text-xs">Reading</span>
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Reading
                           </>
                         ) : (
                           <>
-                            <Eye className="h-3 w-3 mr-1.5 cursor-pointer" />
-                            <span className="font-mono text-xs">Read</span>
+                            <Eye className="h-3 w-3" />
+                            Read
                           </>
                         )}
                       </Button>
