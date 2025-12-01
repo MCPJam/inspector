@@ -404,7 +404,7 @@ function PartSwitch({
 
 function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
   const textColorClass =
-    role === "user" ? "text-black dark:text-white" : "text-foreground";
+    role === "user" ? "text-foreground" : "text-foreground";
   return (
     <MemoizedMarkdown
       content={text}

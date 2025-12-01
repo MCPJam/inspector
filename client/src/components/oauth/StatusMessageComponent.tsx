@@ -10,20 +10,20 @@ export const StatusMessageComponent = ({ message }: StatusMessageProps) => {
 
   switch (message.type) {
     case "error":
-      bgColor = "bg-red-50 dark:bg-red-950/50";
-      textColor = "text-red-700 dark:text-red-400";
-      borderColor = "border-red-200 dark:border-red-800";
+      bgColor = "bg-destructive/10";
+      textColor = "text-destructive";
+      borderColor = "border-destructive/20";
       break;
     case "success":
-      bgColor = "bg-green-50 dark:bg-green-950/50";
-      textColor = "text-green-700 dark:text-green-400";
-      borderColor = "border-green-200 dark:border-green-800";
+      bgColor = "bg-success/10";
+      textColor = "text-success";
+      borderColor = "border-success/20";
       break;
     case "info":
     default:
-      bgColor = "bg-blue-50 dark:bg-blue-950/50";
-      textColor = "text-blue-700 dark:text-blue-400";
-      borderColor = "border-blue-200 dark:border-blue-800";
+      bgColor = "bg-info/10";
+      textColor = "text-info";
+      borderColor = "border-info/20";
       break;
   }
 

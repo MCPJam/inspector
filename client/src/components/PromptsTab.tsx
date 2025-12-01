@@ -341,15 +341,13 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                       >
                         {loading ? (
                           <>
-                            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                            <span className="font-mono text-xs">Loading</span>
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Loading
                           </>
                         ) : (
                           <>
-                            <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
-                            <span className="font-mono text-xs">
-                              Get Prompt
-                            </span>
+                            <Play className="h-3 w-3" />
+                            Get Prompt
                           </>
                         )}
                       </Button>

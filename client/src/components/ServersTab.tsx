@@ -8,15 +8,11 @@ import {
   Cable,
   Link,
   Loader2,
-  X,
   Copy,
   Check,
-  PanelRightClose,
-  PanelRightOpen,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
-import { ServerConnectionDetails } from "./connection/ServerConnectionDetails";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
@@ -29,7 +25,6 @@ import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
-import { Workspace } from "@/state/app-types";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -50,6 +45,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./ui/tooltip";
+import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
+import { LoggerView } from "./logging/logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 
 interface ServersTabProps {
@@ -271,8 +268,8 @@ export function ServersTab({
           ) : (
             <>
               <span className="relative flex h-2 w-2 mr-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-50"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-foreground opacity-50"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-foreground"></span>
               </span>
               Close Tunnel
             </>
@@ -324,7 +321,7 @@ export function ServersTab({
       closeDelay={100}
     >
       <HoverCardTrigger asChild>
-        <Button onClick={handleAddServerClick} className="cursor-pointer">
+        <Button size="sm" onClick={handleAddServerClick} className="cursor-pointer">
           <Plus className="h-4 w-4 mr-2" />
           Add Server
         </Button>
@@ -379,29 +376,6 @@ export function ServersTab({
               <div className="flex items-center gap-2">
                 {renderTunnelButton()}
                 {renderServerActionsMenu()}
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={toggleJsonRpcPanel}
-                        className="cursor-pointer"
-                      >
-                        {isJsonRpcPanelVisible ? (
-                          <PanelRightClose className="h-4 w-4" />
-                        ) : (
-                          <PanelRightOpen className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>
-                        {isJsonRpcPanelVisible ? "Hide" : "Show"} JSON-RPC panel
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
               </div>
             </div>
           </div>
@@ -424,13 +398,17 @@ export function ServersTab({
       </ResizablePanel>
 
       {/* JSON-RPC Traces Panel */}
-      {isJsonRpcPanelVisible && (
+      {isJsonRpcPanelVisible ? (
         <>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={35} minSize={20} maxSize={30}>
-            <ServerConnectionDetails serverCount={connectedCount} />
+          <ResizablePanel defaultSize={35} minSize={20} maxSize={50}>
+            <div className="h-full flex flex-col bg-background border-l border-border">
+              <LoggerView key={connectedCount} onClose={toggleJsonRpcPanel} />
+            </div>
           </ResizablePanel>
         </>
+      ) : (
+        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
       )}
     </ResizablePanelGroup>
   );

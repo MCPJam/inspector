@@ -447,7 +447,7 @@ function CombinedToolPart({
             {isError ? (
               <AlertTriangle className="h-4 w-4 text-destructive" />
             ) : toolResult ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
             ) : (
               <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
             )}

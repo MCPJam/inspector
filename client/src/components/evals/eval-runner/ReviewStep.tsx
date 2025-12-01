@@ -58,7 +58,7 @@ export function ReviewStep({
             autoFocus
           />
           {showNameError && !suiteName.trim() && (
-            <p className="text-sm text-red-600 font-medium">
+            <p className="text-sm text-destructive font-medium">
               Please provide a name for this test suite
             </p>
           )}

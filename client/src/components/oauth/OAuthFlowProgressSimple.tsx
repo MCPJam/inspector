@@ -27,7 +27,7 @@ const OAuthStepDetails = ({
         className={`flex items-center p-2 rounded-md ${isCurrent ? "bg-accent" : ""}`}
       >
         {isComplete ? (
-          <CheckCircle2 className="h-5 w-5 text-green-500 mr-2" />
+          <CheckCircle2 className="h-5 w-5 text-success mr-2" />
         ) : (
           <Circle className="h-5 w-5 text-muted-foreground mr-2" />
         )}
@@ -41,11 +41,11 @@ const OAuthStepDetails = ({
 
       {/* Display error if current step and an error exists */}
       {isCurrent && error && (
-        <div className="ml-7 mt-2 p-3 border border-red-300 bg-red-50 dark:bg-red-950/50 rounded-md">
-          <p className="text-sm font-medium text-red-700 dark:text-red-400">
+        <div className="ml-7 mt-2 p-3 border border-destructive/30 bg-destructive/10 rounded-md">
+          <p className="text-sm font-medium text-destructive">
             Error:
           </p>
-          <p className="text-xs text-red-600 dark:text-red-500 mt-1">
+          <p className="text-xs text-destructive/80 mt-1">
             {error.message}
           </p>
         </div>
@@ -162,8 +162,8 @@ export const OAuthFlowProgressSimple = ({
               )}
 
               {flowState.resourceMetadataError && (
-                <div className="mt-2 p-3 border border-blue-300 bg-blue-50 dark:bg-blue-950/50 rounded-md">
-                  <p className="text-sm font-medium text-blue-700 dark:text-blue-400">
+                <div className="mt-2 p-3 border border-info/30 bg-info/10 rounded-md">
+                  <p className="text-sm font-medium text-info">
                     ℹ️ Problem with resource metadata from{" "}
                     <a
                       href={
@@ -174,7 +174,7 @@ export const OAuthFlowProgressSimple = ({
                       }
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                      className="text-info hover:text-info/80"
                     >
                       {
                         new URL(
@@ -184,7 +184,7 @@ export const OAuthFlowProgressSimple = ({
                       }
                     </a>
                   </p>
-                  <p className="text-xs text-blue-600 dark:text-blue-500 mt-1">
+                  <p className="text-xs text-info/80 mt-1">
                     Resource metadata was added in the{" "}
                     <a
                       href="https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#authorization-server-location"
@@ -256,7 +256,7 @@ export const OAuthFlowProgressSimple = ({
                   onClick={() => {
                     setIsAuthModalOpen(true);
                   }}
-                  className="flex items-center text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                  className="flex items-center text-info hover:text-info/80"
                   aria-label="Open authorization URL"
                   title="Open authorization URL"
                 >
@@ -294,12 +294,12 @@ export const OAuthFlowProgressSimple = ({
                 }}
                 placeholder="Enter the code from the authorization server"
                 className={`flex h-9 w-full rounded-md border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                  flowState.validationError ? "border-red-500" : "border-input"
+                  flowState.validationError ? "border-destructive" : "border-input"
                 }`}
               />
             </div>
             {flowState.validationError && (
-              <p className="text-xs text-red-600 mt-1">
+              <p className="text-xs text-destructive mt-1">
                 {flowState.validationError}
               </p>
             )}

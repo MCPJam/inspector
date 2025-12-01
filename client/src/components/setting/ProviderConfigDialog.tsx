@@ -48,7 +48,7 @@ export function ProviderConfigDialog({
         <DialogHeader>
           <div className="flex items-center gap-3 mb-4">
             {provider && (
-              <div className="w-12 h-12 rounded-lg bg-white p-2 border">
+              <div className="w-12 h-12 rounded-lg bg-card p-2 border">
                 <img
                   src={provider.logo}
                   alt={provider.logoAlt}
@@ -82,9 +82,9 @@ export function ProviderConfigDialog({
             />
           </div>
 
-          <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg">
-            <ExternalLink className="w-4 h-4 text-blue-600" />
-            <span className="text-sm text-blue-600">
+          <div className="flex items-center gap-2 p-3 bg-info/10 rounded-lg">
+            <ExternalLink className="w-4 h-4 text-info" />
+            <span className="text-sm text-info">
               Need an API key?{" "}
               <button
                 onClick={() =>

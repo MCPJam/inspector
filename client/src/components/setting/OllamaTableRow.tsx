@@ -15,7 +15,7 @@ export function OllamaTableRow({ baseUrl, onEdit }: OllamaTableRowProps) {
       className={cn(
         "group h-full gap-4 border bg-card px-6 py-6 transition-all hover:border-primary/40 hover:shadow-md dark:hover:shadow-xl",
         isConfigured
-          ? "border-green-200/80 dark:border-green-400/30"
+          ? "border-success/30"
           : "border-border/60",
       )}
     >

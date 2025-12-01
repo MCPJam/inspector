@@ -120,7 +120,7 @@ export function ServerSelectionCard({
             className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
           >
             {copiedField === "command" ? (
-              <Check className="h-3 w-3 text-green-500" />
+              <Check className="h-3 w-3 text-success" />
             ) : (
               <Copy className="h-3 w-3" />
             )}
@@ -144,7 +144,7 @@ export function ServerSelectionCard({
               className="absolute top-1 right-1 p-1 text-muted-foreground/50 hover:text-foreground transition-colors cursor-pointer"
             >
               {copiedField === "config" ? (
-                <Check className="h-3 w-3 text-green-500" />
+                <Check className="h-3 w-3 text-success" />
               ) : (
                 <Copy className="h-3 w-3" />
               )}

@@ -7,7 +7,7 @@ import {
   useRef,
 } from "react";
 import { useChat } from "@ai-sdk/react";
-import { ArrowDown, PanelRightOpen } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import {
   DefaultChatTransport,
   lastAssistantMessageIsCompleteWithToolCalls,
@@ -57,13 +57,7 @@ import {
   buildMcpPromptMessages,
 } from "@/components/chat-v2/chat-helpers";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
-import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -830,25 +824,7 @@ export function ChatTabV2({
             </ResizablePanel>
           </>
         ) : (
-          <div className="flex items-center border-l border-border">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={toggleJsonRpcPanel}
-                    className="h-full px-1 rounded-none cursor-pointer"
-                  >
-                    <PanelRightOpen className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">
-                  <p>Show JSON-RPC panel</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
+          <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
         )}
       </ResizablePanelGroup>
     </div>
