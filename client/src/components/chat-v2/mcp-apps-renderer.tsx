@@ -29,6 +29,12 @@ type ToolState =
   | "output-available"
   | "output-error";
 
+// CSP metadata type per SEP-1865
+interface UIResourceCSP {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+}
+
 interface MCPAppsRendererProps {
   serverId: string;
   toolCallId: string;
@@ -80,6 +86,7 @@ export function MCPAppsRenderer({
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
+  const [widgetCsp, setWidgetCsp] = useState<UIResourceCSP | undefined>(undefined);
 
   const pendingRequests = useRef<
     Map<
@@ -120,18 +127,20 @@ export function MCPAppsRenderer({
           );
         }
 
-        // Fetch the processed HTML with injected script
-        const htmlResponse = await fetch(
+        // Fetch widget content with CSP metadata (SEP-1865)
+        const contentResponse = await fetch(
           `/api/mcp/apps/widget-content/${toolCallId}`,
         );
-        if (!htmlResponse.ok) {
+        if (!contentResponse.ok) {
+          const errorData = await contentResponse.json().catch(() => ({}));
           throw new Error(
-            `Failed to fetch widget HTML: ${htmlResponse.statusText}`,
+            errorData.error || `Failed to fetch widget: ${contentResponse.statusText}`,
           );
         }
 
-        const html = await htmlResponse.text();
+        const { html, csp } = await contentResponse.json();
         setWidgetHtml(html);
+        setWidgetCsp(csp);
       } catch (err) {
         setLoadError(
           err instanceof Error ? err.message : "Failed to prepare widget",
@@ -503,6 +512,7 @@ export function MCPAppsRenderer({
         ref={sandboxRef}
         html={widgetHtml}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        csp={widgetCsp}
         onMessage={handleMessage}
         title={`MCP App: ${toolName}`}
         className="w-full border border-border/40 rounded-md bg-background"
