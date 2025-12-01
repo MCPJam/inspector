@@ -74,3 +74,4 @@ sdk/dist/
 sdk/node_modules/
 sdk/mcp-client-manager/node_modules/
 sdk/mcp-client-manager/dist/
+.idea/

@@ -120,6 +120,10 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     this.customClientSecret = customClientSecret;
   }
 
+  state(): string {
+    return `mcp-state-${this.serverName}`
+  }
+
   get redirectUrl(): string {
     return this.redirectUri;
   }
@@ -593,6 +597,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+  localStorage.removeItem(`mcp-state-${serverName}`);
 }
 
 /**
