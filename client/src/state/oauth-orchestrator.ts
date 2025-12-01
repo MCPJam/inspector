@@ -20,9 +20,19 @@ export type OAuthResult = OAuthReady | OAuthRedirect | OAuthError;
 export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
 ): Promise<OAuthResult> {
-  // Check if OAuth was configured by looking at multiple sources
-  if (!server.oauthTokens && !hasOAuthConfig(server.name)) {
-    // No OAuth was ever configured, use existing config
+  // If server is explicitly configured without OAuth, skip OAuth flow entirely
+  // This handles the case where a server was saved with "No Authentication"
+  if (server.useOAuth === false) {
+    // Also clear any lingering OAuth data in localStorage
+    clearOAuthData(server.name);
+    return { kind: "ready", serverConfig: server.config, tokens: undefined };
+  }
+
+  // If useOAuth is not explicitly true and there are no OAuth tokens,
+  // skip OAuth (handles legacy servers and non-OAuth connections)
+  if (server.useOAuth !== true && !server.oauthTokens) {
+    // Clear any lingering OAuth data that might cause confusion
+    clearOAuthData(server.name);
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 
