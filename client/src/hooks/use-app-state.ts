@@ -1056,7 +1056,11 @@ export function useAppState() {
     isLoading,
 
     // Computed values
-    connectedServerConfigs: appState.servers,
+    connectedServerConfigs: Object.fromEntries(
+      Object.entries(appState.servers).filter(
+        ([, server]) => server.connectionStatus === "connected",
+      ),
+    ),
     selectedServerEntry: appState.servers[appState.selectedServer],
     selectedMCPConfig: appState.servers[appState.selectedServer]?.config,
     selectedMCPConfigs: appState.selectedMultipleServers

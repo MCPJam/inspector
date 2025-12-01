@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
@@ -83,6 +83,18 @@ export function ActiveServerSelector({
     if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
     return true;
   });
+
+  // Auto-select first available server if current selection is not in the list
+  useEffect(() => {
+    if (isMultiSelectEnabled) return; // Don't auto-select in multi-select mode
+
+    const serverNames = servers.map(([name]) => name);
+    const isCurrentSelectionValid = serverNames.includes(selectedServer);
+
+    if (!isCurrentSelectionValid && serverNames.length > 0) {
+      onServerChange(serverNames[0]);
+    }
+  }, [servers.length, selectedServer, isMultiSelectEnabled, onServerChange]);
 
   const handleServerClick = (name: string) => {
     if (isMultiSelectEnabled) {
