@@ -25,6 +25,7 @@ import {
   handleOAuthCallback,
   getStoredTokens,
   clearOAuthData,
+  initiateOAuth,
 } from "@/lib/mcp-oauth";
 import { MCPServerConfig } from "@/sdk";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
@@ -735,13 +736,71 @@ export function useAppState() {
   }, []);
 
   const handleReconnect = useCallback(
-    async (serverName: string) => {
-      logger.info("Reconnecting to server", { serverName });
+    async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
+      logger.info("Reconnecting to server", { serverName, options });
       const server = appState.servers[serverName];
       if (!server) throw new Error(`Server ${serverName} not found`);
 
       dispatch({ type: "RECONNECT_REQUEST", name: serverName });
       const token = nextOpToken(serverName);
+
+      // If forceOAuthFlow is true, clear all OAuth data and initiate a fresh OAuth flow
+      if (options?.forceOAuthFlow) {
+        clearOAuthData(serverName);
+        await deleteServer(serverName);
+
+        const serverUrl = (server.config as any)?.url?.toString?.();
+        if (!serverUrl) {
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: "No server URL found for OAuth flow",
+          });
+          return;
+        }
+
+        const oauthResult = await initiateOAuth({
+          serverName,
+          serverUrl,
+        });
+
+        if (oauthResult.success && !oauthResult.serverConfig) {
+          // OAuth redirect in progress
+          return;
+        }
+        if (!oauthResult.success) {
+          if (isStaleOp(serverName, token)) return;
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: oauthResult.error || "OAuth flow failed",
+          });
+          toast.error(`OAuth failed: ${serverName}`);
+          return;
+        }
+        // OAuth completed successfully, continue with reconnect using the new config
+        const result = await reconnectServer(serverName, oauthResult.serverConfig!);
+        if (isStaleOp(serverName, token)) return;
+        if (result.success) {
+          dispatch({
+            type: "CONNECT_SUCCESS",
+            name: serverName,
+            config: oauthResult.serverConfig!,
+            tokens: getStoredTokens(serverName),
+          });
+          await fetchAndStoreInitInfo(serverName);
+          logger.info("Reconnection with fresh OAuth successful", { serverName });
+          return { success: true } as const;
+        } else {
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: serverName,
+            error: result.error || "Reconnection failed after OAuth",
+          });
+          return;
+        }
+      }
+
       try {
         const authResult: OAuthResult =
           await ensureAuthorizedForReconnect(server);
