@@ -324,7 +324,7 @@ export function ServersTab({
       closeDelay={100}
     >
       <HoverCardTrigger asChild>
-        <Button onClick={handleAddServerClick} className="cursor-pointer">
+        <Button size="sm" onClick={handleAddServerClick} className="cursor-pointer">
           <Plus className="h-4 w-4 mr-2" />
           Add Server
         </Button>
