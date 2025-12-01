@@ -77,15 +77,13 @@ export function ParametersPanel({
             >
               {loading ? (
                 <>
-                  <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                  <span className="font-mono text-xs">
-                    {waitingOnElicitation ? "Waiting..." : "Running"}
-                  </span>
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                  {waitingOnElicitation ? "Waiting..." : "Running"}
                 </>
               ) : (
                 <>
-                  <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
-                  <span className="font-mono text-xs">Execute</span>
+                  <Play className="h-3 w-3" />
+                  Execute
                 </>
               )}
             </Button>
@@ -102,8 +100,8 @@ export function ParametersPanel({
               size="sm"
               disabled={!selectedTool}
             >
-              <SaveIcon className="h-3 w-3 mr-1" />
-              <span className="font-mono text-xs">Save</span>
+              <SaveIcon className="h-3 w-3" />
+              Save
             </Button>
           </div>
         </div>
@@ -152,7 +150,7 @@ export function ParametersPanel({
                               </span>
                             )}
                             {!field.required && (
-                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
+                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
                                 <input
                                   type="checkbox"
                                   checked={!field.isSet}
