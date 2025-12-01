@@ -56,10 +56,10 @@
        * @returns {string} Sanitized domain
        */
       function sanitizeDomain(domain) {
-        if (typeof domain !== 'string') return '';
+        if (typeof domain !== "string") return "";
         // Remove characters that could break out of CSP or HTML attributes
         // Valid CSP sources shouldn't contain these characters
-        return domain.replace(/['"<>;]/g, '').trim();
+        return domain.replace(/['"<>;]/g, "").trim();
       }
 
       /**
@@ -81,25 +81,29 @@
             "connect-src 'none'",
             "frame-src 'none'",
             "object-src 'none'",
-            "base-uri 'none'"
+            "base-uri 'none'",
           ].join("; ");
         }
 
         // Build CSP from declared domains (SEP-1865)
         // Per spec: "Host MAY further restrict but MUST NOT allow undeclared domains"
-        const connectDomains = (csp.connectDomains || []).map(sanitizeDomain).filter(Boolean);
-        const resourceDomains = (csp.resourceDomains || []).map(sanitizeDomain).filter(Boolean);
+        const connectDomains = (csp.connectDomains || [])
+          .map(sanitizeDomain)
+          .filter(Boolean);
+        const resourceDomains = (csp.resourceDomains || [])
+          .map(sanitizeDomain)
+          .filter(Boolean);
 
         // connect-src: Only allow declared domains, or 'none' if empty
-        const connectSrc = connectDomains.length > 0
-          ? connectDomains.join(" ")
-          : "'none'";
+        const connectSrc =
+          connectDomains.length > 0 ? connectDomains.join(" ") : "'none'";
 
         // Resource sources: data: and blob: are always allowed for inline content
         // Only add declared resourceDomains - no forced CDNs per SEP-1865
-        const resourceSrc = resourceDomains.length > 0
-          ? ["data:", "blob:", ...resourceDomains].join(" ")
-          : "data: blob:";
+        const resourceSrc =
+          resourceDomains.length > 0
+            ? ["data:", "blob:", ...resourceDomains].join(" ")
+            : "data: blob:";
 
         return [
           "default-src 'none'",
@@ -110,7 +114,7 @@
           "connect-src " + connectSrc,
           "frame-src 'none'",
           "object-src 'none'",
-          "base-uri 'none'"
+          "base-uri 'none'",
         ].join("; ");
       }
 
@@ -121,7 +125,10 @@
        * @returns {string} HTML with CSP meta tag injected
        */
       function injectCSP(html, cspValue) {
-        const cspMeta = '<meta http-equiv="Content-Security-Policy" content="' + cspValue + '">';
+        const cspMeta =
+          '<meta http-equiv="Content-Security-Policy" content="' +
+          cspValue +
+          '">';
 
         if (html.includes("<head>")) {
           return html.replace("<head>", "<head>" + cspMeta);
@@ -133,7 +140,10 @@
           return html.replace("<HTML>", "<HTML><head>" + cspMeta + "</head>");
         } else if (html.includes("<!DOCTYPE") || html.includes("<!doctype")) {
           // Insert after doctype
-          return html.replace(/(<!DOCTYPE[^>]*>|<!doctype[^>]*>)/i, "$1<head>" + cspMeta + "</head>");
+          return html.replace(
+            /(<!DOCTYPE[^>]*>|<!doctype[^>]*>)/i,
+            "$1<head>" + cspMeta + "</head>",
+          );
         } else {
           // Prepend CSP meta tag
           return cspMeta + html;

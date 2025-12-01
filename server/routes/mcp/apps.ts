@@ -103,10 +103,7 @@ apps.get("/widget-content/:toolId", async (c) => {
     const widgetData = widgetDataStore.get(toolId);
 
     if (!widgetData) {
-      return c.json(
-        { error: "Widget data not found or expired" },
-        404,
-      );
+      return c.json({ error: "Widget data not found or expired" }, 404);
     }
 
     const { serverId, resourceUri } = widgetData;
@@ -122,10 +119,7 @@ apps.get("/widget-content/:toolId", async (c) => {
     const content = contents[0];
 
     if (!content) {
-      return c.json(
-        { error: "No content in resource" },
-        404,
-      );
+      return c.json({ error: "No content in resource" }, 404);
     }
 
     let html: string;
@@ -134,10 +128,7 @@ apps.get("/widget-content/:toolId", async (c) => {
     } else if ("blob" in content && typeof content.blob === "string") {
       html = Buffer.from(content.blob, "base64").toString("utf-8");
     } else {
-      return c.json(
-        { error: "No HTML content in resource" },
-        404,
-      );
+      return c.json({ error: "No HTML content in resource" }, 404);
     }
 
     // Extract CSP and other UI metadata from resource _meta (SEP-1865)
@@ -152,7 +143,10 @@ apps.get("/widget-content/:toolId", async (c) => {
         resourceDomains: csp.resourceDomains || [],
       });
     } else {
-      console.log("[MCP Apps] No CSP declared for %s - using restrictive defaults", resourceUri);
+      console.log(
+        "[MCP Apps] No CSP declared for %s - using restrictive defaults",
+        resourceUri,
+      );
     }
 
     // Return JSON with HTML and metadata for CSP enforcement

@@ -86,7 +86,9 @@ export function MCPAppsRenderer({
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
-  const [widgetCsp, setWidgetCsp] = useState<UIResourceCSP | undefined>(undefined);
+  const [widgetCsp, setWidgetCsp] = useState<UIResourceCSP | undefined>(
+    undefined,
+  );
 
   const pendingRequests = useRef<
     Map<
@@ -134,7 +136,8 @@ export function MCPAppsRenderer({
         if (!contentResponse.ok) {
           const errorData = await contentResponse.json().catch(() => ({}));
           throw new Error(
-            errorData.error || `Failed to fetch widget: ${contentResponse.statusText}`,
+            errorData.error ||
+              `Failed to fetch widget: ${contentResponse.statusText}`,
           );
         }
 

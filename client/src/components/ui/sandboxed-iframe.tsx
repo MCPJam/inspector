@@ -136,7 +136,9 @@ export const SandboxedIframe = forwardRef<
   }, [proxyReady, html, sandbox, csp]);
 
   // Stable cache-bust URL (only changes on page refresh, not on re-renders)
-  const [sandboxProxyUrl] = useState(() => `/api/mcp/sandbox-proxy?v=${Date.now()}`);
+  const [sandboxProxyUrl] = useState(
+    () => `/api/mcp/sandbox-proxy?v=${Date.now()}`,
+  );
 
   return (
     <iframe
