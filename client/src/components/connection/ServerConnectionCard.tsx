@@ -291,7 +291,9 @@ export function ServerConnectionCard({
                         platform: detectPlatform(),
                         environment: detectEnvironment(),
                       });
-                      handleReconnect({ forceOAuthFlow: true });
+                      // Only force OAuth flow for servers that actually use OAuth
+                      const shouldForceOAuth = server.useOAuth === true || server.oauthTokens != null;
+                      handleReconnect(shouldForceOAuth ? { forceOAuthFlow: true } : undefined);
                     }}
                     disabled={
                       isReconnecting ||

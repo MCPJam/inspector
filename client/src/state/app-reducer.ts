@@ -54,6 +54,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         lastError: undefined,
         oauthTokens: action.tokens,
         enabled: true,
+        // Track whether this server uses OAuth based on whether tokens were provided
+        useOAuth: action.tokens != null,
       });
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       return {

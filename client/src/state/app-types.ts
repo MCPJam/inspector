@@ -39,6 +39,8 @@ export interface ServerWithName {
   retryCount: number;
   lastError?: string;
   enabled?: boolean;
+  /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
+  useOAuth?: boolean;
 }
 
 export interface Workspace {

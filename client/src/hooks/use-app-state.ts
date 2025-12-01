@@ -250,6 +250,7 @@ export function useAppState() {
               connectionStatus: "oauth-flow",
               retryCount: 0,
               enabled: true,
+              useOAuth: true,
             } as ServerWithName,
           });
 
@@ -310,7 +311,8 @@ export function useAppState() {
           }
         }
 
-        // Non-OAuth connect
+        // Non-OAuth connect - clear any lingering OAuth data
+        clearOAuthData(formData.name);
         const result = await testConnection(mcpConfig, formData.name);
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
@@ -386,7 +388,13 @@ export function useAppState() {
         retryCount: existingServer?.retryCount ?? 0,
         enabled: existingServer?.enabled ?? false,
         oauthFlowProfile: nextOAuthProfile,
+        useOAuth: formData.useOAuth ?? false,
       } as ServerWithName;
+
+      // Clear OAuth data when switching away from OAuth
+      if (!formData.useOAuth) {
+        clearOAuthData(serverName);
+      }
 
       dispatch({
         type: "UPSERT_SERVER",
@@ -425,11 +433,8 @@ export function useAppState() {
               JSON.stringify(clientInfo),
             );
           }
-        } else {
-          localStorage.removeItem(`mcp-serverUrl-${serverName}`);
-          localStorage.removeItem(`mcp-oauth-config-${serverName}`);
-          localStorage.removeItem(`mcp-client-${serverName}`);
         }
+        // Note: OAuth data cleanup for non-OAuth servers is handled above via clearOAuthData
       }
 
       const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
