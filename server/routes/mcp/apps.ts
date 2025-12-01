@@ -84,17 +84,26 @@ apps.post("/widget/store", async (c) => {
   }
 });
 
-// Serve widget HTML content
+// CSP metadata type per SEP-1865
+interface UIResourceCSP {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+}
+
+interface UIResourceMeta {
+  csp?: UIResourceCSP;
+  domain?: string;
+  prefersBorder?: boolean;
+}
+
+// Serve widget content with CSP metadata (SEP-1865)
 apps.get("/widget-content/:toolId", async (c) => {
   try {
     const toolId = c.req.param("toolId");
     const widgetData = widgetDataStore.get(toolId);
 
     if (!widgetData) {
-      return c.html(
-        "<html><body>Error: Widget data not found or expired</body></html>",
-        404,
-      );
+      return c.json({ error: "Widget data not found or expired" }, 404);
     }
 
     const { serverId, resourceUri } = widgetData;
@@ -110,10 +119,7 @@ apps.get("/widget-content/:toolId", async (c) => {
     const content = contents[0];
 
     if (!content) {
-      return c.html(
-        "<html><body>Error: No content in resource</body></html>",
-        404,
-      );
+      return c.json({ error: "No content in resource" }, 404);
     }
 
     let html: string;
@@ -122,21 +128,38 @@ apps.get("/widget-content/:toolId", async (c) => {
     } else if ("blob" in content && typeof content.blob === "string") {
       html = Buffer.from(content.blob, "base64").toString("utf-8");
     } else {
-      return c.html(
-        "<html><body>Error: No HTML content in resource</body></html>",
-        404,
+      return c.json({ error: "No HTML content in resource" }, 404);
+    }
+
+    // Extract CSP and other UI metadata from resource _meta (SEP-1865)
+    const uiMeta = (content._meta as { ui?: UIResourceMeta } | undefined)?.ui;
+    const csp = uiMeta?.csp;
+    const prefersBorder = uiMeta?.prefersBorder;
+
+    // Log CSP configuration for security review (SEP-1865)
+    if (csp) {
+      console.log("[MCP Apps] CSP configuration for %s:", resourceUri, {
+        connectDomains: csp.connectDomains || [],
+        resourceDomains: csp.resourceDomains || [],
+      });
+    } else {
+      console.log(
+        "[MCP Apps] No CSP declared for %s - using restrictive defaults",
+        resourceUri,
       );
     }
 
-    // Return HTML as-is - widgets using the official SDK (@modelcontextprotocol/ext-apps)
-    // handle JSON-RPC communication themselves. No script injection needed.
-    c.header("Content-Type", "text/html; charset=utf-8");
+    // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-    return c.body(html);
+    return c.json({
+      html,
+      csp,
+      prefersBorder,
+    });
   } catch (error) {
     console.error("[MCP Apps] Error fetching resource:", error);
-    return c.html(
-      `<html><body>Error: ${error instanceof Error ? error.message : "Unknown error"}</body></html>`,
+    return c.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
       500,
     );
   }

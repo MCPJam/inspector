@@ -26,11 +26,8 @@ import tunnelsRoute from "./tunnels";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load sandbox proxy HTML at startup
-const sandboxProxyHtml = fs.readFileSync(
-  path.join(__dirname, "sandbox-proxy.html"),
-  "utf-8",
-);
+// Path to sandbox proxy HTML
+const sandboxProxyPath = path.join(__dirname, "sandbox-proxy.html");
 
 const mcp = new Hono();
 
@@ -77,9 +74,11 @@ mcp.route("/openai", openai);
 mcp.route("/apps", apps);
 
 // Sandbox proxy for MCP Apps double-iframe architecture (SEP-1865)
+// Read file on each request in dev mode to support hot reload
 mcp.get("/sandbox-proxy", (c) => {
+  const sandboxProxyHtml = fs.readFileSync(sandboxProxyPath, "utf-8");
   c.header("Content-Type", "text/html; charset=utf-8");
-  c.header("Cache-Control", "public, max-age=3600");
+  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
   return c.body(sandboxProxyHtml);
 });
 
