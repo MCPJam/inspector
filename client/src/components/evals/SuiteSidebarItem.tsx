@@ -96,28 +96,28 @@ export function SuiteSidebarItem({
   // Determine status for the dot indicator
   const getStatusColor = () => {
     // If servers are disconnected, show grey dot
-    if (hasMissingServers) return "bg-gray-400";
+    if (hasMissingServers) return "bg-muted-foreground";
 
-    if (!latestRun) return "bg-gray-400"; // cancelled/no runs
+    if (!latestRun) return "bg-muted-foreground"; // cancelled/no runs
 
     // Use result if available, otherwise infer from status
-    if (latestRun.result === "passed") return "bg-emerald-500";
-    if (latestRun.result === "failed") return "bg-red-500";
-    if (latestRun.result === "cancelled") return "bg-gray-400";
+    if (latestRun.result === "passed") return "bg-success";
+    if (latestRun.result === "failed") return "bg-destructive";
+    if (latestRun.result === "cancelled") return "bg-muted-foreground";
     if (latestRun.result === "pending" || latestRun.status === "pending")
-      return "bg-amber-400";
-    if (latestRun.status === "running") return "bg-amber-400";
+      return "bg-warning";
+    if (latestRun.status === "running") return "bg-warning";
 
     // Fallback based on status
     if (latestRun.status === "completed") {
       // Check pass rate
       const passRate = latestRun.summary?.passRate ?? 0;
       const minimumPassRate = latestRun.passCriteria?.minimumPassRate ?? 100;
-      return passRate >= minimumPassRate ? "bg-emerald-500" : "bg-red-500";
+      return passRate >= minimumPassRate ? "bg-success" : "bg-destructive";
     }
-    if (latestRun.status === "cancelled") return "bg-gray-400";
+    if (latestRun.status === "cancelled") return "bg-muted-foreground";
 
-    return "bg-gray-400";
+    return "bg-muted-foreground";
   };
 
   return (

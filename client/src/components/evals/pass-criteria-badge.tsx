@@ -40,8 +40,8 @@ export function PassCriteriaBadge({
             variant="outline"
             className={
               passed
-                ? "gap-1 bg-emerald-500/50 text-white border-emerald-500/50 hover:bg-emerald-500/70"
-                : "gap-1 bg-red-500/50 text-white border-red-500/50 hover:bg-red-500/70"
+                ? "gap-1 bg-success/50 text-success-foreground border-success/50 hover:bg-success/70"
+                : "gap-1 bg-destructive/50 text-destructive-foreground border-destructive/50 hover:bg-destructive/70"
             }
           >
             {passed ? (
@@ -71,7 +71,7 @@ export function PassCriteriaBadge({
     <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
       <div className="flex items-center gap-2">
         {passed ? (
-          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+          <CheckCircle2 className="h-5 w-5 text-success" />
         ) : (
           <XCircle className="h-5 w-5 text-destructive" />
         )}

@@ -30,13 +30,13 @@ export function OpenRouterTableRow({
       className={cn(
         "group h-full gap-4 border bg-card px-6 py-6 transition-all hover:border-primary/40 hover:shadow-md dark:hover:shadow-xl",
         isConfigured
-          ? "border-green-200/80 dark:border-green-400/30"
+          ? "border-success/30"
           : "border-border/60",
       )}
     >
       <div className="flex items-start justify-between gap-6">
         <div className="flex items-center gap-4">
-          <div className="size-6 rounded bg-white dark:bg-gray-800 p-0.5 flex items-center justify-center">
+          <div className="size-6 rounded bg-card p-0.5 flex items-center justify-center border">
             <img
               src="/openrouter_logo.png"
               alt="OpenRouter Logo"
