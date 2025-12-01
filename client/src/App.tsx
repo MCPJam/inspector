@@ -188,7 +188,11 @@ export default function App() {
             activeTab === "chat" ||
             activeTab === "chat-v2") && (
             <ActiveServerSelector
-              serverConfigs={appState.servers}
+              serverConfigs={
+                activeTab === "oauth-flow"
+                  ? appState.servers
+                  : connectedServerConfigs
+              }
               selectedServer={appState.selectedServer}
               onServerChange={setSelectedServer}
               onConnect={handleConnect}
@@ -205,7 +209,7 @@ export default function App() {
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
-              connectedServerConfigs={connectedServerConfigs}
+              connectedServerConfigs={appState.servers}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
@@ -258,7 +262,7 @@ export default function App() {
 
           {activeTab === "oauth-flow" && (
             <OAuthFlowTab
-              serverConfigs={connectedServerConfigs}
+              serverConfigs={appState.servers}
               selectedServerName={appState.selectedServer}
               onSelectServer={setSelectedServer}
               onSaveServerConfig={saveServerConfigWithoutConnecting}
