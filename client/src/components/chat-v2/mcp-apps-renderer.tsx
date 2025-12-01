@@ -139,11 +139,6 @@ export function MCPAppsRenderer({
         }
 
         const { html, csp } = await contentResponse.json();
-        console.log("[MCPAppsRenderer] Received from server:", {
-          htmlLength: html?.length,
-          csp,
-          cspStringified: JSON.stringify(csp)
-        });
         setWidgetHtml(html);
         setWidgetCsp(csp);
       } catch (err) {
