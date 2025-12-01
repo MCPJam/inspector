@@ -53,7 +53,10 @@ interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
-  onReconnect: (serverName: string, options?: { forceOAuthFlow?: boolean }) => void;
+  onReconnect: (
+    serverName: string,
+    options?: { forceOAuthFlow?: boolean },
+  ) => void;
   onUpdate: (
     originalServerName: string,
     formData: ServerFormData,
@@ -321,7 +324,11 @@ export function ServersTab({
       closeDelay={100}
     >
       <HoverCardTrigger asChild>
-        <Button size="sm" onClick={handleAddServerClick} className="cursor-pointer">
+        <Button
+          size="sm"
+          onClick={handleAddServerClick}
+          className="cursor-pointer"
+        >
           <Plus className="h-4 w-4 mr-2" />
           Add Server
         </Button>

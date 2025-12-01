@@ -779,7 +779,10 @@ export function useAppState() {
           return;
         }
         // OAuth completed successfully, continue with reconnect using the new config
-        const result = await reconnectServer(serverName, oauthResult.serverConfig!);
+        const result = await reconnectServer(
+          serverName,
+          oauthResult.serverConfig!,
+        );
         if (isStaleOp(serverName, token)) return;
         if (result.success) {
           dispatch({
@@ -789,7 +792,9 @@ export function useAppState() {
             tokens: getStoredTokens(serverName),
           });
           await fetchAndStoreInitInfo(serverName);
-          logger.info("Reconnection with fresh OAuth successful", { serverName });
+          logger.info("Reconnection with fresh OAuth successful", {
+            serverName,
+          });
           return { success: true } as const;
         } else {
           dispatch({

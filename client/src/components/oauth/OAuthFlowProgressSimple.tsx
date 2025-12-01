@@ -42,12 +42,8 @@ const OAuthStepDetails = ({
       {/* Display error if current step and an error exists */}
       {isCurrent && error && (
         <div className="ml-7 mt-2 p-3 border border-destructive/30 bg-destructive/10 rounded-md">
-          <p className="text-sm font-medium text-destructive">
-            Error:
-          </p>
-          <p className="text-xs text-destructive/80 mt-1">
-            {error.message}
-          </p>
+          <p className="text-sm font-medium text-destructive">Error:</p>
+          <p className="text-xs text-destructive/80 mt-1">{error.message}</p>
         </div>
       )}
     </div>
@@ -294,7 +290,9 @@ export const OAuthFlowProgressSimple = ({
                 }}
                 placeholder="Enter the code from the authorization server"
                 className={`flex h-9 w-full rounded-md border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                  flowState.validationError ? "border-destructive" : "border-input"
+                  flowState.validationError
+                    ? "border-destructive"
+                    : "border-input"
                 }`}
               />
             </div>

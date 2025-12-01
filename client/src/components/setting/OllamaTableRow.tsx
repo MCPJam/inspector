@@ -14,9 +14,7 @@ export function OllamaTableRow({ baseUrl, onEdit }: OllamaTableRowProps) {
     <Card
       className={cn(
         "group h-full gap-4 border bg-card px-6 py-6 transition-all hover:border-primary/40 hover:shadow-md dark:hover:shadow-xl",
-        isConfigured
-          ? "border-success/30"
-          : "border-border/60",
+        isConfigured ? "border-success/30" : "border-border/60",
       )}
     >
       <div className="flex items-start justify-between gap-6">
