@@ -41,7 +41,7 @@ import { ServerInfoModal } from "./ServerInfoModal";
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
-  onReconnect: (serverName: string) => void;
+  onReconnect: (serverName: string, options?: { forceOAuthFlow?: boolean }) => void;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
   sharedTunnelUrl?: string | null;
@@ -146,10 +146,10 @@ export function ServerConnectionCard({
     }
   };
 
-  const handleReconnect = async () => {
+  const handleReconnect = async (options?: { forceOAuthFlow?: boolean }) => {
     setIsReconnecting(true);
     try {
-      onReconnect(server.name);
+      onReconnect(server.name, options);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -288,7 +288,7 @@ export function ServerConnectionCard({
                         platform: detectPlatform(),
                         environment: detectEnvironment(),
                       });
-                      handleReconnect();
+                      handleReconnect({ forceOAuthFlow: true });
                     }}
                     disabled={
                       isReconnecting ||

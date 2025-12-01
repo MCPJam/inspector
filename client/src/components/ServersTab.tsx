@@ -56,7 +56,7 @@ interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
-  onReconnect: (serverName: string) => void;
+  onReconnect: (serverName: string, options?: { forceOAuthFlow?: boolean }) => void;
   onUpdate: (
     originalServerName: string,
     formData: ServerFormData,
