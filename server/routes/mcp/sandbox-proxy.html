@@ -50,52 +50,60 @@
        */
 
       /**
+       * Sanitize a domain/origin value for CSP (SEP-1865)
+       * Prevents injection attacks via malicious domain values
+       * @param {string} domain - Domain to sanitize
+       * @returns {string} Sanitized domain
+       */
+      function sanitizeDomain(domain) {
+        if (typeof domain !== 'string') return '';
+        // Remove characters that could break out of CSP or HTML attributes
+        // Valid CSP sources shouldn't contain these characters
+        return domain.replace(/['"<>;]/g, '').trim();
+      }
+
+      /**
        * Build CSP string from metadata (SEP-1865)
        * @param {Object} csp - CSP metadata with connectDomains and resourceDomains
        * @returns {string} CSP policy string
        */
       function buildCSP(csp) {
-        // Default CSP (relaxed for DevX - allows common CDNs)
-        // Per SEP-1865, if no CSP declared, use restrictive defaults
-        // We use a slightly relaxed default that allows common CDNs for better DevX
-        const commonCDNs = "https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com";
-
+        // Per SEP-1865: If no CSP declared, use restrictive defaults
+        // Note: 'self' doesn't work in srcdoc iframes (refers to about:srcdoc)
+        // So we use 'unsafe-inline' for scripts/styles since all widget code is inline
         if (!csp) {
-          // Relaxed default for DevX - allows common CDNs
-          // Note: 'self' doesn't work in srcdoc iframes (refers to about:srcdoc)
-          // So we use 'unsafe-inline' and allow common CDNs for scripts/styles
           return [
             "default-src 'none'",
-            "script-src 'unsafe-inline' 'unsafe-eval' data: blob: " + commonCDNs,
-            "style-src 'unsafe-inline' data: blob: " + commonCDNs,
-            "img-src data: blob: " + commonCDNs,
-            "font-src data: blob: " + commonCDNs,
-            "connect-src *",  // Permissive for dev when no CSP declared
+            "script-src 'unsafe-inline'",
+            "style-src 'unsafe-inline'",
+            "img-src data:",
+            "font-src data:",
+            "connect-src 'none'",
             "frame-src 'none'",
             "object-src 'none'",
             "base-uri 'none'"
           ].join("; ");
         }
 
-        // Build CSP from declared domains
-        // Note: For srcdoc iframes, 'self' refers to the parent's origin which doesn't help
-        // We use 'unsafe-inline' and 'unsafe-eval' for scripts since all widget code is inline
-        const connectDomains = csp.connectDomains || [];
-        const resourceDomains = csp.resourceDomains || [];
+        // Build CSP from declared domains (SEP-1865)
+        // Per spec: "Host MAY further restrict but MUST NOT allow undeclared domains"
+        const connectDomains = (csp.connectDomains || []).map(sanitizeDomain).filter(Boolean);
+        const resourceDomains = (csp.resourceDomains || []).map(sanitizeDomain).filter(Boolean);
 
-        // For srcdoc, we need 'unsafe-inline' and 'unsafe-eval' for scripts to work
-        // External resources are controlled by resourceDomains
-        // Common CDNs are always allowed for widget framework dependencies
-        const baseCDNs = "https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com https://esm.sh";
-
+        // connect-src: Only allow declared domains, or 'none' if empty
         const connectSrc = connectDomains.length > 0
           ? connectDomains.join(" ")
-          : "'none'";  // Block all fetch/XHR if no domains specified
-        const resourceSrc = ["data:", "blob:", baseCDNs, ...resourceDomains].join(" ");
+          : "'none'";
+
+        // Resource sources: data: and blob: are always allowed for inline content
+        // Only add declared resourceDomains - no forced CDNs per SEP-1865
+        const resourceSrc = resourceDomains.length > 0
+          ? ["data:", "blob:", ...resourceDomains].join(" ")
+          : "data: blob:";
 
         return [
           "default-src 'none'",
-          "script-src 'unsafe-inline' 'unsafe-eval' " + resourceSrc,
+          "script-src 'unsafe-inline' " + resourceSrc,
           "style-src 'unsafe-inline' " + resourceSrc,
           "img-src " + resourceSrc,
           "font-src " + resourceSrc,
