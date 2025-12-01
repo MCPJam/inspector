@@ -42,11 +42,113 @@
        * This proxy:
        * 1. Creates inner iframe immediately
        * 2. Waits for HTML content via ui/notifications/sandbox-resource-ready
-       * 3. Loads HTML via srcdoc with configurable sandbox attributes
-       * 4. Forwards all non-sandbox messages between host and guest
+       * 3. Builds CSP from metadata and injects into HTML
+       * 4. Loads HTML via srcdoc with configurable sandbox attributes
+       * 5. Forwards all non-sandbox messages between host and guest
        *
        * Reference: https://gist.github.com/ochafik/a9603ba2d6757d6038ce066eded4c354
        */
+
+      /**
+       * Sanitize a domain/origin value for CSP (SEP-1865)
+       * Prevents injection attacks via malicious domain values
+       * @param {string} domain - Domain to sanitize
+       * @returns {string} Sanitized domain
+       */
+      function sanitizeDomain(domain) {
+        if (typeof domain !== "string") return "";
+        // Remove characters that could break out of CSP or HTML attributes
+        // Valid CSP sources shouldn't contain these characters
+        return domain.replace(/['"<>;]/g, "").trim();
+      }
+
+      /**
+       * Build CSP string from metadata (SEP-1865)
+       * @param {Object} csp - CSP metadata with connectDomains and resourceDomains
+       * @returns {string} CSP policy string
+       */
+      function buildCSP(csp) {
+        // Per SEP-1865: If no CSP declared, use restrictive defaults
+        // Note: 'self' doesn't work in srcdoc iframes (refers to about:srcdoc)
+        // So we use 'unsafe-inline' for scripts/styles since all widget code is inline
+        if (!csp) {
+          return [
+            "default-src 'none'",
+            "script-src 'unsafe-inline'",
+            "style-src 'unsafe-inline'",
+            "img-src data:",
+            "font-src data:",
+            "connect-src 'none'",
+            "frame-src 'none'",
+            "object-src 'none'",
+            "base-uri 'none'",
+          ].join("; ");
+        }
+
+        // Build CSP from declared domains (SEP-1865)
+        // Per spec: "Host MAY further restrict but MUST NOT allow undeclared domains"
+        const connectDomains = (csp.connectDomains || [])
+          .map(sanitizeDomain)
+          .filter(Boolean);
+        const resourceDomains = (csp.resourceDomains || [])
+          .map(sanitizeDomain)
+          .filter(Boolean);
+
+        // connect-src: Only allow declared domains, or 'none' if empty
+        const connectSrc =
+          connectDomains.length > 0 ? connectDomains.join(" ") : "'none'";
+
+        // Resource sources: data: and blob: are always allowed for inline content
+        // Only add declared resourceDomains - no forced CDNs per SEP-1865
+        const resourceSrc =
+          resourceDomains.length > 0
+            ? ["data:", "blob:", ...resourceDomains].join(" ")
+            : "data: blob:";
+
+        return [
+          "default-src 'none'",
+          "script-src 'unsafe-inline' " + resourceSrc,
+          "style-src 'unsafe-inline' " + resourceSrc,
+          "img-src " + resourceSrc,
+          "font-src " + resourceSrc,
+          "connect-src " + connectSrc,
+          "frame-src 'none'",
+          "object-src 'none'",
+          "base-uri 'none'",
+        ].join("; ");
+      }
+
+      /**
+       * Inject CSP meta tag into HTML
+       * @param {string} html - Original HTML content
+       * @param {string} cspValue - CSP policy string
+       * @returns {string} HTML with CSP meta tag injected
+       */
+      function injectCSP(html, cspValue) {
+        const cspMeta =
+          '<meta http-equiv="Content-Security-Policy" content="' +
+          cspValue +
+          '">';
+
+        if (html.includes("<head>")) {
+          return html.replace("<head>", "<head>" + cspMeta);
+        } else if (html.includes("<HEAD>")) {
+          return html.replace("<HEAD>", "<HEAD>" + cspMeta);
+        } else if (html.includes("<html>")) {
+          return html.replace("<html>", "<html><head>" + cspMeta + "</head>");
+        } else if (html.includes("<HTML>")) {
+          return html.replace("<HTML>", "<HTML><head>" + cspMeta + "</head>");
+        } else if (html.includes("<!DOCTYPE") || html.includes("<!doctype")) {
+          // Insert after doctype
+          return html.replace(
+            /(<!DOCTYPE[^>]*>|<!doctype[^>]*>)/i,
+            "$1<head>" + cspMeta + "</head>",
+          );
+        } else {
+          // Prepend CSP meta tag
+          return cspMeta + html;
+        }
+      }
 
       // Create inner iframe immediately (before HTML arrives)
       const inner = document.createElement("iframe");
@@ -66,13 +168,18 @@
             event.data &&
             event.data.method === "ui/notifications/sandbox-resource-ready"
           ) {
-            // Load HTML into inner iframe
-            const { html, sandbox } = event.data.params || {};
+            // Load HTML into inner iframe with CSP enforcement
+            const { html, sandbox, csp } = event.data.params || {};
+
             if (typeof sandbox === "string") {
               inner.setAttribute("sandbox", sandbox);
             }
+
             if (typeof html === "string") {
-              inner.srcdoc = html;
+              // Build CSP and inject into HTML (SEP-1865)
+              const cspValue = buildCSP(csp);
+              const processedHtml = injectCSP(html, cspValue);
+              inner.srcdoc = processedHtml;
             }
           } else {
             // Forward other messages to inner iframe (guest UI)

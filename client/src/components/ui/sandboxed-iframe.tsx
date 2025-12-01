@@ -26,11 +26,19 @@ export interface SandboxedIframeHandle {
   postMessage: (data: unknown) => void;
 }
 
+/** CSP metadata per SEP-1865 */
+interface UIResourceCSP {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+}
+
 interface SandboxedIframeProps {
   /** HTML content to render in the sandbox */
   html: string | null;
   /** Sandbox attribute for the inner iframe */
   sandbox?: string;
+  /** CSP metadata from resource _meta.ui.csp (SEP-1865) */
+  csp?: UIResourceCSP;
   /** Callback when sandbox proxy is ready */
   onProxyReady?: () => void;
   /** Callback for messages from guest UI (excluding sandbox-internal messages) */
@@ -58,6 +66,7 @@ export const SandboxedIframe = forwardRef<
   {
     html,
     sandbox = "allow-scripts allow-same-origin allow-forms allow-popups",
+    csp,
     onProxyReady,
     onMessage,
     className,
@@ -112,7 +121,7 @@ export const SandboxedIframe = forwardRef<
     return () => window.removeEventListener("message", handleMessage);
   }, [handleMessage]);
 
-  // Send HTML to sandbox when ready
+  // Send HTML and CSP to sandbox when ready (SEP-1865)
   useEffect(() => {
     if (!proxyReady || !html) return;
 
@@ -120,16 +129,21 @@ export const SandboxedIframe = forwardRef<
       {
         jsonrpc: "2.0",
         method: "ui/notifications/sandbox-resource-ready",
-        params: { html, sandbox },
+        params: { html, sandbox, csp },
       },
       "*",
     );
-  }, [proxyReady, html, sandbox]);
+  }, [proxyReady, html, sandbox, csp]);
+
+  // Stable cache-bust URL (only changes on page refresh, not on re-renders)
+  const [sandboxProxyUrl] = useState(
+    () => `/api/mcp/sandbox-proxy?v=${Date.now()}`,
+  );
 
   return (
     <iframe
       ref={outerRef}
-      src="/api/mcp/sandbox-proxy"
+      src={sandboxProxyUrl}
       sandbox="allow-scripts allow-same-origin"
       title={title}
       className={className}
