@@ -35,8 +35,8 @@ export function TestResultsPanel({
       {hasResult && !loading && (
         <div className="flex items-center justify-between px-3 py-2 border-b">
           <div className="flex items-center gap-3">
-            {isPassed && <CheckCircle2 className="h-5 w-5 text-green-600" />}
-            {isFailed && <XCircle className="h-5 w-5 text-red-600" />}
+            {isPassed && <CheckCircle2 className="h-5 w-5 text-success" />}
+            {isFailed && <XCircle className="h-5 w-5 text-destructive" />}
             {isPending && (
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             )}

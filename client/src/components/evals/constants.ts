@@ -69,20 +69,20 @@ export const UI_CONFIG = {
 
 // Border colors for iteration results
 export const BORDER_COLORS = {
-  [RESULT_STATUS.PASSED]: "bg-emerald-500/50",
-  [RESULT_STATUS.FAILED]: "bg-red-500/50",
-  [RESULT_STATUS.CANCELLED]: "bg-zinc-300/50",
-  [RESULT_STATUS.PENDING]: "bg-amber-500/50",
+  [RESULT_STATUS.PASSED]: "bg-success/50",
+  [RESULT_STATUS.FAILED]: "bg-destructive/50",
+  [RESULT_STATUS.CANCELLED]: "bg-muted",
+  [RESULT_STATUS.PENDING]: "bg-warning/50",
 } as const;
 
 // Status dot colors
 export const STATUS_DOT_COLORS = {
-  [RESULT_STATUS.PASSED]: "bg-emerald-500",
-  [RESULT_STATUS.FAILED]: "bg-red-500",
-  [RESULT_STATUS.CANCELLED]: "bg-gray-400",
-  [RESULT_STATUS.PENDING]: "bg-amber-400",
-  RUNNING: "bg-amber-400",
-  DEFAULT: "bg-gray-400",
+  [RESULT_STATUS.PASSED]: "bg-success",
+  [RESULT_STATUS.FAILED]: "bg-destructive",
+  [RESULT_STATUS.CANCELLED]: "bg-muted-foreground",
+  [RESULT_STATUS.PENDING]: "bg-warning",
+  RUNNING: "bg-warning",
+  DEFAULT: "bg-muted-foreground",
 } as const;
 
 // Wizard steps

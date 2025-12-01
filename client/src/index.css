@@ -39,6 +39,17 @@
   --border: oklch(0.8847 0.0069 97.3627);
   --input: oklch(0.7621 0.0156 98.3528);
   --ring: oklch(0.6171 0.1375 39.0427);
+  /* Semantic status colors */
+  --success: oklch(0.696 0.17 152.5);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.769 0.188 85.3);
+  --warning-foreground: oklch(0.239 0.06 60);
+  --info: oklch(0.623 0.214 259);
+  --info-foreground: oklch(1 0 0);
+  --pending: oklch(0.769 0.188 85.3);
+  --pending-foreground: oklch(0.239 0.06 60);
+  /* Overlay color */
+  --overlay: oklch(0 0 0 / 0.5);
   --chart-1: oklch(0.5583 0.1276 42.9956);
   --chart-2: oklch(0.6898 0.1581 290.4107);
   --chart-3: oklch(0.8816 0.0276 93.128);
@@ -103,6 +114,17 @@
   --border: oklch(0.3618 0.0101 106.8928);
   --input: oklch(0.4336 0.0113 100.2195);
   --ring: oklch(0.6724 0.1308 38.7559);
+  /* Semantic status colors */
+  --success: oklch(0.648 0.15 152);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.75 0.183 55);
+  --warning-foreground: oklch(0.239 0.06 60);
+  --info: oklch(0.623 0.214 259);
+  --info-foreground: oklch(1 0 0);
+  --pending: oklch(0.75 0.183 55);
+  --pending-foreground: oklch(0.239 0.06 60);
+  /* Overlay color */
+  --overlay: oklch(0 0 0 / 0.5);
   --chart-1: oklch(0.5583 0.1276 42.9956);
   --chart-2: oklch(0.6898 0.1581 290.4107);
   --chart-3: oklch(0.213 0.0078 95.4245);
@@ -165,6 +187,16 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  /* Semantic status colors */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-pending: var(--pending);
+  --color-pending-foreground: var(--pending-foreground);
+  --color-overlay: var(--overlay);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);

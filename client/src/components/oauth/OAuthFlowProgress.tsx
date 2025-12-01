@@ -86,8 +86,8 @@ const STATUS_LABEL: Record<NodeStatus, string> = {
 };
 
 const STATUS_BADGE_CLASS: Record<NodeStatus, string> = {
-  complete: "border-green-500/30 bg-green-500/10 text-green-600",
-  current: "border-blue-500/30 bg-blue-500/10 text-blue-600",
+  complete: "border-success/30 bg-success/10 text-success",
+  current: "border-info/30 bg-info/10 text-info",
   pending: "border-border bg-muted text-muted-foreground",
 };
 
@@ -222,8 +222,8 @@ const CustomActionEdge = memo((props: EdgeProps<Edge<ActionEdgeData>>) => {
   if (!data) return null;
 
   const statusColor = {
-    complete: "border-green-500/50 bg-card",
-    current: "border-blue-500/70 bg-blue-500/5",
+    complete: "border-success/50 bg-card",
+    current: "border-info/70 bg-info/5",
     pending: "border-border bg-muted/30",
   }[data.status];
 
@@ -317,8 +317,8 @@ const StepDetailsPanel = memo(({ action }: StepDetailsPanelProps) => {
   }
 
   const statusColor = {
-    complete: "border-green-500/50 bg-green-500/5 text-green-600",
-    current: "border-blue-500/70 bg-blue-500/5 text-blue-600",
+    complete: "border-success/50 bg-success/5 text-success",
+    current: "border-info/70 bg-info/5 text-info",
     pending: "border-border bg-muted/30 text-muted-foreground",
   }[action.status];
 
@@ -420,8 +420,8 @@ StepDetailsPanel.displayName = "StepDetailsPanel";
 const ActionNode = memo((props: NodeProps<Node<ActionNodeData>>) => {
   const { data } = props;
   const statusColor = {
-    complete: "border-green-500/50 bg-card",
-    current: "border-blue-500/70 bg-blue-500/5",
+    complete: "border-success/50 bg-card",
+    current: "border-info/70 bg-info/5",
     pending: "border-border bg-muted/30",
   }[data.status];
 
