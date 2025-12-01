@@ -33,8 +33,6 @@
   </head>
   <body>
     <script>
-      console.log("[Sandbox Proxy] Script loaded - version 2024-12-01-v2");
-
       /**
        * MCP Apps Sandbox Proxy (SEP-1865)
        *
@@ -146,13 +144,6 @@
 
       // Handle messages from parent (host) and inner (guest UI)
       window.addEventListener("message", async (event) => {
-        console.log("[Sandbox Proxy] Message received:", {
-          source: event.source === window.parent ? "parent" : event.source === inner.contentWindow ? "inner" : "unknown",
-          method: event.data?.method,
-          hasParams: !!event.data?.params,
-          hasCsp: !!event.data?.params?.csp
-        });
-
         if (event.source === window.parent) {
           // Message from host
           if (
@@ -168,14 +159,8 @@
 
             if (typeof html === "string") {
               // Build CSP and inject into HTML (SEP-1865)
-              console.log("[Sandbox Proxy] Processing HTML with CSP enforcement");
-              console.log("[Sandbox Proxy] CSP received:", JSON.stringify(csp));
-              console.log("[Sandbox Proxy] CSP truthy?:", !!csp);
               const cspValue = buildCSP(csp);
-              console.log("[Sandbox Proxy] CSP value built:", cspValue);
               const processedHtml = injectCSP(html, cspValue);
-              console.log("[Sandbox Proxy] Injected CSP meta tag, HTML length:", processedHtml.length);
-              console.log("[Sandbox Proxy] First 500 chars:", processedHtml.substring(0, 500));
               inner.srcdoc = processedHtml;
             }
           } else {

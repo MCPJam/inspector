@@ -125,12 +125,6 @@ export const SandboxedIframe = forwardRef<
   useEffect(() => {
     if (!proxyReady || !html) return;
 
-    console.log("[SandboxedIframe] Sending to sandbox proxy:", {
-      htmlLength: html.length,
-      sandbox,
-      csp
-    });
-
     outerRef.current?.contentWindow?.postMessage(
       {
         jsonrpc: "2.0",
