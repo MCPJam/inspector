@@ -41,7 +41,10 @@ import { ServerInfoModal } from "./ServerInfoModal";
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
-  onReconnect: (serverName: string, options?: { forceOAuthFlow?: boolean }) => void;
+  onReconnect: (
+    serverName: string,
+    options?: { forceOAuthFlow?: boolean },
+  ) => void;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
   sharedTunnelUrl?: string | null;
