@@ -145,6 +145,11 @@ apps.get("/widget-content/:toolId", async (c) => {
     const csp = uiMeta?.csp;
     const prefersBorder = uiMeta?.prefersBorder;
 
+    // Debug logging
+    console.log("[MCP Apps] Resource _meta:", content._meta);
+    console.log("[MCP Apps] UI meta:", uiMeta);
+    console.log("[MCP Apps] CSP extracted:", csp);
+
     // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({

@@ -125,6 +125,12 @@ export const SandboxedIframe = forwardRef<
   useEffect(() => {
     if (!proxyReady || !html) return;
 
+    console.log("[SandboxedIframe] Sending to sandbox proxy:", {
+      htmlLength: html.length,
+      sandbox,
+      csp
+    });
+
     outerRef.current?.contentWindow?.postMessage(
       {
         jsonrpc: "2.0",
@@ -135,10 +141,13 @@ export const SandboxedIframe = forwardRef<
     );
   }, [proxyReady, html, sandbox, csp]);
 
+  // Stable cache-bust URL (only changes on page refresh, not on re-renders)
+  const [sandboxProxyUrl] = useState(() => `/api/mcp/sandbox-proxy?v=${Date.now()}`);
+
   return (
     <iframe
       ref={outerRef}
-      src="/api/mcp/sandbox-proxy"
+      src={sandboxProxyUrl}
       sandbox="allow-scripts allow-same-origin"
       title={title}
       className={className}
