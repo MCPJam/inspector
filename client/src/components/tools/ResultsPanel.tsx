@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  CallToolResult,
+  EmbeddedResource,
+} from "@modelcontextprotocol/sdk/types.js";
 import type { ToolExecutionResponse } from "@/lib/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { CheckCircle, XCircle } from "lucide-react";
@@ -174,7 +177,6 @@ export function ResultsPanel({
   toolMeta,
 }: ResultsPanelProps) {
   const [showDebug, setShowDebug] = useState(false);
-
   // Generate a stable fallback toolCallId to avoid re-renders causing ID mismatches
   const resolvedToolCallId = useMemo(
     () => toolCallId ?? `tools-tab-${toolName || "unknown"}-${Date.now()}`,
@@ -434,7 +436,7 @@ export function ResultsPanel({
             if (!showStructured && uiResource) {
               return (
                 <UIResourceRenderer
-                  resource={uiResource}
+                  resource={uiResource as Partial<EmbeddedResource>}
                   htmlProps={{
                     autoResizeIframe: true,
                     style: {
