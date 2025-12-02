@@ -12,7 +12,6 @@ import {
   type ToolCallOptions,
   ToolSet,
 } from "ai";
-import type { FlexibleSchema } from "@ai-sdk/provider-utils";
 
 const ensureJsonSchemaObject = (schema: unknown): JSONSchema7 => {
   if (schema && typeof schema === "object") {
@@ -51,9 +50,11 @@ type CallToolExecutor = (params: {
   options: ToolCallOptions;
 }) => Promise<CallToolResult>;
 
+type ToolInputSchema = Parameters<typeof dynamicTool>[0]["inputSchema"];
+
 export type ToolSchemaOverrides = Record<
   string,
-  { inputSchema: FlexibleSchema<unknown> }
+  { inputSchema: ToolInputSchema }
 >;
 
 export type ConvertedToolSet<
@@ -104,7 +105,7 @@ export async function convertMCPToolsToVercelTools(
         // If overrides are provided, only include tools explicitly listed
         continue;
       }
-      vercelTool = defineTool({
+      vercelTool = defineTool<unknown, CallToolResult>({
         description,
         inputSchema: overrides[name].inputSchema,
         execute,

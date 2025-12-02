@@ -62,6 +62,30 @@ export type DialogElicitation = {
   timestamp: string;
 };
 
+function normalizeElicitationContent(
+  parameters?: Record<string, unknown>,
+): ElicitResult["content"] | undefined {
+  if (!parameters) return undefined;
+  const content: ElicitResult["content"] = {};
+  for (const [key, value] of Object.entries(parameters)) {
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      content[key] = value;
+    } else if (
+      Array.isArray(value) &&
+      value.every((v): v is string => typeof v === "string")
+    ) {
+      content[key] = value;
+    } else if (value !== undefined) {
+      content[key] = JSON.stringify(value);
+    }
+  }
+  return content;
+}
+
 interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
@@ -246,19 +270,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         setStructuredResult(
           rawResult.structuredContent as Record<string, unknown>,
         );
-        // Check for OpenAI or MCP Apps component using tool metadata from definition
-        const toolMeta = getToolMeta(toolName);
-        const hasOpenAIComponent = toolMeta?.["openai/outputTemplate"];
-        const hasMCPAppsComponent = toolMeta?.["ui/resourceUri"];
-        // Default to showing Component view for widgets, Raw JSON otherwise
-        setShowStructured(!hasOpenAIComponent && !hasMCPAppsComponent);
       } else {
         setStructuredResult(null);
-        // Also check for OpenAI or MCP Apps even without structuredContent
-        const toolMeta = getToolMeta(toolName);
-        const hasOpenAIComponent = toolMeta?.["openai/outputTemplate"];
-        const hasMCPAppsComponent = toolMeta?.["ui/resourceUri"];
-        setShowStructured(!hasOpenAIComponent && !hasMCPAppsComponent);
       }
 
       const currentTool = tools[toolName];
@@ -377,9 +390,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     setElicitationLoading(true);
     try {
+      const content = normalizeElicitationContent(parameters);
       const payload: ElicitResult =
-        action === "accept"
-          ? { action: "accept", content: parameters ?? {} }
+        action === "accept" && content
+          ? { action: "accept", content }
           : { action };
       const response = await respondToElicitationApi(
         activeElicitation.requestId,
