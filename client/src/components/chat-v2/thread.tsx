@@ -36,6 +36,7 @@ import { getProviderLogoFromModel } from "./chat-helpers";
 import { detectUIType } from "@/lib/mcp-apps-utils";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";
 
 type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 type ToolState =
@@ -791,7 +792,7 @@ function MCPUIResourcePart({
   return (
     <div className="w-full overflow-hidden rounded-2xl border border-border/40 bg-muted/20 shadow-sm">
       <UIResourceRenderer
-        resource={resource}
+        resource={resource as Partial<EmbeddedResource>}
         htmlProps={{
           style: {
             border: "2px",
