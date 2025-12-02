@@ -23,6 +23,7 @@ import type {
   ElicitRequest,
   ElicitResult,
   JSONRPCMessage,
+  LoggingLevel,
   MessageExtraInfo,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -321,7 +322,7 @@ export class MCPClientManager {
       // clear pending
       state.promise = undefined;
       this.clientStates.set(serverId, state);
-
+      this.setLoggingLevel(serverId, "debug"); // TODO: Allow the user to configure the debugging level to debug.
       return client;
     })().catch((error) => {
       this.resetState(serverId);
@@ -528,6 +529,18 @@ export class MCPClientManager {
       CallToolResultSchema,
       mergedOptions,
     );
+  }
+
+  async setLoggingLevel(serverId: string, level: LoggingLevel = "debug") {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    try {
+      await client.setLoggingLevel(level);
+    } catch (error) {
+      throw new Error(
+        `Failed to set logging level for MCP server "${serverId}": ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
   }
 
   async listResources(
