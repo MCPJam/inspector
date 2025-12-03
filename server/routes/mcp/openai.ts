@@ -21,6 +21,8 @@ interface WidgetData {
   toolName: string;
   theme?: "light" | "dark";
   timestamp: number;
+  // List of tool names that have openai/widgetAccessible: true
+  widgetAccessibleTools?: string[];
 }
 
 const widgetDataStore = new Map<string, WidgetData>();
@@ -60,6 +62,7 @@ openai.post("/widget/store", async (c) => {
       toolId,
       toolName,
       theme,
+      widgetAccessibleTools,
     } = body;
 
     if (!serverId || !uri || !toolId || !toolName) {
@@ -77,6 +80,7 @@ openai.post("/widget/store", async (c) => {
       toolName,
       theme: theme ?? "dark",
       timestamp: Date.now(),
+      widgetAccessibleTools: widgetAccessibleTools ?? [],
     });
 
     return c.json({ success: true });
@@ -156,6 +160,7 @@ openai.get("/widget-html/:toolId", async (c) => {
       toolResponseMetadata,
       toolName,
       theme,
+      widgetAccessibleTools,
     } = widgetData;
 
     const mcpClientManager = c.mcpClientManager;
@@ -242,11 +247,34 @@ openai.get("/widget-html/:toolId", async (c) => {
 
     const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
 
+    // Detect device type and capabilities for userAgent
+    const isTouchDevice =
+      "('ontouchstart' in window) || (navigator.maxTouchPoints > 0)";
+    const deviceType = `(window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop')`;
+
     // OpenAI Apps SDK bridge script with full API
     const apiScript = `
       <script>
         (function() {
           'use strict';
+
+          // Detect device capabilities
+          const hasTouch = ${isTouchDevice};
+          const hasHover = window.matchMedia('(hover: hover)').matches;
+          const deviceType = ${deviceType};
+
+          // Generate anonymous subject ID for rate limiting (per SDK spec)
+          const getSubjectId = () => {
+            let subjectId = sessionStorage.getItem('openai_subject_id');
+            if (!subjectId) {
+              subjectId = 'anon_' + Math.random().toString(36).substring(2, 15);
+              sessionStorage.setItem('openai_subject_id', subjectId);
+            }
+            return subjectId;
+          };
+
+          // List of tools that have widgetAccessible: true
+          const widgetAccessibleTools = ${JSON.stringify(widgetAccessibleTools ?? [])};
 
           const openaiAPI = {
             toolInput: ${serializeForInlineScript(toolInput)},
@@ -256,8 +284,18 @@ openai.get("/widget-html/:toolId", async (c) => {
             theme: ${JSON.stringify(theme ?? "dark")},
             locale: navigator.language || 'en-US',
             maxHeight: null,
-            safeArea: { top: 0, right: 0, bottom: 0, left: 0 },
-            userAgent: navigator.userAgent,
+            // SDK spec: safeArea has insets wrapper
+            safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+            // SDK spec: userAgent is an object with device and capabilities
+            userAgent: {
+              device: { type: deviceType },
+              capabilities: { hover: hasHover, touch: hasTouch }
+            },
+            // SDK spec: view context for inline/modal
+            view: {
+              mode: 'inline',
+              params: {}
+            },
             widgetState: null,
             _pendingCalls: new Map(),
             _callId: 0,
@@ -275,6 +313,14 @@ openai.get("/widget-html/:toolId", async (c) => {
             },
 
             callTool(toolName, args = {}) {
+              // SDK spec: Check widgetAccessible before allowing tool call
+              if (!widgetAccessibleTools.includes(toolName)) {
+                return Promise.reject(new Error(
+                  'Tool "' + toolName + '" is not accessible from widgets. ' +
+                  'The tool must have _meta["openai/widgetAccessible"]: true to be callable from widgets.'
+                ));
+              }
+
               const callId = ++this._callId;
               return new Promise((resolve, reject) => {
                 this._pendingCalls.set(callId, { resolve, reject });
@@ -283,7 +329,13 @@ openai.get("/widget-html/:toolId", async (c) => {
                   toolName,
                   args,
                   callId,
-                  toolId: ${JSON.stringify(toolId)}
+                  toolId: ${JSON.stringify(toolId)},
+                  // SDK spec: Client-supplied _meta fields
+                  _meta: {
+                    'openai/locale': navigator.language || 'en-US',
+                    'openai/userAgent': navigator.userAgent,
+                    'openai/subject': getSubjectId()
+                  }
                 }, '*');
                 setTimeout(() => {
                   if (this._pendingCalls.has(callId)) {
@@ -347,6 +399,16 @@ openai.get("/widget-html/:toolId", async (c) => {
                 params: options.params,
                 anchor: options.anchor
               }, '*');
+            },
+
+            // SDK spec: Alternative to openai:resize event for reporting height
+            notifyIntrinsicHeight(height) {
+              if (typeof height === 'number' && Number.isFinite(height) && height > 0) {
+                window.parent.postMessage({
+                  type: 'openai:resize',
+                  height: Math.round(height)
+                }, '*');
+              }
             }
           };
 
@@ -421,10 +483,20 @@ openai.get("/widget-html/:toolId", async (c) => {
                 if (globals) {
                   if (globals.displayMode !== undefined) window.openai.displayMode = globals.displayMode;
                   if (globals.maxHeight !== undefined) window.openai.maxHeight = globals.maxHeight;
-                  if (globals.safeArea !== undefined) window.openai.safeArea = globals.safeArea;
                   if (globals.theme !== undefined) window.openai.theme = globals.theme;
                   if (globals.locale !== undefined) window.openai.locale = globals.locale;
-                  if (globals.userAgent !== undefined) window.openai.userAgent = globals.userAgent;
+                  // Handle safeArea with insets structure
+                  if (globals.safeArea !== undefined) {
+                    window.openai.safeArea = globals.safeArea;
+                  }
+                  // Handle userAgent with device/capabilities structure
+                  if (globals.userAgent !== undefined) {
+                    window.openai.userAgent = globals.userAgent;
+                  }
+                  // Handle view context updates
+                  if (globals.view !== undefined) {
+                    window.openai.view = globals.view;
+                  }
                 }
                 // Dispatch custom event for React hooks
                 try {
@@ -604,6 +676,7 @@ openai.get("/widget-content/:toolId", async (c) => {
       toolResponseMetadata,
       toolName,
       theme,
+      widgetAccessibleTools,
     } = widgetData;
 
     const mcpClientManager = c.mcpClientManager;
@@ -675,23 +748,43 @@ openai.get("/widget-content/:toolId", async (c) => {
         (function() {
           'use strict';
 
+          // Detect device capabilities
+          const hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+          const hasHover = window.matchMedia('(hover: hover)').matches;
+          const deviceType = window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop';
+
+          // Generate anonymous subject ID for rate limiting (per SDK spec)
+          const getSubjectId = () => {
+            let subjectId = sessionStorage.getItem('openai_subject_id');
+            if (!subjectId) {
+              subjectId = 'anon_' + Math.random().toString(36).substring(2, 15);
+              sessionStorage.setItem('openai_subject_id', subjectId);
+            }
+            return subjectId;
+          };
+
+          // List of tools that have widgetAccessible: true
+          const widgetAccessibleTools = ${JSON.stringify(widgetAccessibleTools ?? [])};
+
           const openaiAPI = {
             toolInput: ${serializeForInlineScript(toolInput)},
             toolOutput: ${serializeForInlineScript(toolOutput)},
             toolResponseMetadata: ${serializeForInlineScript(toolResponseMetadata)},
             displayMode: 'inline',
             theme: ${JSON.stringify(theme ?? "dark")},
-            locale: 'en-US',
+            locale: navigator.language || 'en-US',
+            maxHeight: null,
             safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
             userAgent: {
-              device: { type: 'desktop' },
-              capabilities: { hover: true, touch: false }
+              device: { type: deviceType },
+              capabilities: { hover: hasHover, touch: hasTouch }
             },
             view: {
               mode: ${JSON.stringify(viewMode)},
               params: ${serializeForInlineScript(viewParams)}
             },
             widgetState: null,
+            _callId: 0,
 
             async setWidgetState(state) {
               this.widgetState = state;
@@ -706,12 +799,20 @@ openai.get("/widget-content/:toolId", async (c) => {
               }, '*');
             },
 
-            async callTool(toolName, params = {}) {
+            async callTool(toolName, args = {}) {
+              // SDK spec: Check widgetAccessible before allowing tool call
+              if (!widgetAccessibleTools.includes(toolName)) {
+                return Promise.reject(new Error(
+                  'Tool "' + toolName + '" is not accessible from widgets. ' +
+                  'The tool must have _meta["openai/widgetAccessible"]: true to be callable from widgets.'
+                ));
+              }
+
+              const callId = ++this._callId;
               return new Promise((resolve, reject) => {
-                const requestId = \`tool_\${Date.now()}_\${Math.random()}\`;
                 const handler = (event) => {
                   if (event.data.type === 'openai:callTool:response' &&
-                      event.data.requestId === requestId) {
+                      event.data.callId === callId) {
                     window.removeEventListener('message', handler);
                     if (event.data.error) {
                       reject(new Error(event.data.error));
@@ -723,9 +824,16 @@ openai.get("/widget-content/:toolId", async (c) => {
                 window.addEventListener('message', handler);
                 window.parent.postMessage({
                   type: 'openai:callTool',
-                  requestId,
+                  callId,
                   toolName,
-                  params
+                  args,
+                  toolId: ${JSON.stringify(toolId)},
+                  // SDK spec: Client-supplied _meta fields
+                  _meta: {
+                    'openai/locale': navigator.language || 'en-US',
+                    'openai/userAgent': navigator.userAgent,
+                    'openai/subject': getSubjectId()
+                  }
                 }, '*');
                 setTimeout(() => {
                   window.removeEventListener('message', handler);
@@ -785,6 +893,16 @@ openai.get("/widget-content/:toolId", async (c) => {
                 type: 'openai:requestClose',
                 toolId: ${JSON.stringify(toolId)}
               }, '*');
+            },
+
+            // SDK spec: Alternative to openai:resize event for reporting height
+            notifyIntrinsicHeight(height) {
+              if (typeof height === 'number' && Number.isFinite(height) && height > 0) {
+                window.parent.postMessage({
+                  type: 'openai:resize',
+                  height: Math.round(height)
+                }, '*');
+              }
             }
           };
 
@@ -837,47 +955,50 @@ openai.get("/widget-content/:toolId", async (c) => {
             }
           }, 0);
 
-          // Listen for theme changes from parent
+          // Listen for globals changes from parent
           window.addEventListener('message', (event) => {
             if (event.data.type === 'openai:set_globals') {
               const { globals } = event.data;
+              const updatedGlobals = {};
 
-              if (globals?.theme && window.openai) {
-                window.openai.theme = globals.theme;
-
-                // Dispatch event for widgets that use useTheme() hook
-                try {
-                  const globalsEvent = new CustomEvent('openai:set_globals', {
-                    detail: { globals: { theme: globals.theme } }
-                  });
-                  window.dispatchEvent(globalsEvent);
-                } catch (err) {
-                  console.error('[OpenAI Widget] Failed to dispatch theme change:', err);
+              if (globals) {
+                if (globals.theme !== undefined) {
+                  window.openai.theme = globals.theme;
+                  updatedGlobals.theme = globals.theme;
+                }
+                if (globals.maxHeight !== undefined) {
+                  window.openai.maxHeight = globals.maxHeight;
+                  updatedGlobals.maxHeight = globals.maxHeight;
+                }
+                if (globals.displayMode !== undefined) {
+                  window.openai.displayMode = globals.displayMode;
+                  updatedGlobals.displayMode = globals.displayMode;
+                }
+                if (globals.locale !== undefined) {
+                  window.openai.locale = globals.locale;
+                  updatedGlobals.locale = globals.locale;
+                }
+                if (globals.safeArea !== undefined) {
+                  window.openai.safeArea = globals.safeArea;
+                  updatedGlobals.safeArea = globals.safeArea;
+                }
+                if (globals.userAgent !== undefined) {
+                  window.openai.userAgent = globals.userAgent;
+                  updatedGlobals.userAgent = globals.userAgent;
+                }
+                if (globals.view !== undefined) {
+                  window.openai.view = globals.view;
+                  updatedGlobals.view = globals.view;
                 }
               }
 
-              if (typeof globals?.maxHeight === 'number' && window.openai) {
-                window.openai.maxHeight = globals.maxHeight;
-                try {
-                  const globalsEvent = new CustomEvent('openai:set_globals', {
-                    detail: { globals: { maxHeight: globals.maxHeight } }
-                  });
-                  window.dispatchEvent(globalsEvent);
-                } catch (err) {
-                  console.error('[OpenAI Widget] Failed to dispatch maxHeight change:', err);
-                }
-              }
-
-              if (globals?.displayMode && window.openai) {
-                window.openai.displayMode = globals.displayMode;
-                try {
-                  const globalsEvent = new CustomEvent('openai:set_globals', {
-                    detail: { globals: { displayMode: globals.displayMode } }
-                  });
-                  window.dispatchEvent(globalsEvent);
-                } catch (err) {
-                  console.error('[OpenAI Widget] Failed to dispatch displayMode change:', err);
-                }
+              // Dispatch combined globals update event
+              try {
+                window.dispatchEvent(new CustomEvent('openai:set_globals', {
+                  detail: { globals: updatedGlobals }
+                }));
+              } catch (err) {
+                console.error('[OpenAI Widget] Failed to dispatch globals update:', err);
               }
             }
 

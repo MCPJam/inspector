@@ -33,11 +33,13 @@ interface OpenAIAppRendererProps {
   toolOutput?: unknown;
   toolMetadata?: Record<string, any>;
   onSendFollowUp?: (text: string) => void;
-  onCallTool?: (toolName: string, params: Record<string, any>) => Promise<any>;
+  onCallTool?: (toolName: string, params: Record<string, any>, meta?: Record<string, any>) => Promise<any>;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
   pipWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
+  /** List of tool names that have openai/widgetAccessible: true */
+  widgetAccessibleTools?: string[];
 }
 
 export function OpenAIAppRenderer({
@@ -54,6 +56,7 @@ export function OpenAIAppRenderer({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  widgetAccessibleTools,
 }: OpenAIAppRendererProps) {
   const sandboxRef = useRef<OpenAISandboxedIframeHandle>(null);
   const modalIframeRef = useRef<HTMLIFrameElement>(null);
@@ -179,6 +182,7 @@ export function OpenAIAppRenderer({
             toolId: resolvedToolCallId,
             toolName: toolName,
             theme: themeMode,
+            widgetAccessibleTools: widgetAccessibleTools ?? [],
           }),
         });
 
@@ -247,6 +251,7 @@ export function OpenAIAppRenderer({
     resolvedToolOutput,
     toolResponseMetadata,
     themeMode,
+    widgetAccessibleTools,
   ]);
 
   const appliedHeight = useMemo(() => {
@@ -407,9 +412,12 @@ export function OpenAIAppRenderer({
           }
 
           try {
+            // Forward client-supplied _meta fields (SDK spec)
+            const clientMeta = event.data._meta || {};
             const result = await onCallTool(
               event.data.toolName,
-              event.data.args || event.data.params || {}
+              event.data.args || event.data.params || {},
+              clientMeta
             );
             postToWidget({
               type: "openai:callTool:response",
