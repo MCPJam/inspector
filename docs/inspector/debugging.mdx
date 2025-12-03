@@ -18,3 +18,25 @@ MCPJam Inspector provides powerful debugging and monitoring capabilities to help
 ## Logs
 
 View all messages being sent back and forth between MCPJam and your MCP server. We're working on building support to view all JSON-RPC messages. Tracing message levels are `ERROR`, `WARNING`, and `TRACE`.
+
+## Setting log levels
+
+You can configure the logging verbosity for each connected MCP server. This follows the [MCP logging specification](https://modelcontextprotocol.info/specification/draft/server/utilities/logging/).
+
+To set a log level:
+
+1. Open the Logger panel
+2. Select a connected server from the dropdown
+3. Choose a log level from the available options
+4. Click **Apply**
+
+Available log levels (from most to least verbose):
+
+- `debug` - Detailed debugging information
+- `info` - General informational messages
+- `notice` - Normal but significant events
+- `warning` - Warning conditions
+- `error` - Error conditions
+- `critical` - Critical conditions
+- `alert` - Action must be taken immediately
+- `emergency` - System is unusable
