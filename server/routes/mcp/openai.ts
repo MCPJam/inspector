@@ -133,6 +133,10 @@ const devResourceDomains = isDev
 // In production, widgets should declare their domains in openai/widgetCSP
 const devConnectDomains = isDev ? ["https:", "wss:", "ws:"] : [];
 
+// In dev, also allow https: for scripts/styles to test production widgets
+// In production, widgets MUST declare their domains in openai/widgetCSP
+const devScriptDomains = isDev ? ["https:"] : [];
+
 // New endpoint: Returns widget HTML + CSP as JSON for double-iframe architecture
 openai.get("/widget-html/:toolId", async (c) => {
   try {
@@ -221,17 +225,19 @@ openai.get("/widget-html/:toolId", async (c) => {
       | undefined;
 
     // Build CSP config (snake_case from metadata -> camelCase for JS)
-    // In dev mode, add localhost ports for widget dev servers (Vite HMR, etc.)
-    // and allow https:/wss: for API calls
+    // In dev mode:
+    // - Add localhost ports for widget dev servers (Vite HMR, etc.)
+    // - Allow https: for API calls and script/style loading
+    // In production, widgets MUST declare their domains in openai/widgetCSP
     const baseResourceDomains = widgetCspRaw?.resource_domains || defaultResourceDomains;
     const csp = widgetCspRaw
       ? {
           connectDomains: [...(widgetCspRaw.connect_domains || []), ...devResourceDomains, ...devConnectDomains],
-          resourceDomains: [...baseResourceDomains, ...devResourceDomains],
+          resourceDomains: [...baseResourceDomains, ...devResourceDomains, ...devScriptDomains],
         }
       : {
           connectDomains: [...devResourceDomains, ...devConnectDomains],
-          resourceDomains: [...defaultResourceDomains, ...devResourceDomains],
+          resourceDomains: [...defaultResourceDomains, ...devResourceDomains, ...devScriptDomains],
         };
 
     const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
