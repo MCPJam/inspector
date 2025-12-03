@@ -3,7 +3,6 @@ import { UIMessage } from "@ai-sdk/react";
 import {
   UIActionResult,
   UIResourceRenderer,
-  isUIResource,
   basicComponentLibrary,
   remoteButtonDefinition,
   remoteCardDefinition,
@@ -11,22 +10,9 @@ import {
   remoteStackDefinition,
   remoteTextDefinition,
 } from "@mcp-ui/client";
-import {
-  UIDataTypes,
-  UIMessagePart,
-  UITools,
-  ToolUIPart,
-  DynamicToolUIPart,
-} from "ai";
+import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 import { useState } from "react";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  Loader2,
-  MessageCircle,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronDown, MessageCircle } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { OpenAIAppRenderer } from "./openai-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
@@ -37,17 +23,29 @@ import {
 } from "@/lib/apis/mcp-tools-api";
 import { MemoizedMarkdown } from "./memomized-markdown";
 import { getProviderLogoFromModel } from "./chat-helpers";
-import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  detectUIType,
+  getUIResourceUri,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";
-
-type AnyPart = UIMessagePart<UIDataTypes, UITools>;
-type ToolState =
-  | "input-streaming"
-  | "input-available"
-  | "output-available"
-  | "output-error";
+import {
+  AnyPart,
+  ToolState,
+  extractUIResource,
+  getDataLabel,
+  getToolInfo,
+  getToolNameFromType,
+  getToolStateMeta,
+  groupAssistantPartsIntoSteps,
+  isDataPart,
+  isDynamicTool,
+  isToolPart,
+  safeStringify,
+  type McpResource,
+} from "./thread-helpers";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -193,23 +191,6 @@ function MessageView({
   );
 }
 
-function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
-  const groups: AnyPart[][] = [];
-  let current: AnyPart[] = [];
-  for (const part of parts) {
-    if ((part as any).type === "step-start") {
-      if (current.length > 0) groups.push(current);
-      current = [];
-      continue; // do not include the step-start part itself
-    }
-    current.push(part);
-  }
-  if (current.length > 0) groups.push(current);
-  return groups.length > 0
-    ? groups
-    : [parts.filter((p) => (p as any).type !== "step-start")];
-}
-
 function PartSwitch({
   part,
   role,
@@ -232,70 +213,50 @@ function PartSwitch({
   onExitPip: (toolCallId: string) => void;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
-    let maybeUiResource: any;
-    if (isToolPart(part)) {
-      maybeUiResource = (part as any)?.output?.value?.content?.[0];
-    } else {
-      maybeUiResource = (part as any)?.output?.content?.[0];
-    }
-    if (maybeUiResource && isUIResource(maybeUiResource)) {
+    const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
+    const toolInfo = getToolInfo(toolPart);
+    const partToolMeta = toolsMetadata[toolInfo.toolName];
+    const uiType = detectUIType(partToolMeta, toolInfo.rawOutput);
+    const uiResourceUri = getUIResourceUri(uiType, partToolMeta);
+    const uiResource =
+      uiType === UIType.MCP_UI ? extractUIResource(toolInfo.rawOutput) : null;
+    const serverId = getToolServerId(toolInfo.toolName, toolServerMap);
+
+    if (uiResource) {
       return (
         <>
-          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <ToolPart part={toolPart} />
           <MCPUIResourcePart
-            resource={maybeUiResource.resource}
+            resource={uiResource.resource}
             onSendFollowUp={onSendFollowUp}
           />
         </>
       );
     }
 
-    // MCP Apps detection (SEP-1865) - check for ui/resourceUri in tool metadata
-    const partToolName = isDynamicTool(part)
-      ? (part as DynamicToolUIPart).toolName
-      : getToolNameFromType((part as any).type);
-    const partToolMeta = toolsMetadata[partToolName];
-    const uiType = detectUIType(partToolMeta, (part as any).output);
-
-    if (uiType === "mcp-apps" && partToolMeta?.["ui/resourceUri"]) {
-      const toolState = (part as any).state as ToolState | undefined;
-      const serverId = getToolServerId(partToolName, toolServerMap);
-
-      if (!serverId) {
+    if (uiType === UIType.MCP_APPS) {
+      if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
         return (
           <>
-            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <ToolPart part={toolPart} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              Failed to load server id for MCP App.
+              Failed to load server id or resource uri for MCP App.
             </div>
           </>
         );
       }
 
-      let toolInput: Record<string, unknown> | undefined;
-      let toolOutput: unknown;
-      if (isDynamicTool(part)) {
-        toolInput = (part as DynamicToolUIPart).input as Record<
-          string,
-          unknown
-        >;
-        toolOutput = (part as DynamicToolUIPart).output;
-      } else {
-        toolInput = (part as any).input;
-        toolOutput = (part as any).output?.value;
-      }
-
       return (
         <>
-          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <ToolPart part={toolPart} />
           <MCPAppsRenderer
             serverId={serverId}
-            toolCallId={(part as any).toolCallId}
-            toolName={partToolName}
-            toolState={toolState}
-            toolInput={toolInput}
-            toolOutput={toolOutput}
-            resourceUri={partToolMeta["ui/resourceUri"] as string}
+            toolCallId={toolInfo.toolCallId}
+            toolName={toolInfo.toolName}
+            toolState={toolInfo.toolState}
+            toolInput={toolInfo.input}
+            toolOutput={toolInfo.output}
+            resourceUri={uiResourceUri}
             toolMetadata={partToolMeta}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
@@ -310,48 +271,24 @@ function PartSwitch({
       );
     }
 
-    // OpenAI Apps detection - check for openai/outputTemplate in tool metadata
-    if (
-      (isDynamicTool(part) || isToolPart(part)) &&
-      isPartOpenAIApp(part, toolsMetadata)
-    ) {
-      let toolInput: any = null;
-      let toolOutput: any = null;
-      let toolName: string | undefined;
-
-      // Check free chat or BYOK. isDynamicTool(part) is true for BYOK.
-      const toolState = (part as any).state ?? undefined;
-      if (toolState === "output-available") {
-        if (isDynamicTool(part)) {
-          toolName = (part as DynamicToolUIPart).toolName;
-          toolInput = (part as DynamicToolUIPart).input;
-          toolOutput = (part as DynamicToolUIPart).output;
-        } else {
-          toolName = getToolNameFromType((part as any).type);
-          toolInput = (part as any).input;
-          toolOutput = (part as any).output.value;
-        }
-      }
-      const serverId = toolName
-        ? getToolServerId(toolName, toolServerMap)
-        : undefined;
-
-      if (toolState !== "output-available") {
+    if (uiType === UIType.OPENAI_SDK) {
+      if (toolInfo.toolState !== "output-available") {
         return (
           <>
-            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <ToolPart part={toolPart} />
             <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-              Waiting for tool finish executing...
+              Waiting for tool to finish executing...
             </div>
           </>
         );
       }
-      if (!toolName || !serverId) {
+
+      if (!serverId) {
         return (
           <>
-            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <ToolPart part={toolPart} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              Failed to load tool name or server id.
+              Failed to load tool server id.
             </div>
           </>
         );
@@ -359,15 +296,15 @@ function PartSwitch({
 
       return (
         <>
-          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <ToolPart part={toolPart} />
           <OpenAIAppRenderer
             serverId={serverId}
-            toolCallId={(part as any).toolCallId}
-            toolName={toolName}
-            toolState={(part as any).state as ToolState | undefined}
-            toolInput={toolInput ?? null}
-            toolOutput={toolOutput ?? null}
-            toolMetadata={toolsMetadata[toolName] ?? undefined}
+            toolCallId={toolInfo.toolCallId}
+            toolName={toolInfo.toolName}
+            toolState={toolInfo.toolState}
+            toolInput={toolInfo.input ?? null}
+            toolOutput={toolInfo.output ?? null}
+            toolMetadata={toolsMetadata[toolInfo.toolName] ?? undefined}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
               callTool(serverId, toolName, params)
@@ -380,7 +317,8 @@ function PartSwitch({
         </>
       );
     }
-    return <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />;
+
+    return <ToolPart part={toolPart} />;
   }
 
   if (isDataPart(part)) {
@@ -740,16 +678,6 @@ function ThinkingIndicator({ model }: { model: ModelDefinition }) {
   );
 }
 
-function isToolPart(part: AnyPart): part is ToolUIPart<UITools> {
-  const t = (part as any).type;
-  return typeof t === "string" && t.startsWith("tool-");
-}
-
-type McpResource = {
-  uri: string;
-  [key: string]: unknown;
-};
-
 function MCPUIResourcePart({
   resource,
   onSendFollowUp,
@@ -822,84 +750,4 @@ function MCPUIResourcePart({
       />
     </div>
   );
-}
-
-function isDynamicTool(part: unknown): part is DynamicToolUIPart {
-  return (
-    !!part &&
-    typeof (part as any).type === "string" &&
-    (part as any).type === "dynamic-tool"
-  );
-}
-
-function isPartOpenAIApp(
-  part: unknown,
-  toolsMetadata: Record<string, Record<string, any>>,
-): part is DynamicToolUIPart {
-  const toolName = (part as DynamicToolUIPart).toolName;
-  const toolNameFromType = getToolNameFromType((part as any).type);
-  return (
-    toolsMetadata[toolName]?.["openai/outputTemplate"] !== undefined ||
-    toolsMetadata[toolNameFromType]?.["openai/outputTemplate"] !== undefined
-  );
-}
-
-function isDataPart(part: AnyPart): boolean {
-  const t = (part as any).type;
-  return typeof t === "string" && t.startsWith("data-");
-}
-
-function getDataLabel(type: string): string {
-  return type === "data-" ? "Data" : `Data (${type.replace(/^data-/, "")})`;
-}
-
-function getToolNameFromType(type: string | undefined): string {
-  if (!type) return "Tool";
-  return type.startsWith("tool-") ? type.replace(/^tool-/, "") : "Tool";
-}
-
-function safeStringify(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-type ToolStateMeta = {
-  Icon: LucideIcon;
-  label: string;
-  className: string;
-};
-
-function getToolStateMeta(state: ToolState | undefined): ToolStateMeta | null {
-  if (!state) return null;
-  switch (state) {
-    case "input-streaming":
-      return {
-        Icon: Loader2,
-        label: "Input streaming",
-        className: "h-4 w-4 animate-spin text-muted-foreground",
-      };
-    case "input-available":
-      return {
-        Icon: CheckCircle2,
-        label: "Input available",
-        className: "h-4 w-4 text-muted-foreground",
-      };
-    case "output-available":
-      return {
-        Icon: CheckCircle2,
-        label: "Output available",
-        className: "h-4 w-4 text-emerald-500",
-      };
-    case "output-error":
-      return {
-        Icon: AlertTriangle,
-        label: "Output error",
-        className: "h-4 w-4 text-destructive",
-      };
-    default:
-      return null;
-  }
 }
