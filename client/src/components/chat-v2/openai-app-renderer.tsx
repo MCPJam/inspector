@@ -6,9 +6,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { X } from "lucide-react";
+import { X, Loader2 } from "lucide-react";
 import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import {
+  OpenAISandboxedIframe,
+  OpenAISandboxedIframeHandle,
+  OpenAIWidgetCSP,
+} from "@/components/ui/openai-sandboxed-iframe";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 
@@ -50,7 +55,7 @@ export function OpenAIAppRenderer({
   onRequestPip,
   onExitPip,
 }: OpenAIAppRendererProps) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const sandboxRef = useRef<OpenAISandboxedIframeHandle>(null);
   const modalIframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
@@ -58,12 +63,17 @@ export function OpenAIAppRenderer({
   const [contentHeight, setContentHeight] = useState<number>(320);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
+  const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
+  const [widgetCsp, setWidgetCsp] = useState<OpenAIWidgetCSP | undefined>(
+    undefined
+  );
+  const [widgetClosed, setWidgetClosed] = useState(false);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, any>>({});
   const [modalTitle, setModalTitle] = useState<string>("");
+  const [modalUrl, setModalUrl] = useState<string | null>(null);
   const previousWidgetStateRef = useRef<string | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const resolvedToolCallId = useMemo(
@@ -121,7 +131,7 @@ export function OpenAIAppRenderer({
     [structuredContent, toolOutputProp],
   );
 
-  // Store widget data and get URL - ONLY once when tool state is output-available
+  // Store widget data and fetch HTML - ONLY once when tool state is output-available
   useEffect(() => {
     let isCancelled = false;
 
@@ -130,31 +140,32 @@ export function OpenAIAppRenderer({
       return;
     }
 
-    // Already have a URL, don't re-store
-    if (widgetUrl) {
+    // Already have HTML, don't re-fetch
+    if (widgetHtml) {
       return;
     }
 
     if (!outputTemplate) {
-      setWidgetUrl(null);
+      setWidgetHtml(null);
       setStoreError(null);
       setIsStoringWidget(false);
       return;
     }
 
     if (!toolName) {
-      setWidgetUrl(null);
+      setWidgetHtml(null);
       setStoreError("Tool name is required");
       setIsStoringWidget(false);
       return;
     }
 
-    const storeWidgetData = async () => {
+    const fetchWidgetHtml = async () => {
       setIsStoringWidget(true);
       setStoreError(null);
 
       try {
-        const response = await fetch("/api/mcp/openai/widget/store", {
+        // First, store widget data
+        const storeResponse = await fetch("/api/mcp/openai/widget/store", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -164,29 +175,53 @@ export function OpenAIAppRenderer({
             uri: outputTemplate,
             toolInput: resolvedToolInput,
             toolOutput: resolvedToolOutput,
-            toolResponseMetadata: toolResponseMetadata, // Extract _meta from tool response
+            toolResponseMetadata: toolResponseMetadata,
             toolId: resolvedToolCallId,
             toolName: toolName,
             theme: themeMode,
           }),
         });
 
-        if (!response.ok) {
+        if (!storeResponse.ok) {
           throw new Error(
-            `Failed to store widget data: ${response.statusText}`,
+            `Failed to store widget data: ${storeResponse.statusText}`
           );
         }
 
         if (isCancelled) return;
 
-        // Set the widget URL after successful storage
-        const url = `/api/mcp/openai/widget/${resolvedToolCallId}`;
-        setWidgetUrl(url);
+        // Then fetch HTML + CSP as JSON
+        const htmlResponse = await fetch(
+          `/api/mcp/openai/widget-html/${resolvedToolCallId}`
+        );
+
+        if (!htmlResponse.ok) {
+          const errorData = await htmlResponse.json().catch(() => ({}));
+          throw new Error(
+            errorData.error || `Failed to fetch widget HTML: ${htmlResponse.statusText}`
+          );
+        }
+
+        const data = await htmlResponse.json();
+
+        if (isCancelled) return;
+
+        // Check if widget should be closed (not rendered)
+        if (data.closeWidget) {
+          setWidgetClosed(true);
+          setIsStoringWidget(false);
+          return;
+        }
+
+        setWidgetHtml(data.html);
+        setWidgetCsp(data.csp);
+        // Also store the modal URL for requestModal functionality
+        setModalUrl(`/api/mcp/openai/widget/${resolvedToolCallId}`);
       } catch (err) {
         if (isCancelled) return;
-        console.error("Error storing widget data:", err);
+        console.error("Error fetching widget HTML:", err);
         setStoreError(
-          err instanceof Error ? err.message : "Failed to prepare widget",
+          err instanceof Error ? err.message : "Failed to prepare widget"
         );
       } finally {
         if (!isCancelled) {
@@ -195,17 +230,16 @@ export function OpenAIAppRenderer({
       }
     };
 
-    storeWidgetData();
+    fetchWidgetHtml();
 
     return () => {
       isCancelled = true;
     };
-    // Store once when state becomes output-available and widgetUrl is not yet set
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     toolState,
     resolvedToolCallId,
-    widgetUrl,
+    widgetHtml,
     outputTemplate,
     toolName,
     serverId,
@@ -278,10 +312,9 @@ export function OpenAIAppRenderer({
     });
   }, [resolvedToolCallId, themeMode, displayMode, maxHeight, setWidgetGlobals]);
 
-  // Helper to post message to widget and log it
+  // Helper to post message to widget via sandbox and log it
   const postToWidget = useCallback(
-    (target: Window | null, data: unknown) => {
-      if (!target) return;
+    (data: unknown, targetModal?: boolean) => {
       addUiLog({
         widgetId: resolvedToolCallId,
         serverId,
@@ -290,22 +323,19 @@ export function OpenAIAppRenderer({
         method: extractMethod(data, "openai-apps"),
         message: data,
       });
-      target.postMessage(data, "*");
+
+      if (targetModal && modalIframeRef.current?.contentWindow) {
+        modalIframeRef.current.contentWindow.postMessage(data, "*");
+      } else {
+        sandboxRef.current?.postMessage(data);
+      }
     },
-    [addUiLog, resolvedToolCallId, serverId],
+    [addUiLog, resolvedToolCallId, serverId]
   );
 
-  // Handle messages from iframe
-  const handleMessage = useCallback(
+  // Handle messages from sandbox iframe (widget messages are forwarded through sandbox)
+  const handleSandboxMessage = useCallback(
     async (event: MessageEvent) => {
-      const inlineWindow = iframeRef.current?.contentWindow ?? null;
-      const modalWindow = modalIframeRef.current?.contentWindow ?? null;
-      const isFromInline =
-        inlineWindow != null && event.source === inlineWindow;
-      const isFromModal = modalWindow != null && event.source === modalWindow;
-
-      if (!isFromInline && !isFromModal) return;
-
       // Log incoming message
       if (event.data?.type) {
         addUiLog({
@@ -318,7 +348,7 @@ export function OpenAIAppRenderer({
         });
       }
 
-      console.log("[OpenAI App] Received message from iframe:", event.data);
+      console.log("[OpenAI App] Received message from sandbox:", event.data);
 
       switch (event.data?.type) {
         case "openai:resize": {
@@ -326,14 +356,13 @@ export function OpenAIAppRenderer({
           if (Number.isFinite(rawHeight) && rawHeight > 0) {
             const nextHeight = Math.round(rawHeight);
             setContentHeight((prev) =>
-              Math.abs(prev - nextHeight) > 1 ? nextHeight : prev,
+              Math.abs(prev - nextHeight) > 1 ? nextHeight : prev
             );
           }
           break;
         }
 
         case "openai:setWidgetState": {
-          // Widget state is already persisted by the iframe script
           console.log("[OpenAI App] Widget state updated:", event.data.state);
 
           if (event.data.toolId === resolvedToolCallId) {
@@ -343,35 +372,35 @@ export function OpenAIAppRenderer({
 
             if (newStateStr !== previousWidgetStateRef.current) {
               previousWidgetStateRef.current = newStateStr;
-              // Update debug store
               setWidgetState(resolvedToolCallId, newState);
-              // Notify parent
               onWidgetStateChange?.(resolvedToolCallId, newState);
             }
           }
 
-          const targetWindow = isFromInline
-            ? modalWindow
-            : isFromModal
-              ? inlineWindow
-              : null;
-
-          postToWidget(targetWindow, {
-            type: "openai:pushWidgetState",
-            toolId: resolvedToolCallId,
-            state: event.data.state,
-          });
+          // Sync state to modal if open
+          if (modalOpen) {
+            postToWidget(
+              {
+                type: "openai:pushWidgetState",
+                toolId: resolvedToolCallId,
+                state: event.data.state,
+              },
+              true
+            );
+          }
           break;
         }
 
         case "openai:callTool": {
+          const callId = event.data.callId;
+
           if (!onCallTool) {
             console.warn(
-              "[OpenAI App] callTool received but handler not available",
+              "[OpenAI App] callTool received but handler not available"
             );
-            postToWidget(event.source as Window | null, {
+            postToWidget({
               type: "openai:callTool:response",
-              requestId: event.data.requestId,
+              callId,
               error: "callTool is not supported in this context",
             });
             break;
@@ -380,17 +409,17 @@ export function OpenAIAppRenderer({
           try {
             const result = await onCallTool(
               event.data.toolName,
-              event.data.params || {},
+              event.data.args || event.data.params || {}
             );
-            postToWidget(event.source as Window | null, {
+            postToWidget({
               type: "openai:callTool:response",
-              requestId: event.data.requestId,
+              callId,
               result,
             });
           } catch (err) {
-            postToWidget(event.source as Window | null, {
+            postToWidget({
               type: "openai:callTool:response",
-              requestId: event.data.requestId,
+              callId,
               error: err instanceof Error ? err.message : "Unknown error",
             });
           }
@@ -399,7 +428,6 @@ export function OpenAIAppRenderer({
 
         case "openai:sendFollowup": {
           if (onSendFollowUp && event.data.message) {
-            // Handle both string and object formats from OpenAI Apps SDK
             const message =
               typeof event.data.message === "string"
                 ? event.data.message
@@ -413,29 +441,59 @@ export function OpenAIAppRenderer({
               {
                 hasHandler: !!onSendFollowUp,
                 message: event.data.message,
-              },
+              }
             );
           }
           break;
         }
 
         case "openai:requestDisplayMode": {
-          if (event.data.mode) {
-            const mode = event.data.mode;
-            setDisplayMode(mode);
-            if (mode === "pip") {
-              onRequestPip?.(resolvedToolCallId);
-            } else if (mode === "inline" || mode === "fullscreen") {
-              if (pipWidgetId === resolvedToolCallId) {
-                onExitPip?.(resolvedToolCallId);
-              }
+          const requestedMode = event.data.mode || "inline";
+          // Mobile coerces PiP -> fullscreen per SDK docs
+          const isMobile = window.innerWidth < 768;
+          const actualMode =
+            isMobile && requestedMode === "pip" ? "fullscreen" : requestedMode;
+
+          setDisplayMode(actualMode);
+
+          if (actualMode === "pip") {
+            onRequestPip?.(resolvedToolCallId);
+          } else if (actualMode === "inline" || actualMode === "fullscreen") {
+            if (pipWidgetId === resolvedToolCallId) {
+              onExitPip?.(resolvedToolCallId);
             }
           }
+
           if (typeof event.data.maxHeight === "number") {
             setMaxHeight(event.data.maxHeight);
           } else if (event.data.maxHeight == null) {
             setMaxHeight(null);
           }
+
+          // Notify widget of actual mode (may differ from requested on mobile)
+          postToWidget({
+            type: "openai:set_globals",
+            globals: { displayMode: actualMode },
+          });
+          break;
+        }
+
+        case "openai:requestClose": {
+          console.log("[OpenAI App] Widget requested close");
+          setDisplayMode("inline");
+          if (pipWidgetId === resolvedToolCallId) {
+            onExitPip?.(resolvedToolCallId);
+          }
+          break;
+        }
+
+        case "openai:csp-violation": {
+          const { directive, blockedUri, sourceFile, lineNumber } = event.data;
+          console.warn(
+            `[OpenAI Widget CSP] Blocked ${blockedUri} by ${directive}`,
+            sourceFile ? `at ${sourceFile}:${lineNumber}` : ""
+          );
+          // In dev mode, could show a toast, but for now just log
           break;
         }
 
@@ -460,22 +518,66 @@ export function OpenAIAppRenderer({
       onWidgetStateChange,
       resolvedToolCallId,
       pipWidgetId,
-      modalIframeRef,
+      modalOpen,
       onRequestPip,
       onExitPip,
       addUiLog,
       postToWidget,
       serverId,
       setWidgetState,
-    ],
+    ]
   );
 
+  // Handle messages from modal iframe (uses old direct iframe approach)
+  const handleModalMessage = useCallback(
+    async (event: MessageEvent) => {
+      const modalWindow = modalIframeRef.current?.contentWindow ?? null;
+      if (!modalWindow || event.source !== modalWindow) return;
+
+      // Log incoming message
+      if (event.data?.type) {
+        addUiLog({
+          widgetId: resolvedToolCallId,
+          serverId,
+          direction: "ui-to-host",
+          protocol: "openai-apps",
+          method: extractMethod(event.data, "openai-apps"),
+          message: event.data,
+        });
+      }
+
+      // Handle widget state sync from modal back to inline
+      if (event.data?.type === "openai:setWidgetState") {
+        if (event.data.toolId === resolvedToolCallId) {
+          const newState = event.data.state;
+          setWidgetState(resolvedToolCallId, newState);
+          onWidgetStateChange?.(resolvedToolCallId, newState);
+          // Sync to inline sandbox
+          postToWidget({
+            type: "openai:pushWidgetState",
+            toolId: resolvedToolCallId,
+            state: newState,
+          });
+        }
+      }
+    },
+    [
+      addUiLog,
+      resolvedToolCallId,
+      serverId,
+      setWidgetState,
+      onWidgetStateChange,
+      postToWidget,
+    ]
+  );
+
+  // Modal message handler (global listener for modal iframe)
   useEffect(() => {
-    window.addEventListener("message", handleMessage);
+    window.addEventListener("message", handleModalMessage);
     return () => {
-      window.removeEventListener("message", handleMessage);
+      window.removeEventListener("message", handleModalMessage);
     };
-  }, [handleMessage]);
+  }, [handleModalMessage]);
 
   useEffect(() => {
     if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId) {
@@ -483,74 +585,51 @@ export function OpenAIAppRenderer({
     }
   }, [displayMode, pipWidgetId, resolvedToolCallId]);
 
-  // Send global updates to server
+  // Send global updates to sandbox
   useEffect(() => {
     if (!isReady) return;
 
-    const postGlobals = (target: HTMLIFrameElement | null) => {
-      if (!target?.contentWindow) return;
-      const globals: Record<string, unknown> = { theme: themeMode };
-      if (typeof maxHeight === "number" && Number.isFinite(maxHeight)) {
-        globals.maxHeight = maxHeight;
-      }
-      globals.displayMode = displayMode;
+    const globals: Record<string, unknown> = { theme: themeMode };
+    if (typeof maxHeight === "number" && Number.isFinite(maxHeight)) {
+      globals.maxHeight = maxHeight;
+    }
+    globals.displayMode = displayMode;
 
-      console.log("[OpenAI App] Sending globals update to iframe:", globals);
-      postToWidget(target.contentWindow, {
-        type: "openai:set_globals",
-        globals,
-      });
-    };
+    console.log("[OpenAI App] Sending globals update to sandbox:", globals);
+    postToWidget({ type: "openai:set_globals", globals });
 
-    postGlobals(iframeRef.current);
-    postGlobals(modalIframeRef.current);
-  }, [themeMode, maxHeight, displayMode, isReady, postToWidget]);
+    // Also send to modal if open
+    if (modalOpen) {
+      postToWidget({ type: "openai:set_globals", globals }, true);
+    }
+  }, [themeMode, maxHeight, displayMode, isReady, modalOpen, postToWidget]);
 
-  // Kick off an early manual resize measurement while the widget is mounting.
-  useEffect(() => {
-    if (!isReady) return;
+  // Note: Height measurement via contentDocument won't work with cross-origin sandbox.
+  // Widget should send openai:resize messages to report its height.
 
-    let attempts = 0;
-    const maxAttempts = 12; // a handful of frames to settle height
+  // Extract tool invocation status from metadata
+  const invokingText = toolMetadata?.["openai/toolInvocation/invoking"] as
+    | string
+    | undefined;
+  const invokedText = toolMetadata?.["openai/toolInvocation/invoked"] as
+    | string
+    | undefined;
 
-    const measureHeight = () => {
-      try {
-        const doc = iframeRef.current?.contentDocument;
-        if (doc) {
-          const bodyHeight = doc.body?.scrollHeight ?? 0;
-          const docHeight = doc.documentElement?.scrollHeight ?? 0;
-          const measured = Math.max(bodyHeight, docHeight);
-          if (measured > 0) {
-            setContentHeight((prev) =>
-              Math.abs(prev - measured) > 1 ? measured : prev,
-            );
-          }
-        }
-      } catch (err) {
-        // Cross-origin guard; if we can't read the iframe, just stop polling.
-        attempts = maxAttempts;
-      }
-
-      attempts += 1;
-      if (attempts <= maxAttempts) {
-        rafIdRef.current = requestAnimationFrame(measureHeight);
-      }
-    };
-
-    measureHeight();
-
-    return () => {
-      if (rafIdRef.current != null) {
-        cancelAnimationFrame(rafIdRef.current);
-        rafIdRef.current = null;
-      }
-    };
-  }, [isReady, widgetUrl]);
+  // Tool is executing - show invocation status
+  if (toolState === "input-streaming" || toolState === "input-available") {
+    return (
+      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2 flex items-center gap-2">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        {invokingText || "Executing tool..."}
+      </div>
+    );
+  }
 
   // Loading state
   if (isStoringWidget) {
     return (
-      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2 flex items-center gap-2">
+        <Loader2 className="h-3 w-3 animate-spin" />
         Loading OpenAI App widget...
       </div>
     );
@@ -567,6 +646,15 @@ export function OpenAIAppRenderer({
             (Template <code>{outputTemplate}</code>)
           </>
         )}
+      </div>
+    );
+  }
+
+  // Widget closed by server
+  if (widgetClosed) {
+    return (
+      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+        {invokedText || "Tool completed successfully."}
       </div>
     );
   }
@@ -588,11 +676,12 @@ export function OpenAIAppRenderer({
     );
   }
 
-  // No widget URL yet
-  if (!widgetUrl) {
+  // No widget HTML yet
+  if (!widgetHtml) {
     return (
-      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-        Preparing widget URL...
+      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2 flex items-center gap-2">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Preparing widget...
       </div>
     );
   }
@@ -636,7 +725,7 @@ export function OpenAIAppRenderer({
 
   const shouldShowExitButton = isPip || isFullscreen;
 
-  // Render iframe
+  // Render sandboxed iframe
   return (
     <div className={containerClassName}>
       {shouldShowExitButton && (
@@ -657,24 +746,20 @@ export function OpenAIAppRenderer({
           Failed to load widget: {loadError}
         </div>
       )}
-      <iframe
-        ref={iframeRef}
-        src={widgetUrl}
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+      <OpenAISandboxedIframe
+        ref={sandboxRef}
+        html={widgetHtml}
+        csp={widgetCsp}
+        onMessage={handleSandboxMessage}
+        onReady={() => {
+          setIsReady(true);
+          setLoadError(null);
+        }}
         title={`OpenAI App Widget: ${toolName || "tool"}`}
-        allow="web-share"
         className="w-full border border-border/40 rounded-md bg-background"
         style={{
           height: iframeHeight,
           maxHeight: displayMode === "fullscreen" ? "90vh" : undefined,
-        }}
-        onLoad={() => {
-          setIsReady(true);
-          setLoadError(null);
-        }}
-        onError={() => {
-          console.error("[OpenAI App] Iframe failed to load");
-          setLoadError("Iframe failed to load");
         }}
       />
       {outputTemplate && (
@@ -683,6 +768,7 @@ export function OpenAIAppRenderer({
         </div>
       )}
 
+      {/* Modal uses old direct iframe (same-origin, inspector-specific feature) */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent className="sm:max-w-6xl h-[70vh] flex flex-col">
           <DialogHeader>
@@ -691,9 +777,13 @@ export function OpenAIAppRenderer({
           <div className="flex-1 w-full h-full min-h-0">
             <iframe
               ref={modalIframeRef}
-              src={`${widgetUrl}?view_mode=modal&view_params=${encodeURIComponent(
-                JSON.stringify(modalParams),
-              )}`}
+              src={
+                modalUrl
+                  ? `${modalUrl}?view_mode=modal&view_params=${encodeURIComponent(
+                      JSON.stringify(modalParams)
+                    )}`
+                  : undefined
+              }
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
               title={`OpenAI App Modal: ${modalTitle}`}
               className="w-full h-full border-0 rounded-md bg-background"
