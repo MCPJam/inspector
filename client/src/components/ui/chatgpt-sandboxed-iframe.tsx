@@ -55,6 +55,6 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
       return `/api/mcp/openai/sandbox-proxy?v=${version}`;
     });
 
-    return <iframe ref={iframeRef} src={sandboxUrl} sandbox="allow-scripts allow-same-origin" title={title} className={className} style={style} />;
+    return <iframe ref={iframeRef} src={sandboxUrl} sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" title={title} className={className} style={style} />;
   }
 );
