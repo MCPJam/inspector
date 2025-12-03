@@ -325,8 +325,9 @@ chatgpt.get("/sandbox-proxy", (c) => {
   const html = readFileSync(join(__dirname, "chatgpt-sandbox-proxy.html"), "utf-8");
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "public, max-age=3600");
-  c.header("Content-Security-Policy", "frame-ancestors 'self'");
-  c.header("X-Frame-Options", "SAMEORIGIN");
+  // Allow cross-origin framing between localhost and 127.0.0.1 for triple-iframe architecture
+  c.header("Content-Security-Policy", "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*");
+  // Remove X-Frame-Options as it doesn't support multiple origins (CSP takes precedence)
   return c.body(html);
 });
 
