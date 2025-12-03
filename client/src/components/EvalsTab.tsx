@@ -13,7 +13,6 @@ import {
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { useEvalsRoute, navigateToEvalsRoute } from "@/lib/evals-router";
 import { useChat } from "@/hooks/use-chat";
-import { useAppState } from "@/hooks/use-app-state";
 import { aggregateSuite } from "./evals/helpers";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import { EvalRunner } from "./evals/eval-runner";
@@ -22,6 +21,7 @@ import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
+import { useSharedAppState } from "@/state/app-state-context";
 
 export function EvalsTab() {
   const { isAuthenticated, isLoading } = useConvexAuth();
@@ -86,7 +86,7 @@ export function EvalsTab() {
   });
 
   // Get app state for server connections
-  const { appState } = useAppState();
+  const appState = useSharedAppState();
 
   // Get connected server names
   const connectedServerNames = useMemo(
