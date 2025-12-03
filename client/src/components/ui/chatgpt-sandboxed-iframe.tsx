@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
+import { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef, useMemo } from "react";
 
 export interface ChatGPTSandboxedIframeHandle {
   postMessage: (data: unknown) => void;
@@ -23,11 +23,14 @@ interface ChatGPTSandboxedIframeProps {
 /**
  * Triple-iframe architecture matching ChatGPT's actual implementation:
  *
- * Host (React component)
+ * Host (React component) - e.g., localhost:5173
  * └── Outer iframe (src="about:blank", sandbox with popups) - "jail" container
- *     ├── Middle iframe (sandbox-proxy.html, sandbox without popups) - message relay
+ *     ├── Middle iframe (sandbox-proxy on DIFFERENT origin, e.g., 127.0.0.1:5173)
  *     │   └── Inner iframe (srcdoc with widget) - actual widget content
  *     └── Measurement iframe (hidden, for layout calculations)
+ *
+ * Cross-origin isolation: Middle iframe uses localhost ↔ 127.0.0.1 swap
+ * for true origin isolation, similar to ChatGPT's web-sandbox.oaiusercontent.com
  *
  * Message flow: Host <-> Outer <-> Middle <-> Inner
  */
@@ -48,11 +51,32 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
     const [proxyReady, setProxyReady] = useState(false);
     const htmlSentRef = useRef(false);
 
-    // Build the sandbox proxy URL
-    const sandboxProxyUrl = useRef(() => {
+    // Build cross-origin sandbox proxy URL (localhost ↔ 127.0.0.1 swap)
+    const [sandboxProxyUrl, sandboxOrigin] = useMemo(() => {
+      const currentHost = window.location.hostname;
+      const currentPort = window.location.port;
+      const protocol = window.location.protocol;
+
+      // Swap localhost <-> 127.0.0.1 for cross-origin isolation
+      let sandboxHost: string;
+      if (currentHost === "localhost") {
+        sandboxHost = "127.0.0.1";
+      } else if (currentHost === "127.0.0.1") {
+        sandboxHost = "localhost";
+      } else {
+        // In production or other environments, fall back to same-origin
+        // Could be enhanced with a dedicated sandbox subdomain
+        console.warn("[ChatGPTSandboxedIframe] Cross-origin isolation not available, using same-origin");
+        sandboxHost = currentHost;
+      }
+
+      const portSuffix = currentPort ? `:${currentPort}` : "";
       const version = import.meta.env.PROD ? import.meta.env.VITE_BUILD_HASH || "v1" : Date.now();
-      return `/api/mcp/openai/sandbox-proxy?v=${version}`;
-    }).current();
+      const url = `${protocol}//${sandboxHost}${portSuffix}/api/mcp/openai/sandbox-proxy?v=${version}`;
+      const origin = `${protocol}//${sandboxHost}${portSuffix}`;
+
+      return [url, origin];
+    }, []);
 
     // Expose postMessage to parent - routes through outer -> middle -> inner
     useImperativeHandle(ref, () => ({
@@ -67,6 +91,7 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
       // Debug logging for openai messages
       if (event.data?.type?.startsWith?.("openai:")) {
         console.log("[ChatGPTSandboxedIframe] Message received:", event.data?.type,
+          "origin:", event.origin,
           "source:", event.source === outerIframeRef.current?.contentWindow ? "outer" :
                     event.source === middleIframeRef.current?.contentWindow ? "middle" : "unknown");
       }
@@ -113,6 +138,8 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
         }
 
         console.log("[ChatGPTSandboxedIframe] Outer iframe loaded, injecting middle iframe");
+        console.log("[ChatGPTSandboxedIframe] Cross-origin sandbox URL:", sandboxProxyUrl);
+        console.log("[ChatGPTSandboxedIframe] Sandbox origin:", sandboxOrigin);
 
         // Write the outer iframe's HTML content (contains middle iframe + relay script)
         outerDoc.open();
@@ -140,17 +167,22 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
     class="measurement"
   ></iframe>
   <script>
-    // Message relay: Host <-> Middle iframe
+    // Message relay: Host <-> Middle iframe (cross-origin)
     const middle = document.getElementById("middle");
+    const SANDBOX_ORIGIN = "${sandboxOrigin}";
 
-    // Forward messages from host (parent) to middle iframe
     window.addEventListener("message", (event) => {
       if (event.source === window.parent) {
-        // Forward from host to middle
+        // Forward from host to middle (use specific origin for security)
         if (middle.contentWindow) {
-          middle.contentWindow.postMessage(event.data, "*");
+          middle.contentWindow.postMessage(event.data, SANDBOX_ORIGIN);
         }
       } else if (event.source === middle.contentWindow) {
+        // Validate origin from middle iframe
+        if (event.origin !== SANDBOX_ORIGIN) {
+          console.warn("[Outer] Ignoring message from unexpected origin:", event.origin);
+          return;
+        }
         // Forward from middle to host
         window.parent.postMessage(event.data, "*");
       }
@@ -172,7 +204,7 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
         outerIframe.addEventListener("load", handleOuterLoad);
         return () => outerIframe.removeEventListener("load", handleOuterLoad);
       }
-    }, [sandboxProxyUrl, outerReady]);
+    }, [sandboxProxyUrl, sandboxOrigin, outerReady]);
 
     // Send widget HTML when proxy is ready
     useEffect(() => {
