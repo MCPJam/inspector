@@ -28,7 +28,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { OpenAIAppRenderer } from "./openai-app-renderer";
+import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
 import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
 import { MemoizedMarkdown } from "./memomized-markdown";
@@ -356,7 +356,7 @@ function PartSwitch({
       return (
         <>
           <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
-          <OpenAIAppRenderer
+          <ChatGPTAppRenderer
             serverId={serverId}
             toolCallId={(part as any).toolCallId}
             toolName={toolName}

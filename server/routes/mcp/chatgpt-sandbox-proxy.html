@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ChatGPT Apps Sandbox Proxy</title>
+    <style>
+      html, body { margin: 0; height: 100vh; width: 100vw; }
+      body { display: flex; flex-direction: column; }
+      * { box-sizing: border-box; }
+      iframe { background-color: transparent; border: 0px none transparent; padding: 0px; overflow: hidden; flex-grow: 1; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <script>
+      /**
+       * ChatGPT Apps Sandbox Proxy - Double-iframe architecture for ChatGPT parity
+       * Inspector Host -> This Proxy (different origin) -> Widget (srcdoc)
+       */
+
+      const ALLOWED_SANDBOX_TOKENS = ["allow-scripts", "allow-same-origin", "allow-forms", "allow-popups", "allow-popups-to-escape-sandbox"];
+      const DEFAULT_SANDBOX = ALLOWED_SANDBOX_TOKENS.join(" ");
+
+      function sanitizeDomain(domain) {
+        if (typeof domain !== "string") return "";
+        return domain.replace(/['"<>;]/g, "").trim();
+      }
+
+      function buildCSP(csp) {
+        if (!csp) {
+          return [
+            "default-src 'none'", "script-src 'unsafe-inline'", "style-src 'unsafe-inline'",
+            "img-src data: blob: https:", "media-src data: blob: https:", "font-src data: https:",
+            "connect-src 'none'", "frame-src 'none'", "object-src 'none'",
+          ].join("; ");
+        }
+
+        const connectDomains = (csp.connectDomains || []).map(sanitizeDomain).filter(Boolean);
+        const resourceDomains = (csp.resourceDomains || []).map(sanitizeDomain).filter(Boolean);
+        const connectSrc = connectDomains.length > 0 ? connectDomains.join(" ") : "'none'";
+        const scriptStyleSrc = resourceDomains.length > 0 ? ["data:", "blob:", ...resourceDomains].join(" ") : "data: blob:";
+        const mediaSrc = resourceDomains.length > 0 ? ["data:", "blob:", "https:", ...resourceDomains].join(" ") : "data: blob: https:";
+
+        return [
+          "default-src 'none'", "script-src 'unsafe-inline' " + scriptStyleSrc, "style-src 'unsafe-inline' " + scriptStyleSrc,
+          "img-src " + mediaSrc, "media-src " + mediaSrc, "font-src " + mediaSrc,
+          "connect-src " + connectSrc, "frame-src 'none'", "object-src 'none'",
+        ].join("; ");
+      }
+
+      function injectCSP(html, cspValue) {
+        const cspMeta = '<meta http-equiv="Content-Security-Policy" content="' + cspValue + '">';
+        if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, "$&" + cspMeta);
+        if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, "$&<head>" + cspMeta + "</head>");
+        if (/<!DOCTYPE[^>]*>/i.test(html)) return html.replace(/<!DOCTYPE[^>]*>/i, "$&<head>" + cspMeta + "</head>");
+        return "<head>" + cspMeta + "</head>" + html;
+      }
+
+      function validateSandbox(sandbox) {
+        if (typeof sandbox !== "string") return DEFAULT_SANDBOX;
+        const tokens = sandbox.split(/\s+/).filter(Boolean);
+        return tokens.every((t) => ALLOWED_SANDBOX_TOKENS.includes(t)) ? sandbox : DEFAULT_SANDBOX;
+      }
+
+      const inner = document.createElement("iframe");
+      inner.style.cssText = "width:100%; height:100%; border:none;";
+      inner.setAttribute("sandbox", DEFAULT_SANDBOX);
+      document.body.appendChild(inner);
+
+      document.addEventListener("securitypolicyviolation", (e) => {
+        window.parent.postMessage({
+          type: "openai:csp-violation",
+          directive: e.violatedDirective,
+          blockedUri: e.blockedURI,
+          sourceFile: e.sourceFile,
+          lineNumber: e.lineNumber,
+          columnNumber: e.columnNumber,
+        }, "*");
+      });
+
+      let widgetLoaded = false;
+
+      window.addEventListener("message", (event) => {
+        if (event.source === window.parent) {
+          if (event.data?.type === "openai:load-widget") {
+            const { html, sandbox, csp } = event.data;
+            inner.setAttribute("sandbox", validateSandbox(sandbox));
+            if (typeof html === "string") {
+              inner.srcdoc = injectCSP(html, buildCSP(csp));
+              widgetLoaded = true;
+            }
+          } else if (widgetLoaded && inner.contentWindow) {
+            inner.contentWindow.postMessage(event.data, "*");
+          }
+        } else if (event.source === inner.contentWindow) {
+          window.parent.postMessage(event.data, "*");
+        }
+      });
+
+      window.parent.postMessage({ type: "openai:sandbox-ready" }, "*");
+    </script>
+  </body>
+</html>
