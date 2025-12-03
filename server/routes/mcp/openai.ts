@@ -1,7 +1,14 @@
 import { Hono } from "hono";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import "../../types/hono"; // Type extensions
 
 const openai = new Hono();
+
+// Get directory for static files
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // In-memory storage for widget data (TTL: 1 hour)
 interface WidgetData {
@@ -81,6 +88,436 @@ openai.post("/widget/store", async (c) => {
         error: error instanceof Error ? error.message : "Unknown error",
       },
       500,
+    );
+  }
+});
+
+// Serve the OpenAI sandbox proxy with security headers
+openai.get("/sandbox-proxy", (c) => {
+  const html = readFileSync(
+    join(__dirname, "openai-sandbox-proxy.html"),
+    "utf-8"
+  );
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "public, max-age=3600");
+  // Security: Prevent embedding by malicious sites
+  c.header("Content-Security-Policy", "frame-ancestors 'self'");
+  c.header("X-Frame-Options", "SAMEORIGIN");
+  return c.body(html);
+});
+
+// Default CDNs for widgets that don't declare CSP
+const defaultResourceDomains = [
+  "https://unpkg.com",
+  "https://cdn.jsdelivr.net",
+  "https://cdnjs.cloudflare.com",
+  "https://cdn.tailwindcss.com",
+];
+
+// In development, allow broader access for widget dev servers
+const isDev = process.env.NODE_ENV !== "production";
+const devResourceDomains = isDev
+  ? [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:5173",
+      "ws://localhost:3000",
+      "ws://localhost:5173",
+    ]
+  : [];
+
+// In dev, allow https: for API calls (widgets often call external APIs)
+// In production, widgets should declare their domains in openai/widgetCSP
+const devConnectDomains = isDev ? ["https:", "wss:", "ws:"] : [];
+
+// New endpoint: Returns widget HTML + CSP as JSON for double-iframe architecture
+openai.get("/widget-html/:toolId", async (c) => {
+  try {
+    const toolId = c.req.param("toolId");
+
+    // Retrieve widget data from storage
+    const widgetData = widgetDataStore.get(toolId);
+    if (!widgetData) {
+      return c.json({ error: "Widget data not found or expired" }, 404);
+    }
+
+    const {
+      serverId,
+      uri,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata,
+      toolName,
+      theme,
+    } = widgetData;
+
+    const mcpClientManager = c.mcpClientManager;
+    const availableServers = mcpClientManager
+      .listServers()
+      .filter((id) => Boolean(mcpClientManager.getClient(id)));
+
+    let actualServerId = serverId;
+    if (!availableServers.includes(serverId)) {
+      const match = availableServers.find(
+        (name) => name.toLowerCase() === serverId.toLowerCase()
+      );
+      if (match) {
+        actualServerId = match;
+      } else {
+        return c.json(
+          {
+            error: `Server not connected. Requested: ${serverId}, Available: ${availableServers.join(", ")}`,
+          },
+          404
+        );
+      }
+    }
+
+    // Read the widget HTML from MCP server
+    const content = await mcpClientManager.readResource(actualServerId, {
+      uri,
+    });
+
+    let htmlContent = "";
+    const contentsArray = Array.isArray(content?.contents)
+      ? content.contents
+      : [];
+
+    const firstContent = contentsArray[0];
+    if (firstContent) {
+      if (typeof (firstContent as { text?: unknown }).text === "string") {
+        htmlContent = (firstContent as { text: string }).text;
+      } else if (
+        typeof (firstContent as { blob?: unknown }).blob === "string"
+      ) {
+        htmlContent = (firstContent as { blob: string }).blob;
+      }
+    }
+
+    if (!htmlContent && content && typeof content === "object") {
+      const recordContent = content as Record<string, unknown>;
+      if (typeof recordContent.text === "string") {
+        htmlContent = recordContent.text;
+      } else if (typeof recordContent.blob === "string") {
+        htmlContent = recordContent.blob;
+      }
+    }
+
+    if (!htmlContent) {
+      return c.json({ error: "No HTML content found" }, 404);
+    }
+
+    // Extract CSP from resource metadata
+    const resourceMeta = (firstContent as { _meta?: Record<string, unknown> })
+      ?._meta;
+    const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
+      | {
+          connect_domains?: string[];
+          resource_domains?: string[];
+        }
+      | undefined;
+
+    // Build CSP config (snake_case from metadata -> camelCase for JS)
+    // In dev mode, add localhost ports for widget dev servers (Vite HMR, etc.)
+    // and allow https:/wss: for API calls
+    const baseResourceDomains = widgetCspRaw?.resource_domains || defaultResourceDomains;
+    const csp = widgetCspRaw
+      ? {
+          connectDomains: [...(widgetCspRaw.connect_domains || []), ...devResourceDomains, ...devConnectDomains],
+          resourceDomains: [...baseResourceDomains, ...devResourceDomains],
+        }
+      : {
+          connectDomains: [...devResourceDomains, ...devConnectDomains],
+          resourceDomains: [...defaultResourceDomains, ...devResourceDomains],
+        };
+
+    const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
+
+    // OpenAI Apps SDK bridge script with full API
+    const apiScript = `
+      <script>
+        (function() {
+          'use strict';
+
+          const openaiAPI = {
+            toolInput: ${serializeForInlineScript(toolInput)},
+            toolOutput: ${serializeForInlineScript(toolOutput)},
+            toolResponseMetadata: ${serializeForInlineScript(toolResponseMetadata)},
+            displayMode: 'inline',
+            theme: ${JSON.stringify(theme ?? "dark")},
+            locale: navigator.language || 'en-US',
+            maxHeight: null,
+            safeArea: { top: 0, right: 0, bottom: 0, left: 0 },
+            userAgent: navigator.userAgent,
+            widgetState: null,
+            _pendingCalls: new Map(),
+            _callId: 0,
+
+            setWidgetState(state) {
+              this.widgetState = state;
+              try {
+                localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(state));
+              } catch (err) {}
+              window.parent.postMessage({
+                type: 'openai:setWidgetState',
+                toolId: ${JSON.stringify(toolId)},
+                state
+              }, '*');
+            },
+
+            callTool(toolName, args = {}) {
+              const callId = ++this._callId;
+              return new Promise((resolve, reject) => {
+                this._pendingCalls.set(callId, { resolve, reject });
+                window.parent.postMessage({
+                  type: 'openai:callTool',
+                  toolName,
+                  args,
+                  callId,
+                  toolId: ${JSON.stringify(toolId)}
+                }, '*');
+                setTimeout(() => {
+                  if (this._pendingCalls.has(callId)) {
+                    this._pendingCalls.delete(callId);
+                    reject(new Error('Tool call timeout'));
+                  }
+                }, 30000);
+              });
+            },
+
+            sendFollowUpMessage(opts) {
+              const prompt = typeof opts === 'string' ? opts : (opts?.prompt || '');
+              window.parent.postMessage({
+                type: 'openai:sendFollowup',
+                message: prompt,
+                toolId: ${JSON.stringify(toolId)}
+              }, '*');
+            },
+
+            // Alias for compatibility
+            sendFollowupTurn(message) {
+              const prompt = typeof message === 'string' ? message : (message?.prompt || '');
+              return this.sendFollowUpMessage(prompt);
+            },
+
+            requestDisplayMode(options = {}) {
+              const mode = options.mode || 'inline';
+              this.displayMode = mode;
+              window.parent.postMessage({
+                type: 'openai:requestDisplayMode',
+                mode,
+                maxHeight: options.maxHeight,
+                toolId: ${JSON.stringify(toolId)}
+              }, '*');
+              return { mode };
+            },
+
+            requestClose() {
+              window.parent.postMessage({
+                type: 'openai:requestClose',
+                toolId: ${JSON.stringify(toolId)}
+              }, '*');
+            },
+
+            openExternal(options) {
+              const href = typeof options === 'string' ? options : options?.href;
+              if (!href) {
+                throw new Error('href is required for openExternal');
+              }
+              window.parent.postMessage({
+                type: 'openai:openExternal',
+                href
+              }, '*');
+              window.open(href, '_blank', 'noopener,noreferrer');
+            },
+
+            requestModal(options) {
+              window.parent.postMessage({
+                type: 'openai:requestModal',
+                title: options.title,
+                params: options.params,
+                anchor: options.anchor
+              }, '*');
+            }
+          };
+
+          // Define window.openai
+          Object.defineProperty(window, 'openai', {
+            value: openaiAPI,
+            writable: false,
+            configurable: false,
+            enumerable: true
+          });
+
+          // Define window.webplus (alias)
+          Object.defineProperty(window, 'webplus', {
+            value: openaiAPI,
+            writable: false,
+            configurable: false,
+            enumerable: true
+          });
+
+          // Dispatch initial globals event
+          setTimeout(() => {
+            try {
+              const globalsEvent = new CustomEvent('openai:set_globals', {
+                detail: {
+                  globals: {
+                    displayMode: openaiAPI.displayMode,
+                    maxHeight: openaiAPI.maxHeight,
+                    theme: openaiAPI.theme,
+                    locale: openaiAPI.locale,
+                    safeArea: openaiAPI.safeArea,
+                    userAgent: openaiAPI.userAgent
+                  }
+                }
+              });
+              window.dispatchEvent(globalsEvent);
+            } catch (err) {
+              console.error('[OpenAI Widget] Failed to dispatch globals event:', err);
+            }
+          }, 0);
+
+          // Restore widget state from localStorage
+          setTimeout(() => {
+            try {
+              const stored = localStorage.getItem(${JSON.stringify(widgetStateKey)});
+              if (stored && window.openai) {
+                window.openai.widgetState = JSON.parse(stored);
+              }
+            } catch (err) {
+              console.error('[OpenAI Widget] Failed to restore widget state:', err);
+            }
+          }, 0);
+
+          // Listen for messages from host
+          window.addEventListener('message', (event) => {
+            const { type, callId, result, error, globals } = event.data || {};
+
+            switch (type) {
+              case 'openai:callTool:response': {
+                const pending = window.openai._pendingCalls.get(callId);
+                if (pending) {
+                  window.openai._pendingCalls.delete(callId);
+                  if (error) {
+                    pending.reject(new Error(error));
+                  } else {
+                    pending.resolve(result);
+                  }
+                }
+                break;
+              }
+
+              case 'openai:set_globals': {
+                if (globals) {
+                  if (globals.displayMode !== undefined) window.openai.displayMode = globals.displayMode;
+                  if (globals.maxHeight !== undefined) window.openai.maxHeight = globals.maxHeight;
+                  if (globals.safeArea !== undefined) window.openai.safeArea = globals.safeArea;
+                  if (globals.theme !== undefined) window.openai.theme = globals.theme;
+                  if (globals.locale !== undefined) window.openai.locale = globals.locale;
+                  if (globals.userAgent !== undefined) window.openai.userAgent = globals.userAgent;
+                }
+                // Dispatch custom event for React hooks
+                try {
+                  window.dispatchEvent(new CustomEvent('openai:set_globals', { detail: { globals } }));
+                } catch (err) {}
+                break;
+              }
+
+              case 'openai:pushWidgetState': {
+                if (event.data.toolId === ${JSON.stringify(toolId)}) {
+                  try {
+                    const nextState = event.data.state ?? null;
+                    window.openai.widgetState = nextState;
+                    try {
+                      localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(nextState));
+                    } catch (err) {}
+                    window.dispatchEvent(new CustomEvent('openai:widget_state', {
+                      detail: { state: nextState }
+                    }));
+                  } catch (err) {
+                    console.error('[OpenAI Widget] Failed to apply pushed widget state:', err);
+                  }
+                }
+                break;
+              }
+            }
+          });
+
+          // Forward resize requests to parent
+          window.addEventListener('openai:resize', (event) => {
+            try {
+              let detail = {};
+              if (event && typeof event === 'object' && 'detail' in event) {
+                detail = event.detail || {};
+              }
+              const height = typeof detail?.height === 'number'
+                ? detail.height
+                : typeof detail?.size?.height === 'number'
+                  ? detail.size.height
+                  : null;
+
+              if (height && Number.isFinite(height)) {
+                window.parent.postMessage({
+                  type: 'openai:resize',
+                  height
+                }, '*');
+              }
+            } catch (err) {
+              console.error('[OpenAI Widget] Failed to forward resize event:', err);
+            }
+          });
+        })();
+      </script>
+    `;
+
+    // Inject the bridge script into the HTML
+    // Note: No <base> tag - CSP has base-uri 'none' for security
+    // Widgets should use absolute URLs or rely on their bundled assets
+    let modifiedHtml;
+    if (htmlContent.includes("<html>") && htmlContent.includes("<head>")) {
+      modifiedHtml = htmlContent.replace("<head>", `<head>${apiScript}`);
+    } else {
+      modifiedHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  ${apiScript}
+</head>
+<body>
+  ${htmlContent}
+</body>
+</html>`;
+    }
+
+    // Extract other metadata fields
+    const widgetDescription = resourceMeta?.["openai/widgetDescription"] as
+      | string
+      | undefined;
+    const prefersBorder =
+      (resourceMeta?.["openai/widgetPrefersBorder"] as boolean | undefined) ??
+      true;
+    const closeWidget =
+      (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ?? false;
+
+    c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+
+    return c.json({
+      html: modifiedHtml,
+      csp,
+      widgetDescription,
+      prefersBorder,
+      closeWidget,
+    });
+  } catch (error) {
+    console.error("Error serving widget HTML:", error);
+    return c.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      500
     );
   }
 });
@@ -334,6 +771,13 @@ openai.get("/widget-content/:toolId", async (c) => {
                 title: options.title,
                 params: options.params,
                 anchor: options.anchor
+              }, '*');
+            },
+
+            requestClose() {
+              window.parent.postMessage({
+                type: 'openai:requestClose',
+                toolId: ${JSON.stringify(toolId)}
               }, '*');
             }
           };
