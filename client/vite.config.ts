@@ -60,6 +60,9 @@ export default defineConfig({
     force: process.env.FORCE_OPTIMIZE === "true",
   },
   server: {
+    // Listen on all interfaces so both localhost and 127.0.0.1 work
+    // Required for SEP-1865 different-origin sandbox proxy
+    host: true,
     proxy: {
       "/api": {
         target: "http://localhost:6274",
