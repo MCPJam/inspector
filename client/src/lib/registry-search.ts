@@ -41,65 +41,6 @@ export function createRegistrySearch(servers: RegistryServer[]) {
 }
 
 /**
- * Search registry servers with optional filters
- */
-export function searchRegistryServers(
-  servers: RegistryServer[],
-  query: string,
-  filters?: {
-    official?: boolean;
-    hasRemote?: boolean;
-    packageType?: string;
-    status?: string;
-  },
-): RegistryServer[] {
-  let results = servers;
-
-  // Apply filters first
-  if (filters) {
-    results = results.filter((server) => {
-      if (
-        filters.official !== undefined &&
-        server._meta?.official !== filters.official
-      ) {
-        return false;
-      }
-      if (filters.hasRemote !== undefined) {
-        const hasRemote = server.remotes && server.remotes.length > 0;
-        if (hasRemote !== filters.hasRemote) {
-          return false;
-        }
-      }
-      if (filters.packageType) {
-        const hasPackageType = server.packages?.some(
-          (pkg) => pkg.registryType === filters.packageType,
-        );
-        if (!hasPackageType) {
-          return false;
-        }
-      }
-      if (filters.status && server.status !== filters.status) {
-        return false;
-      }
-      return true;
-    });
-  }
-
-  // If no query, return filtered results sorted alphabetically
-  if (!query.trim()) {
-    return results.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  }
-
-  // Perform fuzzy search on filtered results
-  const fuse = new Fuse(results, fuseOptions);
-  const searchResults = fuse.search(query);
-
-  // Extract items from search results (sorted by relevance score)
-  // Fuse.js returns results sorted by score (best matches first)
-  return searchResults.map((result) => result.item);
-}
-
-/**
  * Parse search query for special operators
  * Examples:
  *   "openai" -> { query: "openai" }

@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { LogEntry } from "@/hooks/use-logger";
-import { formatDate } from "@/lib/date-utils";
+import { formatDate } from "@/lib/utils";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";

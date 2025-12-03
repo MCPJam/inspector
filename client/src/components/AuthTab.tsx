@@ -14,15 +14,15 @@ import {
   getStoredTokens,
   clearOAuthData,
   MCPOAuthOptions,
-} from "../lib/mcp-oauth";
-import { DebugMCPOAuthClientProvider } from "../lib/debug-oauth-provider";
+} from "../lib/oauth/mcp-oauth";
+import { DebugMCPOAuthClientProvider } from "../lib/oauth/debug-oauth-provider";
 import { ServerWithName } from "../hooks/use-app-state";
 import {
   OAuthFlowState,
   EMPTY_OAUTH_FLOW_STATE,
-} from "../lib/oauth-flow-types";
+} from "../lib/types/oauth-flow-types";
 import { OAuthFlowProgressSimple } from "./oauth/OAuthFlowProgressSimple";
-import { OAuthStateMachine } from "../lib/oauth-state-machine";
+import { OAuthStateMachine } from "../lib/oauth/oauth-state-machine";
 import { MCPServerConfig } from "@/sdk";
 
 interface StatusMessageProps {

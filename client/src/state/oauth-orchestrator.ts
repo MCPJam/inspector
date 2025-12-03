@@ -5,7 +5,7 @@ import {
   initiateOAuth,
   refreshOAuthTokens,
   MCPOAuthOptions,
-} from "@/lib/mcp-oauth";
+} from "@/lib/oauth/mcp-oauth";
 import { ServerWithName } from "./app-types";
 
 export type OAuthReady = {

@@ -1,4 +1,4 @@
-import { OAuthStep, OAuthFlowState } from "./oauth-flow-types";
+import { OAuthStep, OAuthFlowState } from "../types/oauth-flow-types";
 import {
   discoverOAuthMetadata,
   registerClient,

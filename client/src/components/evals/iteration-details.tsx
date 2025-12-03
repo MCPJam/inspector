@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import { MessageSquare, Code2, ChevronDown, ChevronRight } from "lucide-react";
-import { ToolServerMap, listTools } from "@/lib/mcp-tools-api";
+import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";

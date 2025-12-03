@@ -7,7 +7,7 @@ import { SearchInput } from "../ui/search-input";
 import { ResizablePanel } from "../ui/resizable";
 import { ToolItem } from "./ToolItem";
 import { SavedRequestItem } from "./SavedRequestItem";
-import type { SavedRequest } from "@/lib/request-types";
+import type { SavedRequest } from "@/lib/types/request-types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 interface ToolsSidebarProps {

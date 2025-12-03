@@ -10,7 +10,7 @@ import {
 import { useState } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogo } from "@/lib/provider-logos";
-import { ToolServerMap, getToolServerId } from "@/lib/mcp-tools-api";
+import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
 import { OpenAIAppRenderer } from "@/components/chat-v2/openai-app-renderer";
 
 interface ContentPart {

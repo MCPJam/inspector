@@ -13,7 +13,7 @@ import {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { registerClient } from "@modelcontextprotocol/sdk/client/auth.js";
 import { MCPJAM_CLIENT_ID, getRedirectUri } from "./constants";
-import type { DebugMCPOAuthClientProvider } from "../debug-oauth-provider";
+import type { DebugMCPOAuthClientProvider } from "./debug-oauth-provider";
 
 export type RegistrationMethod =
   | "client_id_metadata"
