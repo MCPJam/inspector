@@ -1,6 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { ChatMessage } from "./chat-types";
+import { ChatMessage } from "./types/chat-types";
 import { ModelDefinition } from "@/shared/types.js";
 import { getDefaultTemperatureByProvider } from "@/shared/chat-utils.js";
 

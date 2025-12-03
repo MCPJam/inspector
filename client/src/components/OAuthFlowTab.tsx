@@ -5,7 +5,7 @@ import {
   type OAuthFlowStep,
 } from "@/lib/oauth/state-machines/types";
 import { createOAuthStateMachine } from "@/lib/oauth/state-machines/factory";
-import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
+import { DebugMCPOAuthClientProvider } from "@/lib/oauth/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import {

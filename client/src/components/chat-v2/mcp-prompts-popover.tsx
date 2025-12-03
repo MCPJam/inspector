@@ -20,7 +20,7 @@ import {
   listPromptsForServers,
   getPrompt,
   PromptContentResponse,
-} from "@/lib/mcp-prompts-api";
+} from "@/lib/apis/mcp-prompts-api";
 
 export interface MCPPromptResult extends PromptListItem {
   result: PromptContentResponse;

@@ -40,14 +40,14 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { getToolsMetadata, ToolServerMap } from "@/lib/mcp-tools-api";
+import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
-import { countTextTokens } from "@/lib/mcp-tokenizer-api";
+import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
 import {
