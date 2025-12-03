@@ -21,7 +21,6 @@ import {
   Check,
   Edit,
   ExternalLink,
-  Link,
   Cable,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -38,6 +37,7 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { ServerInfoModal } from "./ServerInfoModal";
+import { isMCPApp, isOpenAIApp } from "@/lib/mcp-ui/mcp-apps-utils";
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
@@ -99,18 +99,10 @@ export function ServerConnectionCard({
       serverTitle);
 
   // Check if this is an MCP App (has tools with ui/resourceUri metadata)
-  const isMCPApp =
-    toolsData?.toolsMetadata &&
-    Object.values(toolsData.toolsMetadata).some(
-      (meta: any) => meta?.["ui/resourceUri"],
-    );
+  const isMCPAppServer = isMCPApp(toolsData);
 
   // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
-  const isOpenAIApp =
-    toolsData?.toolsMetadata &&
-    Object.values(toolsData.toolsMetadata).some(
-      (meta: any) => meta?.["openai/outputTemplate"],
-    );
+  const isOpenAIAppServer = isOpenAIApp(toolsData);
 
   // Compute the server-specific tunnel URL from the shared tunnel
   // Only show tunnel URL if server is connected
@@ -401,7 +393,7 @@ export function ServerConnectionCard({
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
                   <span>{"View server info"}</span>
-                  {isMCPApp && (
+                  {isMCPAppServer && (
                     <img
                       src="/mcp.svg"
                       alt="MCP App"
@@ -409,7 +401,7 @@ export function ServerConnectionCard({
                       title="MCP App"
                     />
                   )}
-                  {isOpenAIApp && !isMCPApp && (
+                  {isOpenAIAppServer && !isMCPAppServer && (
                     <img
                       src="/openai_logo.png"
                       alt="OpenAI App"

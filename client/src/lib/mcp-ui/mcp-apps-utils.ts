@@ -1,38 +1,24 @@
-/**
- * MCP Apps (SEP-1865) Detection Utilities
- *
- * This module provides helper functions for detecting and routing to the correct
- * UI renderer based on tool metadata and result content.
- *
- * Detection Priority:
- * 1. MCP Apps (SEP-1865): ui/resourceUri in tool metadata
- * 2. OpenAI Apps SDK: openai/outputTemplate in tool metadata
- * 3. MCP-UI: inline ui:// resource in tool result
- */
-
 import { isUIResource } from "@mcp-ui/client";
+import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 
-export type UIType = "mcp-apps" | "openai-sdk" | "mcp-ui" | null;
+export enum UIType {
+  MCP_APPS = "mcp-apps",
+  OPENAI_SDK = "openai-sdk",
+  MCP_UI = "mcp-ui",
+}
 
-/**
- * Detects which UI renderer to use based on tool metadata and result content.
- *
- * @param toolMeta - Tool metadata from tools/list
- * @param toolResult - Tool execution result
- * @returns UIType indicating which renderer to use
- */
 export function detectUIType(
   toolMeta: Record<string, unknown> | undefined,
   toolResult: unknown,
-): UIType {
+): UIType | null {
   // 1. MCP Apps (SEP-1865): Check for ui/resourceUri metadata
   if (toolMeta?.["ui/resourceUri"]) {
-    return "mcp-apps";
+    return UIType.MCP_APPS;
   }
 
   // 2. OpenAI SDK: Check for openai/outputTemplate metadata
   if (toolMeta?.["openai/outputTemplate"]) {
-    return "openai-sdk";
+    return UIType.OPENAI_SDK;
   }
 
   // 3. MCP-UI: Check for inline ui:// resource in result
@@ -41,7 +27,7 @@ export function detectUIType(
     for (const item of content) {
       // isUIResource is a type guard, cast to any for runtime type check
       if (isUIResource(item as any)) {
-        return "mcp-ui";
+        return UIType.MCP_UI;
       }
       // Also check nested resource
       if (
@@ -52,43 +38,49 @@ export function detectUIType(
           "ui://",
         )
       ) {
-        return "mcp-ui";
+        return UIType.MCP_UI;
       }
     }
   }
-
   return null;
 }
 
-/**
- * Extract the UI resource URI from tool metadata based on UI type.
- *
- * @param uiType - The detected UI type
- * @param toolMeta - Tool metadata
- * @returns Resource URI or null
- */
 export function getUIResourceUri(
-  uiType: UIType,
+  uiType: UIType | null,
   toolMeta: Record<string, unknown> | undefined,
 ): string | null {
   switch (uiType) {
-    case "mcp-apps":
+    case UIType.MCP_APPS:
       return (toolMeta?.["ui/resourceUri"] as string) ?? null;
-    case "openai-sdk":
+    case UIType.OPENAI_SDK:
       return (toolMeta?.["openai/outputTemplate"] as string) ?? null;
     default:
       return null;
   }
 }
 
-/**
- * Check if a tool has MCP Apps UI support
- *
- * @param toolMeta - Tool metadata
- * @returns true if tool has ui/resourceUri metadata
- */
-export function isMCPAppsEnabled(
-  toolMeta: Record<string, unknown> | undefined,
+export function isMCPApp(
+  toolsData?: ListToolsResultWithMetadata | null,
 ): boolean {
-  return !!toolMeta?.["ui/resourceUri"];
+  const metadata = toolsData?.toolsMetadata;
+  if (!metadata) return false;
+
+  return Object.values(metadata).some(
+    (meta) =>
+      (meta as Record<string, unknown> | undefined)?.["ui/resourceUri"] != null,
+  );
+}
+
+export function isOpenAIApp(
+  toolsData?: ListToolsResultWithMetadata | null,
+): boolean {
+  const metadata = toolsData?.toolsMetadata;
+  if (!metadata) return false;
+
+  return Object.values(metadata).some(
+    (meta) =>
+      (meta as Record<string, unknown> | undefined)?.[
+        "openai/outputTemplate"
+      ] != null,
+  );
 }
