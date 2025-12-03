@@ -82,7 +82,8 @@
             "connect-src 'none'",
             "frame-src 'none'",
             "object-src 'none'",
-            "base-uri 'none'",
+            // Allow any base-uri - widgets need this to set their origin for URL resolution
+            // This is safe in the sandboxed srcdoc context
           ].join("; ");
         }
 
@@ -121,12 +122,14 @@
           "connect-src " + connectSrc,
           "frame-src 'none'",
           "object-src 'none'",
-          "base-uri 'none'",
+          // No base-uri restriction - widgets need this for URL resolution
         ].join("; ");
       }
 
       /**
        * Inject CSP meta tag into HTML
+       * Note: Base tag is now injected by the server (openai.ts) before the HTML reaches here
+       * We only inject CSP meta tag after the opening head tag
        * @param {string} html - Original HTML content
        * @param {string} cspValue - CSP policy string
        * @returns {string} HTML with CSP meta tag injected
@@ -137,21 +140,19 @@
           cspValue +
           '">';
 
-        if (html.includes("<head>")) {
-          return html.replace("<head>", "<head>" + cspMeta);
-        } else if (html.includes("<HEAD>")) {
-          return html.replace("<HEAD>", "<HEAD>" + cspMeta);
-        } else if (html.includes("<html>")) {
-          return html.replace("<html>", "<html><head>" + cspMeta + "</head>");
-        } else if (html.includes("<HTML>")) {
-          return html.replace("<HTML>", "<HTML><head>" + cspMeta + "</head>");
-        } else if (html.includes("<!DOCTYPE") || html.includes("<!doctype")) {
+        // Match <head> with any attributes (e.g., <head>, <head class="...">)
+        const headRegex = /<head[^>]*>/i;
+        if (headRegex.test(html)) {
+          return html.replace(headRegex, "$&" + cspMeta);
+        } else if (/<html[^>]*>/i.test(html)) {
+          return html.replace(/<html[^>]*>/i, "$&<head>" + cspMeta + "</head>");
+        } else if (/<!DOCTYPE[^>]*>/i.test(html)) {
           return html.replace(
-            /(<!DOCTYPE[^>]*>|<!doctype[^>]*>)/i,
-            "$1<head>" + cspMeta + "</head>"
+            /<!DOCTYPE[^>]*>/i,
+            "$&<head>" + cspMeta + "</head>"
           );
         } else {
-          return cspMeta + html;
+          return "<head>" + cspMeta + "</head>" + html;
         }
       }
 
