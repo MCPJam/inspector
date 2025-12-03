@@ -20,41 +20,192 @@ interface ChatGPTSandboxedIframeProps {
   title?: string;
 }
 
+/**
+ * Triple-iframe architecture matching ChatGPT's actual implementation:
+ *
+ * Host (React component)
+ * └── Outer iframe (src="about:blank", sandbox with popups) - "jail" container
+ *     ├── Middle iframe (sandbox-proxy.html, sandbox without popups) - message relay
+ *     │   └── Inner iframe (srcdoc with widget) - actual widget content
+ *     └── Measurement iframe (hidden, for layout calculations)
+ *
+ * Message flow: Host <-> Outer <-> Middle <-> Inner
+ */
 export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, ChatGPTSandboxedIframeProps>(
-  function ChatGPTSandboxedIframe({ html, sandbox = "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox", csp, onReady, onMessage, className, style, title = "ChatGPT App Widget" }, ref) {
-    const iframeRef = useRef<HTMLIFrameElement>(null);
+  function ChatGPTSandboxedIframe({
+    html,
+    sandbox = "allow-scripts allow-same-origin allow-forms",
+    csp,
+    onReady,
+    onMessage,
+    className,
+    style,
+    title = "ChatGPT App Widget"
+  }, ref) {
+    const outerIframeRef = useRef<HTMLIFrameElement>(null);
+    const middleIframeRef = useRef<HTMLIFrameElement | null>(null);
+    const [outerReady, setOuterReady] = useState(false);
     const [proxyReady, setProxyReady] = useState(false);
     const htmlSentRef = useRef(false);
 
+    // Build the sandbox proxy URL
+    const sandboxProxyUrl = useRef(() => {
+      const version = import.meta.env.PROD ? import.meta.env.VITE_BUILD_HASH || "v1" : Date.now();
+      return `/api/mcp/openai/sandbox-proxy?v=${version}`;
+    }).current();
+
+    // Expose postMessage to parent - routes through outer -> middle -> inner
     useImperativeHandle(ref, () => ({
-      postMessage: (data: unknown) => iframeRef.current?.contentWindow?.postMessage(data, "*"),
+      postMessage: (data: unknown) => {
+        // Post to outer iframe, which forwards to middle
+        outerIframeRef.current?.contentWindow?.postMessage(data, "*");
+      },
     }), []);
 
+    // Handle messages from the iframe chain
     const handleMessage = useCallback((event: MessageEvent) => {
-      if (event.source !== iframeRef.current?.contentWindow) return;
-      if (event.data?.type === "openai:sandbox-ready") { setProxyReady(true); return; }
+      // Debug logging for openai messages
+      if (event.data?.type?.startsWith?.("openai:")) {
+        console.log("[ChatGPTSandboxedIframe] Message received:", event.data?.type,
+          "source:", event.source === outerIframeRef.current?.contentWindow ? "outer" :
+                    event.source === middleIframeRef.current?.contentWindow ? "middle" : "unknown");
+      }
+
+      // Accept messages from outer iframe (which relays from middle)
+      if (event.source !== outerIframeRef.current?.contentWindow) return;
+
+      // Handle proxy ready signal
+      if (event.data?.type === "openai:sandbox-ready") {
+        console.log("[ChatGPTSandboxedIframe] Proxy ready signal received");
+        setProxyReady(true);
+        return;
+      }
+
+      // Forward all other messages to the handler
+      console.log("[ChatGPTSandboxedIframe] Forwarding to onMessage:", event.data?.type);
       onMessage(event);
     }, [onMessage]);
 
+    // Set up message listener
     useEffect(() => {
       window.addEventListener("message", handleMessage);
       return () => window.removeEventListener("message", handleMessage);
     }, [handleMessage]);
 
+    // Initialize outer iframe with middle iframe when it loads
+    useEffect(() => {
+      const outerIframe = outerIframeRef.current;
+      if (!outerIframe || outerReady) return;
+
+      const handleOuterLoad = () => {
+        const outerDoc = outerIframe.contentDocument;
+        if (!outerDoc) {
+          console.error("[ChatGPTSandboxedIframe] Cannot access outer iframe contentDocument");
+          return;
+        }
+
+        // Guard against React StrictMode double-invoke - check actual DOM state
+        if (outerDoc.getElementById("middle")) {
+          console.log("[ChatGPTSandboxedIframe] Middle iframe already exists, skipping");
+          middleIframeRef.current = outerDoc.getElementById("middle") as HTMLIFrameElement;
+          setOuterReady(true);
+          return;
+        }
+
+        console.log("[ChatGPTSandboxedIframe] Outer iframe loaded, injecting middle iframe");
+
+        // Write the outer iframe's HTML content (contains middle iframe + relay script)
+        outerDoc.open();
+        outerDoc.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ChatGPT Sandbox Container</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
+    iframe { border: none; width: 100%; height: 100%; }
+    .measurement { z-index: -1; position: absolute; width: 100%; height: 100%; top: 0; left: 0; opacity: 0; }
+  </style>
+</head>
+<body>
+  <iframe
+    id="middle"
+    src="${sandboxProxyUrl}"
+    sandbox="allow-scripts allow-same-origin allow-forms"
+  ></iframe>
+  <iframe
+    id="measurement"
+    aria-hidden="true"
+    tabindex="-1"
+    class="measurement"
+  ></iframe>
+  <script>
+    // Message relay: Host <-> Middle iframe
+    const middle = document.getElementById("middle");
+
+    // Forward messages from host (parent) to middle iframe
+    window.addEventListener("message", (event) => {
+      if (event.source === window.parent) {
+        // Forward from host to middle
+        if (middle.contentWindow) {
+          middle.contentWindow.postMessage(event.data, "*");
+        }
+      } else if (event.source === middle.contentWindow) {
+        // Forward from middle to host
+        window.parent.postMessage(event.data, "*");
+      }
+    });
+  </script>
+</body>
+</html>`);
+        outerDoc.close();
+
+        // Store reference to middle iframe for debugging
+        middleIframeRef.current = outerDoc.getElementById("middle") as HTMLIFrameElement;
+        setOuterReady(true);
+      };
+
+      // For about:blank, it loads immediately
+      if (outerIframe.contentDocument?.readyState === "complete") {
+        handleOuterLoad();
+      } else {
+        outerIframe.addEventListener("load", handleOuterLoad);
+        return () => outerIframe.removeEventListener("load", handleOuterLoad);
+      }
+    }, [sandboxProxyUrl, outerReady]);
+
+    // Send widget HTML when proxy is ready
     useEffect(() => {
       if (!proxyReady || !html || htmlSentRef.current) return;
+
       htmlSentRef.current = true;
-      iframeRef.current?.contentWindow?.postMessage({ type: "openai:load-widget", html, sandbox, csp }, "*");
+      console.log("[ChatGPTSandboxedIframe] Sending widget HTML to proxy");
+
+      // Post to outer iframe, which relays to middle (proxy)
+      outerIframeRef.current?.contentWindow?.postMessage(
+        { type: "openai:load-widget", html, sandbox, csp },
+        "*"
+      );
+
       setTimeout(() => onReady?.(), 100);
     }, [proxyReady, html, sandbox, csp, onReady]);
 
-    useEffect(() => { htmlSentRef.current = false; }, [html]);
+    // Reset all state when html changes
+    useEffect(() => {
+      htmlSentRef.current = false;
+      setProxyReady(false);
+      setOuterReady(false);
+    }, [html]);
 
-    const [sandboxUrl] = useState(() => {
-      const version = import.meta.env.PROD ? import.meta.env.VITE_BUILD_HASH || "v1" : Date.now();
-      return `/api/mcp/openai/sandbox-proxy?v=${version}`;
-    });
-
-    return <iframe ref={iframeRef} src={sandboxUrl} sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" title={title} className={className} style={style} />;
+    return (
+      <iframe
+        ref={outerIframeRef}
+        src="about:blank"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
+        title={title}
+        className={className}
+        style={style}
+      />
+    );
   }
 );
