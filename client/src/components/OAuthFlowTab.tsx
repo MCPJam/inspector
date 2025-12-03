@@ -14,7 +14,7 @@ import {
   ResizablePanelGroup,
 } from "./ui/resizable";
 import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { OAuthProfileModal } from "./oauth/OAuthProfileModal";
 import { type OAuthTestProfile } from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";

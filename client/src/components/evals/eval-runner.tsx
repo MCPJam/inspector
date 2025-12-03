@@ -19,7 +19,7 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import posthog from "posthog-js";
 import {
   Tooltip,

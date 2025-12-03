@@ -7,7 +7,7 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { usePostHog } from "posthog-js/react";
 import type { FormField } from "@/lib/tool-form";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 interface ParametersPanelProps {
   selectedTool: string;

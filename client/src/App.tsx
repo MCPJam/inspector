@@ -27,7 +27,7 @@ import { AppStateProvider } from "./state/app-state-context";
 
 // Import global styles
 import "./index.css";
-import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "./lib/PosthogUtils";
 import {
   getInitialThemeMode,
   updateThemeMode,

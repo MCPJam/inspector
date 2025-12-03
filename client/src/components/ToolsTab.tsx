@@ -42,7 +42,7 @@ import {
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig } from "@/sdk";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 
 type ToolMap = Record<string, Tool>;
@@ -134,7 +134,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     title: string;
     description?: string;
   }>({ title: "" });
-
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
