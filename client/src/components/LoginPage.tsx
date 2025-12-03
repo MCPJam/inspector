@@ -4,7 +4,7 @@ import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useLoginPage } from "@/hooks/use-log-in-page";
 import { useEffect } from "react";
 

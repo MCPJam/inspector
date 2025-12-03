@@ -13,7 +13,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { CircleUser, LogOut, RefreshCw, Settings } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 export function AuthUpperArea() {
   const { isLoading } = useConvexAuth();
