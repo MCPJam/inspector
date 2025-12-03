@@ -9,9 +9,9 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
-import type { ListToolsResultWithMetadata } from "@/lib/mcp-tools-api";
-import { getStoredTokens } from "@/lib/mcp-oauth";
-import { decodeJWT } from "@/lib/jwt-decoder";
+import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
+import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import { decodeJWT } from "@/lib/oauth/jwt-decoder";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";

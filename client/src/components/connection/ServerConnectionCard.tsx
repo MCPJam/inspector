@@ -25,7 +25,7 @@ import {
   Cable,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { exportServerApi } from "@/lib/mcp-export-api";
+import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
@@ -36,7 +36,7 @@ import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import {
   listTools,
   type ListToolsResultWithMetadata,
-} from "@/lib/mcp-tools-api";
+} from "@/lib/apis/mcp-tools-api";
 import { ServerInfoModal } from "./ServerInfoModal";
 interface ServerConnectionCardProps {
   server: ServerWithName;

@@ -9,7 +9,7 @@
  * - No Client ID Metadata Documents support
  */
 
-import { decodeJWT, formatJWTTimestamp } from "../../jwt-decoder";
+import { decodeJWT, formatJWTTimestamp } from "../jwt-decoder";
 import { EMPTY_OAUTH_FLOW_STATE } from "./types";
 import type {
   OAuthFlowStep,

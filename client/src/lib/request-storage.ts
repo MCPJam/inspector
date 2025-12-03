@@ -1,4 +1,4 @@
-import { SavedRequest } from "./request-types";
+import { SavedRequest } from "./types/request-types";
 
 const STORAGE_PREFIX = "mcp-inspector.saved-requests";
 

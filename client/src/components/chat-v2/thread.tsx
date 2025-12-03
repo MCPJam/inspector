@@ -30,10 +30,14 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { OpenAIAppRenderer } from "./openai-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
-import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
+import {
+  callTool,
+  getToolServerId,
+  ToolServerMap,
+} from "@/lib/apis/mcp-tools-api";
 import { MemoizedMarkdown } from "./memomized-markdown";
 import { getProviderLogoFromModel } from "./chat-helpers";
-import { detectUIType } from "@/lib/mcp-apps-utils";
+import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";

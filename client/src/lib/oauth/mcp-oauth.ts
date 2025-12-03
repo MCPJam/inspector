@@ -121,7 +121,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   state(): string {
-    return `mcp-state-${this.serverName}`
+    return `mcp-state-${this.serverName}`;
   }
 
   get redirectUrl(): string {

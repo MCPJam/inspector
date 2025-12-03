@@ -1,6 +1,6 @@
 import { Button } from "../ui/button";
 import { Edit2, Copy, Trash2 } from "lucide-react";
-import type { SavedRequest } from "@/lib/request-types";
+import type { SavedRequest } from "@/lib/types/request-types";
 import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 interface SavedRequestItemProps {
