@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import {
   parseOAuthCallbackParams,
   generateOAuthErrorDescription,
-} from "@/utils/oauthUtils";
+} from "@/lib/oauth/oauthUtils";
 import { CheckCircle2, XCircle } from "lucide-react";
 
 export default function OAuthDebugCallback() {

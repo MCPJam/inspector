@@ -18,7 +18,7 @@ import {
 } from "../ui/select";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import { useServerForm } from "./hooks/use-server-form";
 import { AuthenticationSection } from "./shared/AuthenticationSection";

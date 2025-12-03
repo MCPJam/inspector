@@ -10,7 +10,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useEvalsRoute, navigateToEvalsRoute } from "@/lib/evals-router";
 import { useChat } from "@/hooks/use-chat";
 import { aggregateSuite } from "./evals/helpers";

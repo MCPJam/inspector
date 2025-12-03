@@ -11,7 +11,7 @@ import {
 } from "../ui/dialog";
 import { Alert, AlertDescription } from "../ui/alert";
 import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 interface ProviderConfig {
   id: string;
   name: string;

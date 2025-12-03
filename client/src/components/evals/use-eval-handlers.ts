@@ -3,7 +3,7 @@ import { useConvex } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import posthog from "posthog-js";
-import { detectPlatform, detectEnvironment } from "@/logs/PosthogUtils";
+import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   useAiProviderKeys,
   type ProviderTokens,
