@@ -82,7 +82,7 @@ export function MCPAppsRenderer({
 
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
   const [contentHeight, setContentHeight] = useState<number>(400);
-  const [maxHeight] = useState<number>(600);
+  const [maxHeight] = useState<number>(800);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
@@ -399,7 +399,7 @@ export function MCPAppsRenderer({
             }
             break;
 
-          case "ui/size-change": {
+          case "ui/notifications/size-change": {
             const sizeParams = params as { height?: number };
             if (typeof sizeParams.height === "number") {
               setContentHeight(Math.min(sizeParams.height, maxHeight));
@@ -481,7 +481,8 @@ export function MCPAppsRenderer({
 
   const isPip = displayMode === "pip" && pipWidgetId === toolCallId;
   const isFullscreen = displayMode === "fullscreen";
-  const appliedHeight = Math.min(Math.max(contentHeight, 320), maxHeight);
+  // Apply maxHeight constraint, but no minimum - let widget control its size
+  const appliedHeight = Math.min(contentHeight, maxHeight);
 
   let containerClassName = "mt-3 space-y-2 relative group";
   if (isFullscreen) {
@@ -518,9 +519,8 @@ export function MCPAppsRenderer({
         csp={widgetCsp}
         onMessage={handleMessage}
         title={`MCP App: ${toolName}`}
-        className="w-full border border-border/40 rounded-md bg-background"
+        className="w-full border border-border/40 rounded-md bg-background transition-[height] duration-200 ease-out overflow-auto"
         style={{
-          minHeight: "320px",
           height: isFullscreen ? "100%" : `${appliedHeight}px`,
         }}
       />
