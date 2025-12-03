@@ -17,8 +17,8 @@ import {
   type MCPResourceTemplate,
   type MCPReadResourceResult,
 } from "@/sdk";
-import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/mcp-resource-templates-api";
-import { readResource as readResourceTemplateApi } from "@/lib/mcp-resources-api";
+import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/apis/mcp-resource-templates-api";
+import { readResource as readResourceTemplateApi } from "@/lib/apis/mcp-resources-api";
 import { LoggerView } from "./logging/logger-view";
 
 interface ResourceTemplatesTabProps {
