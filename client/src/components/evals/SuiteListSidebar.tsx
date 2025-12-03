@@ -1,7 +1,7 @@
 import { Plus } from "lucide-react";
 import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
-import { detectPlatform, detectEnvironment } from "@/logs/PosthogUtils";
+import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import { SuiteSidebarItem } from "./SuiteSidebarItem";
 import type { EvalSuiteOverviewEntry, EvalSuite } from "./types";

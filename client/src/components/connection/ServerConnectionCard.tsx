@@ -32,7 +32,7 @@ import {
   getServerTransportLabel,
 } from "./server-card-utils";
 import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   listTools,
   type ListToolsResultWithMetadata,
