@@ -38,8 +38,6 @@ interface OpenAIAppRendererProps {
   pipWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
-  /** List of tool names that have openai/widgetAccessible: true */
-  widgetAccessibleTools?: string[];
 }
 
 export function OpenAIAppRenderer({
@@ -56,7 +54,6 @@ export function OpenAIAppRenderer({
   pipWidgetId,
   onRequestPip,
   onExitPip,
-  widgetAccessibleTools,
 }: OpenAIAppRendererProps) {
   const sandboxRef = useRef<OpenAISandboxedIframeHandle>(null);
   const modalIframeRef = useRef<HTMLIFrameElement>(null);
@@ -182,7 +179,6 @@ export function OpenAIAppRenderer({
             toolId: resolvedToolCallId,
             toolName: toolName,
             theme: themeMode,
-            widgetAccessibleTools: widgetAccessibleTools ?? [],
           }),
         });
 
@@ -251,7 +247,6 @@ export function OpenAIAppRenderer({
     resolvedToolOutput,
     toolResponseMetadata,
     themeMode,
-    widgetAccessibleTools,
   ]);
 
   const appliedHeight = useMemo(() => {
@@ -507,7 +502,16 @@ export function OpenAIAppRenderer({
 
         case "openai:openExternal": {
           if (event.data.href && typeof event.data.href === "string") {
-            window.open(event.data.href, "_blank", "noopener,noreferrer");
+            const href = event.data.href;
+            // Don't open localhost URLs - these are internal widget navigation
+            // that should be handled within the widget, not opened in a new tab
+            const isLocalhost = href.startsWith('http://localhost') ||
+                               href.startsWith('http://127.0.0.1');
+            if (isLocalhost) {
+              console.log('[OpenAI App] Ignoring internal navigation:', href);
+              break;
+            }
+            window.open(href, "_blank", "noopener,noreferrer");
           }
           break;
         }

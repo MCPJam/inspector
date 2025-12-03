@@ -21,8 +21,6 @@ interface WidgetData {
   toolName: string;
   theme?: "light" | "dark";
   timestamp: number;
-  // List of tool names that have openai/widgetAccessible: true
-  widgetAccessibleTools?: string[];
 }
 
 const widgetDataStore = new Map<string, WidgetData>();
@@ -62,7 +60,6 @@ openai.post("/widget/store", async (c) => {
       toolId,
       toolName,
       theme,
-      widgetAccessibleTools,
     } = body;
 
     if (!serverId || !uri || !toolId || !toolName) {
@@ -70,6 +67,7 @@ openai.post("/widget/store", async (c) => {
     }
 
     // Store widget data using toolId as key
+    // Note: widgetAccessibleTools is computed server-side in /widget-html/:toolId
     widgetDataStore.set(toolId, {
       serverId,
       uri,
@@ -80,7 +78,6 @@ openai.post("/widget/store", async (c) => {
       toolName,
       theme: theme ?? "dark",
       timestamp: Date.now(),
-      widgetAccessibleTools: widgetAccessibleTools ?? [],
     });
 
     return c.json({ success: true });
@@ -160,7 +157,6 @@ openai.get("/widget-html/:toolId", async (c) => {
       toolResponseMetadata,
       toolName,
       theme,
-      widgetAccessibleTools,
     } = widgetData;
 
     const mcpClientManager = c.mcpClientManager;
@@ -183,6 +179,19 @@ openai.get("/widget-html/:toolId", async (c) => {
           404
         );
       }
+    }
+
+    // Compute widgetAccessibleTools directly from MCP server
+    // This avoids prop drilling through the client
+    let widgetAccessibleTools: string[] = [];
+    try {
+      const toolsResult = await mcpClientManager.listTools(actualServerId);
+      const tools = toolsResult?.tools ?? [];
+      widgetAccessibleTools = tools
+        .filter((tool: any) => tool._meta?.["openai/widgetAccessible"] === true)
+        .map((tool: any) => tool.name);
+    } catch (err) {
+      console.warn("Failed to list tools for widgetAccessible check:", err);
     }
 
     // Read the widget HTML from MCP server
@@ -552,16 +561,63 @@ openai.get("/widget-html/:toolId", async (c) => {
       </script>
     `;
 
-    // Inject the bridge script into the HTML
-    // Note: No <base> tag - CSP has base-uri 'none' for security
-    // Widgets should use absolute URLs or rely on their bundled assets
+    // Extract base URL from original HTML to preserve it
+    // Widgets may have <base href="..."> or window.innerBaseUrl = "..."
+    const extractBaseUrl = (html: string): string => {
+      // Try <base href="..."> or <base href='...'>
+      const baseMatch = html.match(/<base\s+href\s*=\s*["']([^"']+)["']\s*\/?>/i);
+      if (baseMatch) return baseMatch[1];
+      // Try window.innerBaseUrl
+      const innerMatch = html.match(/window\.innerBaseUrl\s*=\s*["']([^"']+)["']/);
+      if (innerMatch) return innerMatch[1];
+      return '';
+    };
+
+    const baseUrl = extractBaseUrl(htmlContent);
+
+    // CRITICAL: URL polyfill must run BEFORE any async scripts load
+    // In srcdoc iframes, window.location.origin is "null" which breaks URL construction
+    // This script patches the URL constructor to use the widget's base URL
+    const urlPolyfillScript = baseUrl ? `<script>(function(){
+var BASE="${baseUrl}";
+window.__widgetBaseUrl=BASE;
+var OrigURL=window.URL;
+function isRelative(u){return typeof u==="string"&&!u.match(/^[a-z][a-z0-9+.-]*:/i);}
+window.URL=function URL(u,b){
+var base=b;
+if(base===void 0||base===null||base==="null"||base==="about:srcdoc"){base=BASE;}
+else if(typeof base==="string"&&base.startsWith("null")){base=BASE;}
+try{return new OrigURL(u,base);}catch(e){
+if(isRelative(u)){try{return new OrigURL(u,BASE);}catch(e2){}}
+throw e;
+}
+};
+window.URL.prototype=OrigURL.prototype;
+window.URL.createObjectURL=OrigURL.createObjectURL;
+window.URL.revokeObjectURL=OrigURL.revokeObjectURL;
+window.URL.canParse=OrigURL.canParse;
+})();</script>` : '';
+
+    // Base tag must come at the start of <head> for document.baseURI
+    const baseTag = baseUrl ? `<base href="${baseUrl}">` : '';
+
+    // Inject the scripts into the HTML
+    // Order in <head>: URL polyfill (must be first!) -> base tag -> API script -> original content
+    // The URL polyfill MUST execute before any other scripts (including async) to patch window.URL
     let modifiedHtml;
-    if (htmlContent.includes("<html>") && htmlContent.includes("<head>")) {
-      modifiedHtml = htmlContent.replace("<head>", `<head>${apiScript}`);
+    // Use regex to detect <html with any attributes (e.g., <html lang="en">)
+    const hasHtmlTag = /<html[^>]*>/i.test(htmlContent);
+    const hasHeadTag = /<head[^>]*>/i.test(htmlContent);
+
+    if (hasHtmlTag && hasHeadTag) {
+      // Inject all scripts at the very start of <head>: polyfill first, then base, then API
+      modifiedHtml = htmlContent.replace(/<head[^>]*>/i, `$&${urlPolyfillScript}${baseTag}${apiScript}`);
     } else {
       modifiedHtml = `<!DOCTYPE html>
 <html>
 <head>
+  ${urlPolyfillScript}
+  ${baseTag}
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   ${apiScript}
