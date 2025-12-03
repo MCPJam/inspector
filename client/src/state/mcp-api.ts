@@ -1,4 +1,5 @@
 import { MCPServerConfig } from "@/sdk";
+import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 
 // Helper to add timeout to fetch requests
 async function fetchWithTimeout(
@@ -75,5 +76,17 @@ export async function getInitializationInfo(serverId: string) {
   const res = await fetch(
     `/api/mcp/servers/init-info/${encodeURIComponent(serverId)}`,
   );
+  return res.json();
+}
+
+export async function setServerLoggingLevel(
+  serverId: string,
+  level: LoggingLevel,
+) {
+  const res = await fetch("/api/mcp/log-level", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverId, level }),
+  });
   return res.json();
 }
