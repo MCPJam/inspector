@@ -1506,14 +1506,14 @@ console.log("toolOutput:", window.openai?.toolOutput);
 
 **Adding New OpenAI API Methods:**
 
-1. Update server-side injection script (`server/routes/mcp/resources.ts:250-376`)
-2. Add postMessage handler in parent (`client/src/components/chat/openai-component-renderer.tsx:118-196`)
+1. Update server-side injection script (`server/routes/mcp/chatgpt.ts:213-376`)
+2. Add postMessage handler in parent (`client/src/components/chat-v2/chatgpt-app-renderer.tsx`)
 3. Update TypeScript types if needed
 
 **Example: Adding a custom method:**
 
 ```typescript
-// 1. Server-side API injection (server/routes/mcp/openai.ts)
+// 1. Server-side API injection (server/routes/mcp/chatgpt.ts)
 openaiAPI.customMethod = async function(options) {
   window.parent.postMessage({
     type: 'openai:customMethod',
@@ -1521,11 +1521,18 @@ openaiAPI.customMethod = async function(options) {
   }, '*');
 };
 
-// 2. Parent-side handler (client/src/components/chat-v2/openai-app-renderer.tsx)
+// 2. Parent-side handler (client/src/components/chat-v2/chatgpt-app-renderer.tsx)
 case \"openai:customMethod\":
   handleCustomMethod(event.data.data);
   break;
 ```
+
+**Note on Message Flow:**
+
+Remember that messages flow through the triple-iframe chain:
+- Widget → Middle Proxy → Outer Container → Host
+- Each layer forwards messages bidirectionally
+- Origin validation occurs at each boundary
 
 ## Performance Considerations
 
