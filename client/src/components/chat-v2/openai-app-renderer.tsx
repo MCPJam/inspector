@@ -54,7 +54,11 @@ export function OpenAIAppRenderer({
   const modalIframeRef = useRef<HTMLIFrameElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
-  const [maxHeight, setMaxHeight] = useState<number | null>(null);
+  // ChatGPT provides ~500px maxHeight for inline mode by default
+  const DEFAULT_INLINE_MAX_HEIGHT = 500;
+  const [maxHeight, setMaxHeight] = useState<number | null>(
+    DEFAULT_INLINE_MAX_HEIGHT,
+  );
   const [contentHeight, setContentHeight] = useState<number>(320);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -168,6 +172,7 @@ export function OpenAIAppRenderer({
             toolId: resolvedToolCallId,
             toolName: toolName,
             theme: themeMode,
+            maxHeight: maxHeight, // ChatGPT provides maxHeight constraint to widgets
           }),
         });
 
@@ -666,7 +671,12 @@ export function OpenAIAppRenderer({
         className="w-full border border-border/40 rounded-md bg-background"
         style={{
           height: iframeHeight,
-          maxHeight: displayMode === "fullscreen" ? "90vh" : undefined,
+          maxHeight:
+            displayMode === "fullscreen"
+              ? "90vh"
+              : displayMode === "inline" && typeof maxHeight === "number"
+                ? `${maxHeight}px`
+                : undefined,
         }}
         onLoad={() => {
           setIsReady(true);

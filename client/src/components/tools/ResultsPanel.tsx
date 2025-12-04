@@ -6,7 +6,7 @@ import type {
 import type { ToolExecutionResponse } from "@/lib/apis/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { CheckCircle, XCircle } from "lucide-react";
-import { OpenAIAppRenderer } from "../chat-v2/openai-app-renderer";
+import { ChatGPTAppRenderer } from "../chat-v2/chatgpt-app-renderer";
 import { MCPAppsRenderer } from "../chat-v2/mcp-apps-renderer";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -385,7 +385,7 @@ export function ResultsPanel({
 
             if (!showStructured && hasOpenAIComponent && openaiOutputTemplate) {
               return (
-                <OpenAIAppRenderer
+                <ChatGPTAppRenderer
                   serverId={serverId || "unknown-server"}
                   toolCallId={resolvedToolCallId}
                   toolName={toolName}
