@@ -370,7 +370,7 @@ export function ChatGPTAppRenderer({
   onExitPip,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
-  const modalIframeRef = useRef<HTMLIFrameElement>(null);
+  const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
@@ -381,6 +381,8 @@ export function ChatGPTAppRenderer({
   const [modalParams, setModalParams] = useState<Record<string, any>>({});
   const [modalTitle, setModalTitle] = useState<string>("");
   const previousWidgetStateRef = useRef<string | null>(null);
+  const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
+  const [modalSandboxReady, setModalSandboxReady] = useState(false);
 
   const {
     resolvedToolCallId,
@@ -423,6 +425,14 @@ export function ChatGPTAppRenderer({
         : `${appliedHeight}px`;
     return `${appliedHeight}px`;
   }, [appliedHeight, displayMode, pipWidgetId, resolvedToolCallId]);
+
+  const modalWidgetUrl = useMemo(() => {
+    if (!widgetUrl || !modalOpen) return null;
+    const url = new URL(widgetUrl, window.location.origin);
+    url.searchParams.set("view_mode", "modal");
+    url.searchParams.set("view_params", JSON.stringify(modalParams));
+    return url.toString();
+  }, [widgetUrl, modalOpen, modalParams]);
 
   const addUiLog = useUiLogStore((s) => s.addLog);
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
@@ -475,14 +485,15 @@ export function ChatGPTAppRenderer({
         message: data,
       });
       if (targetModal) {
-        // Only send to modal if it's ready, otherwise drop the message (don't misdirect to main widget)
-        if (modalIframeRef.current?.contentWindow)
-          modalIframeRef.current.contentWindow.postMessage(data, "*");
+        // Only send to modal if it's ready
+        if (modalSandboxReady) {
+          modalSandboxRef.current?.postMessage(data);
+        }
       } else {
         sandboxRef.current?.postMessage(data);
       }
     },
-    [addUiLog, resolvedToolCallId, serverId],
+    [addUiLog, resolvedToolCallId, serverId, modalSandboxReady],
   );
 
   const handleSandboxMessage = useCallback(
@@ -515,19 +526,19 @@ export function ChatGPTAppRenderer({
               newState === null ? null : JSON.stringify(newState);
             if (newStateStr !== previousWidgetStateRef.current) {
               previousWidgetStateRef.current = newStateStr;
+              setCurrentWidgetState(newState);
               setWidgetState(resolvedToolCallId, newState);
               onWidgetStateChange?.(resolvedToolCallId, newState);
             }
-          }
-          if (modalOpen)
-            postToWidget(
-              {
+            // Push to modal if open and ready
+            if (modalOpen && modalSandboxReady) {
+              modalSandboxRef.current?.postMessage({
                 type: "openai:pushWidgetState",
                 toolId: resolvedToolCallId,
-                state: event.data.state,
-              },
-              true,
-            );
+                state: newState,
+              });
+            }
+          }
           break;
         }
         case "openai:callTool": {
@@ -648,6 +659,7 @@ export function ChatGPTAppRenderer({
       resolvedToolCallId,
       pipWidgetId,
       modalOpen,
+      modalSandboxReady,
       onRequestPip,
       onExitPip,
       addUiLog,
@@ -657,11 +669,9 @@ export function ChatGPTAppRenderer({
     ],
   );
 
-  const handleModalMessage = useCallback(
-    async (event: MessageEvent) => {
-      const modalWindow = modalIframeRef.current?.contentWindow ?? null;
-      if (!modalWindow || event.source !== modalWindow) return;
-      if (event.data?.type)
+  const handleModalSandboxMessage = useCallback(
+    (event: MessageEvent) => {
+      if (event.data?.type) {
         addUiLog({
           widgetId: resolvedToolCallId,
           serverId,
@@ -670,14 +680,22 @@ export function ChatGPTAppRenderer({
           method: extractMethod(event.data, "openai-apps"),
           message: event.data,
         });
+      }
+
       if (
         event.data?.type === "openai:setWidgetState" &&
         event.data.toolId === resolvedToolCallId
       ) {
         const newState = event.data.state;
-        setWidgetState(resolvedToolCallId, newState);
-        onWidgetStateChange?.(resolvedToolCallId, newState);
-        postToWidget({
+        const newStateStr = newState === null ? null : JSON.stringify(newState);
+        if (newStateStr !== previousWidgetStateRef.current) {
+          previousWidgetStateRef.current = newStateStr;
+          setCurrentWidgetState(newState);
+          setWidgetState(resolvedToolCallId, newState);
+          onWidgetStateChange?.(resolvedToolCallId, newState);
+        }
+        // Push to inline widget
+        sandboxRef.current?.postMessage({
           type: "openai:pushWidgetState",
           toolId: resolvedToolCallId,
           state: newState,
@@ -690,14 +708,37 @@ export function ChatGPTAppRenderer({
       serverId,
       setWidgetState,
       onWidgetStateChange,
-      postToWidget,
     ],
   );
 
+  const handleModalReady = useCallback(() => {
+    setModalSandboxReady(true);
+    // Push current widget state to modal on ready
+    if (currentWidgetState !== null) {
+      modalSandboxRef.current?.postMessage({
+        type: "openai:pushWidgetState",
+        toolId: resolvedToolCallId,
+        state: currentWidgetState,
+      });
+    }
+    // Push current globals
+    modalSandboxRef.current?.postMessage({
+      type: "openai:set_globals",
+      globals: {
+        theme: themeMode,
+        displayMode: "inline",
+        maxHeight: null,
+      },
+    });
+  }, [currentWidgetState, resolvedToolCallId, themeMode]);
+
+  // Reset modal sandbox state when modal closes
   useEffect(() => {
-    window.addEventListener("message", handleModalMessage);
-    return () => window.removeEventListener("message", handleModalMessage);
-  }, [handleModalMessage]);
+    if (!modalOpen) {
+      setModalSandboxReady(false);
+    }
+  }, [modalOpen]);
+
   useEffect(() => {
     if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId)
       setDisplayMode("inline");
@@ -829,18 +870,16 @@ export function ChatGPTAppRenderer({
             <DialogTitle>{modalTitle}</DialogTitle>
           </DialogHeader>
           <div className="flex-1 w-full h-full min-h-0">
-            <iframe
-              ref={modalIframeRef}
-              src={
-                widgetUrl
-                  ? `${widgetUrl}?view_mode=modal&view_params=${encodeURIComponent(JSON.stringify(modalParams))}`
-                  : undefined
-              }
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-              allow="local-network-access *; microphone *; midi *"
-              title={`ChatGPT App Modal: ${modalTitle}`}
-              className="w-full h-full border-0 rounded-md bg-background"
-            />
+            {modalWidgetUrl && (
+              <ChatGPTSandboxedIframe
+                ref={modalSandboxRef}
+                url={modalWidgetUrl}
+                onMessage={handleModalSandboxMessage}
+                onReady={handleModalReady}
+                title={`ChatGPT App Modal: ${modalTitle}`}
+                className="w-full h-full border-0 rounded-md bg-background"
+              />
+            )}
           </div>
         </DialogContent>
       </Dialog>
