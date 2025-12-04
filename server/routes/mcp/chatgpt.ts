@@ -101,7 +101,6 @@ interface ApiScriptOptions {
   locale: string; // Host-controlled BCP 47 locale (e.g., 'en-US')
   deviceType: "mobile" | "tablet" | "desktop"; // Host-controlled device type
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
-  widgetAccessibleTools: string[];
   viewMode?: string;
   viewParams?: Record<string, any>;
   useMapPendingCalls?: boolean;
@@ -142,15 +141,15 @@ interface ApiScriptOptions {
 function generateApiScript(opts: ApiScriptOptions): string {
   const {
     toolId, toolName, toolInput, toolOutput, toolResponseMetadata,
-    theme, locale, deviceType, userLocation, widgetAccessibleTools, viewMode = "inline", viewParams = {},
+    theme, locale, deviceType, userLocation, viewMode = "inline", viewParams = {},
     useMapPendingCalls = true,
   } = opts;
 
   const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
 
+  // Note: widgetAccessibleTools check removed for ChatGPT parity - ChatGPT doesn't enforce client-side
   const callToolImpl = useMapPendingCalls
     ? `callTool(toolName, args = {}) {
-        if (!widgetAccessibleTools.includes(toolName)) return Promise.reject(new Error('Tool not accessible from widgets.'));
         const callId = ++this._callId;
         return new Promise((resolve, reject) => {
           this._pendingCalls.set(callId, { resolve, reject });
@@ -166,7 +165,6 @@ function generateApiScript(opts: ApiScriptOptions): string {
         });
       },`
     : `async callTool(toolName, args = {}) {
-        if (!widgetAccessibleTools.includes(toolName)) return Promise.reject(new Error('Tool not accessible from widgets.'));
         const callId = ++this._callId;
         return new Promise((resolve, reject) => {
           const handler = (event) => {
@@ -216,7 +214,6 @@ function generateApiScript(opts: ApiScriptOptions): string {
     if (!subjectId) { subjectId = 'anon_' + Math.random().toString(36).substring(2, 15); sessionStorage.setItem('openai_subject_id', subjectId); }
     return subjectId;
   };
-  const widgetAccessibleTools = ${JSON.stringify(widgetAccessibleTools)};
 
   const openaiAPI = {
     toolInput: ${serializeForInlineScript(toolInput)},
@@ -429,14 +426,6 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     const resolved = resolveServerId(serverId, availableServers);
     if (resolved.error) return c.json({ error: resolved.error }, 404);
 
-    let widgetAccessibleTools: string[] = [];
-    try {
-      const toolsResult = await mcpClientManager.listTools(resolved.id);
-      widgetAccessibleTools = (toolsResult?.tools ?? []).filter((t: any) => t._meta?.["openai/widgetAccessible"] === true).map((t: any) => t.name);
-    } catch (err) {
-      console.warn("Failed to list tools for widgetAccessible check:", err);
-    }
-
     const content = await mcpClientManager.readResource(resolved.id, { uri });
     const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent) return c.json({ error: "No HTML content found" }, 404);
@@ -460,7 +449,6 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       locale: locale ?? "en-US",
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
-      widgetAccessibleTools,
       useMapPendingCalls: true,
     });
     const modifiedHtml = injectScripts(htmlContent, generateUrlPolyfillScript(baseUrl), baseUrl ? `<base href="${baseUrl}">` : "", apiScript);
@@ -511,12 +499,6 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
     const resolved = resolveServerId(serverId, availableServers);
     if (resolved.error) return c.html(`<html><body><h3>Error: Server not connected</h3><p>${resolved.error}</p></body></html>`, 404);
 
-    let widgetAccessibleTools: string[] = [];
-    try {
-      const toolsResult = await mcpClientManager.listTools(resolved.id);
-      widgetAccessibleTools = (toolsResult?.tools ?? []).filter((t: any) => t._meta?.["openai/widgetAccessible"] === true).map((t: any) => t.name);
-    } catch (err) {}
-
     const content = await mcpClientManager.readResource(resolved.id, { uri });
     const { html: htmlContent } = extractHtmlContent(content);
     if (!htmlContent) return c.html("<html><body>Error: No HTML content found</body></html>", 404);
@@ -531,7 +513,6 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       locale: locale ?? "en-US",
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
-      widgetAccessibleTools,
       viewMode,
       viewParams,
       useMapPendingCalls: false,
