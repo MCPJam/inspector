@@ -451,7 +451,7 @@ graph LR
 
 #### API Implementation
 
-Located in `server/routes/mcp/openai.ts:213-376`:
+Located in `server/routes/mcp/chatgpt.ts:213-376`:
 
 **Core API Methods:**
 
@@ -461,13 +461,13 @@ const openaiAPI = {
   toolOutput: ${JSON.stringify(toolOutput)},
   toolResponseMetadata: ${JSON.stringify(toolResponseMetadata ?? null)},
   displayMode: 'inline',
-  maxHeight: 600,
+  maxHeight: ${maxHeight ?? null},  // Host-controlled constraint
   theme: ${JSON.stringify(theme ?? "dark")},
-  locale: 'en-US',
+  locale: hostLocale,  // Host-controlled BCP 47 locale (e.g., 'en-US')
   safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
   userAgent: {
-    device: { type: 'desktop' },
-    capabilities: { hover: true, touch: false }
+    device: { type: hostDeviceType },  // Host-controlled: 'mobile', 'tablet', 'desktop'
+    capabilities: { hover: hasHover, touch: hasTouch }  // Detected in widget
   },
   view: {
     mode: ${JSON.stringify(viewMode)},  // 'inline' or 'modal'
