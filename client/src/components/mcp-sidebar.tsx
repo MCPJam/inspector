@@ -58,6 +58,11 @@ const navigationSections = [
         icon: Hammer,
       },
       {
+        title: "UI Playground",
+        url: "#ui-playground",
+        icon: LayoutGrid,
+      },
+      {
         title: "Resources",
         url: "#resources",
         icon: BookOpen,
