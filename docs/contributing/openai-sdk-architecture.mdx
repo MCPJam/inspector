@@ -795,7 +795,7 @@ As of PR #927, widgets can request different display modes to optimize their pre
 
 The display mode system uses React state to track which widget (if any) is in PiP mode, and applies different CSS classes based on the current mode:
 
-**State Management** (`client/src/components/chat-v2/thread.tsx:62-72`):
+**State Management** (`client/src/components/chat-v2/thread.tsx`):
 
 ```typescript
 const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
