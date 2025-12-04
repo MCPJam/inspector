@@ -10,11 +10,11 @@ import { useEffect, useCallback, useMemo, useState } from "react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench } from "lucide-react";
 import {
-  ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "../ui/resizable";
 import { EmptyState } from "../ui/empty-state";
+import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
 import { PlaygroundToolsSidebar } from "./PlaygroundToolsSidebar";
 import { PlaygroundEmulator } from "./PlaygroundEmulator";
 import { PlaygroundInspector } from "./PlaygroundInspector";
@@ -90,6 +90,8 @@ export function UIPlaygroundTab({
     displayMode,
     globals,
     lastToolCallId,
+    isSidebarVisible,
+    isInspectorVisible,
     setTools,
     setSelectedTool,
     setFormFields,
@@ -111,6 +113,8 @@ export function UIPlaygroundTab({
     followUpMessages,
     addFollowUpMessage,
     clearFollowUpMessages,
+    toggleSidebar,
+    toggleInspector,
     reset,
   } = useUIPlaygroundStore();
 
@@ -359,29 +363,40 @@ export function UIPlaygroundTab({
     <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="horizontal" className="flex-1">
         {/* Left Panel - Tools Sidebar */}
-        <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-          <PlaygroundToolsSidebar
-            tools={tools}
-            toolNames={toolNames}
-            filteredToolNames={filteredToolNames}
-            selectedToolName={selectedTool}
-            fetchingTools={false}
-            searchQuery={searchQuery}
-            onSearchQueryChange={setSearchQuery}
-            onRefresh={fetchTools}
-            onSelectTool={setSelectedTool}
-            formFields={formFields}
-            onFieldChange={updateFormField}
-            onToggleField={updateFormFieldIsSet}
-            isExecuting={isExecuting}
-            onExecute={executeTool}
+        {isSidebarVisible ? (
+          <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
+            <PlaygroundToolsSidebar
+              tools={tools}
+              toolNames={toolNames}
+              filteredToolNames={filteredToolNames}
+              selectedToolName={selectedTool}
+              fetchingTools={false}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              onRefresh={fetchTools}
+              onSelectTool={setSelectedTool}
+              formFields={formFields}
+              onFieldChange={updateFormField}
+              onToggleField={updateFormFieldIsSet}
+              isExecuting={isExecuting}
+              onExecute={executeTool}
+              deviceType={deviceType}
+              displayMode={displayMode}
+              onDeviceTypeChange={setDeviceType}
+              onDisplayModeChange={setDisplayMode}
+              onClose={toggleSidebar}
+            />
+          </ResizablePanel>
+        ) : (
+          <CollapsedPanelStrip
+            side="left"
+            onOpen={toggleSidebar}
+            tooltipText="Show tools sidebar"
           />
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
+        )}
 
         {/* Center Panel - Emulator */}
-        <ResizablePanel defaultSize={45} minSize={30}>
+        <ResizablePanel defaultSize={isSidebarVisible && isInspectorVisible ? 45 : 70} minSize={30}>
           <PlaygroundEmulator
             serverId={serverName || ""}
             serverName={serverName || null}
@@ -407,21 +422,27 @@ export function UIPlaygroundTab({
           />
         </ResizablePanel>
 
-        <ResizableHandle withHandle />
-
         {/* Right Panel - Inspector */}
-        <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-          <PlaygroundInspector
-            toolOutput={toolOutput}
-            toolResponseMetadata={toolResponseMetadata}
-            widgetState={widgetState}
-            globals={globals}
-            csp={csp}
-            cspViolations={cspViolations}
-            widgetId={lastToolCallId}
-            onUpdateGlobal={updateGlobal}
+        {isInspectorVisible ? (
+          <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+            <PlaygroundInspector
+              toolOutput={toolOutput}
+              toolResponseMetadata={toolResponseMetadata}
+              widgetState={widgetState}
+              globals={globals}
+              csp={csp}
+              cspViolations={cspViolations}
+              onUpdateGlobal={updateGlobal}
+              onClose={toggleInspector}
+            />
+          </ResizablePanel>
+        ) : (
+          <CollapsedPanelStrip
+            side="right"
+            onOpen={toggleInspector}
+            tooltipText="Show inspector panel"
           />
-        </ResizablePanel>
+        )}
       </ResizablePanelGroup>
     </div>
   );

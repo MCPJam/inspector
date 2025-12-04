@@ -9,7 +9,7 @@
  * 5. Logs - Filtered postMessage logs
  */
 
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import {
   FileJson,
   Database,
@@ -20,6 +20,7 @@ import {
   Sun,
   Globe,
   MapPin,
+  PanelRightClose,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { ScrollArea } from "../ui/scroll-area";
@@ -28,7 +29,7 @@ import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { Badge } from "../ui/badge";
 import JsonView from "react18-json-view";
-import { useUiLogStore, type UiLogEvent } from "@/stores/ui-log-store";
+import { LoggerView } from "../logging/logger-view";
 import type {
   PlaygroundGlobals,
   CspConfig,
@@ -42,11 +43,11 @@ interface PlaygroundInspectorProps {
   globals: PlaygroundGlobals;
   csp: CspConfig | null;
   cspViolations: CspViolation[];
-  widgetId: string | null;
   onUpdateGlobal: <K extends keyof PlaygroundGlobals>(
     key: K,
     value: PlaygroundGlobals[K]
   ) => void;
+  onClose?: () => void;
 }
 
 export function PlaygroundInspector({
@@ -56,52 +57,51 @@ export function PlaygroundInspector({
   globals,
   csp,
   cspViolations,
-  widgetId,
   onUpdateGlobal,
+  onClose,
 }: PlaygroundInspectorProps) {
   const [activeTab, setActiveTab] = useState("output");
-
-  // Filter logs by widget ID
-  const logs = useUiLogStore((s) => s.items);
-  const filteredLogs = useMemo(() => {
-    if (!widgetId) return [];
-    return logs.filter((log) => log.widgetId === widgetId);
-  }, [logs, widgetId]);
 
   return (
     <div className="h-full flex flex-col border-l border-border bg-background">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-        <TabsList className="w-full justify-start rounded-none border-b border-border bg-background px-2 h-auto py-1">
-          <TabsTrigger value="output" className="text-xs gap-1.5 data-[state=active]:bg-muted">
-            <FileJson className="h-3 w-3" />
-            Output
-          </TabsTrigger>
-          <TabsTrigger value="state" className="text-xs gap-1.5 data-[state=active]:bg-muted">
-            <Database className="h-3 w-3" />
-            State
-          </TabsTrigger>
-          <TabsTrigger value="globals" className="text-xs gap-1.5 data-[state=active]:bg-muted">
-            <Settings className="h-3 w-3" />
-            Globals
-          </TabsTrigger>
-          <TabsTrigger value="csp" className="text-xs gap-1.5 data-[state=active]:bg-muted">
-            <Shield className="h-3 w-3" />
-            CSP
-            {cspViolations.length > 0 && (
-              <Badge variant="destructive" className="ml-1 px-1 py-0 text-[10px]">
-                {cspViolations.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="logs" className="text-xs gap-1.5 data-[state=active]:bg-muted">
-            <ScrollText className="h-3 w-3" />
-            Logs
-            {filteredLogs.length > 0 && (
-              <Badge variant="secondary" className="ml-1 px-1 py-0 text-[10px]">
-                {filteredLogs.length}
-              </Badge>
-            )}
-          </TabsTrigger>
+        <TabsList className="w-full justify-between rounded-none border-b border-border bg-background px-2 h-auto py-1">
+          <div className="flex">
+            <TabsTrigger value="output" className="text-xs gap-1.5 data-[state=active]:bg-muted">
+              <FileJson className="h-3 w-3" />
+              Output
+            </TabsTrigger>
+            <TabsTrigger value="state" className="text-xs gap-1.5 data-[state=active]:bg-muted">
+              <Database className="h-3 w-3" />
+              State
+            </TabsTrigger>
+            <TabsTrigger value="globals" className="text-xs gap-1.5 data-[state=active]:bg-muted">
+              <Settings className="h-3 w-3" />
+              Globals
+            </TabsTrigger>
+            <TabsTrigger value="csp" className="text-xs gap-1.5 data-[state=active]:bg-muted">
+              <Shield className="h-3 w-3" />
+              CSP
+              {cspViolations.length > 0 && (
+                <Badge variant="destructive" className="ml-1 px-1 py-0 text-[10px]">
+                  {cspViolations.length}
+                </Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="text-xs gap-1.5 data-[state=active]:bg-muted">
+              <ScrollText className="h-3 w-3" />
+              Logs
+            </TabsTrigger>
+          </div>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="h-7 w-7 p-0 flex items-center justify-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              title="Hide inspector"
+            >
+              <PanelRightClose className="h-3.5 w-3.5" />
+            </button>
+          )}
         </TabsList>
 
         {/* Output Tab */}
@@ -435,76 +435,9 @@ export function PlaygroundInspector({
 
         {/* Logs Tab */}
         <TabsContent value="logs" className="flex-1 m-0 overflow-hidden">
-          <ScrollArea className="h-full">
-            <div className="p-4">
-              <h3 className="text-xs font-semibold text-foreground mb-2">
-                postMessage Logs
-                {filteredLogs.length > 0 && (
-                  <span className="ml-2 text-muted-foreground font-normal">
-                    ({filteredLogs.length})
-                  </span>
-                )}
-              </h3>
-              {filteredLogs.length > 0 ? (
-                <div className="space-y-2">
-                  {filteredLogs.map((log) => (
-                    <LogEntry key={log.id} log={log} />
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No messages logged yet. Execute a widget tool to see communication logs.
-                </p>
-              )}
-            </div>
-          </ScrollArea>
+          <LoggerView />
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-function LogEntry({ log }: { log: UiLogEvent }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div
-      className={`rounded-md border text-xs cursor-pointer ${
-        log.direction === "host-to-ui"
-          ? "bg-blue-500/5 border-blue-500/20"
-          : "bg-green-500/5 border-green-500/20"
-      }`}
-      onClick={() => setExpanded(!expanded)}
-    >
-      <div className="flex items-center gap-2 px-2 py-1.5">
-        <Badge
-          variant="outline"
-          className={`text-[10px] px-1 py-0 ${
-            log.direction === "host-to-ui"
-              ? "border-blue-500/50 text-blue-600 dark:text-blue-400"
-              : "border-green-500/50 text-green-600 dark:text-green-400"
-          }`}
-        >
-          {log.direction === "host-to-ui" ? "OUT" : "IN"}
-        </Badge>
-        <code className="font-mono text-foreground">{log.method}</code>
-        <span className="text-[10px] text-muted-foreground ml-auto">
-          {new Date(log.timestamp).toLocaleTimeString()}
-        </span>
-      </div>
-      {expanded && (
-        <div className="px-2 pb-2 border-t border-border/50">
-          <div className="bg-background/50 rounded p-2 mt-2 overflow-auto max-h-48">
-            <JsonView
-              src={log.message as object}
-              theme="atom"
-              enableClipboard
-              collapseStringsAfterLength={50}
-              collapsed={2}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
