@@ -152,6 +152,7 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
     id="middle"
     src="${sandboxProxyUrl}"
     sandbox="allow-scripts allow-same-origin allow-forms"
+    allow="local-network-access *; microphone *; midi *"
   ></iframe>
   <iframe
     id="measurement"
@@ -227,6 +228,8 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
         ref={outerIframeRef}
         src="about:blank"
         sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
+        // Permissions Policy matching ChatGPT's actual implementation
+        allow="local-network-access *; microphone *; midi *"
         title={title}
         className={className}
         style={style}

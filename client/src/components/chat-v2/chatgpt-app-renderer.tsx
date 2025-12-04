@@ -5,9 +5,56 @@ import { X, Loader2 } from "lucide-react";
 import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ChatGPTSandboxedIframe, ChatGPTSandboxedIframeHandle } from "@/components/ui/chatgpt-sandboxed-iframe";
+import { toast } from "sonner";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState = "input-streaming" | "input-available" | "output-available" | "output-error" | string;
+
+/**
+ * Parse RFC 7235 WWW-Authenticate header for OAuth challenges.
+ * Format: Bearer realm="...", error="...", error_description="..."
+ */
+function parseWwwAuthenticate(header: string): { realm?: string; error?: string; errorDescription?: string } | null {
+  if (!header || typeof header !== "string") return null;
+
+  const result: { realm?: string; error?: string; errorDescription?: string } = {};
+
+  // Extract key="value" pairs
+  const matches = header.matchAll(/(\w+)="([^"]+)"/g);
+  for (const match of matches) {
+    const [, key, value] = match;
+    if (key === "realm") result.realm = value;
+    else if (key === "error") result.error = value;
+    else if (key === "error_description") result.errorDescription = value;
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
+ * Handle OAuth challenge from tool response per OpenAI Apps SDK spec.
+ * When a tool returns 401, _meta["mcp/www_authenticate"] contains the challenge header.
+ */
+function handleOAuthChallenge(wwwAuth: string, toolName: string): void {
+  const parsed = parseWwwAuthenticate(wwwAuth);
+
+  console.warn(
+    `[OAuth Challenge] Tool "${toolName}" requires authentication`,
+    parsed ? { realm: parsed.realm, error: parsed.error, description: parsed.errorDescription } : { raw: wwwAuth }
+  );
+
+  if (parsed?.error || parsed?.errorDescription) {
+    toast.warning(`OAuth Required: ${parsed.errorDescription || parsed.error || "Authentication required"}`, {
+      description: `Tool "${toolName}" needs authentication. Configure OAuth in server settings.`,
+      duration: 8000,
+    });
+  } else {
+    toast.warning(`OAuth Required for "${toolName}"`, {
+      description: "The tool requires authentication. Configure OAuth in server settings.",
+      duration: 8000,
+    });
+  }
+}
 
 interface ChatGPTAppRendererProps {
   serverId: string;
@@ -54,6 +101,73 @@ function useResolvedToolData(toolCallId: string | undefined, toolName: string | 
   return { resolvedToolCallId, outputTemplate, toolResponseMetadata, resolvedToolInput, resolvedToolOutput };
 }
 
+/**
+ * Compute device type from viewport width, matching ChatGPT's breakpoints.
+ * ChatGPT passes this as ?deviceType=desktop in iframe URL.
+ */
+function getDeviceType(): "mobile" | "tablet" | "desktop" {
+  const width = window.innerWidth;
+  if (width < 768) return "mobile";
+  if (width < 1024) return "tablet";
+  return "desktop";
+}
+
+/**
+ * Coarse user location per SDK spec: { country, region, city }
+ * Uses IP-based geolocation (no permission required).
+ */
+interface UserLocation {
+  country: string;
+  region: string;
+  city: string;
+}
+
+// Cache location to avoid repeated API calls
+let cachedLocation: UserLocation | null = null;
+let locationFetchPromise: Promise<UserLocation | null> | null = null;
+
+/**
+ * Fetch coarse location from IP-based geolocation service.
+ * Uses ip-api.com (free, no API key required, 45 req/min limit).
+ * Results are cached for the session.
+ */
+async function getUserLocation(): Promise<UserLocation | null> {
+  // Return cached result if available
+  if (cachedLocation) return cachedLocation;
+
+  // Return existing promise if fetch is in progress
+  if (locationFetchPromise) return locationFetchPromise;
+
+  locationFetchPromise = (async () => {
+    try {
+      // ip-api.com provides free IP geolocation (no API key needed)
+      // Fields: country, regionName, city
+      const response = await fetch("http://ip-api.com/json/?fields=status,country,regionName,city", {
+        signal: AbortSignal.timeout(3000), // 3s timeout
+      });
+
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      if (data.status !== "success") return null;
+
+      cachedLocation = {
+        country: data.country || "",
+        region: data.regionName || "",
+        city: data.city || "",
+      };
+
+      return cachedLocation;
+    } catch (err) {
+      // Silently fail - location is optional per SDK spec
+      console.debug("[OpenAI SDK] IP geolocation unavailable:", err);
+      return null;
+    }
+  })();
+
+  return locationFetchPromise;
+}
+
 function useWidgetFetch(toolState: ToolState | undefined, resolvedToolCallId: string, outputTemplate: string | undefined, toolName: string | undefined, serverId: string, resolvedToolInput: Record<string, any>, resolvedToolOutput: unknown, toolResponseMetadata: unknown, themeMode: string) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
@@ -72,10 +186,27 @@ function useWidgetFetch(toolState: ToolState | undefined, resolvedToolCallId: st
       setIsStoringWidget(true);
       setStoreError(null);
       try {
+        // Host-controlled values per SDK spec
+        const locale = navigator.language || "en-US";
+        const deviceType = getDeviceType();
+        const userLocation = await getUserLocation(); // Coarse IP-based location
+
         const storeResponse = await fetch("/api/mcp/openai/widget/store", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverId, uri: outputTemplate, toolInput: resolvedToolInput, toolOutput: resolvedToolOutput, toolResponseMetadata, toolId: resolvedToolCallId, toolName, theme: themeMode }),
+          body: JSON.stringify({
+            serverId,
+            uri: outputTemplate,
+            toolInput: resolvedToolInput,
+            toolOutput: resolvedToolOutput,
+            toolResponseMetadata,
+            toolId: resolvedToolCallId,
+            toolName,
+            theme: themeMode,
+            locale, // BCP 47 locale from host
+            deviceType, // Device type from host
+            userLocation, // Coarse location { country, region, city } or null
+          }),
         });
         if (!storeResponse.ok) throw new Error(`Failed to store widget data: ${storeResponse.statusText}`);
         if (isCancelled) return;
@@ -183,10 +314,22 @@ export function ChatGPTAppRenderer({ serverId, toolCallId, toolName, toolState, 
       }
       case "openai:callTool": {
         const callId = event.data.callId;
+        const calledToolName = event.data.toolName;
         if (!onCallTool) { postToWidget({ type: "openai:callTool:response", callId, error: "callTool is not supported in this context" }); break; }
         try {
-          const result = await onCallTool(event.data.toolName, event.data.args || event.data.params || {}, event.data._meta || {});
-          postToWidget({ type: "openai:callTool:response", callId, result });
+          const result = await onCallTool(calledToolName, event.data.args || event.data.params || {}, event.data._meta || {});
+
+          // Check for OAuth challenge per OpenAI Apps SDK spec
+          // When a tool returns 401, _meta["mcp/www_authenticate"] contains the RFC 7235 challenge
+          const resultMeta = result?._meta || result?.meta;
+          const wwwAuth = resultMeta?.["mcp/www_authenticate"];
+          if (wwwAuth && typeof wwwAuth === "string") {
+            handleOAuthChallenge(wwwAuth, calledToolName);
+          }
+
+          // Send full result to widget - let the widget handle the result structure
+          const responseError = result?.isError ? (result?.content?.[0]?.text || "Tool returned an error") : undefined;
+          postToWidget({ type: "openai:callTool:response", callId, result, error: responseError });
         } catch (err) { postToWidget({ type: "openai:callTool:response", callId, error: err instanceof Error ? err.message : "Unknown error" }); }
         break;
       }
@@ -298,7 +441,7 @@ export function ChatGPTAppRenderer({ serverId, toolCallId, toolName, toolState, 
         <DialogContent className="sm:max-w-6xl h-[70vh] flex flex-col">
           <DialogHeader><DialogTitle>{modalTitle}</DialogTitle></DialogHeader>
           <div className="flex-1 w-full h-full min-h-0">
-            <iframe ref={modalIframeRef} src={widgetUrl ? `${widgetUrl}?view_mode=modal&view_params=${encodeURIComponent(JSON.stringify(modalParams))}` : undefined} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" title={`ChatGPT App Modal: ${modalTitle}`} className="w-full h-full border-0 rounded-md bg-background" />
+            <iframe ref={modalIframeRef} src={widgetUrl ? `${widgetUrl}?view_mode=modal&view_params=${encodeURIComponent(JSON.stringify(modalParams))}` : undefined} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" allow="local-network-access *; microphone *; midi *" title={`ChatGPT App Modal: ${modalTitle}`} className="w-full h-full border-0 rounded-md bg-background" />
           </div>
         </DialogContent>
       </Dialog>
