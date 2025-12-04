@@ -4,15 +4,9 @@ export interface ChatGPTSandboxedIframeHandle {
   postMessage: (data: unknown) => void;
 }
 
-export interface ChatGPTWidgetCSP {
-  connectDomains?: string[];
-  resourceDomains?: string[];
-}
-
 interface ChatGPTSandboxedIframeProps {
-  html: string | null;
+  url: string | null;
   sandbox?: string;
-  csp?: ChatGPTWidgetCSP;
   onReady?: () => void;
   onMessage: (event: MessageEvent) => void;
   className?: string;
@@ -36,9 +30,8 @@ interface ChatGPTSandboxedIframeProps {
  */
 export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, ChatGPTSandboxedIframeProps>(
   function ChatGPTSandboxedIframe({
-    html,
+    url,
     sandbox = "allow-scripts allow-same-origin allow-forms",
-    csp,
     onReady,
     onMessage,
     className,
@@ -49,7 +42,7 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
     const middleIframeRef = useRef<HTMLIFrameElement | null>(null);
     const [outerReady, setOuterReady] = useState(false);
     const [proxyReady, setProxyReady] = useState(false);
-    const htmlSentRef = useRef(false);
+    const urlSentRef = useRef(false);
 
     // Build cross-origin sandbox proxy URL (localhost ↔ 127.0.0.1 swap)
     const [sandboxProxyUrl, sandboxOrigin] = useMemo(() => {
@@ -206,28 +199,28 @@ export const ChatGPTSandboxedIframe = forwardRef<ChatGPTSandboxedIframeHandle, C
       }
     }, [sandboxProxyUrl, sandboxOrigin, outerReady]);
 
-    // Send widget HTML when proxy is ready
+    // Send widget URL when proxy is ready
     useEffect(() => {
-      if (!proxyReady || !html || htmlSentRef.current) return;
+      if (!proxyReady || !url || urlSentRef.current) return;
 
-      htmlSentRef.current = true;
-      console.log("[ChatGPTSandboxedIframe] Sending widget HTML to proxy");
+      urlSentRef.current = true;
+      console.log("[ChatGPTSandboxedIframe] Sending widget URL to proxy:", url);
 
       // Post to outer iframe, which relays to middle (proxy)
       outerIframeRef.current?.contentWindow?.postMessage(
-        { type: "openai:load-widget", html, sandbox, csp },
+        { type: "openai:load-widget", url, sandbox },
         "*"
       );
 
       setTimeout(() => onReady?.(), 100);
-    }, [proxyReady, html, sandbox, csp, onReady]);
+    }, [proxyReady, url, sandbox, onReady]);
 
-    // Reset all state when html changes
+    // Reset all state when url changes
     useEffect(() => {
-      htmlSentRef.current = false;
+      urlSentRef.current = false;
       setProxyReady(false);
       setOuterReady(false);
-    }, [html]);
+    }, [url]);
 
     return (
       <iframe

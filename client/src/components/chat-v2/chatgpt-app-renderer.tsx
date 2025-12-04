@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { X, Loader2 } from "lucide-react";
 import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
-import { ChatGPTSandboxedIframe, ChatGPTSandboxedIframeHandle, ChatGPTWidgetCSP } from "@/components/ui/chatgpt-sandboxed-iframe";
+import { ChatGPTSandboxedIframe, ChatGPTSandboxedIframeHandle } from "@/components/ui/chatgpt-sandboxed-iframe";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState = "input-streaming" | "input-available" | "output-available" | "output-error" | string;
@@ -55,22 +55,20 @@ function useResolvedToolData(toolCallId: string | undefined, toolName: string | 
 }
 
 function useWidgetFetch(toolState: ToolState | undefined, resolvedToolCallId: string, outputTemplate: string | undefined, toolName: string | undefined, serverId: string, resolvedToolInput: Record<string, any>, resolvedToolOutput: unknown, toolResponseMetadata: unknown, themeMode: string) {
-  const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
-  const [widgetCsp, setWidgetCsp] = useState<ChatGPTWidgetCSP | undefined>(undefined);
+  const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
-  const [modalUrl, setModalUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let isCancelled = false;
-    if (toolState !== "output-available" || widgetHtml || !outputTemplate || !toolName) {
-      if (!outputTemplate) { setWidgetHtml(null); setStoreError(null); setIsStoringWidget(false); }
-      if (!toolName && outputTemplate) { setWidgetHtml(null); setStoreError("Tool name is required"); setIsStoringWidget(false); }
+    if (toolState !== "output-available" || widgetUrl || !outputTemplate || !toolName) {
+      if (!outputTemplate) { setWidgetUrl(null); setStoreError(null); setIsStoringWidget(false); }
+      if (!toolName && outputTemplate) { setWidgetUrl(null); setStoreError("Tool name is required"); setIsStoringWidget(false); }
       return;
     }
 
-    const fetchWidgetHtml = async () => {
+    const storeWidgetData = async () => {
       setIsStoringWidget(true);
       setStoreError(null);
       try {
@@ -82,31 +80,28 @@ function useWidgetFetch(toolState: ToolState | undefined, resolvedToolCallId: st
         if (!storeResponse.ok) throw new Error(`Failed to store widget data: ${storeResponse.statusText}`);
         if (isCancelled) return;
 
+        // Check if widget should close
         const htmlResponse = await fetch(`/api/mcp/openai/widget-html/${resolvedToolCallId}`);
-        if (!htmlResponse.ok) {
-          const errorData = await htmlResponse.json().catch(() => ({}));
-          throw new Error(errorData.error || `Failed to fetch widget HTML: ${htmlResponse.statusText}`);
+        if (htmlResponse.ok) {
+          const data = await htmlResponse.json();
+          if (data.closeWidget) { setWidgetClosed(true); setIsStoringWidget(false); return; }
         }
-        const data = await htmlResponse.json();
-        if (isCancelled) return;
 
-        if (data.closeWidget) { setWidgetClosed(true); setIsStoringWidget(false); return; }
-        setWidgetHtml(data.html);
-        setWidgetCsp(data.csp);
-        setModalUrl(`/api/mcp/openai/widget/${resolvedToolCallId}`);
+        // Set the widget URL - the widget will be loaded via src, not srcdoc
+        setWidgetUrl(`/api/mcp/openai/widget/${resolvedToolCallId}`);
       } catch (err) {
         if (isCancelled) return;
-        console.error("Error fetching widget HTML:", err);
+        console.error("Error storing widget data:", err);
         setStoreError(err instanceof Error ? err.message : "Failed to prepare widget");
       } finally {
         if (!isCancelled) setIsStoringWidget(false);
       }
     };
-    fetchWidgetHtml();
+    storeWidgetData();
     return () => { isCancelled = true; };
-  }, [toolState, resolvedToolCallId, widgetHtml, outputTemplate, toolName, serverId, resolvedToolInput, resolvedToolOutput, toolResponseMetadata, themeMode]);
+  }, [toolState, resolvedToolCallId, widgetUrl, outputTemplate, toolName, serverId, resolvedToolInput, resolvedToolOutput, toolResponseMetadata, themeMode]);
 
-  return { widgetHtml, widgetCsp, widgetClosed, isStoringWidget, storeError, modalUrl };
+  return { widgetUrl, widgetClosed, isStoringWidget, storeError };
 }
 
 // ============================================================================
@@ -128,7 +123,7 @@ export function ChatGPTAppRenderer({ serverId, toolCallId, toolName, toolState, 
   const previousWidgetStateRef = useRef<string | null>(null);
 
   const { resolvedToolCallId, outputTemplate, toolResponseMetadata, resolvedToolInput, resolvedToolOutput } = useResolvedToolData(toolCallId, toolName, toolInputProp, toolOutputProp, toolMetadata);
-  const { widgetHtml, widgetCsp, widgetClosed, isStoringWidget, storeError, modalUrl } = useWidgetFetch(toolState, resolvedToolCallId, outputTemplate, toolName, serverId, resolvedToolInput, resolvedToolOutput, toolResponseMetadata, themeMode);
+  const { widgetUrl, widgetClosed, isStoringWidget, storeError } = useWidgetFetch(toolState, resolvedToolCallId, outputTemplate, toolName, serverId, resolvedToolInput, resolvedToolOutput, toolResponseMetadata, themeMode);
 
   const appliedHeight = useMemo(() => {
     const baseHeight = contentHeight > 0 ? contentHeight : 320;
@@ -278,7 +273,7 @@ export function ChatGPTAppRenderer({ serverId, toolCallId, toolName, toolState, 
     if (toolState !== "output-available") return <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">Widget UI will appear once the tool finishes executing.</div>;
     return <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">Unable to render ChatGPT App UI for this tool result.</div>;
   }
-  if (!widgetHtml) return <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2 flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" />Preparing widget...</div>;
+  if (!widgetUrl) return <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2 flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" />Preparing widget...</div>;
 
   const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
   const isFullscreen = displayMode === "fullscreen";
@@ -296,14 +291,14 @@ export function ChatGPTAppRenderer({ serverId, toolCallId, toolName, toolState, 
         </button>
       )}
       {loadError && <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">Failed to load widget: {loadError}</div>}
-      <ChatGPTSandboxedIframe ref={sandboxRef} html={widgetHtml} csp={widgetCsp} onMessage={handleSandboxMessage} onReady={() => { setIsReady(true); setLoadError(null); }} title={`ChatGPT App Widget: ${toolName || "tool"}`} className="w-full border border-border/40 rounded-md bg-background" style={{ height: iframeHeight, maxHeight: displayMode === "fullscreen" ? "90vh" : undefined }} />
+      <ChatGPTSandboxedIframe ref={sandboxRef} url={widgetUrl} onMessage={handleSandboxMessage} onReady={() => { setIsReady(true); setLoadError(null); }} title={`ChatGPT App Widget: ${toolName || "tool"}`} className="w-full border border-border/40 rounded-md bg-background" style={{ height: iframeHeight, maxHeight: displayMode === "fullscreen" ? "90vh" : undefined }} />
       {outputTemplate && <div className="text-[11px] text-muted-foreground/70">Template: <code>{outputTemplate}</code></div>}
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent className="sm:max-w-6xl h-[70vh] flex flex-col">
           <DialogHeader><DialogTitle>{modalTitle}</DialogTitle></DialogHeader>
           <div className="flex-1 w-full h-full min-h-0">
-            <iframe ref={modalIframeRef} src={modalUrl ? `${modalUrl}?view_mode=modal&view_params=${encodeURIComponent(JSON.stringify(modalParams))}` : undefined} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" title={`ChatGPT App Modal: ${modalTitle}`} className="w-full h-full border-0 rounded-md bg-background" />
+            <iframe ref={modalIframeRef} src={widgetUrl ? `${widgetUrl}?view_mode=modal&view_params=${encodeURIComponent(JSON.stringify(modalParams))}` : undefined} sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" title={`ChatGPT App Modal: ${modalTitle}`} className="w-full h-full border-0 rounded-md bg-background" />
           </div>
         </DialogContent>
       </Dialog>
