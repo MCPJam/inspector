@@ -1035,7 +1035,7 @@ window.addEventListener("message", (event) => {
 
 As of PR #891, widget state changes are now propagated to the LLM model as hidden assistant messages. This allows the AI to understand and reason about widget interactions.
 
-**Implementation** (`client/src/components/chat-v2/openai-app-renderer.tsx:232-244`):
+**Implementation** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:232-244`):
 
 ```typescript
 case "openai:setWidgetState": {
