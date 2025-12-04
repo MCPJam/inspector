@@ -14,7 +14,7 @@ import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 import { useState } from "react";
 import { ChevronDown, MessageCircle } from "lucide-react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { OpenAIAppRenderer } from "./openai-app-renderer";
+import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
 import {
   callTool,
@@ -297,7 +297,7 @@ function PartSwitch({
       return (
         <>
           <ToolPart part={toolPart} />
-          <OpenAIAppRenderer
+          <ChatGPTAppRenderer
             serverId={serverId}
             toolCallId={toolInfo.toolCallId}
             toolName={toolInfo.toolName}
