@@ -364,6 +364,49 @@ function generateApiScript(opts: ApiScriptOptions): string {
       if (height && Number.isFinite(height)) window.parent.postMessage({ type: 'openai:resize', height }, '*');
     } catch (err) { console.error('[OpenAI Widget] Failed to forward resize event:', err); }
   });
+
+  // Auto-resize: Measure and report intrinsic height on initial load
+  function measureAndReportHeight() {
+    try {
+      const docHeight = document.documentElement.scrollHeight;
+      const bodyHeight = document.body.scrollHeight;
+      const height = Math.max(docHeight, bodyHeight);
+      if (height && Number.isFinite(height) && height > 0) {
+        window.parent.postMessage({ type: 'openai:resize', height: Math.round(height) }, '*');
+      }
+    } catch (err) {
+      console.error('[OpenAI Widget] Failed to measure and report height:', err);
+    }
+  }
+
+  // Report height on DOM ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', measureAndReportHeight);
+  } else {
+    // DOM already loaded, measure immediately
+    measureAndReportHeight();
+  }
+
+  // Also report on window load (for async content)
+  window.addEventListener('load', () => {
+    setTimeout(measureAndReportHeight, 100);
+  });
+
+  // Report height after a short delay to catch any async rendering
+  setTimeout(measureAndReportHeight, 100);
+
+  // Watch for DOM changes and report height updates
+  let resizeTimeout;
+  const observer = new MutationObserver(() => {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(measureAndReportHeight, 50);
+  });
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style', 'class'],
+  });
 })();
 </script>`;
 }
