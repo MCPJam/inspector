@@ -286,8 +286,12 @@ export function ChatGPTAppRenderer({ serverId, toolCallId, toolName, toolState, 
 
   const postToWidget = useCallback((data: unknown, targetModal?: boolean) => {
     addUiLog({ widgetId: resolvedToolCallId, serverId, direction: "host-to-ui", protocol: "openai-apps", method: extractMethod(data, "openai-apps"), message: data });
-    if (targetModal && modalIframeRef.current?.contentWindow) modalIframeRef.current.contentWindow.postMessage(data, "*");
-    else sandboxRef.current?.postMessage(data);
+    if (targetModal) {
+      // Only send to modal if it's ready, otherwise drop the message (don't misdirect to main widget)
+      if (modalIframeRef.current?.contentWindow) modalIframeRef.current.contentWindow.postMessage(data, "*");
+    } else {
+      sandboxRef.current?.postMessage(data);
+    }
   }, [addUiLog, resolvedToolCallId, serverId]);
 
   const handleSandboxMessage = useCallback(async (event: MessageEvent) => {
