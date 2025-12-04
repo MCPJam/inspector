@@ -262,35 +262,48 @@ setInterval(
 ).unref();
 ```
 
-### 3. Two-Stage Widget Loading
+### 3. Triple-Iframe Widget Loading
 
-The system uses a clever two-stage loading process to ensure React Router compatibility:
+The system uses a sophisticated triple-iframe architecture with cross-origin isolation:
 
 ```mermaid
 sequenceDiagram
-    participant Browser
-    participant Stage1 as Stage 1 Container
-    participant Stage2 as Stage 2 Content
+    participant Host as Inspector Host
+    participant Outer as Outer Iframe (about:blank)
+    participant Middle as Middle Iframe (sandbox-proxy)
+    participant Inner as Inner Iframe (widget)
+    participant Backend as Backend API
     participant MCP as MCP Server
 
-    Browser->>Stage1: GET /widget/abc123
-    Stage1-->>Browser: Return container HTML
-    Note over Browser: Execute history.replaceState to change URL to /
-    Browser->>Stage2: Fetch /widget-content/abc123
-    Stage2->>MCP: Read resource from server
-    MCP-->>Stage2: Return HTML content
-    Stage2->>Stage2: Inject window.openai API script
-    Stage2->>Stage2: Add CSP headers
-    Stage2-->>Browser: Return enhanced HTML
-    Browser->>Browser: Render widget via document.write
+    Host->>Outer: Create iframe with src="about:blank"
+    Outer->>Outer: Inject middle iframe HTML
+    Note over Outer: Middle iframe uses different origin<br/>(localhost ↔ 127.0.0.1 swap)
+    Outer->>Middle: Load sandbox-proxy.html
+    Middle-->>Outer: Send openai:sandbox-ready
+    Outer-->>Host: Forward ready signal
+    Host->>Outer: Send openai:load-widget with URL
+    Outer->>Middle: Forward load-widget message
+    Middle->>Backend: GET /widget/:toolId
+    Backend->>Backend: history.replaceState to /
+    Backend->>Backend: Fetch /widget-content/:toolId
+    Backend->>MCP: Read resource from server
+    MCP-->>Backend: Return HTML content
+    Backend->>Backend: Inject window.openai API script
+    Backend-->>Middle: Return enhanced HTML
+    Middle->>Inner: Load widget via src URL
+    Inner->>Inner: Execute widget code
+    Inner->>Middle: postMessage to parent
+    Middle->>Outer: Relay message
+    Outer->>Host: Forward to Inspector
 ```
 
-**Why Two Stages?**
+**Why Triple-Iframe Architecture?**
 
-- Many widgets use React Router's `BrowserRouter` which expects clean URLs
-- Stage 1 changes URL to "/" before widget code loads
-- Stage 2 fetches actual content after URL is reset
-- Prevents routing conflicts and 404 errors
+- **Cross-origin isolation**: Middle iframe uses localhost ↔ 127.0.0.1 origin swap for true security boundary
+- **URL context preservation**: Widget loads via `src` (not `srcdoc`) for Next.js/React Router compatibility
+- **Message relay**: Each layer forwards postMessage events up/down the chain
+- **ChatGPT parity**: Matches OpenAI's production implementation exactly
+- **Sandbox enforcement**: Each iframe layer enforces its own sandbox restrictions
 
 #### Stage 1: Container Page
 
