@@ -1538,9 +1538,9 @@ Remember that messages flow through the triple-iframe chain:
 
 ### Widget Data Storage
 
-- **TTL**: 1 hour default, configurable in `resources.ts:22`
+- **TTL**: 1 hour default, configurable in `chatgpt.ts:22`
 - **Cleanup**: Runs every 5 minutes
-- **Memory**: Each widget stores ~1-10KB (toolInput + toolOutput)
+- **Memory**: Each widget stores ~1-10KB (toolInput + toolOutput + host globals)
 - **Scale**: 1000 concurrent widgets ≈ 10MB memory
 - **Recommendation**: For production, use Redis instead of Map
 
