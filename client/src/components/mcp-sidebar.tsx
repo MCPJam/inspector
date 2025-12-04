@@ -11,6 +11,7 @@ import {
   Box,
   FileCode,
   Activity,
+  LayoutGrid,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -50,6 +51,11 @@ const navigationSections = [
         title: "Tools",
         url: "#tools",
         icon: Hammer,
+      },
+      {
+        title: "UI Playground",
+        url: "#ui-playground",
+        icon: LayoutGrid,
       },
       {
         title: "Resources",

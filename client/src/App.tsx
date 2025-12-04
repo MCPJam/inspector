@@ -11,6 +11,7 @@ import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { RegistryTab } from "./components/RegistryTab";
+import { UIPlaygroundTab } from "./components/ui-playground";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
@@ -178,14 +179,15 @@ export default function App() {
           onDeleteWorkspace={handleDeleteWorkspace}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, OAuth Flow, Chat, and Chat v2 pages */}
+          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, OAuth Flow, Chat, Chat v2, and UI Playground pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
             activeTab === "resource-templates" ||
             activeTab === "prompts" ||
             activeTab === "oauth-flow" ||
             activeTab === "chat" ||
-            activeTab === "chat-v2") && (
+            activeTab === "chat-v2" ||
+            activeTab === "ui-playground") && (
             <ActiveServerSelector
               serverConfigs={
                 activeTab === "oauth-flow"
@@ -277,6 +279,12 @@ export default function App() {
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
+          {activeTab === "ui-playground" && (
+            <UIPlaygroundTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+            />
+          )}
           {activeTab === "settings" && <SettingsTab />}
         </div>
       </SidebarInset>
