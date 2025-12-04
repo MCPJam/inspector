@@ -368,18 +368,33 @@ The middle iframe serves as a cross-origin relay between the host and widget. Lo
 - **Widget loading via src**: Preserves URL context for React Router
 - **Ready signal**: Notifies host when proxy is initialized
 
-#### Stage 2: Content Injection
+#### Widget Content Injection
 
-Located in `server/routes/mcp/openai.ts:123-459`:
+Located in `server/routes/mcp/chatgpt.ts:600-734`:
 
-Key steps:
+The `/widget-content/:toolId` endpoint performs the following:
 
-1. Retrieve widget data from store
+1. Retrieve widget data from store (includes host-controlled globals)
 2. Read HTML from MCP server via `readResource(uri)`
 3. Parse view mode and params from query string (`view_mode`, `view_params`)
-4. Inject `window.openai` API script with bridge implementation
+4. Inject `window.openai` API script with:
+   - Host-controlled locale (BCP 47 format, e.g., 'en-US')
+   - Host-controlled deviceType ('mobile', 'tablet', 'desktop')
+   - Host-controlled userLocation (coarse IP-based geolocation)
+   - Host-controlled maxHeight constraint (ChatGPT uses ~500px for inline)
 5. Add security headers (CSP, X-Frame-Options)
 6. Set cache control headers (no-cache for fresh content)
+
+**Host-Controlled Globals (New in PR #1001):**
+
+Per the OpenAI Apps SDK spec, these values are **controlled by the host** (Inspector), not computed in the widget:
+
+- `locale`: Browser language from `navigator.language` (e.g., 'en-US', 'es-ES')
+- `deviceType`: Computed from viewport width (mobile: <768px, tablet: <1024px, desktop: ≥1024px)
+- `userLocation`: Coarse IP-based geolocation `{ country, region, city }` or `null` (uses ip-api.com, no API key required)
+- `maxHeight`: Maximum allowed height for inline mode (ChatGPT default: ~500px)
+
+These values are passed to the widget via `window.openai` and cannot be overridden by widget code.
 
 ### 4. window.openai API Bridge
 
