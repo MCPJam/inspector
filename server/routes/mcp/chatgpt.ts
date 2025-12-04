@@ -31,6 +31,7 @@ interface WidgetData {
   locale?: string; // BCP 47 locale from host (e.g., 'en-US')
   deviceType?: "mobile" | "tablet" | "desktop";
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
+  maxHeight?: number | null; // ChatGPT provides maxHeight constraint for inline mode
   timestamp: number;
 }
 
@@ -101,6 +102,7 @@ interface ApiScriptOptions {
   locale: string; // Host-controlled BCP 47 locale (e.g., 'en-US')
   deviceType: "mobile" | "tablet" | "desktop"; // Host-controlled device type
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
+  maxHeight?: number | null; // Host-controlled max height constraint (ChatGPT uses ~500px for inline)
   viewMode?: string;
   viewParams?: Record<string, any>;
   useMapPendingCalls?: boolean;
@@ -141,7 +143,7 @@ interface ApiScriptOptions {
 function generateApiScript(opts: ApiScriptOptions): string {
   const {
     toolId, toolName, toolInput, toolOutput, toolResponseMetadata,
-    theme, locale, deviceType, userLocation, viewMode = "inline", viewParams = {},
+    theme, locale, deviceType, userLocation, maxHeight, viewMode = "inline", viewParams = {},
     useMapPendingCalls = true,
   } = opts;
 
@@ -222,7 +224,7 @@ function generateApiScript(opts: ApiScriptOptions): string {
     displayMode: 'inline',
     theme: ${JSON.stringify(theme)},
     locale: hostLocale, // Host-controlled per SDK spec
-    maxHeight: null,
+    maxHeight: ${maxHeight != null ? maxHeight : "null"},
     safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
     userAgent: { device: { type: hostDeviceType }, capabilities: { hover: hasHover, touch: hasTouch } },
     view: { mode: ${JSON.stringify(viewMode)}, params: ${serializeForInlineScript(viewParams)} },
@@ -379,7 +381,7 @@ const trustedCdns = ["https://persistent.oaistatic.com", "https://*.oaistatic.co
 
 chatgpt.post("/widget/store", async (c) => {
   try {
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolId, toolName, theme, locale, deviceType, userLocation } = await c.req.json();
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolId, toolName, theme, locale, deviceType, userLocation, maxHeight } = await c.req.json();
     if (!serverId || !uri || !toolId || !toolName) return c.json({ success: false, error: "Missing required fields" }, 400);
 
     widgetDataStore.set(toolId, {
@@ -394,6 +396,7 @@ chatgpt.post("/widget/store", async (c) => {
       locale: locale ?? "en-US", // Host-controlled locale per SDK spec
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null, // Coarse IP-based location per SDK spec
+      maxHeight: maxHeight ?? null, // Host-controlled max height constraint
       timestamp: Date.now(),
     });
     return c.json({ success: true });
@@ -419,7 +422,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     const widgetData = widgetDataStore.get(toolId);
     if (!widgetData) return c.json({ error: "Widget data not found or expired" }, 404);
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme, locale, deviceType, userLocation } = widgetData;
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme, locale, deviceType, userLocation, maxHeight } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager.listServers().filter((id) => Boolean(mcpClientManager.getClient(id)));
 
@@ -449,6 +452,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       locale: locale ?? "en-US",
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
+      maxHeight: maxHeight ?? null,
       useMapPendingCalls: true,
     });
     const modifiedHtml = injectScripts(htmlContent, generateUrlPolyfillScript(baseUrl), baseUrl ? `<base href="${baseUrl}">` : "", apiScript);
@@ -492,7 +496,7 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
     const widgetData = widgetDataStore.get(toolId);
     if (!widgetData) return c.html("<html><body>Error: Widget data not found or expired</body></html>", 404);
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme, locale, deviceType, userLocation } = widgetData;
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme, locale, deviceType, userLocation, maxHeight } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager.listServers().filter((id) => Boolean(mcpClientManager.getClient(id)));
 
@@ -513,6 +517,7 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       locale: locale ?? "en-US",
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
+      maxHeight: maxHeight ?? null,
       viewMode,
       viewParams,
       useMapPendingCalls: false,
