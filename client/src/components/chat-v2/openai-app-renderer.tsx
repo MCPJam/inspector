@@ -56,7 +56,9 @@ export function OpenAIAppRenderer({
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
   // ChatGPT provides ~500px maxHeight for inline mode by default
   const DEFAULT_INLINE_MAX_HEIGHT = 500;
-  const [maxHeight, setMaxHeight] = useState<number | null>(DEFAULT_INLINE_MAX_HEIGHT);
+  const [maxHeight, setMaxHeight] = useState<number | null>(
+    DEFAULT_INLINE_MAX_HEIGHT,
+  );
   const [contentHeight, setContentHeight] = useState<number>(320);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -669,11 +671,12 @@ export function OpenAIAppRenderer({
         className="w-full border border-border/40 rounded-md bg-background"
         style={{
           height: iframeHeight,
-          maxHeight: displayMode === "fullscreen"
-            ? "90vh"
-            : displayMode === "inline" && typeof maxHeight === "number"
-              ? `${maxHeight}px`
-              : undefined,
+          maxHeight:
+            displayMode === "fullscreen"
+              ? "90vh"
+              : displayMode === "inline" && typeof maxHeight === "number"
+                ? `${maxHeight}px`
+                : undefined,
         }}
         onLoad={() => {
           setIsReady(true);
