@@ -309,43 +309,64 @@ sequenceDiagram
 
 The middle iframe serves as a cross-origin relay between the host and widget. Located in `server/routes/mcp/chatgpt-sandbox-proxy.html`:
 
-```typescript
-openai.get(\"/widget/:toolId\", async (c) => {
-  const toolId = c.req.param(\"toolId\");
-  const widgetData = widgetDataStore.get(toolId);
+```html
+<!doctype html>
+<html>
+  <head>
+    <title>ChatGPT Apps Sandbox Proxy</title>
+  </head>
+  <body>
+    <script>
+      // Validate sandbox tokens for security
+      const ALLOWED_SANDBOX_TOKENS = [
+        "allow-scripts",
+        "allow-same-origin",
+        "allow-forms",
+        "allow-popups",
+        "allow-popups-to-escape-sandbox",
+      ];
 
-  if (!widgetData) {
-    return c.html(\"Error: Widget data not found or expired\", 404);
-  }
+      // Create inner iframe for widget content
+      const inner = document.createElement("iframe");
+      inner.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+      inner.setAttribute("allow", "local-network-access *; microphone *; midi *");
+      document.body.appendChild(inner);
 
-  return c.html(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset=\"utf-8\">
-      <title>Loading Widget...</title>
-    </head>
-    <body>
-      <script>
-        (async function() {
-          // Change URL to \"/\" BEFORE loading widget
-          history.replaceState(null, '', '/');
+      let widgetLoaded = false;
 
-          // Fetch actual widget HTML
-          const response = await fetch('/api/mcp/openai/widget-content/${toolId}');
-          const html = await response.text();
+      // Message relay: Parent <-> Inner iframe
+      window.addEventListener("message", (event) => {
+        if (event.source === window.parent) {
+          // Load widget when host sends URL
+          if (event.data?.type === "openai:load-widget") {
+            const { url, sandbox } = event.data;
+            inner.setAttribute("sandbox", validateSandbox(sandbox));
+            inner.src = url; // Load via src for URL context
+            widgetLoaded = true;
+          } else if (widgetLoaded && inner.contentWindow) {
+            // Forward messages to widget
+            inner.contentWindow.postMessage(event.data, "*");
+          }
+        } else if (event.source === inner.contentWindow) {
+          // Forward messages from widget to host
+          window.parent.postMessage(event.data, "*");
+        }
+      });
 
-          // Replace entire document
-          document.open();
-          document.write(html);
-          document.close();
-        })();
-      </script>
-    </body>
-    </html>
-  `);
-});
+      // Signal ready to host
+      window.parent.postMessage({ type: "openai:sandbox-ready" }, "*");
+    </script>
+  </body>
+</html>
 ```
+
+**Key Features:**
+
+- **Cross-origin isolation**: Proxy runs on different origin (localhost ↔ 127.0.0.1)
+- **Message relay**: Bidirectional forwarding between host and widget
+- **Sandbox validation**: Only allows whitelisted sandbox tokens
+- **Widget loading via src**: Preserves URL context for React Router
+- **Ready signal**: Notifies host when proxy is initialized
 
 #### Stage 2: Content Injection
 
