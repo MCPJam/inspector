@@ -687,8 +687,7 @@ export function ChatGPTAppRenderer({
         event.data.toolId === resolvedToolCallId
       ) {
         const newState = event.data.state;
-        const newStateStr =
-          newState === null ? null : JSON.stringify(newState);
+        const newStateStr = newState === null ? null : JSON.stringify(newState);
         if (newStateStr !== previousWidgetStateRef.current) {
           previousWidgetStateRef.current = newStateStr;
           setCurrentWidgetState(newState);
@@ -703,7 +702,13 @@ export function ChatGPTAppRenderer({
         });
       }
     },
-    [addUiLog, resolvedToolCallId, serverId, setWidgetState, onWidgetStateChange],
+    [
+      addUiLog,
+      resolvedToolCallId,
+      serverId,
+      setWidgetState,
+      onWidgetStateChange,
+    ],
   );
 
   const handleModalReady = useCallback(() => {
