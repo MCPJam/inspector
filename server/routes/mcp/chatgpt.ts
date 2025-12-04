@@ -38,15 +38,18 @@ interface WidgetData {
 const widgetDataStore = new Map<string, WidgetData>();
 
 // Cleanup expired widget data every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  const ONE_HOUR = 60 * 60 * 1000;
-  for (const [toolId, data] of widgetDataStore.entries()) {
-    if (now - data.timestamp > ONE_HOUR) {
-      widgetDataStore.delete(toolId);
+setInterval(
+  () => {
+    const now = Date.now();
+    const ONE_HOUR = 60 * 60 * 1000;
+    for (const [toolId, data] of widgetDataStore.entries()) {
+      if (now - data.timestamp > ONE_HOUR) {
+        widgetDataStore.delete(toolId);
+      }
     }
-  }
-}, 5 * 60 * 1000).unref();
+  },
+  5 * 60 * 1000,
+).unref();
 
 // ============================================================================
 // Shared Helpers (DRY)
@@ -60,9 +63,14 @@ const serializeForInlineScript = (value: unknown) =>
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029");
 
-function extractHtmlContent(content: unknown): { html: string; firstContent: any } {
+function extractHtmlContent(content: unknown): {
+  html: string;
+  firstContent: any;
+} {
   let html = "";
-  const contentsArray = Array.isArray((content as any)?.contents) ? (content as any).contents : [];
+  const contentsArray = Array.isArray((content as any)?.contents)
+    ? (content as any).contents
+    : [];
   const firstContent = contentsArray[0];
 
   if (firstContent) {
@@ -77,11 +85,19 @@ function extractHtmlContent(content: unknown): { html: string; firstContent: any
   return { html, firstContent };
 }
 
-function resolveServerId(serverId: string, availableServers: string[]): { id: string; error?: string } {
+function resolveServerId(
+  serverId: string,
+  availableServers: string[],
+): { id: string; error?: string } {
   if (availableServers.includes(serverId)) return { id: serverId };
-  const match = availableServers.find((n) => n.toLowerCase() === serverId.toLowerCase());
+  const match = availableServers.find(
+    (n) => n.toLowerCase() === serverId.toLowerCase(),
+  );
   if (match) return { id: match };
-  return { id: serverId, error: `Server not connected. Requested: ${serverId}, Available: ${availableServers.join(", ")}` };
+  return {
+    id: serverId,
+    error: `Server not connected. Requested: ${serverId}, Available: ${availableServers.join(", ")}`,
+  };
 }
 
 function extractBaseUrl(html: string): string {
@@ -142,8 +158,18 @@ interface ApiScriptOptions {
  */
 function generateApiScript(opts: ApiScriptOptions): string {
   const {
-    toolId, toolName, toolInput, toolOutput, toolResponseMetadata,
-    theme, locale, deviceType, userLocation, maxHeight, viewMode = "inline", viewParams = {},
+    toolId,
+    toolName,
+    toolInput,
+    toolOutput,
+    toolResponseMetadata,
+    theme,
+    locale,
+    deviceType,
+    userLocation,
+    maxHeight,
+    viewMode = "inline",
+    viewParams = {},
     useMapPendingCalls = true,
   } = opts;
 
@@ -357,9 +383,17 @@ window.URL.revokeObjectURL=OrigURL.revokeObjectURL;window.URL.canParse=OrigURL.c
 })();</script>`;
 }
 
-function injectScripts(html: string, urlPolyfill: string, baseTag: string, apiScript: string): string {
+function injectScripts(
+  html: string,
+  urlPolyfill: string,
+  baseTag: string,
+  apiScript: string,
+): string {
   if (/<html[^>]*>/i.test(html) && /<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, `$&${urlPolyfill}${baseTag}${apiScript}`);
+    return html.replace(
+      /<head[^>]*>/i,
+      `$&${urlPolyfill}${baseTag}${apiScript}`,
+    );
   }
   return `<!DOCTYPE html><html><head>${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
 }
@@ -368,12 +402,39 @@ function injectScripts(html: string, urlPolyfill: string, baseTag: string, apiSc
 // CSP Configuration
 // ============================================================================
 
-const defaultResourceDomains = ["https://unpkg.com", "https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com", "https://cdn.tailwindcss.com"];
+const defaultResourceDomains = [
+  "https://unpkg.com",
+  "https://cdn.jsdelivr.net",
+  "https://cdnjs.cloudflare.com",
+  "https://cdn.tailwindcss.com",
+];
 const isDev = process.env.NODE_ENV !== "production";
-const devResourceDomains = isDev ? ["http://localhost:3000", "http://localhost:3001", "http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:3000", "http://127.0.0.1:5173", "ws://localhost:3000", "ws://localhost:5173"] : [];
+const devResourceDomains = isDev
+  ? [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:5173",
+      "ws://localhost:3000",
+      "ws://localhost:5173",
+    ]
+  : [];
 const devConnectDomains = isDev ? ["https:", "wss:", "ws:"] : [];
 const devScriptDomains = isDev ? ["https:"] : [];
-const trustedCdns = ["https://persistent.oaistatic.com", "https://*.oaistatic.com", "https://unpkg.com", "https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com", "https://cdn.skypack.dev", "https://apps-sdk-widgets.vercel.app", "https://dynamic.heygen.ai", "https://static.heygen.ai", "https://files2.heygen.ai"].join(" ");
+const trustedCdns = [
+  "https://persistent.oaistatic.com",
+  "https://*.oaistatic.com",
+  "https://unpkg.com",
+  "https://cdn.jsdelivr.net",
+  "https://cdnjs.cloudflare.com",
+  "https://cdn.skypack.dev",
+  "https://apps-sdk-widgets.vercel.app",
+  "https://dynamic.heygen.ai",
+  "https://static.heygen.ai",
+  "https://files2.heygen.ai",
+].join(" ");
 
 // ============================================================================
 // Routes
@@ -381,8 +442,22 @@ const trustedCdns = ["https://persistent.oaistatic.com", "https://*.oaistatic.co
 
 chatgpt.post("/widget/store", async (c) => {
   try {
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolId, toolName, theme, locale, deviceType, userLocation, maxHeight } = await c.req.json();
-    if (!serverId || !uri || !toolId || !toolName) return c.json({ success: false, error: "Missing required fields" }, 400);
+    const {
+      serverId,
+      uri,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata,
+      toolId,
+      toolName,
+      theme,
+      locale,
+      deviceType,
+      userLocation,
+      maxHeight,
+    } = await c.req.json();
+    if (!serverId || !uri || !toolId || !toolName)
+      return c.json({ success: false, error: "Missing required fields" }, 400);
 
     widgetDataStore.set(toolId, {
       serverId,
@@ -402,16 +477,28 @@ chatgpt.post("/widget/store", async (c) => {
     return c.json({ success: true });
   } catch (error) {
     console.error("Error storing widget data:", error);
-    return c.json({ success: false, error: error instanceof Error ? error.message : "Unknown error" }, 500);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
   }
 });
 
 chatgpt.get("/sandbox-proxy", (c) => {
-  const html = readFileSync(join(__dirname, "chatgpt-sandbox-proxy.html"), "utf-8");
+  const html = readFileSync(
+    join(__dirname, "chatgpt-sandbox-proxy.html"),
+    "utf-8",
+  );
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "public, max-age=3600");
   // Allow cross-origin framing between localhost and 127.0.0.1 for triple-iframe architecture
-  c.header("Content-Security-Policy", "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*");
+  c.header(
+    "Content-Security-Policy",
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
+  );
   // Remove X-Frame-Options as it doesn't support multiple origins (CSP takes precedence)
   return c.body(html);
 });
@@ -420,11 +507,26 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
   try {
     const toolId = c.req.param("toolId");
     const widgetData = widgetDataStore.get(toolId);
-    if (!widgetData) return c.json({ error: "Widget data not found or expired" }, 404);
+    if (!widgetData)
+      return c.json({ error: "Widget data not found or expired" }, 404);
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme, locale, deviceType, userLocation, maxHeight } = widgetData;
+    const {
+      serverId,
+      uri,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata,
+      toolName,
+      theme,
+      locale,
+      deviceType,
+      userLocation,
+      maxHeight,
+    } = widgetData;
     const mcpClientManager = c.mcpClientManager;
-    const availableServers = mcpClientManager.listServers().filter((id) => Boolean(mcpClientManager.getClient(id)));
+    const availableServers = mcpClientManager
+      .listServers()
+      .filter((id) => Boolean(mcpClientManager.getClient(id)));
 
     const resolved = resolveServerId(serverId, availableServers);
     if (resolved.error) return c.json({ error: resolved.error }, 404);
@@ -433,13 +535,36 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent) return c.json({ error: "No HTML content found" }, 404);
 
-    const resourceMeta = firstContent?._meta as Record<string, unknown> | undefined;
-    const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as { connect_domains?: string[]; resource_domains?: string[] } | undefined;
+    const resourceMeta = firstContent?._meta as
+      | Record<string, unknown>
+      | undefined;
+    const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
+      | { connect_domains?: string[]; resource_domains?: string[] }
+      | undefined;
 
-    const baseResourceDomains = widgetCspRaw?.resource_domains || defaultResourceDomains;
+    const baseResourceDomains =
+      widgetCspRaw?.resource_domains || defaultResourceDomains;
     const csp = widgetCspRaw
-      ? { connectDomains: [...(widgetCspRaw.connect_domains || []), ...devResourceDomains, ...devConnectDomains], resourceDomains: [...baseResourceDomains, ...devResourceDomains, ...devScriptDomains] }
-      : { connectDomains: [...devResourceDomains, ...devConnectDomains], resourceDomains: [...defaultResourceDomains, ...devResourceDomains, ...devScriptDomains] };
+      ? {
+          connectDomains: [
+            ...(widgetCspRaw.connect_domains || []),
+            ...devResourceDomains,
+            ...devConnectDomains,
+          ],
+          resourceDomains: [
+            ...baseResourceDomains,
+            ...devResourceDomains,
+            ...devScriptDomains,
+          ],
+        }
+      : {
+          connectDomains: [...devResourceDomains, ...devConnectDomains],
+          resourceDomains: [
+            ...defaultResourceDomains,
+            ...devResourceDomains,
+            ...devScriptDomains,
+          ],
+        };
 
     const baseUrl = extractBaseUrl(htmlContent);
     const apiScript = generateApiScript({
@@ -455,25 +580,42 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       maxHeight: maxHeight ?? null,
       useMapPendingCalls: true,
     });
-    const modifiedHtml = injectScripts(htmlContent, generateUrlPolyfillScript(baseUrl), baseUrl ? `<base href="${baseUrl}">` : "", apiScript);
+    const modifiedHtml = injectScripts(
+      htmlContent,
+      generateUrlPolyfillScript(baseUrl),
+      baseUrl ? `<base href="${baseUrl}">` : "",
+      apiScript,
+    );
 
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
       html: modifiedHtml,
       csp,
-      widgetDescription: resourceMeta?.["openai/widgetDescription"] as string | undefined,
-      prefersBorder: (resourceMeta?.["openai/widgetPrefersBorder"] as boolean | undefined) ?? true,
-      closeWidget: (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ?? false,
+      widgetDescription: resourceMeta?.["openai/widgetDescription"] as
+        | string
+        | undefined,
+      prefersBorder:
+        (resourceMeta?.["openai/widgetPrefersBorder"] as boolean | undefined) ??
+        true,
+      closeWidget:
+        (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ?? false,
     });
   } catch (error) {
     console.error("Error serving widget HTML:", error);
-    return c.json({ error: error instanceof Error ? error.message : "Unknown error" }, 500);
+    return c.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      500,
+    );
   }
 });
 
 chatgpt.get("/widget/:toolId", async (c) => {
   const toolId = c.req.param("toolId");
-  if (!widgetDataStore.get(toolId)) return c.html("<html><body>Error: Widget data not found or expired</body></html>", 404);
+  if (!widgetDataStore.get(toolId))
+    return c.html(
+      "<html><body>Error: Widget data not found or expired</body></html>",
+      404,
+    );
 
   return c.html(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Loading Widget...</title></head><body><script>
 (async function() {
@@ -491,21 +633,50 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
     const toolId = c.req.param("toolId");
     const viewMode = c.req.query("view_mode") || "inline";
     let viewParams = {};
-    try { const vp = c.req.query("view_params"); if (vp) viewParams = JSON.parse(vp); } catch (e) {}
+    try {
+      const vp = c.req.query("view_params");
+      if (vp) viewParams = JSON.parse(vp);
+    } catch (e) {}
 
     const widgetData = widgetDataStore.get(toolId);
-    if (!widgetData) return c.html("<html><body>Error: Widget data not found or expired</body></html>", 404);
+    if (!widgetData)
+      return c.html(
+        "<html><body>Error: Widget data not found or expired</body></html>",
+        404,
+      );
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme, locale, deviceType, userLocation, maxHeight } = widgetData;
+    const {
+      serverId,
+      uri,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata,
+      toolName,
+      theme,
+      locale,
+      deviceType,
+      userLocation,
+      maxHeight,
+    } = widgetData;
     const mcpClientManager = c.mcpClientManager;
-    const availableServers = mcpClientManager.listServers().filter((id) => Boolean(mcpClientManager.getClient(id)));
+    const availableServers = mcpClientManager
+      .listServers()
+      .filter((id) => Boolean(mcpClientManager.getClient(id)));
 
     const resolved = resolveServerId(serverId, availableServers);
-    if (resolved.error) return c.html(`<html><body><h3>Error: Server not connected</h3><p>${resolved.error}</p></body></html>`, 404);
+    if (resolved.error)
+      return c.html(
+        `<html><body><h3>Error: Server not connected</h3><p>${resolved.error}</p></body></html>`,
+        404,
+      );
 
     const content = await mcpClientManager.readResource(resolved.id, { uri });
     const { html: htmlContent } = extractHtmlContent(content);
-    if (!htmlContent) return c.html("<html><body>Error: No HTML content found</body></html>", 404);
+    if (!htmlContent)
+      return c.html(
+        "<html><body>Error: No HTML content found</body></html>",
+        404,
+      );
 
     const apiScript = generateApiScript({
       toolId,
@@ -522,13 +693,28 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       viewParams,
       useMapPendingCalls: false,
     });
-    const modifiedHtml = injectScripts(htmlContent, "", '<base href="/">', apiScript);
+    const modifiedHtml = injectScripts(
+      htmlContent,
+      "",
+      '<base href="/">',
+      apiScript,
+    );
 
-    c.header("Content-Security-Policy", [
-      "default-src 'self'", `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`, "worker-src 'self' blob:", "child-src 'self' blob:",
-      `style-src 'self' 'unsafe-inline' ${trustedCdns}`, "img-src 'self' data: https: blob:", "media-src 'self' data: https: blob:",
-      `font-src 'self' data: ${trustedCdns}`, "connect-src 'self' https: wss: ws:", "frame-ancestors 'self'",
-    ].join("; "));
+    c.header(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`,
+        "worker-src 'self' blob:",
+        "child-src 'self' blob:",
+        `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
+        "img-src 'self' data: https: blob:",
+        "media-src 'self' data: https: blob:",
+        `font-src 'self' data: ${trustedCdns}`,
+        "connect-src 'self' https: wss: ws:",
+        "frame-ancestors 'self'",
+      ].join("; "),
+    );
     c.header("X-Frame-Options", "SAMEORIGIN");
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -538,7 +724,10 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
     return c.html(modifiedHtml);
   } catch (error) {
     console.error("Error serving widget content:", error);
-    return c.html(`<html><body>Error: ${error instanceof Error ? error.message : "Unknown error"}</body></html>`, 500);
+    return c.html(
+      `<html><body>Error: ${error instanceof Error ? error.message : "Unknown error"}</body></html>`,
+      500,
+    );
   }
 });
 
