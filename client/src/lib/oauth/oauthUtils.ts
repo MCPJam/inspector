@@ -54,20 +54,6 @@ export const parseOAuthCallbackParams = (location: string): CallbackParams => {
 };
 
 /**
- * Generate a random state for the OAuth 2.0 flow.
- *
- * @returns A random state for the OAuth 2.0 flow.
- */
-export const generateOAuthState = () => {
-  // Generate a random state
-  const array = new Uint8Array(32);
-  crypto.getRandomValues(array);
-  return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
-};
-
-/**
  * Generates a human-readable error description from OAuth callback error parameters
  * @param params OAuth error callback parameters containing error details
  * @returns Formatted multiline error message with error code, description, and optional URI

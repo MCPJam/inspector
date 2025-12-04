@@ -31,18 +31,18 @@ import {
   saveRequest,
   updateRequestMeta,
 } from "@/lib/request-storage";
-import type { SavedRequest } from "@/lib/request-types";
+import type { SavedRequest } from "@/lib/types/request-types";
 import { useLogger } from "@/hooks/use-logger";
 import {
   executeToolApi,
   listTools,
   respondToElicitationApi,
   type ToolExecutionResponse,
-} from "@/lib/mcp-tools-api";
+} from "@/lib/apis/mcp-tools-api";
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig } from "@/sdk";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 
 type ToolMap = Record<string, Tool>;
@@ -134,7 +134,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     title: string;
     description?: string;
   }>({ title: "" });
-
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {

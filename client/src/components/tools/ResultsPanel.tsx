@@ -3,7 +3,7 @@ import type {
   CallToolResult,
   EmbeddedResource,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { ToolExecutionResponse } from "@/lib/mcp-tools-api";
+import type { ToolExecutionResponse } from "@/lib/apis/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { CheckCircle, XCircle } from "lucide-react";
 import { ChatGPTAppRenderer } from "../chat-v2/chatgpt-app-renderer";

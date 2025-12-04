@@ -21,6 +21,7 @@ import models from "./models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
+import logLevel from "./log-level";
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -106,5 +107,8 @@ mcp.route("/tokenizer", tokenizer);
 
 // Tunnel management endpoints - create ngrok tunnels for servers
 mcp.route("/tunnels", tunnelsRoute);
+
+// Logging level endpoint - configure per-server logging verbosity
+mcp.route("/log-level", logLevel);
 
 export default mcp;

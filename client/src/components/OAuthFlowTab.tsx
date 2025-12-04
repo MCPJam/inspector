@@ -5,7 +5,7 @@ import {
   type OAuthFlowStep,
 } from "@/lib/oauth/state-machines/types";
 import { createOAuthStateMachine } from "@/lib/oauth/state-machines/factory";
-import { DebugMCPOAuthClientProvider } from "@/lib/debug-oauth-provider";
+import { DebugMCPOAuthClientProvider } from "@/lib/oauth/debug-oauth-provider";
 import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import {
@@ -14,7 +14,7 @@ import {
   ResizablePanelGroup,
 } from "./ui/resizable";
 import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { OAuthProfileModal } from "./oauth/OAuthProfileModal";
 import { type OAuthTestProfile } from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";

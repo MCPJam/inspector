@@ -19,7 +19,7 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { cn } from "@/lib/utils";
 import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import posthog from "posthog-js";
 import {
   Tooltip,
@@ -41,6 +41,7 @@ import type {
   TestTemplate,
   ExpectedToolCall,
 } from "./eval-runner/types";
+import { useSharedAppState } from "@/state/app-state-context";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
@@ -99,7 +100,7 @@ export function EvalRunner({
   } | null>(null);
   const { isAuthenticated } = useConvexAuth();
   const { getAccessToken } = useAuth();
-  const { appState } = useAppState();
+  const appState = useSharedAppState();
   const { getToken, hasToken } = useAiProviderKeys();
 
   const [selectedServers, setSelectedServers] = useState<string[]>([]);

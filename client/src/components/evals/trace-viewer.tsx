@@ -10,8 +10,8 @@ import {
 import { useState } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogo } from "@/lib/provider-logos";
-import { ToolServerMap, getToolServerId } from "@/lib/mcp-tools-api";
-import { ChatGPTAppRenderer } from "@/components/chat-v2/chatgpt-app-renderer";
+import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
+import { OpenAIAppRenderer } from "@/components/chat-v2/openai-app-renderer";
 
 interface ContentPart {
   type: string;
@@ -507,7 +507,7 @@ function CombinedToolPart({
         !isError &&
         (() => {
           return (
-            <ChatGPTAppRenderer
+            <OpenAIAppRenderer
               serverId={serverId}
               toolCallId={toolCall?.toolCallId}
               toolName={toolName}

@@ -6,7 +6,7 @@ import {
   getPostHogKey,
   getPostHogOptions,
   isPostHogDisabled,
-} from "./logs/PosthogUtils.ts";
+} from "./lib/PosthogUtils.ts";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";

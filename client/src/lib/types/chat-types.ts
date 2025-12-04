@@ -60,29 +60,3 @@ export interface ChatState {
   error?: string;
   connectionStatus: "connected" | "disconnected" | "connecting";
 }
-
-export interface ChatActions {
-  sendMessage: (content: string, attachments?: Attachment[]) => Promise<void>;
-  editMessage: (messageId: string, newContent: string) => Promise<void>;
-  regenerateMessage: (messageId: string) => Promise<void>;
-  deleteMessage: (messageId: string) => void;
-  clearChat: () => void;
-  stopGeneration: () => void;
-}
-
-export interface MCPToolCall extends ToolCall {
-  serverId: string;
-  serverName: string;
-}
-
-export interface MCPToolResult extends ToolResult {
-  serverId: string;
-}
-
-export type ChatStatus = "idle" | "typing" | "streaming" | "error";
-
-export interface StreamingMessage {
-  id: string;
-  content: string;
-  isComplete: boolean;
-}

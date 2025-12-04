@@ -26,7 +26,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
-} from "@/lib/mcp-oauth";
+} from "@/lib/oauth/mcp-oauth";
 import { MCPServerConfig } from "@/sdk";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 export type { ServerWithName } from "@/state/app-types";
@@ -254,7 +254,7 @@ export function useAppState() {
             } as ServerWithName,
           });
 
-          const { initiateOAuth } = await import("@/lib/mcp-oauth");
+          const { initiateOAuth } = await import("@/lib/oauth/mcp-oauth");
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
