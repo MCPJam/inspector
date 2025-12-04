@@ -305,9 +305,9 @@ sequenceDiagram
 - **ChatGPT parity**: Matches OpenAI's production implementation exactly
 - **Sandbox enforcement**: Each iframe layer enforces its own sandbox restrictions
 
-#### Stage 1: Container Page
+#### Sandbox Proxy Implementation
 
-Located in `server/routes/mcp/openai.ts:81-120`:
+The middle iframe serves as a cross-origin relay between the host and widget. Located in `server/routes/mcp/chatgpt-sandbox-proxy.html`:
 
 ```typescript
 openai.get(\"/widget/:toolId\", async (c) => {
