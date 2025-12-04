@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ChatGPT Apps Sandbox Proxy</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100vh;
+        width: 100vw;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      iframe {
+        background-color: transparent;
+        border: 0px none transparent;
+        padding: 0px;
+        overflow: hidden;
+        flex-grow: 1;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      /**
+       * ChatGPT Apps Sandbox Proxy - Triple-iframe architecture for ChatGPT parity
+       * Inspector Host -> Outer (about:blank) -> This Proxy (different origin) -> Widget (src URL)
+       *
+       * The widget is loaded via src URL (not srcdoc) to preserve proper URL context
+       * for Next.js navigation and React hydration.
+       */
+
+      const ALLOWED_SANDBOX_TOKENS = [
+        "allow-scripts",
+        "allow-same-origin",
+        "allow-forms",
+        "allow-popups",
+        "allow-popups-to-escape-sandbox",
+      ];
+      const DEFAULT_SANDBOX = ALLOWED_SANDBOX_TOKENS.join(" ");
+
+      function validateSandbox(sandbox) {
+        if (typeof sandbox !== "string") return DEFAULT_SANDBOX;
+        const tokens = sandbox.split(/\s+/).filter(Boolean);
+        return tokens.every((t) => ALLOWED_SANDBOX_TOKENS.includes(t))
+          ? sandbox
+          : DEFAULT_SANDBOX;
+      }
+
+      const inner = document.createElement("iframe");
+      inner.style.cssText = "width:100%; height:100%; border:none;";
+      inner.setAttribute("sandbox", DEFAULT_SANDBOX);
+      // Permissions Policy matching ChatGPT's actual implementation
+      inner.setAttribute(
+        "allow",
+        "local-network-access *; microphone *; midi *",
+      );
+      document.body.appendChild(inner);
+
+      let widgetLoaded = false;
+
+      window.addEventListener("message", (event) => {
+        console.log(
+          "[Sandbox Proxy] Received message:",
+          event.data?.type,
+          "from:",
+          event.source === window.parent
+            ? "parent"
+            : event.source === inner.contentWindow
+              ? "inner"
+              : "unknown",
+        );
+        if (event.source === window.parent) {
+          if (event.data?.type === "openai:load-widget") {
+            const { url, sandbox } = event.data;
+            console.log("[Sandbox Proxy] Loading widget from URL:", url);
+            inner.setAttribute("sandbox", validateSandbox(sandbox));
+            if (typeof url === "string") {
+              inner.src = url;
+              widgetLoaded = true;
+            }
+          } else if (widgetLoaded && inner.contentWindow) {
+            inner.contentWindow.postMessage(event.data, "*");
+          }
+        } else if (event.source === inner.contentWindow) {
+          console.log(
+            "[Sandbox Proxy] Forwarding to parent:",
+            event.data?.type,
+          );
+          window.parent.postMessage(event.data, "*");
+        }
+      });
+
+      window.parent.postMessage({ type: "openai:sandbox-ready" }, "*");
+    </script>
+  </body>
+</html>

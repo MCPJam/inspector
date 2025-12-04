@@ -14,7 +14,7 @@ import exporter from "./export";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
-import openai from "./openai";
+import chatgpt from "./chatgpt";
 import apps from "./apps";
 import registry from "./registry";
 import models from "./models";
@@ -69,7 +69,7 @@ mcp.route("/resources", resources);
 mcp.route("/resource-templates", resourceTemplates);
 
 // OpenAI Apps SDK widget endpoints
-mcp.route("/openai", openai);
+mcp.route("/openai", chatgpt);
 
 // MCP Apps (SEP-1865) widget endpoints
 mcp.route("/apps", apps);
