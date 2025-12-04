@@ -2,53 +2,68 @@
  * UIPlaygroundTab
  *
  * Main orchestrator component for the UI Playground tab.
- * Combines deterministic tool execution with ChatTabV2-style chat,
- * allowing users to execute tools and then chat about the results.
+ * Combines the determinism of ToolsTab with playground aesthetics
+ * for testing ChatGPT Apps (OpenAI Apps SDK widgets).
  */
 
 import { useEffect, useCallback, useMemo, useState } from "react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench } from "lucide-react";
 import {
+  ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
-  ResizableHandle,
 } from "../ui/resizable";
 import { EmptyState } from "../ui/empty-state";
-import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
 import { PlaygroundToolsSidebar } from "./PlaygroundToolsSidebar";
-import { PlaygroundThread } from "./PlaygroundThread";
+import { PlaygroundEmulator } from "./PlaygroundEmulator";
 import { PlaygroundInspector } from "./PlaygroundInspector";
-import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { listTools, executeToolApi, type ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
+import { listTools, executeToolApi } from "@/lib/apis/mcp-tools-api";
 import {
   generateFormFieldsFromSchema,
   buildParametersFromFields,
-  applyParametersToFields,
 } from "@/lib/tool-form";
-import {
-  listSavedRequests,
-  saveRequest,
-  deleteRequest,
-  duplicateRequest,
-  updateRequestMeta,
-} from "@/lib/request-storage";
-import type { SavedRequest } from "@/lib/types/request-types";
 import type { MCPServerConfig } from "@/sdk";
-
-// Pending execution to be injected into chat
-interface PendingExecution {
-  toolName: string;
-  params: Record<string, unknown>;
-  result: unknown;
-  toolMeta: Record<string, unknown> | undefined;
-}
 
 interface UIPlaygroundTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+}
+
+/**
+ * Check if a tool is a ChatGPT App tool (returns widget UI)
+ */
+function isChatGPTAppTool(
+  tool: Tool | undefined,
+  toolOutput: unknown
+): boolean {
+  if (!tool) return false;
+
+  // Check for outputTemplate in tool definition metadata
+  const hasOutputTemplate = !!tool._meta?.["openai/outputTemplate"];
+
+  // Or check for structuredContent with HTML resource in output
+  if (
+    toolOutput &&
+    typeof toolOutput === "object" &&
+    toolOutput !== null &&
+    "structuredContent" in toolOutput
+  ) {
+    const content = (toolOutput as { structuredContent?: unknown }).structuredContent;
+    if (content && typeof content === "object" && content !== null) {
+      const { resourceUri, mimeType } = content as {
+        resourceUri?: string;
+        mimeType?: string;
+      };
+      if (resourceUri && mimeType === "text/html+skybridge") {
+        return true;
+      }
+    }
+  }
+
+  return hasOutputTemplate;
 }
 
 export function UIPlaygroundTab({
@@ -57,44 +72,24 @@ export function UIPlaygroundTab({
 }: UIPlaygroundTabProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  // Pending execution to inject into chat thread
-  const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
-
-  // Saved requests state
-  const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
-  const [highlightedRequestId, setHighlightedRequestId] = useState<string | null>(null);
-  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
-  const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
-  const [dialogDefaults, setDialogDefaults] = useState<{ title: string; description?: string }>({ title: "" });
-
-  // Compute server key for saved requests storage
-  const serverKey = useMemo(() => {
-    if (!serverConfig) return "none";
-    try {
-      if ((serverConfig as any).url) {
-        return `http:${(serverConfig as any).url}`;
-      }
-      if ((serverConfig as any).command) {
-        const args = ((serverConfig as any).args || []).join(" ");
-        return `stdio:${(serverConfig as any).command} ${args}`.trim();
-      }
-      return JSON.stringify(serverConfig);
-    } catch {
-      return "unknown";
-    }
-  }, [serverConfig]);
-
   // Get store state and actions
   const {
     selectedTool,
     tools,
     formFields,
     isExecuting,
+    toolOutput,
+    toolResponseMetadata,
+    executionError,
+    widgetUrl,
+    widgetState,
+    isWidgetTool,
+    csp,
+    cspViolations,
     deviceType,
     displayMode,
     globals,
-    isSidebarVisible,
-    isInspectorVisible,
+    lastToolCallId,
     setTools,
     setSelectedTool,
     setFormFields,
@@ -104,12 +99,18 @@ export function UIPlaygroundTab({
     setToolOutput,
     setToolResponseMetadata,
     setExecutionError,
+    setWidgetUrl,
     setWidgetState,
+    setIsWidgetTool,
     setDeviceType,
+    setDisplayMode,
     updateGlobal,
     setCsp,
-    toggleSidebar,
-    toggleInspector,
+    addCspViolation,
+    setLastToolCallId,
+    followUpMessages,
+    addFollowUpMessage,
+    clearFollowUpMessages,
     reset,
   } = useUIPlaygroundStore();
 
@@ -118,16 +119,10 @@ export function UIPlaygroundTab({
     updateGlobal("theme", themeMode);
   }, [themeMode, updateGlobal]);
 
-  // Tools metadata for filtering OpenAI apps
-  const [toolsMetadata, setToolsMetadata] = useState<Record<string, Record<string, unknown>>>({});
-
-  // Compute tool names - only show OpenAI apps (tools with openai/outputTemplate metadata)
-  const toolNames = useMemo(() => {
-    return Object.keys(tools).filter(
-      (name) => toolsMetadata[name]?.["openai/outputTemplate"] != null
-    );
-  }, [tools, toolsMetadata]);
+  // Compute tool names and filtering
+  const toolNames = useMemo(() => Object.keys(tools), [tools]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [hasExecuted, setHasExecuted] = useState(false);
   const filteredToolNames = useMemo(() => {
     if (!searchQuery.trim()) return toolNames;
     const query = searchQuery.trim().toLowerCase();
@@ -138,29 +133,24 @@ export function UIPlaygroundTab({
     });
   }, [toolNames, tools, searchQuery]);
 
-  // Filter saved requests by search query
-  const filteredSavedRequests = useMemo(() => {
-    if (!searchQuery.trim()) return savedRequests;
-    const query = searchQuery.trim().toLowerCase();
-    return savedRequests.filter((req) => {
-      const haystack = `${req.title} ${req.description ?? ""} ${req.toolName}`.toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [savedRequests, searchQuery]);
+  // Extract invocation messages from selected tool metadata
+  const invocationMessages = useMemo(() => {
+    if (!selectedTool || !tools[selectedTool]) return null;
+    const meta = tools[selectedTool]._meta as Record<string, unknown> | undefined;
+    if (!meta) return null;
 
-  // Load saved requests when server changes
-  useEffect(() => {
-    if (serverConfig) {
-      setSavedRequests(listSavedRequests(serverKey));
-    }
-  }, [serverConfig, serverKey]);
+    const invoking = meta["openai/toolInvocation/invoking"] as string | undefined;
+    const invoked = meta["openai/toolInvocation/invoked"] as string | undefined;
+
+    if (!invoking && !invoked) return null;
+    return { invoking, invoked };
+  }, [selectedTool, tools]);
 
   // Fetch tools when server changes
   const fetchTools = useCallback(async () => {
     if (!serverName) return;
 
     reset();
-    setToolsMetadata({});
     try {
       const data = await listTools(serverName);
       const toolArray = data.tools ?? [];
@@ -168,7 +158,6 @@ export function UIPlaygroundTab({
         toolArray.map((tool: Tool) => [tool.name, tool])
       );
       setTools(dictionary);
-      setToolsMetadata(data.toolsMetadata ?? {});
     } catch (err) {
       console.error("Failed to fetch tools:", err);
       setExecutionError(
@@ -192,14 +181,26 @@ export function UIPlaygroundTab({
     } else {
       setFormFields([]);
     }
+    // Reset hasExecuted when tool changes
+    setHasExecuted(false);
   }, [selectedTool, tools, setFormFields]);
 
-  // Execute tool and inject into chat thread
+  // Execute tool
   const executeTool = useCallback(async () => {
     if (!selectedTool || !serverName) return;
 
     setIsExecuting(true);
+    setHasExecuted(true);
     setExecutionError(null);
+    setToolOutput(null);
+    setToolResponseMetadata(null);
+    setWidgetUrl(null);
+    setWidgetState(null);
+    setIsWidgetTool(false);
+    setCsp(null);
+
+    const toolCallId = `playground-${Date.now()}`;
+    setLastToolCallId(toolCallId);
 
     try {
       const params = buildParametersFromFields(formFields);
@@ -220,34 +221,72 @@ export function UIPlaygroundTab({
       }
 
       const result = response.result;
-
-      // Store raw output for inspector
       setToolOutput(result);
 
-      // Extract metadata for inspector
+      // Extract metadata
       const rawResult = result as unknown as Record<string, unknown>;
       const meta = (rawResult?._meta || rawResult?.meta) as Record<string, unknown> | undefined;
       setToolResponseMetadata(meta || null);
 
-      // Extract CSP for inspector
-      const widgetCsp = meta?.["openai/widgetCSP"] as {
-        connectDomains?: string[];
-        resourceDomains?: string[];
-      } | undefined;
-      if (widgetCsp) {
-        setCsp({
-          connectDomains: widgetCsp.connectDomains || [],
-          resourceDomains: widgetCsp.resourceDomains || [],
-        });
-      }
+      // Check if this is a ChatGPT App tool
+      const tool = tools[selectedTool];
+      const isWidget = isChatGPTAppTool(tool, result);
+      setIsWidgetTool(isWidget);
 
-      // Set pending execution for chat thread to inject
-      setPendingExecution({
-        toolName: selectedTool,
-        params,
-        result,
-        toolMeta: meta,
-      });
+      // If it's a widget tool, prepare the widget
+      if (isWidget) {
+        const outputTemplate = tool?._meta?.["openai/outputTemplate"] as string | undefined;
+
+        // Extract CSP from metadata
+        const widgetCsp = meta?.["openai/widgetCSP"] as {
+          connectDomains?: string[];
+          resourceDomains?: string[];
+        } | undefined;
+        if (widgetCsp) {
+          setCsp({
+            connectDomains: widgetCsp.connectDomains || [],
+            resourceDomains: widgetCsp.resourceDomains || [],
+          });
+        }
+
+        // Extract structured content
+        let structuredContent = null;
+        if (rawResult?.structuredContent) {
+          structuredContent = rawResult.structuredContent;
+        }
+
+        // Store widget data and get URL
+        try {
+          const storeResponse = await fetch("/api/mcp/openai/widget/store", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serverId: serverName,
+              uri: outputTemplate,
+              toolInput: params,
+              toolOutput: structuredContent || result,
+              toolResponseMetadata: meta,
+              toolId: toolCallId,
+              toolName: selectedTool,
+              theme: globals.theme,
+              locale: globals.locale,
+              deviceType: globals.deviceType,
+              userLocation: globals.userLocation,
+            }),
+          });
+
+          if (storeResponse.ok) {
+            setWidgetUrl(`/api/mcp/openai/widget/${toolCallId}`);
+          } else {
+            throw new Error("Failed to store widget data");
+          }
+        } catch (err) {
+          console.error("Error storing widget data:", err);
+          setExecutionError(
+            err instanceof Error ? err.message : "Failed to prepare widget"
+          );
+        }
+      }
     } catch (err) {
       console.error("Tool execution error:", err);
       setExecutionError(
@@ -260,12 +299,38 @@ export function UIPlaygroundTab({
     selectedTool,
     serverName,
     formFields,
+    tools,
+    globals,
     setIsExecuting,
     setExecutionError,
     setToolOutput,
     setToolResponseMetadata,
+    setWidgetUrl,
+    setWidgetState,
+    setIsWidgetTool,
     setCsp,
+    setLastToolCallId,
   ]);
+
+  // Handle callTool from widget
+  const handleCallTool = useCallback(
+    async (toolName: string, params: Record<string, unknown>) => {
+      if (!serverName) throw new Error("No server selected");
+      const response = await executeToolApi(serverName, toolName, params);
+      if ("error" in response) throw new Error(response.error);
+      if (response.status === "elicitation_required") {
+        throw new Error("Nested elicitation not supported");
+      }
+      return response.result;
+    },
+    [serverName]
+  );
+
+  // Handle follow-up message from widget
+  const handleSendFollowUp = useCallback((message: string) => {
+    console.log("[UIPlayground] Widget requested follow-up:", message);
+    addFollowUpMessage(message);
+  }, [addFollowUpMessage]);
 
   // Keyboard shortcut for execute
   useEffect(() => {
@@ -279,72 +344,6 @@ export function UIPlaygroundTab({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedTool, isExecuting, executeTool]);
 
-  // Saved request handlers
-  const handleSaveCurrent = useCallback(() => {
-    if (!selectedTool) return;
-    setEditingRequestId(null);
-    setDialogDefaults({ title: selectedTool, description: "" });
-    setIsSaveDialogOpen(true);
-  }, [selectedTool]);
-
-  const handleLoadRequest = useCallback((req: SavedRequest) => {
-    setSelectedTool(req.toolName);
-    // Wait for form fields to be generated, then apply parameters
-    setTimeout(() => {
-      if (tools[req.toolName]) {
-        const fields = generateFormFieldsFromSchema(tools[req.toolName].inputSchema);
-        const updatedFields = applyParametersToFields(fields, req.parameters);
-        setFormFields(updatedFields);
-      }
-    }, 50);
-  }, [tools, setSelectedTool, setFormFields]);
-
-  const handleDeleteRequest = useCallback((id: string) => {
-    deleteRequest(serverKey, id);
-    setSavedRequests(listSavedRequests(serverKey));
-  }, [serverKey]);
-
-  const handleDuplicateRequest = useCallback((req: SavedRequest) => {
-    const duplicated = duplicateRequest(serverKey, req.id);
-    setSavedRequests(listSavedRequests(serverKey));
-    if (duplicated?.id) {
-      setHighlightedRequestId(duplicated.id);
-      setTimeout(() => setHighlightedRequestId(null), 2000);
-    }
-  }, [serverKey]);
-
-  const handleRenameRequest = useCallback((req: SavedRequest) => {
-    setEditingRequestId(req.id);
-    setDialogDefaults({ title: req.title, description: req.description });
-    setIsSaveDialogOpen(true);
-  }, []);
-
-  const handleSaveDialogSubmit = useCallback(({ title, description }: { title: string; description?: string }) => {
-    if (editingRequestId) {
-      updateRequestMeta(serverKey, editingRequestId, { title, description });
-      setSavedRequests(listSavedRequests(serverKey));
-      setEditingRequestId(null);
-      setIsSaveDialogOpen(false);
-      setHighlightedRequestId(editingRequestId);
-      setTimeout(() => setHighlightedRequestId(null), 2000);
-      return;
-    }
-
-    const params = buildParametersFromFields(formFields);
-    const newRequest = saveRequest(serverKey, {
-      title,
-      description,
-      toolName: selectedTool!,
-      parameters: params,
-    });
-    setSavedRequests(listSavedRequests(serverKey));
-    setIsSaveDialogOpen(false);
-    if (newRequest?.id) {
-      setHighlightedRequestId(newRequest.id);
-      setTimeout(() => setHighlightedRequestId(null), 2000);
-    }
-  }, [editingRequestId, serverKey, formFields, selectedTool]);
-
   // No server selected
   if (!serverConfig) {
     return (
@@ -357,97 +356,73 @@ export function UIPlaygroundTab({
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+    <div className="h-full flex flex-col">
+      <ResizablePanelGroup direction="horizontal" className="flex-1">
         {/* Left Panel - Tools Sidebar */}
-        {isSidebarVisible ? (
-          <>
-            <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-              <PlaygroundToolsSidebar
-              tools={tools}
-              toolNames={toolNames}
-              filteredToolNames={filteredToolNames}
-              selectedToolName={selectedTool}
-              fetchingTools={false}
-              searchQuery={searchQuery}
-              onSearchQueryChange={setSearchQuery}
-              onRefresh={fetchTools}
-              onSelectTool={setSelectedTool}
-              formFields={formFields}
-              onFieldChange={updateFormField}
-              onToggleField={updateFormFieldIsSet}
-              isExecuting={isExecuting}
-              onExecute={executeTool}
-              onSave={handleSaveCurrent}
-              deviceType={deviceType}
-              onDeviceTypeChange={setDeviceType}
-              globals={globals}
-              onUpdateGlobal={updateGlobal}
-              savedRequests={savedRequests}
-              filteredSavedRequests={filteredSavedRequests}
-              highlightedRequestId={highlightedRequestId}
-              onLoadRequest={handleLoadRequest}
-              onRenameRequest={handleRenameRequest}
-              onDuplicateRequest={handleDuplicateRequest}
-              onDeleteRequest={handleDeleteRequest}
-              onClose={toggleSidebar}
-            />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        ) : (
-          <CollapsedPanelStrip
-            side="left"
-            onOpen={toggleSidebar}
-            tooltipText="Show tools sidebar"
-          />
-        )}
-
-        {/* Center Panel - Chat Thread */}
-        <ResizablePanel defaultSize={isSidebarVisible && isInspectorVisible ? 45 : 70} minSize={30}>
-          <PlaygroundThread
-            serverName={serverName || ""}
+        <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
+          <PlaygroundToolsSidebar
+            tools={tools}
+            toolNames={toolNames}
+            filteredToolNames={filteredToolNames}
+            selectedToolName={selectedTool}
+            fetchingTools={false}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            onRefresh={fetchTools}
+            onSelectTool={setSelectedTool}
+            formFields={formFields}
+            onFieldChange={updateFormField}
+            onToggleField={updateFormFieldIsSet}
             isExecuting={isExecuting}
-            executingToolName={selectedTool}
-            invokingMessage={
-              selectedTool && tools[selectedTool]
-                ? (tools[selectedTool] as any)._meta?.[
-                    "openai/toolInvocation/invoking"
-                  ]
-                : null
-            }
-            pendingExecution={pendingExecution}
-            onExecutionInjected={() => setPendingExecution(null)}
-            onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
-            deviceType={deviceType}
-            displayMode={displayMode}
+            onExecute={executeTool}
           />
         </ResizablePanel>
 
-        {/* Right Panel - Inspector */}
-        {isInspectorVisible ? (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-              <PlaygroundInspector onClose={toggleInspector} />
-            </ResizablePanel>
-          </>
-        ) : (
-          <CollapsedPanelStrip
-            side="right"
-            onOpen={toggleInspector}
-            tooltipText="Show inspector panel"
-          />
-        )}
-      </ResizablePanelGroup>
+        <ResizableHandle withHandle />
 
-      <SaveRequestDialog
-        open={isSaveDialogOpen}
-        defaultTitle={dialogDefaults.title}
-        defaultDescription={dialogDefaults.description}
-        onCancel={() => setIsSaveDialogOpen(false)}
-        onSave={handleSaveDialogSubmit}
-      />
+        {/* Center Panel - Emulator */}
+        <ResizablePanel defaultSize={45} minSize={30}>
+          <PlaygroundEmulator
+            serverId={serverName || ""}
+            serverName={serverName || null}
+            toolCallId={lastToolCallId}
+            toolName={selectedTool}
+            widgetUrl={widgetUrl}
+            isWidgetTool={isWidgetTool}
+            isExecuting={isExecuting}
+            executionError={executionError}
+            hasExecuted={hasExecuted}
+            invocationMessages={invocationMessages}
+            deviceType={deviceType}
+            displayMode={displayMode}
+            globals={globals}
+            followUpMessages={followUpMessages}
+            onDeviceTypeChange={setDeviceType}
+            onDisplayModeChange={setDisplayMode}
+            onWidgetStateChange={setWidgetState}
+            onCspViolation={addCspViolation}
+            onCallTool={handleCallTool}
+            onSendFollowUp={handleSendFollowUp}
+            onClearFollowUpMessages={clearFollowUpMessages}
+          />
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        {/* Right Panel - Inspector */}
+        <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+          <PlaygroundInspector
+            toolOutput={toolOutput}
+            toolResponseMetadata={toolResponseMetadata}
+            widgetState={widgetState}
+            globals={globals}
+            csp={csp}
+            cspViolations={cspViolations}
+            widgetId={lastToolCallId}
+            onUpdateGlobal={updateGlobal}
+          />
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

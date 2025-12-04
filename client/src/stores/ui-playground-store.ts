@@ -48,9 +48,6 @@ export interface FollowUpMessage {
 }
 
 interface UIPlaygroundState {
-  // Active flag - true when UI Playground is mounted
-  isPlaygroundActive: boolean;
-
   // Tool selection
   selectedTool: string | null;
   tools: Record<string, Tool>;
@@ -82,10 +79,6 @@ interface UIPlaygroundState {
   // Follow-up messages from widget
   followUpMessages: FollowUpMessage[];
 
-  // Panel visibility
-  isSidebarVisible: boolean;
-  isInspectorVisible: boolean;
-
   // Actions
   setTools: (tools: Record<string, Tool>) => void;
   setSelectedTool: (tool: string | null) => void;
@@ -111,11 +104,6 @@ interface UIPlaygroundState {
   setLastToolCallId: (id: string | null) => void;
   addFollowUpMessage: (text: string) => void;
   clearFollowUpMessages: () => void;
-  toggleSidebar: () => void;
-  toggleInspector: () => void;
-  setSidebarVisible: (visible: boolean) => void;
-  setInspectorVisible: (visible: boolean) => void;
-  setPlaygroundActive: (active: boolean) => void;
   reset: () => void;
 }
 
@@ -127,17 +115,7 @@ const getInitialGlobals = (): PlaygroundGlobals => ({
   userLocation: null,
 });
 
-const STORAGE_KEY_SIDEBAR = "mcpjam-ui-playground-sidebar-visible";
-const STORAGE_KEY_INSPECTOR = "mcpjam-ui-playground-inspector-visible";
-
-const getStoredVisibility = (key: string, defaultValue: boolean): boolean => {
-  if (typeof window === "undefined") return defaultValue;
-  const stored = localStorage.getItem(key);
-  return stored === null ? defaultValue : stored === "true";
-};
-
 const initialState = {
-  isPlaygroundActive: false,
   selectedTool: null,
   tools: {},
   formFields: [],
@@ -155,8 +133,6 @@ const initialState = {
   globals: getInitialGlobals(),
   lastToolCallId: null,
   followUpMessages: [] as FollowUpMessage[],
-  isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
-  isInspectorVisible: getStoredVisibility(STORAGE_KEY_INSPECTOR, true),
 };
 
 export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
@@ -256,38 +232,5 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
 
   clearFollowUpMessages: () => set({ followUpMessages: [] }),
 
-  toggleSidebar: () =>
-    set((state) => {
-      const newValue = !state.isSidebarVisible;
-      localStorage.setItem(STORAGE_KEY_SIDEBAR, String(newValue));
-      return { isSidebarVisible: newValue };
-    }),
-
-  toggleInspector: () =>
-    set((state) => {
-      const newValue = !state.isInspectorVisible;
-      localStorage.setItem(STORAGE_KEY_INSPECTOR, String(newValue));
-      return { isInspectorVisible: newValue };
-    }),
-
-  setSidebarVisible: (visible) => {
-    localStorage.setItem(STORAGE_KEY_SIDEBAR, String(visible));
-    set({ isSidebarVisible: visible });
-  },
-
-  setInspectorVisible: (visible) => {
-    localStorage.setItem(STORAGE_KEY_INSPECTOR, String(visible));
-    set({ isInspectorVisible: visible });
-  },
-
-  setPlaygroundActive: (active) => set({ isPlaygroundActive: active }),
-
-  reset: () => set((state) => ({
-    ...initialState,
-    // Preserve panel visibility on reset
-    isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
-    isInspectorVisible: getStoredVisibility(STORAGE_KEY_INSPECTOR, true),
-    // Preserve playground active state (controlled by PlaygroundThread mount/unmount)
-    isPlaygroundActive: state.isPlaygroundActive,
-  })),
+  reset: () => set(initialState),
 }));
