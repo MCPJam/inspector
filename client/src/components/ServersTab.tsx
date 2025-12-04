@@ -23,7 +23,7 @@ import {
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import {
   ResizablePanelGroup,
@@ -35,7 +35,7 @@ import {
   getTunnel,
   closeTunnel,
   cleanupOrphanedTunnels,
-} from "@/lib/mcp-tunnels-api";
+} from "@/lib/apis/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "sonner";

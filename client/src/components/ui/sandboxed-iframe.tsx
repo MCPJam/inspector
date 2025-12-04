@@ -66,7 +66,7 @@ export const SandboxedIframe = forwardRef<
 >(function SandboxedIframe(
   {
     html,
-    sandbox = "allow-scripts allow-same-origin allow-forms",
+    sandbox = "allow-scripts allow-same-origin allow-forms allow-popups",
     csp,
     onProxyReady,
     onMessage,
@@ -150,6 +150,7 @@ export const SandboxedIframe = forwardRef<
     return () => window.removeEventListener("message", handleMessage);
   }, [handleMessage]);
 
+  // Send HTML and CSP to sandbox when ready (SEP-1865)
   useEffect(() => {
     if (!proxyReady || !html) return;
 

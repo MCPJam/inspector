@@ -31,28 +31,6 @@ export function decodeJWT(token: string): Record<string, any> | null {
 }
 
 /**
- * Decode JWT header
- */
-export function decodeJWTHeader(token: string): Record<string, any> | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) {
-      return null;
-    }
-
-    const header = parts[0];
-    const base64 = header.replace(/-/g, "+").replace(/_/g, "/");
-    const paddedBase64 = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-    const decoded = atob(paddedBase64);
-
-    return JSON.parse(decoded);
-  } catch (error) {
-    console.error("Failed to decode JWT header:", error);
-    return null;
-  }
-}
-
-/**
  * Format timestamp to readable date
  */
 export function formatJWTTimestamp(timestamp: number): string {

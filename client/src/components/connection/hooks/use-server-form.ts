@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { hasOAuthConfig, getStoredTokens } from "@/lib/mcp-oauth";
+import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 
 export function useServerForm(server?: ServerWithName) {
   const [name, setName] = useState("");

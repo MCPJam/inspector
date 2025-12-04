@@ -23,10 +23,11 @@ import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { AppStateProvider } from "./state/app-state-context";
 
 // Import global styles
 import "./index.css";
-import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "./lib/PosthogUtils";
 import {
   getInitialThemeMode,
   updateThemeMode,
@@ -98,11 +99,9 @@ export default function App() {
     handleRemoveServer,
     setSelectedServer,
     toggleServerSelection,
-    selectedMCPConfigsMap,
     setSelectedMultipleServersToAllServers,
     workspaces,
     activeWorkspaceId,
-    activeWorkspace,
     handleSwitchWorkspace,
     handleCreateWorkspace,
     handleUpdateWorkspace,
@@ -290,12 +289,14 @@ export default function App() {
       themePreset={initialThemePreset}
     >
       <RegistryStoreProvider>
-        <Toaster />
-        {shouldShowLoginPage && !isOAuthCallbackComplete ? (
-          <LoginPage />
-        ) : (
-          appContent
-        )}
+        <AppStateProvider appState={appState}>
+          <Toaster />
+          {shouldShowLoginPage && !isOAuthCallbackComplete ? (
+            <LoginPage />
+          ) : (
+            appContent
+          )}
+        </AppStateProvider>
       </RegistryStoreProvider>
     </PreferencesStoreProvider>
   );

@@ -24,7 +24,7 @@ import { MCPServerConfig, type MCPPrompt } from "@/sdk";
 import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,
-} from "@/lib/mcp-prompts-api";
+} from "@/lib/apis/mcp-prompts-api";
 import { LoggerView } from "./logging/logger-view";
 
 interface PromptsTabProps {

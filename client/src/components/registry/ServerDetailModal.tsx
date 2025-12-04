@@ -28,7 +28,7 @@ import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import type { RegistryServer } from "@/shared/types";
 import { useState, useEffect } from "react";
-import { listServerVersions, getServerVersion } from "@/lib/registry-api";
+import { listServerVersions, getServerVersion } from "@/lib/apis/registry-api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface RegistryServerDetailModalProps {

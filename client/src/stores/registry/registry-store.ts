@@ -1,6 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import type { RegistryServer } from "@/shared/types";
-import { listRegistryServers } from "@/lib/registry-api";
+import { listRegistryServers } from "@/lib/apis/registry-api";
 import { toast } from "sonner";
 
 const CACHE_KEY = "mcp-registry-cache";

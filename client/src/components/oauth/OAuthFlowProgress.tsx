@@ -20,7 +20,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { OAuthFlowState, OAuthStep } from "@/lib/oauth-flow-types";
+import { OAuthFlowState, OAuthStep } from "@/lib/types/oauth-flow-types";
 import { cn } from "@/lib/utils";
 
 type NodeStatus = "complete" | "current" | "pending";

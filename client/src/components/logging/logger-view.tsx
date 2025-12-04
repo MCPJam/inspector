@@ -9,6 +9,7 @@ import {
   Server,
   AppWindow,
   PanelRightClose,
+  Loader2,
 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -16,10 +17,22 @@ import "react18-json-view/src/dark.css";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   useUiLogStore,
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/ui-log-store";
+import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
+import { setServerLoggingLevel } from "@/state/mcp-api";
+import { toast } from "sonner";
+import { useSharedAppState } from "@/state/app-state-context";
+import type { ServerWithName } from "@/state/app-types";
 
 type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps";
@@ -48,6 +61,17 @@ interface LoggerViewProps {
   onClose?: () => void; // Optional callback to close/hide the panel
 }
 
+const LOGGING_LEVELS: LoggingLevel[] = [
+  "debug",
+  "info",
+  "notice",
+  "warning",
+  "error",
+  "critical",
+  "alert",
+  "emergency",
+];
+
 function normalizePayload(
   payload: unknown,
 ): Record<string, unknown> | unknown[] {
@@ -57,10 +81,14 @@ function normalizePayload(
 }
 
 export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
+  const appState = useSharedAppState();
   const [mcpServerItems, setMcpServerItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedServerId, setSelectedServerId] = useState<string>("");
+  const [selectedLevel, setSelectedLevel] = useState<LoggingLevel>("debug");
+  const [isUpdatingLevel, setIsUpdatingLevel] = useState(false);
 
   // Subscribe to UI log store for MCP Apps traffic
   const uiLogItems = useUiLogStore((s) => s.items);
@@ -80,6 +108,62 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
       widgetId: item.widgetId,
     }));
   }, [uiLogItems]);
+  const connectedServers = useMemo<
+    Array<{ id: string; server: ServerWithName }>
+  >(
+    () =>
+      Object.entries(appState.servers)
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([id, server]) => ({ id, server })),
+    [appState.servers],
+  );
+
+  const selectableServers = useMemo(() => {
+    if (!serverIds || serverIds.length === 0) return connectedServers;
+    const filter = new Set(serverIds);
+    return connectedServers.filter((server) => filter.has(server.id));
+  }, [connectedServers, serverIds]);
+
+  useEffect(() => {
+    if (selectableServers.length === 0) {
+      setSelectedServerId("");
+      return;
+    }
+    setSelectedServerId((prev) => {
+      if (prev && selectableServers.some((server) => server.id === prev)) {
+        return prev;
+      }
+      return selectableServers[0]?.id ?? "";
+    });
+  }, [selectableServers]);
+
+  const handleApplyLogLevel = async () => {
+    if (!selectedServerId) return;
+    setIsUpdatingLevel(true);
+    try {
+      const response = await setServerLoggingLevel(
+        selectedServerId,
+        selectedLevel,
+      );
+      if (!response?.success) {
+        throw new Error(
+          response?.error ||
+            `Failed to set logging level for ${selectedServerId}`,
+        );
+      }
+      toast.success(
+        `Logging level set to "${selectedLevel}" for ${selectedServerId}`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to update logging level",
+      );
+    } finally {
+      setIsUpdatingLevel(false);
+    }
+  };
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -184,6 +268,8 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
     return result;
   }, [allItems, searchQuery, serverIds]);
 
+  const canUpdateLogLevel = !!selectedServerId && !isUpdatingLevel;
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
@@ -226,6 +312,69 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
           <span className="text-xs text-muted-foreground whitespace-nowrap">
             {filteredItems.length} / {allItems.length}
           </span>
+        </div>
+        <span className="mt-1 text-[9px] font-semibold uppercase text-muted-foreground">
+          Log Level
+        </span>
+        <div className="mt-0.5 flex w-full items-center gap-1 text-[10px]">
+          <div className="flex-[2] min-w-0">
+            <Select
+              value={selectedServerId}
+              onValueChange={setSelectedServerId}
+              disabled={selectableServers.length === 0 || isUpdatingLevel}
+            >
+              <SelectTrigger className="h-5 w-full bg-transparent px-1.5 py-0 text-[11px] cursor-pointer">
+                <SelectValue placeholder="Server" />
+              </SelectTrigger>
+              <SelectContent>
+                {selectableServers.length === 0 ? (
+                  <SelectItem value="none" disabled>
+                    No connected servers
+                  </SelectItem>
+                ) : (
+                  selectableServers.map((server) => (
+                    <SelectItem
+                      key={server.id}
+                      value={server.id}
+                      className="text-[10px]"
+                    >
+                      {server.id}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex-[1] min-w-0">
+            <Select
+              value={selectedLevel}
+              onValueChange={(value) => setSelectedLevel(value as LoggingLevel)}
+              disabled={!selectedServerId || isUpdatingLevel}
+            >
+              <SelectTrigger className="h-5 w-full bg-transparent px-1.5 py-0 text-[11px] cursor-pointer">
+                <SelectValue placeholder="Level" />
+              </SelectTrigger>
+              <SelectContent>
+                {LOGGING_LEVELS.map((level) => (
+                  <SelectItem key={level} value={level} className="text-[10px]">
+                    {level}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleApplyLogLevel}
+            disabled={!canUpdateLogLevel}
+            className="flex-[1] h-9 justify-center px-1.5 text-[10px]"
+          >
+            {isUpdatingLevel && (
+              <Loader2 className="mr-1 h-2 w-2 animate-spin" />
+            )}
+            Apply
+          </Button>
         </div>
       </div>
 
