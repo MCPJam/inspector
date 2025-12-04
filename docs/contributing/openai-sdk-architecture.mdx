@@ -492,30 +492,30 @@ const openaiAPI = {
   },
 
   // Call another MCP tool
-  async callTool(toolName, params = {}) {
+  async callTool(toolName, args = {}) {
+    const callId = ++this._callId;
     return new Promise((resolve, reject) => {
-      const requestId = `tool_${Date.now()}_${Math.random()}`;
-
-      const handler = (event) => {
-        if (event.data.type === 'openai:callTool:response' &&
-            event.data.requestId === requestId) {
-          window.removeEventListener('message', handler);
-          event.data.error ? reject(new Error(event.data.error))
-                           : resolve(event.data.result);
-        }
-      };
-
-      window.addEventListener('message', handler);
+      this._pendingCalls.set(callId, { resolve, reject });
+      
+      // Include client-supplied _meta per SDK spec
       window.parent.postMessage({
         type: 'openai:callTool',
-        requestId,
         toolName,
-        params
+        args,
+        callId,
+        toolId: ${JSON.stringify(toolId)},
+        _meta: Object.assign({
+          'openai/locale': hostLocale,
+          'openai/userAgent': navigator.userAgent,
+          'openai/subject': getSubjectId()
+        }, hostUserLocation ? { 'openai/userLocation': hostUserLocation } : {})
       }, '*');
 
       setTimeout(() => {
-        window.removeEventListener('message', handler);
-        reject(new Error('Tool call timeout'));
+        if (this._pendingCalls.has(callId)) {
+          this._pendingCalls.delete(callId);
+          reject(new Error('Tool call timeout'));
+        }
       }, 30000);
     });
   },
