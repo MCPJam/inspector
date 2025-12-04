@@ -73,25 +73,32 @@ See [Playground Architecture - MCP-UI Integration](./playground-architecture#mcp
 
 ## Architecture Overview
 
+MCPJam Inspector implements a **triple-iframe architecture** matching ChatGPT's actual implementation for maximum compatibility and security isolation:
+
 ```mermaid
 graph TB
     subgraph Frontend["Frontend (React)"]
         Chat[ChatTab Component]
         Message[Message Component]
         Results[ResultsPanel Component]
-        Renderer[OpenAIComponentRenderer]
-        Iframe[Sandboxed Iframe]
+        Renderer[ChatGPTAppRenderer]
+        OuterIframe["Outer Iframe (about:blank)"]
+        MiddleIframe["Middle Iframe (sandbox-proxy)"]
+        InnerIframe["Inner Iframe (widget content)"]
 
         Chat --> Message
         Message --> Results
         Results --> Renderer
-        Renderer --> Iframe
+        Renderer --> OuterIframe
+        OuterIframe --> MiddleIframe
+        MiddleIframe --> InnerIframe
     end
 
     subgraph Backend["Backend (Hono.js)"]
         ToolExec[Tool Execution]
         Storage[Widget Data Store]
         StoreEndpoint["POST /openai/widget/store"]
+        ProxyEndpoint["GET /openai/sandbox-proxy"]
         WidgetEndpoint["GET /openai/widget/:toolId"]
         ContentEndpoint["GET /openai/widget-content/:toolId"]
         MCPRead[MCP Resource Read]
@@ -111,8 +118,12 @@ graph TB
     end
 
     Renderer -->|Store widget data| StoreEndpoint
-    Renderer -->|Load iframe| WidgetEndpoint
-    Iframe -->|postMessage| Renderer
+    Renderer -->|Load outer iframe| OuterIframe
+    OuterIframe -->|Load proxy| ProxyEndpoint
+    MiddleIframe -->|Load widget| WidgetEndpoint
+    InnerIframe -->|postMessage| MiddleIframe
+    MiddleIframe -->|postMessage| OuterIframe
+    OuterIframe -->|postMessage| Renderer
     Renderer -->|Call tool| ToolExec
     ContentEndpoint -->|Fetch HTML| MCPRead
     MCPRead -->|Read resource| Resource
@@ -121,10 +132,25 @@ graph TB
     classDef backend fill:#fff3e0,stroke:#f57c00
     classDef mcp fill:#f3e5f5,stroke:#7b1fa2
 
-    class Chat,Message,Results,Renderer,Iframe frontend
-    class ToolExec,Storage,WidgetEndpoint,ContentEndpoint,MCPRead backend
+    class Chat,Message,Results,Renderer,OuterIframe,MiddleIframe,InnerIframe frontend
+    class ToolExec,Storage,WidgetEndpoint,ContentEndpoint,MCPRead,ProxyEndpoint backend
     class Tool,Resource mcp
 ```
+
+### Triple-Iframe Architecture
+
+The triple-iframe design provides **true cross-origin isolation** for maximum security:
+
+1. **Outer Iframe** (`about:blank`) - Container with popup permissions
+2. **Middle Iframe** (cross-origin sandbox proxy) - Uses localhost ↔ 127.0.0.1 origin swap for isolation
+3. **Inner Iframe** (widget content via `src` URL) - Actual widget with proper URL context
+
+**Why Three Iframes?**
+
+- **Cross-origin isolation**: Middle iframe runs on different origin (localhost vs 127.0.0.1)
+- **URL context preservation**: Widget loads via `src` (not `srcdoc`) for Next.js/React Router compatibility
+- **Security boundaries**: Each layer enforces sandbox restrictions
+- **ChatGPT parity**: Matches OpenAI's production implementation exactly
 
 ## Component Flow
 
