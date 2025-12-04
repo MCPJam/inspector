@@ -1191,7 +1191,9 @@ c.header(\"Content-Security-Policy\", [
 
 ### Iframe Sandbox
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:518-530`:
+The triple-iframe architecture uses different sandbox configurations at each level:
+
+**Outer Iframe** (`client/src/components/ui/chatgpt-sandboxed-iframe.tsx`):
 
 ```typescript
 <iframe
