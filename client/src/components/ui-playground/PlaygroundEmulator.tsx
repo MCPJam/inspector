@@ -11,11 +11,6 @@
 
 import { useRef, useCallback, useEffect, useState } from "react";
 import {
-  Monitor,
-  Tablet,
-  Smartphone,
-  Maximize2,
-  PictureInPicture2,
   LayoutTemplate,
   Loader2,
   AlertCircle,
@@ -24,7 +19,6 @@ import {
   Server,
   X,
 } from "lucide-react";
-import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import {
   ChatGPTSandboxedIframe,
   ChatGPTSandboxedIframeHandle,
@@ -35,25 +29,25 @@ import { UserMessageBubble } from "../chat-v2/user-message-bubble";
 
 interface DeviceConfig {
   width: number;
-  frameClass: string;
+  height: number;
   label: string;
 }
 
 const DEVICE_CONFIGS: Record<DeviceType, DeviceConfig> = {
   mobile: {
-    width: 375,
-    frameClass: "rounded-[2rem] border-[8px] border-gray-800 dark:border-gray-700",
-    label: "Mobile (375px)",
+    width: 430,
+    height: 932,
+    label: "Mobile (430×932)",
   },
   tablet: {
-    width: 768,
-    frameClass: "rounded-xl border-[6px] border-gray-800 dark:border-gray-700",
-    label: "Tablet (768px)",
+    width: 820,
+    height: 1180,
+    label: "Tablet (820×1180)",
   },
   desktop: {
-    width: 1024,
-    frameClass: "rounded-lg border-2 border-border",
-    label: "Desktop (1024px)",
+    width: 1280,
+    height: 800,
+    label: "Desktop (1280×800)",
   },
 };
 
@@ -112,7 +106,6 @@ export function PlaygroundEmulator({
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const addUiLog = useUiLogStore((s) => s.addLog);
   const [isReady, setIsReady] = useState(false);
-  const [contentHeight, setContentHeight] = useState(400);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   const deviceConfig = DEVICE_CONFIGS[deviceType];
@@ -151,10 +144,7 @@ export function PlaygroundEmulator({
 
       switch (data.type) {
         case "openai:resize": {
-          const rawHeight = Number(data.height);
-          if (Number.isFinite(rawHeight) && rawHeight > 0) {
-            setContentHeight(Math.round(rawHeight));
-          }
+          // Ignored - we use fixed device dimensions
           break;
         }
 
@@ -275,14 +265,6 @@ export function PlaygroundEmulator({
     });
   }, [isReady, globals, postToWidget]);
 
-  // Calculate iframe height based on display mode
-  const iframeHeight =
-    displayMode === "fullscreen"
-      ? "100%"
-      : displayMode === "pip"
-        ? 400
-        : contentHeight;
-
   // Invocation status header component
   const InvocationHeader = () => {
     if (!toolName) return null;
@@ -377,11 +359,12 @@ export function PlaygroundEmulator({
         {/* Skeleton Widget Area */}
         <div className="flex-1 overflow-auto p-4 flex items-start justify-center">
           <div
-            className={`bg-muted/30 overflow-hidden transition-all duration-300 animate-pulse ${deviceConfig.frameClass}`}
+            className="bg-muted/30 overflow-hidden transition-all duration-300 animate-pulse border border-border rounded-lg"
             style={{
               width: `${deviceConfig.width}px`,
+              height: `${deviceConfig.height}px`,
               maxWidth: "100%",
-              height: "400px",
+              maxHeight: "100%",
             }}
           />
         </div>
@@ -544,56 +527,15 @@ export function PlaygroundEmulator({
       {/* Collapsible Content */}
       {!isCollapsed && (
         <>
-          {/* Controls */}
-          <div className="flex items-center justify-center gap-4 px-4 py-3 border-b border-border bg-background">
-            {/* Device Type */}
-            <ToggleGroup
-              type="single"
-              value={deviceType}
-              onValueChange={(v) => v && onDeviceTypeChange(v as DeviceType)}
-            >
-              <ToggleGroupItem value="mobile" aria-label="Mobile" title="Mobile (375px)">
-                <Smartphone className="h-4 w-4" />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="tablet" aria-label="Tablet" title="Tablet (768px)">
-                <Tablet className="h-4 w-4" />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="desktop" aria-label="Desktop" title="Desktop (1024px)">
-                <Monitor className="h-4 w-4" />
-              </ToggleGroupItem>
-            </ToggleGroup>
-
-            <div className="w-px h-6 bg-border" />
-
-            {/* Display Mode */}
-            <ToggleGroup
-              type="single"
-              value={displayMode}
-              onValueChange={(v) => v && onDisplayModeChange(v as DisplayMode)}
-            >
-              <ToggleGroupItem value="inline" aria-label="Inline" title="Inline mode">
-                <LayoutTemplate className="h-4 w-4" />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="pip" aria-label="PiP" title="Picture-in-Picture mode">
-                <PictureInPicture2 className="h-4 w-4" />
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="fullscreen"
-                aria-label="Fullscreen"
-                title="Fullscreen mode"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-
           {/* Widget Area */}
           <div className="flex-1 overflow-auto p-4 flex flex-col items-center gap-4">
             <div
-              className={`bg-background overflow-hidden transition-all duration-300 ${deviceConfig.frameClass}`}
+              className="bg-background overflow-hidden transition-all duration-300 border border-border rounded-lg flex-shrink-0"
               style={{
                 width: `${deviceConfig.width}px`,
+                height: `${deviceConfig.height}px`,
                 maxWidth: "100%",
+                maxHeight: "100%",
               }}
             >
               <ChatGPTSandboxedIframe
@@ -602,12 +544,7 @@ export function PlaygroundEmulator({
                 onMessage={handleMessage}
                 onReady={() => setIsReady(true)}
                 title={`ChatGPT App Widget: ${toolName}`}
-                className="w-full bg-background"
-                style={{
-                  height: typeof iframeHeight === "number" ? `${iframeHeight}px` : iframeHeight,
-                  minHeight: "200px",
-                  maxHeight: "800px",
-                }}
+                className="w-full h-full bg-background"
               />
             </div>
 
@@ -637,9 +574,9 @@ export function PlaygroundEmulator({
           {/* Footer Info */}
           <div className="px-4 py-2 border-t border-border bg-background flex items-center justify-between text-[10px] text-muted-foreground">
             <span>
-              Device: {deviceConfig.label} | Mode: {displayMode}
+              {deviceConfig.width}×{deviceConfig.height} | {displayMode}
             </span>
-            <span>Tool: {toolName}</span>
+            <span>{toolName}</span>
           </div>
         </>
       )}
