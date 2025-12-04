@@ -398,39 +398,55 @@ These values are passed to the widget via `window.openai` and cannot be overridd
 
 ### 4. window.openai API Bridge
 
-The injected script provides the OpenAI Apps SDK API to widget code:
+The injected script provides the OpenAI Apps SDK API to widget code. Messages flow through the triple-iframe chain:
 
 ```mermaid
 graph LR
-    subgraph IframeWidget["Iframe (Widget)"]
+    subgraph InnerIframe["Inner Iframe (Widget)"]
         Widget[Widget Code]
         API[window.openai]
     end
 
+    subgraph MiddleIframe["Middle Iframe (Proxy)"]
+        Relay[Message Relay]
+    end
+
+    subgraph OuterIframe["Outer Iframe"]
+        Container[Container]
+    end
+
     subgraph ParentInspector["Parent (Inspector)"]
-        Renderer[OpenAIComponentRenderer]
+        Renderer[ChatGPTAppRenderer]
         Backend[Backend API]
     end
 
     Widget -->|callTool| API
-    API -->|postMessage| Renderer
+    API -->|postMessage| Relay
+    Relay -->|forward| Container
+    Container -->|forward| Renderer
     Renderer -->|fetch tools API| Backend
     Backend -->|postMessage response| Renderer
-    Renderer -->|postMessage result| API
+    Renderer -->|postMessage| Container
+    Container -->|forward| Relay
+    Relay -->|forward| API
     API -->|Promise resolves| Widget
 
     Widget -->|setWidgetState| API
-    API -->|localStorage and postMessage| Renderer
+    API -->|localStorage and postMessage| Relay
+    Relay -->|forward| Renderer
 
-    Widget -->|sendFollowupTurn| API
-    API -->|postMessage| Renderer
+    Widget -->|sendFollowUpMessage| API
+    API -->|postMessage| Relay
+    Relay -->|forward| Renderer
     Renderer -->|Sends to chat| Backend
 
     classDef iframe fill:#ffe0b2,stroke:#e65100
+    classDef proxy fill:#fff3e0,stroke:#f57c00
     classDef parent fill:#e1f5ff,stroke:#0288d1
 
     class Widget,API iframe
-    class Renderer,Backend parent
+    class Relay proxy
+    class Container,Renderer,Backend parent
 ```
 
 #### API Implementation
