@@ -1546,12 +1546,14 @@ Remember that messages flow through the triple-iframe chain:
 
 ### Iframe Rendering
 
-- **Initial Load**: 200-500ms (Stage 1 + Stage 2 + resource fetch)
-- **Tool Calls**: 100-300ms (postMessage + backend + MCP)
+- **Initial Load**: 300-700ms (triple-iframe setup + resource fetch + cross-origin relay)
+- **Tool Calls**: 100-300ms (postMessage relay through 3 iframes + backend + MCP)
+- **Message Latency**: Additional 5-10ms per iframe layer (3 layers = 15-30ms overhead)
 - **Optimization**:
   - Cache MCP resource reads (currently disabled with `no-cache`)
   - Preload widget data before iframe creation
   - Use service workers for offline support
+  - Consider WebSocket for high-frequency tool calls
 
 ### postMessage Overhead
 
