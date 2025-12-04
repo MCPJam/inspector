@@ -1197,12 +1197,31 @@ The triple-iframe architecture uses different sandbox configurations at each lev
 
 ```typescript
 <iframe
-  ref={iframeRef}
-  src={widgetUrl}
-  sandbox=\"allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox\"
-  title={`OpenAI Component: ${toolCall.name}`}
-  allow=\"web-share\"
+  src="about:blank"
+  sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
+  allow="local-network-access *; microphone *; midi *"
+  title={title}
 />
+```
+
+**Middle Iframe** (injected into outer iframe):
+
+```html
+<iframe
+  id="middle"
+  src="${sandboxProxyUrl}"  <!-- Cross-origin: localhost ↔ 127.0.0.1 -->
+  sandbox="allow-scripts allow-same-origin allow-forms"
+  allow="local-network-access *; microphone *; midi *"
+></iframe>
+```
+
+**Inner Iframe** (created by sandbox proxy):
+
+```javascript
+const inner = document.createElement("iframe");
+inner.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+inner.setAttribute("allow", "local-network-access *; microphone *; midi *");
+inner.src = widgetUrl;  // Widget content loaded via src
 ```
 
 **Sandbox Permissions:**
@@ -1210,15 +1229,16 @@ The triple-iframe architecture uses different sandbox configurations at each lev
 - `allow-scripts`: Enable JavaScript execution
 - `allow-same-origin`: Allow localStorage access (required for state)
 - `allow-forms`: Support form submissions
-- `allow-popups`: Enable external link navigation
-- `allow-popups-to-escape-sandbox`: Allow popup windows to load normally
+- `allow-popups`: Enable external link navigation (outer iframe only)
+- `allow-popups-to-escape-sandbox`: Allow popup windows to load normally (outer iframe only)
 
-**Security Trade-offs:**
+**Security Architecture:**
 
-- `allow-same-origin` + `allow-scripts` = Full JavaScript capabilities
-- Required for React Router and modern frameworks
-- Mitigated by CSP headers and origin validation
-- Widgets should be treated as semi-trusted code
+- **Cross-origin isolation**: Middle iframe uses different origin (localhost ↔ 127.0.0.1) for true security boundary
+- **Message relay**: Each layer validates and forwards messages, preventing direct access
+- **CSP enforcement**: Each iframe layer enforces Content Security Policy
+- **Sandbox layering**: Permissions are progressively restricted at each level
+- **Widget trust model**: Widgets are semi-trusted code with limited host access
 
 ## Complete Data Flow Example
 
