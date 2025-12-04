@@ -588,6 +588,36 @@ window.webplus = openaiAPI; // Compatibility alias
 - 30-second timeout on tool calls prevents hanging requests
 - Origin validation in parent ensures only iframe messages are processed
 
+**OAuth Challenge Handling (New in PR #1001):**
+
+When a tool returns a 401 status, the system checks for OAuth challenges per RFC 7235:
+
+```typescript
+// In ChatGPTAppRenderer message handler
+case "openai:callTool": {
+  const result = await onCallTool(toolName, args, _meta);
+  
+  // Check for OAuth challenge in response metadata
+  const resultMeta = result?._meta || result?.meta;
+  const wwwAuth = resultMeta?.["mcp/www_authenticate"];
+  
+  if (wwwAuth && typeof wwwAuth === "string") {
+    // Parse RFC 7235 challenge: Bearer realm="...", error="...", error_description="..."
+    handleOAuthChallenge(wwwAuth, toolName);
+  }
+  
+  postToWidget({
+    type: 'openai:callTool:response',
+    callId,
+    result,
+    error: result?.isError ? result?.content?.[0]?.text : undefined
+  });
+  break;
+}
+```
+
+The system displays user-friendly toast notifications when OAuth is required, guiding users to configure OAuth in server settings.
+
 ### 5. Modal Support
 
 As of PR #931, widgets can request modal dialogs using `window.openai.requestModal()`. This enables widgets to display secondary views or detailed information in a separate modal context.
