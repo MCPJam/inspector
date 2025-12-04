@@ -701,7 +701,7 @@ if (window.openai.view.mode === "modal") {
 
 Modal and inline views share widget state automatically. When either view calls `setWidgetState()`, the state is propagated to the other view via `openai:pushWidgetState` messages.
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:269-284`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:269-284`:
 
 ```typescript
 // After state is set, push to other view
