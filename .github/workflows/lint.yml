@@ -22,8 +22,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm ci --legacy-peer-deps
-          cd sdk && npm ci --legacy-peer-deps && cd ..
+          npm ci
 
       - name: Check Prettier formatting
         run: |
