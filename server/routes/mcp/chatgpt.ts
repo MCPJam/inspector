@@ -13,6 +13,12 @@ const __dirname = dirname(__filename);
 // Shared Types & Storage
 // ============================================================================
 
+interface UserLocation {
+  country: string;
+  region: string;
+  city: string;
+}
+
 interface WidgetData {
   serverId: string;
   uri: string;
@@ -22,6 +28,9 @@ interface WidgetData {
   toolId: string;
   toolName: string;
   theme?: "light" | "dark";
+  locale?: string; // BCP 47 locale from host (e.g., 'en-US')
+  deviceType?: "mobile" | "tablet" | "desktop";
+  userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   timestamp: number;
 }
 
@@ -89,6 +98,9 @@ interface ApiScriptOptions {
   toolOutput: any;
   toolResponseMetadata?: Record<string, any> | null;
   theme: string;
+  locale: string; // Host-controlled BCP 47 locale (e.g., 'en-US')
+  deviceType: "mobile" | "tablet" | "desktop"; // Host-controlled device type
+  userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   widgetAccessibleTools: string[];
   viewMode?: string;
   viewParams?: Record<string, any>;
@@ -97,11 +109,40 @@ interface ApiScriptOptions {
 
 /**
  * Generate the OpenAI Apps SDK bridge script - SINGLE SOURCE OF TRUTH
+ *
+ * This implements the official OpenAI Apps SDK window.openai API with the following:
+ *
+ * === OFFICIAL SDK PROPERTIES (per https://developers.openai.com/apps-sdk/) ===
+ * - toolOutput: object - Initial structuredContent from tool result
+ * - toolInput: object - Original tool input arguments
+ * - toolResponseMetadata: object - Response metadata from _meta (widget-only)
+ * - widgetState: unknown - Current widget-scoped state snapshot
+ * - displayMode: 'inline' | 'pip' | 'fullscreen' - Current display mode
+ * - maxHeight: number | null - Maximum allowed height
+ * - safeArea: { insets: { top, right, bottom, left } } - Layout safe area
+ * - theme: 'light' | 'dark' - Current theme
+ * - locale: string - BCP 47 locale (e.g., 'en-US')
+ * - userAgent: { device: { type }, capabilities: { hover, touch } }
+ *
+ * === OFFICIAL SDK METHODS ===
+ * - setWidgetState(state) - Persist widget state (sync call, async persistence)
+ * - callTool(name, args) - Invoke MCP tool, returns Promise
+ * - sendFollowUpMessage({ prompt }) - Insert message into chat
+ * - requestDisplayMode({ mode }) - Request display mode change
+ * - requestClose() - Programmatically close widget
+ * - openExternal({ href }) - Open external URL in new tab
+ *
+ * === INSPECTOR-SPECIFIC EXTENSIONS (not in official SDK) ===
+ * - requestModal({ title, params, anchor }) - Open widget in modal dialog
+ * - notifyIntrinsicHeight(height) - Explicitly report content height
+ * - sendFollowupTurn(message) - Alias for sendFollowUpMessage (deprecated)
+ * - view: { mode, params } - Modal view parameters (Inspector extension)
+ * - window.webplus - Alias for window.openai (Inspector compatibility)
  */
 function generateApiScript(opts: ApiScriptOptions): string {
   const {
     toolId, toolName, toolInput, toolOutput, toolResponseMetadata,
-    theme, widgetAccessibleTools, viewMode = "inline", viewParams = {},
+    theme, locale, deviceType, userLocation, widgetAccessibleTools, viewMode = "inline", viewParams = {},
     useMapPendingCalls = true,
   } = opts;
 
@@ -114,7 +155,12 @@ function generateApiScript(opts: ApiScriptOptions): string {
         return new Promise((resolve, reject) => {
           this._pendingCalls.set(callId, { resolve, reject });
           window.parent.postMessage({ type: 'openai:callTool', toolName, args, callId, toolId: ${JSON.stringify(toolId)},
-            _meta: { 'openai/locale': navigator.language || 'en-US', 'openai/userAgent': navigator.userAgent, 'openai/subject': getSubjectId() }
+            // Client-supplied _meta per SDK spec
+            _meta: Object.assign({
+              'openai/locale': hostLocale,
+              'openai/userAgent': navigator.userAgent,
+              'openai/subject': getSubjectId()
+            }, hostUserLocation ? { 'openai/userLocation': hostUserLocation } : {})
           }, '*');
           setTimeout(() => { if (this._pendingCalls.has(callId)) { this._pendingCalls.delete(callId); reject(new Error('Tool call timeout')); } }, 30000);
         });
@@ -131,7 +177,12 @@ function generateApiScript(opts: ApiScriptOptions): string {
           };
           window.addEventListener('message', handler);
           window.parent.postMessage({ type: 'openai:callTool', callId, toolName, args, toolId: ${JSON.stringify(toolId)},
-            _meta: { 'openai/locale': navigator.language || 'en-US', 'openai/userAgent': navigator.userAgent, 'openai/subject': getSubjectId() }
+            // Client-supplied _meta per SDK spec
+            _meta: Object.assign({
+              'openai/locale': hostLocale,
+              'openai/userAgent': navigator.userAgent,
+              'openai/subject': getSubjectId()
+            }, hostUserLocation ? { 'openai/userLocation': hostUserLocation } : {})
           }, '*');
           setTimeout(() => { window.removeEventListener('message', handler); reject(new Error('Tool call timeout')); }, 30000);
         });
@@ -148,9 +199,18 @@ function generateApiScript(opts: ApiScriptOptions): string {
   return `<script>
 (function() {
   'use strict';
+  // Host-controlled values per SDK spec (passed from Inspector, not computed in widget)
+  const hostLocale = ${JSON.stringify(locale)};
+  const hostDeviceType = ${JSON.stringify(deviceType)};
+  const hostUserLocation = ${JSON.stringify(userLocation ?? null)}; // { country, region, city } or null
+
+  // Set document lang attribute per SDK spec: "Host mirrors locale to document.documentElement.lang"
+  try { document.documentElement.lang = hostLocale; } catch (e) {}
+
+  // Capability detection (still done in widget for accuracy)
   const hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
   const hasHover = window.matchMedia('(hover: hover)').matches;
-  const deviceType = window.innerWidth < 768 ? 'mobile' : window.innerWidth < 1024 ? 'tablet' : 'desktop';
+
   const getSubjectId = () => {
     let subjectId = sessionStorage.getItem('openai_subject_id');
     if (!subjectId) { subjectId = 'anon_' + Math.random().toString(36).substring(2, 15); sessionStorage.setItem('openai_subject_id', subjectId); }
@@ -164,10 +224,10 @@ function generateApiScript(opts: ApiScriptOptions): string {
     toolResponseMetadata: ${serializeForInlineScript(toolResponseMetadata)},
     displayMode: 'inline',
     theme: ${JSON.stringify(theme)},
-    locale: navigator.language || 'en-US',
+    locale: hostLocale, // Host-controlled per SDK spec
     maxHeight: null,
     safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
-    userAgent: { device: { type: deviceType }, capabilities: { hover: hasHover, touch: hasTouch } },
+    userAgent: { device: { type: hostDeviceType }, capabilities: { hover: hasHover, touch: hasTouch } },
     view: { mode: ${JSON.stringify(viewMode)}, params: ${serializeForInlineScript(viewParams)} },
     widgetState: null,
     ${useMapPendingCalls ? "_pendingCalls: new Map()," : ""}
@@ -185,6 +245,7 @@ function generateApiScript(opts: ApiScriptOptions): string {
       const prompt = typeof opts === 'string' ? opts : (opts?.prompt || '');
       window.parent.postMessage({ type: 'openai:sendFollowup', message: prompt, toolId: ${JSON.stringify(toolId)} }, '*');
     },
+    /** @deprecated Use sendFollowUpMessage instead. Inspector-only alias. */
     sendFollowupTurn(message) { return this.sendFollowUpMessage(typeof message === 'string' ? message : (message?.prompt || '')); },
 
     requestDisplayMode(options = {}) {
@@ -197,16 +258,26 @@ function generateApiScript(opts: ApiScriptOptions): string {
     requestClose() { window.parent.postMessage({ type: 'openai:requestClose', toolId: ${JSON.stringify(toolId)} }, '*'); },
 
     openExternal(options) {
-      const href = typeof options === 'string' ? options : options?.href;
-      if (!href) throw new Error('href is required for openExternal');
+      // Official SDK signature: openExternal({ href: string })
+      // Inspector also accepts string for convenience, but logs deprecation warning
+      let href;
+      if (typeof options === 'string') {
+        console.warn('[OpenAI SDK] openExternal(string) is deprecated. Use openExternal({ href: string }) instead.');
+        href = options;
+      } else {
+        href = options?.href;
+      }
+      if (!href) throw new Error('href is required for openExternal. Usage: openExternal({ href: "https://..." })');
       window.parent.postMessage({ type: 'openai:openExternal', href }, '*');
       window.open(href, '_blank', 'noopener,noreferrer');
     },
 
+    /** Inspector-specific: Open widget content in a modal dialog. Not in official SDK. */
     requestModal(options) {
       window.parent.postMessage({ type: 'openai:requestModal', title: options.title, params: options.params, anchor: options.anchor }, '*');
     },
 
+    /** Inspector-specific: Explicitly report content height. Widgets can also use openai:resize event. */
     notifyIntrinsicHeight(height) {
       if (typeof height === 'number' && Number.isFinite(height) && height > 0)
         window.parent.postMessage({ type: 'openai:resize', height: Math.round(height) }, '*');
@@ -214,6 +285,7 @@ function generateApiScript(opts: ApiScriptOptions): string {
   };
 
   Object.defineProperty(window, 'openai', { value: openaiAPI, writable: false, configurable: false, enumerable: true });
+  // Inspector-specific: window.webplus is an alias for legacy compatibility
   Object.defineProperty(window, 'webplus', { value: openaiAPI, writable: false, configurable: false, enumerable: true });
 
   setTimeout(() => {
@@ -310,10 +382,23 @@ const trustedCdns = ["https://persistent.oaistatic.com", "https://*.oaistatic.co
 
 chatgpt.post("/widget/store", async (c) => {
   try {
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolId, toolName, theme } = await c.req.json();
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolId, toolName, theme, locale, deviceType, userLocation } = await c.req.json();
     if (!serverId || !uri || !toolId || !toolName) return c.json({ success: false, error: "Missing required fields" }, 400);
 
-    widgetDataStore.set(toolId, { serverId, uri, toolInput, toolOutput, toolResponseMetadata: toolResponseMetadata ?? null, toolId, toolName, theme: theme ?? "dark", timestamp: Date.now() });
+    widgetDataStore.set(toolId, {
+      serverId,
+      uri,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata: toolResponseMetadata ?? null,
+      toolId,
+      toolName,
+      theme: theme ?? "dark",
+      locale: locale ?? "en-US", // Host-controlled locale per SDK spec
+      deviceType: deviceType ?? "desktop",
+      userLocation: userLocation ?? null, // Coarse IP-based location per SDK spec
+      timestamp: Date.now(),
+    });
     return c.json({ success: true });
   } catch (error) {
     console.error("Error storing widget data:", error);
@@ -337,7 +422,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     const widgetData = widgetDataStore.get(toolId);
     if (!widgetData) return c.json({ error: "Widget data not found or expired" }, 404);
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme } = widgetData;
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme, locale, deviceType, userLocation } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager.listServers().filter((id) => Boolean(mcpClientManager.getClient(id)));
 
@@ -365,7 +450,19 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       : { connectDomains: [...devResourceDomains, ...devConnectDomains], resourceDomains: [...defaultResourceDomains, ...devResourceDomains, ...devScriptDomains] };
 
     const baseUrl = extractBaseUrl(htmlContent);
-    const apiScript = generateApiScript({ toolId, toolName, toolInput, toolOutput, toolResponseMetadata, theme: theme ?? "dark", widgetAccessibleTools, useMapPendingCalls: true });
+    const apiScript = generateApiScript({
+      toolId,
+      toolName,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata,
+      theme: theme ?? "dark",
+      locale: locale ?? "en-US",
+      deviceType: deviceType ?? "desktop",
+      userLocation: userLocation ?? null,
+      widgetAccessibleTools,
+      useMapPendingCalls: true,
+    });
     const modifiedHtml = injectScripts(htmlContent, generateUrlPolyfillScript(baseUrl), baseUrl ? `<base href="${baseUrl}">` : "", apiScript);
 
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -407,7 +504,7 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
     const widgetData = widgetDataStore.get(toolId);
     if (!widgetData) return c.html("<html><body>Error: Widget data not found or expired</body></html>", 404);
 
-    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme } = widgetData;
+    const { serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolName, theme, locale, deviceType, userLocation } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager.listServers().filter((id) => Boolean(mcpClientManager.getClient(id)));
 
@@ -424,7 +521,21 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
     const { html: htmlContent } = extractHtmlContent(content);
     if (!htmlContent) return c.html("<html><body>Error: No HTML content found</body></html>", 404);
 
-    const apiScript = generateApiScript({ toolId, toolName, toolInput, toolOutput, toolResponseMetadata, theme: theme ?? "dark", widgetAccessibleTools, viewMode, viewParams, useMapPendingCalls: false });
+    const apiScript = generateApiScript({
+      toolId,
+      toolName,
+      toolInput,
+      toolOutput,
+      toolResponseMetadata,
+      theme: theme ?? "dark",
+      locale: locale ?? "en-US",
+      deviceType: deviceType ?? "desktop",
+      userLocation: userLocation ?? null,
+      widgetAccessibleTools,
+      viewMode,
+      viewParams,
+      useMapPendingCalls: false,
+    });
     const modifiedHtml = injectScripts(htmlContent, "", '<base href="/">', apiScript);
 
     c.header("Content-Security-Policy", [

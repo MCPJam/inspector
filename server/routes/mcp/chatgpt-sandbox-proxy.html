@@ -32,6 +32,8 @@
       const inner = document.createElement("iframe");
       inner.style.cssText = "width:100%; height:100%; border:none;";
       inner.setAttribute("sandbox", DEFAULT_SANDBOX);
+      // Permissions Policy matching ChatGPT's actual implementation
+      inner.setAttribute("allow", "local-network-access *; microphone *; midi *");
       document.body.appendChild(inner);
 
       let widgetLoaded = false;
