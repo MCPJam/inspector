@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import {
   Dialog,
   DialogContent,
@@ -372,7 +373,15 @@ export function ChatGPTAppRenderer({
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
+
+  // Read playground state from store
+  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
+
+  const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>("inline");
+  // When playground is active, use store's display mode; otherwise use internal state
+  const displayMode = isPlaygroundActive ? playgroundDisplayMode : internalDisplayMode;
+  const setDisplayMode = setInternalDisplayMode;
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const [contentHeight, setContentHeight] = useState<number>(320);
   const [isReady, setIsReady] = useState(false);
