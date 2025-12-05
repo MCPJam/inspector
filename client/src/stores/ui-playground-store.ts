@@ -282,10 +282,12 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
 
   setPlaygroundActive: (active) => set({ isPlaygroundActive: active }),
 
-  reset: () => set({
+  reset: () => set((state) => ({
     ...initialState,
     // Preserve panel visibility on reset
     isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
     isInspectorVisible: getStoredVisibility(STORAGE_KEY_INSPECTOR, true),
-  }),
+    // Preserve playground active state (controlled by PlaygroundThread mount/unmount)
+    isPlaygroundActive: state.isPlaygroundActive,
+  })),
 }));
