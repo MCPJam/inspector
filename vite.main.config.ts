@@ -2,17 +2,27 @@ import { defineConfig, Plugin } from "vite";
 import { resolve } from "path";
 import { copyFileSync, mkdirSync } from "fs";
 
-// Plugin to copy sandbox-proxy.html to build output
+// Plugin to copy sandbox proxy HTML files to the Electron main build output
 function copySandboxProxy(): Plugin {
+  const filesToCopy = [
+    {
+      src: "server/routes/mcp/sandbox-proxy.html",
+      dest: "sandbox-proxy.html",
+    },
+    {
+      src: "server/routes/mcp/chatgpt-sandbox-proxy.html",
+      dest: "chatgpt-sandbox-proxy.html",
+    },
+  ];
+
   return {
     name: "copy-sandbox-proxy",
     writeBundle(options) {
       const outDir = options.dir || ".vite/build";
       mkdirSync(outDir, { recursive: true });
-      copyFileSync(
-        resolve(__dirname, "server/routes/mcp/sandbox-proxy.html"),
-        resolve(outDir, "sandbox-proxy.html"),
-      );
+      for (const file of filesToCopy) {
+        copyFileSync(resolve(__dirname, file.src), resolve(outDir, file.dest));
+      }
     },
   };
 }
