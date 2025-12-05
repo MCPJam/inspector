@@ -367,6 +367,8 @@ function generateApiScript(opts: ApiScriptOptions): string {
 
   // Auto-resize: Measure and report intrinsic content height
   let lastReportedHeight = 0;
+  let resizeTimeout;
+  
   function measureAndReportHeight() {
     try {
       // Measure actual content height from body's children (not scrollHeight which reflects container size)
@@ -403,36 +405,34 @@ function generateApiScript(opts: ApiScriptOptions): string {
     }
   }
 
-  // Set up ResizeObserver for reliable size change detection
-  function setupResizeObserver() {
-    if (typeof ResizeObserver === 'undefined') return;
+  function setupMutationObserver() {
+    if (!document.body) return;
     
-    let resizeTimeout;
-    const resizeObserver = new ResizeObserver(() => {
+    const observer = new MutationObserver(() => {
       clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(measureAndReportHeight, 16); // ~1 frame
+      resizeTimeout = setTimeout(measureAndReportHeight, 50);
     });
     
-    // Observe both documentElement and body for comprehensive coverage
-    resizeObserver.observe(document.documentElement);
-    if (document.body) {
-      resizeObserver.observe(document.body);
-    }
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class'],
+    });
   }
 
-  // Report height on DOM ready and set up observers
+  // Set up after DOM is ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       measureAndReportHeight();
-      setupResizeObserver();
+      setupMutationObserver();
     });
   } else {
-    // DOM already loaded
     measureAndReportHeight();
-    setupResizeObserver();
+    setupMutationObserver();
   }
 
-  // Also report on window load (for async content like images)
+  // Also measure on window load for images/async content
   window.addEventListener('load', () => {
     setTimeout(measureAndReportHeight, 100);
   });
