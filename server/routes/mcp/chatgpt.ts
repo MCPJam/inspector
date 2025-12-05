@@ -365,47 +365,76 @@ function generateApiScript(opts: ApiScriptOptions): string {
     } catch (err) { console.error('[OpenAI Widget] Failed to forward resize event:', err); }
   });
 
-  // Auto-resize: Measure and report intrinsic height on initial load
+  // Auto-resize: Measure and report intrinsic content height
+  let lastReportedHeight = 0;
   function measureAndReportHeight() {
     try {
-      const docHeight = document.documentElement.scrollHeight;
-      const bodyHeight = document.body.scrollHeight;
-      const height = Math.max(docHeight, bodyHeight);
-      if (height && Number.isFinite(height) && height > 0) {
-        window.parent.postMessage({ type: 'openai:resize', height: Math.round(height) }, '*');
+      // Measure actual content height from body's children (not scrollHeight which reflects container size)
+      let contentHeight = 0;
+      if (document.body) {
+        const children = document.body.children;
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i];
+          if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE') continue;
+          const rect = child.getBoundingClientRect();
+          const childBottom = rect.top + rect.height + window.scrollY;
+          contentHeight = Math.max(contentHeight, childBottom);
+        }
+        const bodyStyle = window.getComputedStyle(document.body);
+        contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
+        contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
+      }
+      
+      // Fall back to scrollHeight if content measurement fails
+      if (contentHeight <= 0) {
+        contentHeight = Math.max(
+          document.documentElement.scrollHeight,
+          document.body ? document.body.scrollHeight : 0
+        );
+      }
+      
+      const height = Math.ceil(contentHeight);
+      if (height && Number.isFinite(height) && height > 0 && Math.abs(height - lastReportedHeight) > 1) {
+        lastReportedHeight = height;
+        window.parent.postMessage({ type: 'openai:resize', height }, '*');
       }
     } catch (err) {
-      console.error('[OpenAI Widget] Failed to measure and report height:', err);
+      console.error('[OpenAI Widget] Failed to measure height:', err);
     }
   }
 
-  // Report height on DOM ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', measureAndReportHeight);
-  } else {
-    // DOM already loaded, measure immediately
-    measureAndReportHeight();
+  // Set up ResizeObserver for reliable size change detection
+  function setupResizeObserver() {
+    if (typeof ResizeObserver === 'undefined') return;
+    
+    let resizeTimeout;
+    const resizeObserver = new ResizeObserver(() => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(measureAndReportHeight, 16); // ~1 frame
+    });
+    
+    // Observe both documentElement and body for comprehensive coverage
+    resizeObserver.observe(document.documentElement);
+    if (document.body) {
+      resizeObserver.observe(document.body);
+    }
   }
 
-  // Also report on window load (for async content)
+  // Report height on DOM ready and set up observers
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      measureAndReportHeight();
+      setupResizeObserver();
+    });
+  } else {
+    // DOM already loaded
+    measureAndReportHeight();
+    setupResizeObserver();
+  }
+
+  // Also report on window load (for async content like images)
   window.addEventListener('load', () => {
     setTimeout(measureAndReportHeight, 100);
-  });
-
-  // Report height after a short delay to catch any async rendering
-  setTimeout(measureAndReportHeight, 100);
-
-  // Watch for DOM changes and report height updates
-  let resizeTimeout;
-  const observer = new MutationObserver(() => {
-    clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(measureAndReportHeight, 50);
-  });
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['style', 'class'],
   });
 })();
 </script>`;
