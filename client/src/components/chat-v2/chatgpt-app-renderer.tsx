@@ -513,9 +513,7 @@ export function ChatGPTAppRenderer({
           const rawHeight = Number(event.data.height);
           if (Number.isFinite(rawHeight) && rawHeight > 0)
             setContentHeight((prev) =>
-              Math.abs(prev - Math.round(rawHeight)) > 1
-                ? Math.round(rawHeight)
-                : prev,
+              Math.abs(prev - rawHeight) > 1 ? rawHeight : prev,
             );
           break;
         }
