@@ -106,7 +106,6 @@ export function UIPlaygroundTab({
     setExecutionError,
     setWidgetState,
     setDeviceType,
-    setDisplayMode,
     updateGlobal,
     setCsp,
     toggleSidebar,
@@ -381,9 +380,7 @@ export function UIPlaygroundTab({
               onExecute={executeTool}
               onSave={handleSaveCurrent}
               deviceType={deviceType}
-              displayMode={displayMode}
               onDeviceTypeChange={setDeviceType}
-              onDisplayModeChange={setDisplayMode}
               globals={globals}
               onUpdateGlobal={updateGlobal}
               savedRequests={savedRequests}

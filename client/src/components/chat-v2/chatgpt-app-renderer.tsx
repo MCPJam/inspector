@@ -377,11 +377,12 @@ export function ChatGPTAppRenderer({
   // Read playground state from store
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
+  const setPlaygroundDisplayMode = useUIPlaygroundStore((s) => s.setDisplayMode);
 
   const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>("inline");
   // When playground is active, use store's display mode; otherwise use internal state
   const displayMode = isPlaygroundActive ? playgroundDisplayMode : internalDisplayMode;
-  const setDisplayMode = setInternalDisplayMode;
+  const setDisplayMode = isPlaygroundActive ? setPlaygroundDisplayMode : setInternalDisplayMode;
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const [contentHeight, setContentHeight] = useState<number>(320);
   const [isReady, setIsReady] = useState(false);

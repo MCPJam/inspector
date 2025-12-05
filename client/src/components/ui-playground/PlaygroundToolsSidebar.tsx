@@ -17,9 +17,6 @@ import {
   Smartphone,
   Tablet,
   Monitor,
-  LayoutTemplate,
-  PictureInPicture2,
-  Maximize2,
   PanelLeftClose,
   Sun,
   Moon,
@@ -36,7 +33,7 @@ import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
-import type { DeviceType, DisplayMode, PlaygroundGlobals } from "@/stores/ui-playground-store";
+import type { DeviceType, PlaygroundGlobals } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 
@@ -58,9 +55,7 @@ interface PlaygroundToolsSidebarProps {
   onSave: () => void;
   // Device emulation
   deviceType: DeviceType;
-  displayMode: DisplayMode;
   onDeviceTypeChange: (type: DeviceType) => void;
-  onDisplayModeChange: (mode: DisplayMode) => void;
   // Globals (theme, locale)
   globals: PlaygroundGlobals;
   onUpdateGlobal: <K extends keyof PlaygroundGlobals>(key: K, value: PlaygroundGlobals[K]) => void;
@@ -93,9 +88,7 @@ export function PlaygroundToolsSidebar({
   onExecute,
   onSave,
   deviceType,
-  displayMode,
   onDeviceTypeChange,
-  onDisplayModeChange,
   globals,
   onUpdateGlobal,
   savedRequests,
@@ -483,26 +476,6 @@ export function PlaygroundToolsSidebar({
             </ToggleGroupItem>
             <ToggleGroupItem value="desktop" aria-label="Desktop" title="Desktop (1280×800)" className="h-8 w-8 p-0">
               <Monitor className="h-4 w-4" />
-            </ToggleGroupItem>
-          </ToggleGroup>
-
-          <div className="w-px h-5 bg-border" />
-
-          {/* Display Mode */}
-          <ToggleGroup
-            type="single"
-            value={displayMode}
-            onValueChange={(v) => v && onDisplayModeChange(v as DisplayMode)}
-            className="gap-0.5"
-          >
-            <ToggleGroupItem value="inline" aria-label="Inline" title="Inline mode" className="h-8 w-8 p-0">
-              <LayoutTemplate className="h-4 w-4" />
-            </ToggleGroupItem>
-            <ToggleGroupItem value="pip" aria-label="PiP" title="Picture-in-Picture mode" className="h-8 w-8 p-0">
-              <PictureInPicture2 className="h-4 w-4" />
-            </ToggleGroupItem>
-            <ToggleGroupItem value="fullscreen" aria-label="Fullscreen" title="Fullscreen mode" className="h-8 w-8 p-0">
-              <Maximize2 className="h-4 w-4" />
             </ToggleGroupItem>
           </ToggleGroup>
 
