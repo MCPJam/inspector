@@ -21,6 +21,9 @@ import {
   PictureInPicture2,
   Maximize2,
   PanelLeftClose,
+  Sun,
+  Moon,
+  Globe,
 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -29,7 +32,9 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import type { FormField } from "@/lib/tool-form";
-import type { DeviceType, DisplayMode } from "@/stores/ui-playground-store";
+import type { DeviceType, DisplayMode, PlaygroundGlobals } from "@/stores/ui-playground-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { updateThemeMode } from "@/lib/theme-utils";
 
 interface PlaygroundToolsSidebarProps {
   tools: Record<string, Tool>;
@@ -51,6 +56,9 @@ interface PlaygroundToolsSidebarProps {
   displayMode: DisplayMode;
   onDeviceTypeChange: (type: DeviceType) => void;
   onDisplayModeChange: (mode: DisplayMode) => void;
+  // Globals (theme, locale)
+  globals: PlaygroundGlobals;
+  onUpdateGlobal: <K extends keyof PlaygroundGlobals>(key: K, value: PlaygroundGlobals[K]) => void;
   // Panel visibility
   onClose?: () => void;
 }
@@ -74,10 +82,21 @@ export function PlaygroundToolsSidebar({
   displayMode,
   onDeviceTypeChange,
   onDisplayModeChange,
+  globals,
+  onUpdateGlobal,
   onClose,
 }: PlaygroundToolsSidebarProps) {
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
+
+  // Theme from preferences store (for actual theme switching)
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+
+  const handleThemeChange = (newTheme: "light" | "dark") => {
+    updateThemeMode(newTheme);
+    setThemeMode(newTheme);
+  };
 
   // Collapse list when a tool is selected
   useEffect(() => {
@@ -94,9 +113,10 @@ export function PlaygroundToolsSidebar({
   }, [selectedToolName]);
 
   return (
-    <div className="h-full flex flex-col border-r border-border bg-background overflow-hidden">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-border bg-background flex items-center justify-between flex-shrink-0">
+    <div className="h-full overflow-hidden">
+      <div className="h-full flex flex-col border-r border-border bg-background">
+        {/* Header */}
+        <div className="px-4 py-3 border-b border-border bg-background flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2">
           <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
           <h2 className="text-sm font-semibold text-foreground">Tools</h2>
@@ -143,10 +163,10 @@ export function PlaygroundToolsSidebar({
       </div>
 
       {/* Middle Content Area */}
-      <div className="relative overflow-hidden min-h-0 flex-1">
+      <div className="flex-1 min-h-0 overflow-hidden">
         {isListExpanded ? (
           // Expanded state - show full tool list
-          <div className="absolute inset-0 flex flex-col">
+          <div className="h-full flex flex-col">
             {/* Search */}
             <div className="px-3 py-2 flex-shrink-0">
               <SearchInput
@@ -212,7 +232,7 @@ export function PlaygroundToolsSidebar({
           </div>
         ) : (
           // Collapsed state - show selected tool header + params form
-          <div className="absolute inset-0 flex flex-col">
+          <div className="h-full flex flex-col">
             {/* Selected tool header */}
             <div className="border-b border-border bg-muted/30 flex-shrink-0 px-4 py-2.5 flex items-center gap-2">
               <button
@@ -385,8 +405,41 @@ export function PlaygroundToolsSidebar({
               <Maximize2 className="h-4 w-4" />
             </ToggleGroupItem>
           </ToggleGroup>
+
+          <div className="w-px h-5 bg-border" />
+
+          {/* Theme Toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => handleThemeChange(themeMode === "dark" ? "light" : "dark")}
+            className="h-8 w-8 p-0"
+            title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
+          >
+            {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
+
+          {/* Locale Selector */}
+          <div className="relative">
+            <Globe className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <select
+              value={globals.locale}
+              onChange={(e) => onUpdateGlobal("locale", e.target.value)}
+              className="h-8 pl-7 pr-2 text-xs bg-background border border-input rounded-md appearance-none cursor-pointer hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring"
+              title="Locale"
+            >
+              <option value="en-US">EN</option>
+              <option value="es-ES">ES</option>
+              <option value="fr-FR">FR</option>
+              <option value="de-DE">DE</option>
+              <option value="ja-JP">JA</option>
+              <option value="zh-CN">ZH</option>
+              <option value="pt-BR">PT</option>
+            </select>
+          </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }

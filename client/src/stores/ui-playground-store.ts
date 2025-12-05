@@ -48,6 +48,9 @@ export interface FollowUpMessage {
 }
 
 interface UIPlaygroundState {
+  // Active flag - true when UI Playground is mounted
+  isPlaygroundActive: boolean;
+
   // Tool selection
   selectedTool: string | null;
   tools: Record<string, Tool>;
@@ -112,6 +115,7 @@ interface UIPlaygroundState {
   toggleInspector: () => void;
   setSidebarVisible: (visible: boolean) => void;
   setInspectorVisible: (visible: boolean) => void;
+  setPlaygroundActive: (active: boolean) => void;
   reset: () => void;
 }
 
@@ -133,6 +137,7 @@ const getStoredVisibility = (key: string, defaultValue: boolean): boolean => {
 };
 
 const initialState = {
+  isPlaygroundActive: false,
   selectedTool: null,
   tools: {},
   formFields: [],
@@ -274,6 +279,8 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
     localStorage.setItem(STORAGE_KEY_INSPECTOR, String(visible));
     set({ isInspectorVisible: visible });
   },
+
+  setPlaygroundActive: (active) => set({ isPlaygroundActive: active }),
 
   reset: () => set({
     ...initialState,
