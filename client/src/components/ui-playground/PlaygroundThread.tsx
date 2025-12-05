@@ -29,8 +29,8 @@ import { useUIPlaygroundStore, type DeviceType, type DisplayMode } from "@/store
 
 /** Device frame configurations */
 const DEVICE_CONFIGS: Record<DeviceType, { width: number; height: number; label: string; icon: typeof Smartphone }> = {
-  mobile: { width: 430, height: 932, label: "iPhone 15 Pro", icon: Smartphone },
-  tablet: { width: 820, height: 1180, label: "iPad", icon: Tablet },
+  mobile: { width: 430, height: 932, label: "Phone", icon: Smartphone },
+  tablet: { width: 820, height: 1180, label: "Tablet", icon: Tablet },
   desktop: { width: 1280, height: 800, label: "Desktop", icon: Monitor },
 };
 
@@ -353,6 +353,7 @@ export function PlaygroundThread({
             maxWidth: "100%",
             height: deviceConfig.height,
             maxHeight: "100%",
+            transform: "translateZ(0)", // Creates containing block for fixed positioned elements (fullscreen/pip modes)
           }}
         >
           {threadContent}

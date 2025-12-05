@@ -19,13 +19,23 @@ import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
 import { PlaygroundToolsSidebar } from "./PlaygroundToolsSidebar";
 import { PlaygroundThread } from "./PlaygroundThread";
 import { PlaygroundInspector } from "./PlaygroundInspector";
+import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { listTools, executeToolApi } from "@/lib/apis/mcp-tools-api";
+import { listTools, executeToolApi, type ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import {
   generateFormFieldsFromSchema,
   buildParametersFromFields,
+  applyParametersToFields,
 } from "@/lib/tool-form";
+import {
+  listSavedRequests,
+  saveRequest,
+  deleteRequest,
+  duplicateRequest,
+  updateRequestMeta,
+} from "@/lib/request-storage";
+import type { SavedRequest } from "@/lib/types/request-types";
 import type { MCPServerConfig } from "@/sdk";
 
 // Pending execution to be injected into chat
@@ -49,6 +59,30 @@ export function UIPlaygroundTab({
 
   // Pending execution to inject into chat thread
   const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
+
+  // Saved requests state
+  const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
+  const [highlightedRequestId, setHighlightedRequestId] = useState<string | null>(null);
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
+  const [dialogDefaults, setDialogDefaults] = useState<{ title: string; description?: string }>({ title: "" });
+
+  // Compute server key for saved requests storage
+  const serverKey = useMemo(() => {
+    if (!serverConfig) return "none";
+    try {
+      if ((serverConfig as any).url) {
+        return `http:${(serverConfig as any).url}`;
+      }
+      if ((serverConfig as any).command) {
+        const args = ((serverConfig as any).args || []).join(" ");
+        return `stdio:${(serverConfig as any).command} ${args}`.trim();
+      }
+      return JSON.stringify(serverConfig);
+    } catch {
+      return "unknown";
+    }
+  }, [serverConfig]);
 
   // Get store state and actions
   const {
@@ -85,8 +119,15 @@ export function UIPlaygroundTab({
     updateGlobal("theme", themeMode);
   }, [themeMode, updateGlobal]);
 
-  // Compute tool names and filtering
-  const toolNames = useMemo(() => Object.keys(tools), [tools]);
+  // Tools metadata for filtering OpenAI apps
+  const [toolsMetadata, setToolsMetadata] = useState<Record<string, Record<string, unknown>>>({});
+
+  // Compute tool names - only show OpenAI apps (tools with openai/outputTemplate metadata)
+  const toolNames = useMemo(() => {
+    return Object.keys(tools).filter(
+      (name) => toolsMetadata[name]?.["openai/outputTemplate"] != null
+    );
+  }, [tools, toolsMetadata]);
   const [searchQuery, setSearchQuery] = useState("");
   const filteredToolNames = useMemo(() => {
     if (!searchQuery.trim()) return toolNames;
@@ -98,11 +139,29 @@ export function UIPlaygroundTab({
     });
   }, [toolNames, tools, searchQuery]);
 
+  // Filter saved requests by search query
+  const filteredSavedRequests = useMemo(() => {
+    if (!searchQuery.trim()) return savedRequests;
+    const query = searchQuery.trim().toLowerCase();
+    return savedRequests.filter((req) => {
+      const haystack = `${req.title} ${req.description ?? ""} ${req.toolName}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [savedRequests, searchQuery]);
+
+  // Load saved requests when server changes
+  useEffect(() => {
+    if (serverConfig) {
+      setSavedRequests(listSavedRequests(serverKey));
+    }
+  }, [serverConfig, serverKey]);
+
   // Fetch tools when server changes
   const fetchTools = useCallback(async () => {
     if (!serverName) return;
 
     reset();
+    setToolsMetadata({});
     try {
       const data = await listTools(serverName);
       const toolArray = data.tools ?? [];
@@ -110,6 +169,7 @@ export function UIPlaygroundTab({
         toolArray.map((tool: Tool) => [tool.name, tool])
       );
       setTools(dictionary);
+      setToolsMetadata(data.toolsMetadata ?? {});
     } catch (err) {
       console.error("Failed to fetch tools:", err);
       setExecutionError(
@@ -220,6 +280,72 @@ export function UIPlaygroundTab({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedTool, isExecuting, executeTool]);
 
+  // Saved request handlers
+  const handleSaveCurrent = useCallback(() => {
+    if (!selectedTool) return;
+    setEditingRequestId(null);
+    setDialogDefaults({ title: selectedTool, description: "" });
+    setIsSaveDialogOpen(true);
+  }, [selectedTool]);
+
+  const handleLoadRequest = useCallback((req: SavedRequest) => {
+    setSelectedTool(req.toolName);
+    // Wait for form fields to be generated, then apply parameters
+    setTimeout(() => {
+      if (tools[req.toolName]) {
+        const fields = generateFormFieldsFromSchema(tools[req.toolName].inputSchema);
+        const updatedFields = applyParametersToFields(fields, req.parameters);
+        setFormFields(updatedFields);
+      }
+    }, 50);
+  }, [tools, setSelectedTool, setFormFields]);
+
+  const handleDeleteRequest = useCallback((id: string) => {
+    deleteRequest(serverKey, id);
+    setSavedRequests(listSavedRequests(serverKey));
+  }, [serverKey]);
+
+  const handleDuplicateRequest = useCallback((req: SavedRequest) => {
+    const duplicated = duplicateRequest(serverKey, req.id);
+    setSavedRequests(listSavedRequests(serverKey));
+    if (duplicated?.id) {
+      setHighlightedRequestId(duplicated.id);
+      setTimeout(() => setHighlightedRequestId(null), 2000);
+    }
+  }, [serverKey]);
+
+  const handleRenameRequest = useCallback((req: SavedRequest) => {
+    setEditingRequestId(req.id);
+    setDialogDefaults({ title: req.title, description: req.description });
+    setIsSaveDialogOpen(true);
+  }, []);
+
+  const handleSaveDialogSubmit = useCallback(({ title, description }: { title: string; description?: string }) => {
+    if (editingRequestId) {
+      updateRequestMeta(serverKey, editingRequestId, { title, description });
+      setSavedRequests(listSavedRequests(serverKey));
+      setEditingRequestId(null);
+      setIsSaveDialogOpen(false);
+      setHighlightedRequestId(editingRequestId);
+      setTimeout(() => setHighlightedRequestId(null), 2000);
+      return;
+    }
+
+    const params = buildParametersFromFields(formFields);
+    const newRequest = saveRequest(serverKey, {
+      title,
+      description,
+      toolName: selectedTool!,
+      parameters: params,
+    });
+    setSavedRequests(listSavedRequests(serverKey));
+    setIsSaveDialogOpen(false);
+    if (newRequest?.id) {
+      setHighlightedRequestId(newRequest.id);
+      setTimeout(() => setHighlightedRequestId(null), 2000);
+    }
+  }, [editingRequestId, serverKey, formFields, selectedTool]);
+
   // No server selected
   if (!serverConfig) {
     return (
@@ -253,12 +379,20 @@ export function UIPlaygroundTab({
               onToggleField={updateFormFieldIsSet}
               isExecuting={isExecuting}
               onExecute={executeTool}
+              onSave={handleSaveCurrent}
               deviceType={deviceType}
               displayMode={displayMode}
               onDeviceTypeChange={setDeviceType}
               onDisplayModeChange={setDisplayMode}
               globals={globals}
               onUpdateGlobal={updateGlobal}
+              savedRequests={savedRequests}
+              filteredSavedRequests={filteredSavedRequests}
+              highlightedRequestId={highlightedRequestId}
+              onLoadRequest={handleLoadRequest}
+              onRenameRequest={handleRenameRequest}
+              onDuplicateRequest={handleDuplicateRequest}
+              onDeleteRequest={handleDeleteRequest}
               onClose={toggleSidebar}
             />
             </ResizablePanel>
@@ -309,6 +443,14 @@ export function UIPlaygroundTab({
           />
         )}
       </ResizablePanelGroup>
+
+      <SaveRequestDialog
+        open={isSaveDialogOpen}
+        defaultTitle={dialogDefaults.title}
+        defaultDescription={dialogDefaults.description}
+        onCancel={() => setIsSaveDialogOpen(false)}
+        onSave={handleSaveDialogSubmit}
+      />
     </div>
   );
 }
