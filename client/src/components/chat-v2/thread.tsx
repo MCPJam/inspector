@@ -12,7 +12,8 @@ import {
 } from "@mcp-ui/client";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 import { useState } from "react";
-import { ChevronDown, MessageCircle } from "lucide-react";
+import { ChevronDown, MessageCircle, LayoutDashboard, PictureInPicture2, Maximize2 } from "lucide-react";
+import { useUIPlaygroundStore, type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
@@ -381,6 +382,17 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
   );
   const hasWidgetDebug = !!widgetDebugInfo;
 
+  // Playground display mode controls
+  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const displayMode = useUIPlaygroundStore((s) => s.displayMode);
+  const setDisplayMode = useUIPlaygroundStore((s) => s.setDisplayMode);
+
+  const displayModeOptions: { mode: DisplayMode; icon: typeof LayoutDashboard; label: string }[] = [
+    { mode: "inline", icon: LayoutDashboard, label: "Inline" },
+    { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
+    { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
+  ];
+
   return (
     <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
       <button
@@ -404,6 +416,32 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
           </span>
         </span>
         <span className="inline-flex items-center gap-2 text-muted-foreground">
+          {/* Display mode controls - only in playground */}
+          {isPlaygroundActive && hasWidgetDebug && (
+            <span
+              className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {displayModeOptions.map(({ mode, icon: Icon, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDisplayMode(mode);
+                  }}
+                  className={`p-1 rounded transition-colors cursor-pointer ${
+                    displayMode === mode
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                  }`}
+                  title={label}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              ))}
+            </span>
+          )}
           {hasWidgetDebug && !isExpanded && (
             <span className="text-[10px] text-muted-foreground/60 font-normal normal-case">
               Click to debug
