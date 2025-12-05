@@ -24,14 +24,18 @@ import {
   Sun,
   Moon,
   Globe,
+  Save,
 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { SearchInput } from "../ui/search-input";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { ScrollArea } from "../ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
+import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
+import type { SavedRequest } from "@/lib/types/request-types";
 import type { DeviceType, DisplayMode, PlaygroundGlobals } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
@@ -51,6 +55,7 @@ interface PlaygroundToolsSidebarProps {
   onToggleField: (name: string, isSet: boolean) => void;
   isExecuting: boolean;
   onExecute: () => void;
+  onSave: () => void;
   // Device emulation
   deviceType: DeviceType;
   displayMode: DisplayMode;
@@ -59,6 +64,14 @@ interface PlaygroundToolsSidebarProps {
   // Globals (theme, locale)
   globals: PlaygroundGlobals;
   onUpdateGlobal: <K extends keyof PlaygroundGlobals>(key: K, value: PlaygroundGlobals[K]) => void;
+  // Saved requests
+  savedRequests: SavedRequest[];
+  filteredSavedRequests: SavedRequest[];
+  highlightedRequestId: string | null;
+  onLoadRequest: (req: SavedRequest) => void;
+  onRenameRequest: (req: SavedRequest) => void;
+  onDuplicateRequest: (req: SavedRequest) => void;
+  onDeleteRequest: (id: string) => void;
   // Panel visibility
   onClose?: () => void;
 }
@@ -78,16 +91,25 @@ export function PlaygroundToolsSidebar({
   onToggleField,
   isExecuting,
   onExecute,
+  onSave,
   deviceType,
   displayMode,
   onDeviceTypeChange,
   onDisplayModeChange,
   globals,
   onUpdateGlobal,
+  savedRequests,
+  filteredSavedRequests,
+  highlightedRequestId,
+  onLoadRequest,
+  onRenameRequest,
+  onDuplicateRequest,
+  onDeleteRequest,
   onClose,
 }: PlaygroundToolsSidebarProps) {
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
+  const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
 
   // Theme from preferences store (for actual theme switching)
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -115,56 +137,134 @@ export function PlaygroundToolsSidebar({
   return (
     <div className="h-full overflow-hidden">
       <div className="h-full flex flex-col border-r border-border bg-background">
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-border bg-background flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-foreground">Tools</h2>
-          <Badge variant="secondary" className="text-[10px] font-mono px-1.5">
-            {toolNames.length}
-          </Badge>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            onClick={onRefresh}
-            variant="ghost"
-            size="sm"
-            disabled={fetchingTools}
-            className="h-7 w-7 p-0"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${fetchingTools ? "animate-spin" : ""}`}
-            />
-          </Button>
-          <Button
-            onClick={onExecute}
-            disabled={isExecuting || !selectedToolName}
-            size="sm"
-          >
-            {isExecuting ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Play className="h-3.5 w-3.5" />
-            )}
-            <span className="ml-1.5">Execute</span>
-          </Button>
-          {onClose && (
-            <Button
-              onClick={onClose}
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              title="Hide sidebar"
+        {/* Tabs Header */}
+        <div className="border-b border-border flex-shrink-0">
+          <div className="flex items-center">
+            <button
+              onClick={() => setActiveTab("tools")}
+              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
+                activeTab === "tools"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
             >
-              <PanelLeftClose className="h-3.5 w-3.5" />
-            </Button>
-          )}
+              Tools
+              <span className="ml-1 text-[10px] font-mono opacity-60">
+                {toolNames.length}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab("saved")}
+              className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
+                activeTab === "saved"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Saved
+              {savedRequests.length > 0 && (
+                <span className="ml-1 text-[10px] font-mono opacity-60">
+                  {savedRequests.length}
+                </span>
+              )}
+            </button>
+            <div className="ml-auto flex items-center gap-1 pr-2">
+              <Button
+                onClick={onExecute}
+                disabled={isExecuting || !selectedToolName}
+                size="sm"
+                className="h-7 px-2.5 text-xs"
+              >
+                {isExecuting ? (
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Play className="h-3 w-3" />
+                )}
+                <span className="ml-1">Run</span>
+              </Button>
+              <Button
+                onClick={onSave}
+                disabled={!selectedToolName}
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                title="Save request"
+              >
+                <Save className="h-3 w-3" />
+              </Button>
+              <div className="w-px h-4 bg-border mx-0.5" />
+              <Button
+                onClick={onRefresh}
+                variant="ghost"
+                size="sm"
+                disabled={fetchingTools}
+                className="h-7 w-7 p-0"
+                title="Refresh tools"
+              >
+                <RefreshCw
+                  className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""}`}
+                />
+              </Button>
+              {onClose && (
+                <Button
+                  onClick={onClose}
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  title="Hide sidebar"
+                >
+                  <PanelLeftClose className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
 
       {/* Middle Content Area */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {isListExpanded ? (
+        {activeTab === "saved" ? (
+          // Saved Requests Tab
+          <div className="h-full flex flex-col">
+            {/* Search */}
+            <div className="px-3 py-2 flex-shrink-0">
+              <SearchInput
+                value={searchQuery}
+                onValueChange={onSearchQueryChange}
+                placeholder="Search saved requests..."
+              />
+            </div>
+
+            {/* Saved Requests List */}
+            <ScrollArea className="flex-1">
+              <div className="pb-2">
+                {filteredSavedRequests.length === 0 ? (
+                  <div className="text-center py-8 px-4">
+                    <p className="text-xs text-muted-foreground">
+                      {savedRequests.length === 0
+                        ? "No saved requests yet. Execute a tool and save the request to see it here."
+                        : "No saved requests match your search."}
+                    </p>
+                  </div>
+                ) : (
+                  filteredSavedRequests.map((request) => (
+                    <SavedRequestItem
+                      key={request.id}
+                      request={request}
+                      isHighlighted={highlightedRequestId === request.id}
+                      onLoad={(req) => {
+                        onLoadRequest(req);
+                        setActiveTab("tools");
+                      }}
+                      onRename={onRenameRequest}
+                      onDuplicate={onDuplicateRequest}
+                      onDelete={onDeleteRequest}
+                    />
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        ) : isListExpanded ? (
           // Expanded state - show full tool list
           <div className="h-full flex flex-col">
             {/* Search */}
@@ -234,13 +334,13 @@ export function PlaygroundToolsSidebar({
           // Collapsed state - show selected tool header + params form
           <div className="h-full flex flex-col">
             {/* Selected tool header */}
-            <div className="border-b border-border bg-muted/30 flex-shrink-0 px-4 py-2.5 flex items-center gap-2">
+            <div className="border-b border-border bg-muted/30 flex-shrink-0 px-3 py-2 flex items-center gap-2">
               <button
                 onClick={() => setIsListExpanded(true)}
-                className="flex-1 min-w-0 hover:bg-muted/50 rounded px-2 py-1 -mx-2 -my-1 transition-colors text-left"
+                className="flex-1 min-w-0 hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 transition-colors text-left"
                 title="Click to change tool"
               >
-                <code className="text-xs font-mono font-semibold text-foreground truncate block">
+                <code className="text-xs font-mono font-medium text-foreground truncate block">
                   {selectedToolName}
                 </code>
               </button>
@@ -251,12 +351,12 @@ export function PlaygroundToolsSidebar({
                 onClick={() => onSelectTool(null)}
                 title="Clear selection"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-3 w-3" />
               </Button>
             </div>
 
             {/* Parameters Form */}
-            <div className="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <div className="flex-1 min-h-0 overflow-auto px-3 py-3 space-y-3">
               {formFields.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-4">
                   No parameters required
