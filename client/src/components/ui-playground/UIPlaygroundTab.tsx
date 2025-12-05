@@ -2,8 +2,8 @@
  * UIPlaygroundTab
  *
  * Main orchestrator component for the UI Playground tab.
- * Combines the determinism of ToolsTab with playground aesthetics
- * for testing ChatGPT Apps (OpenAI Apps SDK widgets).
+ * Combines deterministic tool execution with ChatTabV2-style chat,
+ * allowing users to execute tools and then chat about the results.
  */
 
 import { useEffect, useCallback, useMemo, useState } from "react";
@@ -12,11 +12,12 @@ import { Wrench } from "lucide-react";
 import {
   ResizablePanel,
   ResizablePanelGroup,
+  ResizableHandle,
 } from "../ui/resizable";
 import { EmptyState } from "../ui/empty-state";
 import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
 import { PlaygroundToolsSidebar } from "./PlaygroundToolsSidebar";
-import { PlaygroundEmulator } from "./PlaygroundEmulator";
+import { PlaygroundThread } from "./PlaygroundThread";
 import { PlaygroundInspector } from "./PlaygroundInspector";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -27,43 +28,17 @@ import {
 } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@/sdk";
 
+// Pending execution to be injected into chat
+interface PendingExecution {
+  toolName: string;
+  params: Record<string, unknown>;
+  result: unknown;
+  toolMeta: Record<string, unknown> | undefined;
+}
+
 interface UIPlaygroundTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
-}
-
-/**
- * Check if a tool is a ChatGPT App tool (returns widget UI)
- */
-function isChatGPTAppTool(
-  tool: Tool | undefined,
-  toolOutput: unknown
-): boolean {
-  if (!tool) return false;
-
-  // Check for outputTemplate in tool definition metadata
-  const hasOutputTemplate = !!tool._meta?.["openai/outputTemplate"];
-
-  // Or check for structuredContent with HTML resource in output
-  if (
-    toolOutput &&
-    typeof toolOutput === "object" &&
-    toolOutput !== null &&
-    "structuredContent" in toolOutput
-  ) {
-    const content = (toolOutput as { structuredContent?: unknown }).structuredContent;
-    if (content && typeof content === "object" && content !== null) {
-      const { resourceUri, mimeType } = content as {
-        resourceUri?: string;
-        mimeType?: string;
-      };
-      if (resourceUri && mimeType === "text/html+skybridge") {
-        return true;
-      }
-    }
-  }
-
-  return hasOutputTemplate;
 }
 
 export function UIPlaygroundTab({
@@ -72,24 +47,18 @@ export function UIPlaygroundTab({
 }: UIPlaygroundTabProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
+  // Pending execution to inject into chat thread
+  const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
+
   // Get store state and actions
   const {
     selectedTool,
     tools,
     formFields,
     isExecuting,
-    toolOutput,
-    toolResponseMetadata,
-    executionError,
-    widgetUrl,
-    widgetState,
-    isWidgetTool,
-    csp,
-    cspViolations,
     deviceType,
     displayMode,
     globals,
-    lastToolCallId,
     isSidebarVisible,
     isInspectorVisible,
     setTools,
@@ -101,18 +70,11 @@ export function UIPlaygroundTab({
     setToolOutput,
     setToolResponseMetadata,
     setExecutionError,
-    setWidgetUrl,
     setWidgetState,
-    setIsWidgetTool,
     setDeviceType,
     setDisplayMode,
     updateGlobal,
     setCsp,
-    addCspViolation,
-    setLastToolCallId,
-    followUpMessages,
-    addFollowUpMessage,
-    clearFollowUpMessages,
     toggleSidebar,
     toggleInspector,
     reset,
@@ -126,7 +88,6 @@ export function UIPlaygroundTab({
   // Compute tool names and filtering
   const toolNames = useMemo(() => Object.keys(tools), [tools]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [hasExecuted, setHasExecuted] = useState(false);
   const filteredToolNames = useMemo(() => {
     if (!searchQuery.trim()) return toolNames;
     const query = searchQuery.trim().toLowerCase();
@@ -136,19 +97,6 @@ export function UIPlaygroundTab({
       return haystack.includes(query);
     });
   }, [toolNames, tools, searchQuery]);
-
-  // Extract invocation messages from selected tool metadata
-  const invocationMessages = useMemo(() => {
-    if (!selectedTool || !tools[selectedTool]) return null;
-    const meta = tools[selectedTool]._meta as Record<string, unknown> | undefined;
-    if (!meta) return null;
-
-    const invoking = meta["openai/toolInvocation/invoking"] as string | undefined;
-    const invoked = meta["openai/toolInvocation/invoked"] as string | undefined;
-
-    if (!invoking && !invoked) return null;
-    return { invoking, invoked };
-  }, [selectedTool, tools]);
 
   // Fetch tools when server changes
   const fetchTools = useCallback(async () => {
@@ -185,26 +133,14 @@ export function UIPlaygroundTab({
     } else {
       setFormFields([]);
     }
-    // Reset hasExecuted when tool changes
-    setHasExecuted(false);
   }, [selectedTool, tools, setFormFields]);
 
-  // Execute tool
+  // Execute tool and inject into chat thread
   const executeTool = useCallback(async () => {
     if (!selectedTool || !serverName) return;
 
     setIsExecuting(true);
-    setHasExecuted(true);
     setExecutionError(null);
-    setToolOutput(null);
-    setToolResponseMetadata(null);
-    setWidgetUrl(null);
-    setWidgetState(null);
-    setIsWidgetTool(false);
-    setCsp(null);
-
-    const toolCallId = `playground-${Date.now()}`;
-    setLastToolCallId(toolCallId);
 
     try {
       const params = buildParametersFromFields(formFields);
@@ -225,72 +161,34 @@ export function UIPlaygroundTab({
       }
 
       const result = response.result;
+
+      // Store raw output for inspector
       setToolOutput(result);
 
-      // Extract metadata
+      // Extract metadata for inspector
       const rawResult = result as unknown as Record<string, unknown>;
       const meta = (rawResult?._meta || rawResult?.meta) as Record<string, unknown> | undefined;
       setToolResponseMetadata(meta || null);
 
-      // Check if this is a ChatGPT App tool
-      const tool = tools[selectedTool];
-      const isWidget = isChatGPTAppTool(tool, result);
-      setIsWidgetTool(isWidget);
-
-      // If it's a widget tool, prepare the widget
-      if (isWidget) {
-        const outputTemplate = tool?._meta?.["openai/outputTemplate"] as string | undefined;
-
-        // Extract CSP from metadata
-        const widgetCsp = meta?.["openai/widgetCSP"] as {
-          connectDomains?: string[];
-          resourceDomains?: string[];
-        } | undefined;
-        if (widgetCsp) {
-          setCsp({
-            connectDomains: widgetCsp.connectDomains || [],
-            resourceDomains: widgetCsp.resourceDomains || [],
-          });
-        }
-
-        // Extract structured content
-        let structuredContent = null;
-        if (rawResult?.structuredContent) {
-          structuredContent = rawResult.structuredContent;
-        }
-
-        // Store widget data and get URL
-        try {
-          const storeResponse = await fetch("/api/mcp/openai/widget/store", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serverId: serverName,
-              uri: outputTemplate,
-              toolInput: params,
-              toolOutput: structuredContent || result,
-              toolResponseMetadata: meta,
-              toolId: toolCallId,
-              toolName: selectedTool,
-              theme: globals.theme,
-              locale: globals.locale,
-              deviceType: globals.deviceType,
-              userLocation: globals.userLocation,
-            }),
-          });
-
-          if (storeResponse.ok) {
-            setWidgetUrl(`/api/mcp/openai/widget/${toolCallId}`);
-          } else {
-            throw new Error("Failed to store widget data");
-          }
-        } catch (err) {
-          console.error("Error storing widget data:", err);
-          setExecutionError(
-            err instanceof Error ? err.message : "Failed to prepare widget"
-          );
-        }
+      // Extract CSP for inspector
+      const widgetCsp = meta?.["openai/widgetCSP"] as {
+        connectDomains?: string[];
+        resourceDomains?: string[];
+      } | undefined;
+      if (widgetCsp) {
+        setCsp({
+          connectDomains: widgetCsp.connectDomains || [],
+          resourceDomains: widgetCsp.resourceDomains || [],
+        });
       }
+
+      // Set pending execution for chat thread to inject
+      setPendingExecution({
+        toolName: selectedTool,
+        params,
+        result,
+        toolMeta: meta,
+      });
     } catch (err) {
       console.error("Tool execution error:", err);
       setExecutionError(
@@ -303,38 +201,12 @@ export function UIPlaygroundTab({
     selectedTool,
     serverName,
     formFields,
-    tools,
-    globals,
     setIsExecuting,
     setExecutionError,
     setToolOutput,
     setToolResponseMetadata,
-    setWidgetUrl,
-    setWidgetState,
-    setIsWidgetTool,
     setCsp,
-    setLastToolCallId,
   ]);
-
-  // Handle callTool from widget
-  const handleCallTool = useCallback(
-    async (toolName: string, params: Record<string, unknown>) => {
-      if (!serverName) throw new Error("No server selected");
-      const response = await executeToolApi(serverName, toolName, params);
-      if ("error" in response) throw new Error(response.error);
-      if (response.status === "elicitation_required") {
-        throw new Error("Nested elicitation not supported");
-      }
-      return response.result;
-    },
-    [serverName]
-  );
-
-  // Handle follow-up message from widget
-  const handleSendFollowUp = useCallback((message: string) => {
-    console.log("[UIPlayground] Widget requested follow-up:", message);
-    addFollowUpMessage(message);
-  }, [addFollowUpMessage]);
 
   // Keyboard shortcut for execute
   useEffect(() => {
@@ -360,12 +232,13 @@ export function UIPlaygroundTab({
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
+    <div className="h-full flex flex-col overflow-hidden">
+      <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
         {/* Left Panel - Tools Sidebar */}
         {isSidebarVisible ? (
-          <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-            <PlaygroundToolsSidebar
+          <>
+            <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
+              <PlaygroundToolsSidebar
               tools={tools}
               toolNames={toolNames}
               filteredToolNames={filteredToolNames}
@@ -384,9 +257,13 @@ export function UIPlaygroundTab({
               displayMode={displayMode}
               onDeviceTypeChange={setDeviceType}
               onDisplayModeChange={setDisplayMode}
+              globals={globals}
+              onUpdateGlobal={updateGlobal}
               onClose={toggleSidebar}
             />
-          </ResizablePanel>
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
         ) : (
           <CollapsedPanelStrip
             side="left"
@@ -395,47 +272,35 @@ export function UIPlaygroundTab({
           />
         )}
 
-        {/* Center Panel - Emulator */}
+        {/* Center Panel - Chat Thread */}
         <ResizablePanel defaultSize={isSidebarVisible && isInspectorVisible ? 45 : 70} minSize={30}>
-          <PlaygroundEmulator
-            serverId={serverName || ""}
-            serverName={serverName || null}
-            toolCallId={lastToolCallId}
-            toolName={selectedTool}
-            widgetUrl={widgetUrl}
-            isWidgetTool={isWidgetTool}
+          <PlaygroundThread
+            serverName={serverName || ""}
             isExecuting={isExecuting}
-            executionError={executionError}
-            hasExecuted={hasExecuted}
-            invocationMessages={invocationMessages}
+            executingToolName={selectedTool}
+            invokingMessage={
+              selectedTool && tools[selectedTool]
+                ? (tools[selectedTool] as any)._meta?.[
+                    "openai/toolInvocation/invoking"
+                  ]
+                : null
+            }
+            pendingExecution={pendingExecution}
+            onExecutionInjected={() => setPendingExecution(null)}
+            onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             displayMode={displayMode}
-            globals={globals}
-            followUpMessages={followUpMessages}
-            onDeviceTypeChange={setDeviceType}
-            onDisplayModeChange={setDisplayMode}
-            onWidgetStateChange={setWidgetState}
-            onCspViolation={addCspViolation}
-            onCallTool={handleCallTool}
-            onSendFollowUp={handleSendFollowUp}
-            onClearFollowUpMessages={clearFollowUpMessages}
           />
         </ResizablePanel>
 
         {/* Right Panel - Inspector */}
         {isInspectorVisible ? (
-          <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-            <PlaygroundInspector
-              toolOutput={toolOutput}
-              toolResponseMetadata={toolResponseMetadata}
-              widgetState={widgetState}
-              globals={globals}
-              csp={csp}
-              cspViolations={cspViolations}
-              onUpdateGlobal={updateGlobal}
-              onClose={toggleInspector}
-            />
-          </ResizablePanel>
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+              <PlaygroundInspector onClose={toggleInspector} />
+            </ResizablePanel>
+          </>
         ) : (
           <CollapsedPanelStrip
             side="right"
