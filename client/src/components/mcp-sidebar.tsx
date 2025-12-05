@@ -38,9 +38,14 @@ const navigationSections = [
         icon: MCPIcon,
       },
       {
-        title: "Playground",
+        title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
+      },
+      {
+        title: "UI Playground",
+        url: "#ui-playground",
+        icon: LayoutGrid,
       },
     ],
   },
@@ -51,11 +56,6 @@ const navigationSections = [
         title: "Tools",
         url: "#tools",
         icon: Hammer,
-      },
-      {
-        title: "UI Playground",
-        url: "#ui-playground",
-        icon: LayoutGrid,
       },
       {
         title: "Resources",
