@@ -11,6 +11,7 @@
 
 import { useRef, useState, useEffect, useCallback } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
 import {
   SandboxedIframe,
@@ -80,7 +81,15 @@ export function MCPAppsRenderer({
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
+  // Read playground state from store
+  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
+  const setPlaygroundDisplayMode = useUIPlaygroundStore((s) => s.setDisplayMode);
+
+  const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>("inline");
+  // When playground is active, use store's display mode; otherwise use internal state
+  const displayMode = isPlaygroundActive ? playgroundDisplayMode : internalDisplayMode;
+  const setDisplayMode = isPlaygroundActive ? setPlaygroundDisplayMode : setInternalDisplayMode;
   const [contentHeight, setContentHeight] = useState<number>(400);
   const [maxHeight] = useState<number>(800);
   const [isReady, setIsReady] = useState(false);
