@@ -66,13 +66,13 @@ export function ChatTabV2({
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
-    []
+    [],
   );
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
   const [elicitation, setElicitation] = useState<DialogElicitation | null>(
-    null
+    null,
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
 
@@ -81,9 +81,9 @@ export function ChatTabV2({
     () =>
       selectedServerNames.filter(
         (name) =>
-          connectedServerConfigs[name]?.connectionStatus === "connected"
+          connectedServerConfigs[name]?.connectionStatus === "connected",
       ),
-    [selectedServerNames, connectedServerConfigs]
+    [selectedServerNames, connectedServerConfigs],
   );
   const noServersConnected = selectedConnectedServerNames.length === 0;
 
@@ -126,7 +126,7 @@ export function ChatTabV2({
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
-    (msg) => msg.role === "user" || msg.role === "assistant"
+    (msg) => msg.role === "user" || msg.role === "assistant",
   );
 
   // Server instructions
@@ -151,7 +151,7 @@ export function ChatTabV2({
             msg.role === "system" &&
             (msg as { metadata?: { source?: string } })?.metadata?.source ===
               "server-instruction"
-          )
+          ),
       );
 
       const instructionMessages = Object.entries(selectedServerInstructions)
@@ -190,7 +190,7 @@ export function ChatTabV2({
   const applyWidgetStateUpdates = useCallback(
     (
       prevMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[]
+      updates: { toolCallId: string; state: unknown }[],
     ) => {
       let nextMessages = prevMessages;
 
@@ -205,7 +205,7 @@ export function ChatTabV2({
 
         const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
         const existingIndex = nextMessages.findIndex(
-          (msg) => msg.id === messageId
+          (msg) => msg.id === messageId,
         );
 
         if (existingIndex !== -1) {
@@ -241,27 +241,27 @@ export function ChatTabV2({
 
       return nextMessages;
     },
-    []
+    [],
   );
 
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
         setMessages((prevMessages) =>
-          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }])
+          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }]),
         );
       } else {
         setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
       }
     },
-    [status, setMessages, applyWidgetStateUpdates]
+    [status, setMessages, applyWidgetStateUpdates],
   );
 
   useEffect(() => {
     if (status !== "ready" || widgetStateQueue.length === 0) return;
 
     setMessages((prevMessages) =>
-      applyWidgetStateUpdates(prevMessages, widgetStateQueue)
+      applyWidgetStateUpdates(prevMessages, widgetStateQueue),
     );
     setWidgetStateQueue([]);
   }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
@@ -281,7 +281,7 @@ export function ChatTabV2({
           });
         } else if (data?.type === "elicitation_complete") {
           setElicitation((prev) =>
-            prev?.requestId === data.requestId ? null : prev
+            prev?.requestId === data.requestId ? null : prev,
           );
         }
       } catch (error) {
@@ -290,7 +290,7 @@ export function ChatTabV2({
     };
     es.onerror = () => {
       console.warn(
-        "[ChatTabV2] Elicitation SSE connection error, browser will retry"
+        "[ChatTabV2] Elicitation SSE connection error, browser will retry",
       );
     };
     return () => es.close();
@@ -298,7 +298,7 @@ export function ChatTabV2({
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
-    parameters?: Record<string, unknown>
+    parameters?: Record<string, unknown>,
   ) => {
     if (!elicitation) return;
     setElicitationLoading(true);
@@ -478,7 +478,10 @@ export function ChatTabV2({
                     )}
 
                     {!isAuthLoading && (
-                      <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={false}
+                      />
                     )}
                   </div>
                 </div>

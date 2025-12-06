@@ -12,7 +12,14 @@
  * Used by both ChatTabV2 (multi-server) and PlaygroundMain (single-server).
  */
 
-import { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useLayoutEffect,
+} from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import {
   DefaultChatTransport,
@@ -186,7 +193,7 @@ export function useChatSession({
     (model: ModelDefinition) => {
       setSelectedModelId(String(model.id));
     },
-    [setSelectedModelId]
+    [setSelectedModelId],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -211,7 +218,14 @@ export function useChatSession({
       },
       headers: authHeaders,
     });
-  }, [selectedModel, getToken, authHeaders, temperature, systemPrompt, selectedServers]);
+  }, [
+    selectedModel,
+    getToken,
+    authHeaders,
+    temperature,
+    systemPrompt,
+    selectedServers,
+  ]);
 
   // useChat hook
   const { messages, sendMessage, stop, status, error, setMessages } = useChat({
@@ -279,7 +293,7 @@ export function useChatSession({
           disabledReason: toolCapableSet.has(modelName)
             ? undefined
             : "Model does not support tool calling",
-        })
+        }),
       );
       setOllamaModels(ollamaDefs);
     };
@@ -311,14 +325,14 @@ export function useChatSession({
       try {
         const { metadata, toolServerMap, tokenCounts } = await getToolsMetadata(
           selectedServers,
-          modelIdForTokens
+          modelIdForTokens,
         );
         setToolsMetadata(metadata);
         setToolServerMap(toolServerMap);
         setMcpToolsTokenCount(
           tokenCounts && Object.keys(tokenCounts).length > 0
             ? tokenCounts
-            : null
+            : null,
         );
       } catch (error) {
         console.warn("[useChatSession] Failed to fetch tools metadata:", error);
@@ -352,7 +366,7 @@ export function useChatSession({
       } catch (error) {
         console.warn(
           "[useChatSession] Failed to count system prompt tokens:",
-          error
+          error,
         );
         setSystemPromptTokenCount(null);
       } finally {
@@ -386,10 +400,12 @@ export function useChatSession({
 
     for (const message of messages) {
       if (message.role === "assistant" && message.metadata) {
-        const metadata = message.metadata as {
-          inputTokens?: number;
-          outputTokens?: number;
-        } | undefined;
+        const metadata = message.metadata as
+          | {
+              inputTokens?: number;
+              outputTokens?: number;
+            }
+          | undefined;
 
         if (metadata) {
           lastInputTokens = metadata.inputTokens ?? 0;
@@ -410,7 +426,8 @@ export function useChatSession({
   const disableForAuthentication = !isAuthenticated && isMcpJamModel;
   const authHeadersNotReady = isMcpJamModel && isAuthenticated && !authHeaders;
   const isStreaming = status === "streaming" || status === "submitted";
-  const submitBlocked = disableForAuthentication || isAuthLoading || authHeadersNotReady;
+  const submitBlocked =
+    disableForAuthentication || isAuthLoading || authHeadersNotReady;
   const inputDisabled = status !== "ready" || submitBlocked;
 
   return {

@@ -81,18 +81,21 @@ export function UIPlaygroundTab({
   }, [themeMode, updateGlobal]);
 
   // Tools metadata for filtering OpenAI apps
-  const [toolsMetadata, setToolsMetadata] = useState<Record<string, Record<string, unknown>>>({});
+  const [toolsMetadata, setToolsMetadata] = useState<
+    Record<string, Record<string, unknown>>
+  >({});
 
   // Tool execution hook
-  const { pendingExecution, clearPendingExecution, executeTool } = useToolExecution({
-    serverName,
-    selectedTool,
-    formFields,
-    setIsExecuting,
-    setExecutionError,
-    setToolOutput,
-    setToolResponseMetadata,
-  });
+  const { pendingExecution, clearPendingExecution, executeTool } =
+    useToolExecution({
+      serverName,
+      selectedTool,
+      formFields,
+      setIsExecuting,
+      setExecutionError,
+      setToolOutput,
+      setToolResponseMetadata,
+    });
 
   // Saved requests hook
   const savedRequestsHook = useSavedRequests({
@@ -110,7 +113,7 @@ export function UIPlaygroundTab({
   // Compute tool names - only show OpenAI apps (tools with openai/outputTemplate metadata)
   const toolNames = useMemo(() => {
     return Object.keys(tools).filter(
-      (name) => toolsMetadata[name]?.["openai/outputTemplate"] != null
+      (name) => toolsMetadata[name]?.["openai/outputTemplate"] != null,
     );
   }, [tools, toolsMetadata]);
 
@@ -128,7 +131,7 @@ export function UIPlaygroundTab({
   // Filter saved requests by search query
   const filteredSavedRequests = useMemo(
     () => savedRequestsHook.getFilteredRequests(searchQuery),
-    [savedRequestsHook, searchQuery]
+    [savedRequestsHook, searchQuery],
   );
 
   // Fetch tools when server changes
@@ -141,14 +144,14 @@ export function UIPlaygroundTab({
       const data = await listTools(serverName);
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
-        toolArray.map((tool: Tool) => [tool.name, tool])
+        toolArray.map((tool: Tool) => [tool.name, tool]),
       );
       setTools(dictionary);
       setToolsMetadata(data.toolsMetadata ?? {});
     } catch (err) {
       console.error("Failed to fetch tools:", err);
       setExecutionError(
-        err instanceof Error ? err.message : "Failed to fetch tools"
+        err instanceof Error ? err.message : "Failed to fetch tools",
       );
     }
   }, [serverName, reset, setTools, setExecutionError]);
@@ -164,7 +167,9 @@ export function UIPlaygroundTab({
   // Update form fields when tool is selected
   useEffect(() => {
     if (selectedTool && tools[selectedTool]) {
-      setFormFields(generateFormFieldsFromSchema(tools[selectedTool].inputSchema));
+      setFormFields(
+        generateFormFieldsFromSchema(tools[selectedTool].inputSchema),
+      );
     } else {
       setFormFields([]);
     }
@@ -178,9 +183,10 @@ export function UIPlaygroundTab({
   }, [selectedTool, toolsMetadata]);
 
   // Compute center panel default size based on sidebar/inspector visibility
-  const centerPanelDefaultSize = isSidebarVisible && isInspectorVisible
-    ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
-    : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
+  const centerPanelDefaultSize =
+    isSidebarVisible && isInspectorVisible
+      ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
+      : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
 
   // No server selected
   if (!serverConfig) {
@@ -290,7 +296,9 @@ export function UIPlaygroundTab({
       <SaveRequestDialog
         open={savedRequestsHook.saveDialogState.isOpen}
         defaultTitle={savedRequestsHook.saveDialogState.defaults.title}
-        defaultDescription={savedRequestsHook.saveDialogState.defaults.description}
+        defaultDescription={
+          savedRequestsHook.saveDialogState.defaults.description
+        }
         onCancel={savedRequestsHook.closeSaveDialog}
         onSave={savedRequestsHook.handleSaveDialogSubmit}
       />

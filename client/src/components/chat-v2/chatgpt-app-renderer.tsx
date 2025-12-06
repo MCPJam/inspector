@@ -381,7 +381,8 @@ export function ChatGPTAppRenderer({
 
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
-  const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>("inline");
+  const [internalDisplayMode, setInternalDisplayMode] =
+    useState<DisplayMode>("inline");
   const displayMode = isControlled ? displayModeProp : internalDisplayMode;
   const setDisplayMode = isControlled
     ? (mode: DisplayMode) => onDisplayModeChange?.(mode)
@@ -752,9 +753,19 @@ export function ChatGPTAppRenderer({
 
   // Reset pip mode if pipWidgetId doesn't match (but not when controlled externally)
   useEffect(() => {
-    if (!isControlled && displayMode === "pip" && pipWidgetId !== resolvedToolCallId)
+    if (
+      !isControlled &&
+      displayMode === "pip" &&
+      pipWidgetId !== resolvedToolCallId
+    )
       setDisplayMode("inline");
-  }, [displayMode, pipWidgetId, resolvedToolCallId, isControlled, setDisplayMode]);
+  }, [
+    displayMode,
+    pipWidgetId,
+    resolvedToolCallId,
+    isControlled,
+    setDisplayMode,
+  ]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -828,7 +839,9 @@ export function ChatGPTAppRenderer({
     );
 
   // When controlled, pip is determined by displayMode prop; otherwise check pipWidgetId
-  const isPip = displayMode === "pip" && (isControlled || pipWidgetId === resolvedToolCallId);
+  const isPip =
+    displayMode === "pip" &&
+    (isControlled || pipWidgetId === resolvedToolCallId);
   const isFullscreen = displayMode === "fullscreen";
   const containerClassName = isFullscreen
     ? "fixed inset-0 z-50 w-full h-full bg-background flex flex-col"

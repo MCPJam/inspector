@@ -27,7 +27,7 @@ export function createDeterministicToolMessages(
   params: Record<string, unknown>,
   result: unknown,
   toolMeta: Record<string, unknown> | undefined,
-  options?: DeterministicToolOptions
+  options?: DeterministicToolOptions,
 ): { messages: UIMessage[]; toolCallId: string } {
   // Validate toolName
   if (!toolName?.trim()) {
@@ -95,4 +95,3 @@ export function createDeterministicToolMessages(
 
   return { messages, toolCallId };
 }
-

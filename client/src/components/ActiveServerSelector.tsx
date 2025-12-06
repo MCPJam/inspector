@@ -85,7 +85,12 @@ export function ActiveServerSelector({
 
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
     if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
-    if (showOnlyOpenAIAppsServers && openAIAppsServers && !openAIAppsServers.has(name)) return false;
+    if (
+      showOnlyOpenAIAppsServers &&
+      openAIAppsServers &&
+      !openAIAppsServers.has(name)
+    )
+      return false;
     return true;
   });
 

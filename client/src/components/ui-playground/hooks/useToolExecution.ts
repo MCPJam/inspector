@@ -65,7 +65,8 @@ export function useToolExecution({
   setToolResponseMetadata,
 }: UseToolExecutionOptions): UseToolExecutionReturn {
   // Pending execution to inject into chat thread
-  const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
+  const [pendingExecution, setPendingExecution] =
+    useState<PendingExecution | null>(null);
 
   // Clear pending execution (called when chat consumes it)
   const clearPendingExecution = useCallback(() => {
@@ -91,7 +92,7 @@ export function useToolExecution({
 
       if (response.status === "elicitation_required") {
         setExecutionError(
-          "Tool requires elicitation, which is not supported in the UI Playground yet."
+          "Tool requires elicitation, which is not supported in the UI Playground yet.",
         );
         setIsExecuting(false);
         return;
@@ -116,7 +117,7 @@ export function useToolExecution({
     } catch (err) {
       console.error("Tool execution error:", err);
       setExecutionError(
-        err instanceof Error ? err.message : "Tool execution failed"
+        err instanceof Error ? err.message : "Tool execution failed",
       );
     } finally {
       setIsExecuting(false);

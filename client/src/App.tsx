@@ -47,7 +47,9 @@ import { isOpenAIApp } from "./lib/mcp-ui/mcp-apps-utils";
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [chatHasMessages, setChatHasMessages] = useState(false);
-  const [openAIAppsServers, setOpenAIAppsServers] = useState<Set<string>>(new Set());
+  const [openAIAppsServers, setOpenAIAppsServers] = useState<Set<string>>(
+    new Set(),
+  );
   const posthog = usePostHog();
   const { shouldShowLoginPage, isAuthenticated, isAuthLoading } =
     useLoginPage();
@@ -118,8 +120,8 @@ export default function App() {
   // Create a stable key for connected servers to avoid infinite loops
   // (connectedServerConfigs is a new object reference on every render)
   const connectedServerNamesKey = useMemo(
-    () => Object.keys(connectedServerConfigs).sort().join(','),
-    [connectedServerConfigs]
+    () => Object.keys(connectedServerConfigs).sort().join(","),
+    [connectedServerConfigs],
   );
 
   // Check which connected servers have OpenAI apps tools
@@ -136,9 +138,12 @@ export default function App() {
               serversWithOpenAIApps.add(serverName);
             }
           } catch (error) {
-            console.debug(`Failed to check OpenAI apps for server ${serverName}:`, error);
+            console.debug(
+              `Failed to check OpenAI apps for server ${serverName}:`,
+              error,
+            );
           }
-        })
+        }),
       );
 
       setOpenAIAppsServers(serversWithOpenAIApps);
