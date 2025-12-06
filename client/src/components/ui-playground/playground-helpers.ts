@@ -68,33 +68,3 @@ export function createDeterministicToolMessages(
   return { messages, toolCallId };
 }
 
-/**
- * Create a follow-up message bubble (display only, not sent to LLM)
- */
-export function createFollowUpDisplayMessage(text: string): UIMessage {
-  return {
-    id: `followup-${generateId()}`,
-    role: "user",
-    parts: [
-      {
-        type: "text",
-        text: `💬 Widget follow-up: ${text}`,
-      },
-    ],
-    // Mark as display-only so we can filter it out before sending to LLM
-    metadata: {
-      source: "widget-followup",
-      displayOnly: true,
-    },
-  } as UIMessage;
-}
-
-/**
- * Filter out display-only messages before sending to LLM
- */
-export function filterDisplayOnlyMessages(messages: UIMessage[]): UIMessage[] {
-  return messages.filter((msg) => {
-    const metadata = msg.metadata as { displayOnly?: boolean } | undefined;
-    return !metadata?.displayOnly;
-  });
-}
