@@ -203,6 +203,7 @@ export function UIPlaygroundTab({
           <>
             <ResizablePanel
               id="playground-left"
+              order={1}
               defaultSize={PANEL_SIZES.LEFT.DEFAULT}
               minSize={PANEL_SIZES.LEFT.MIN}
               maxSize={PANEL_SIZES.LEFT.MAX}
@@ -250,6 +251,7 @@ export function UIPlaygroundTab({
         {/* Center Panel - Chat Thread */}
         <ResizablePanel
           id="playground-center"
+          order={2}
           defaultSize={centerPanelDefaultSize}
           minSize={PANEL_SIZES.CENTER.MIN}
         >
@@ -273,6 +275,7 @@ export function UIPlaygroundTab({
             <ResizableHandle withHandle />
             <ResizablePanel
               id="playground-right"
+              order={3}
               defaultSize={PANEL_SIZES.RIGHT.DEFAULT}
               minSize={PANEL_SIZES.RIGHT.MIN}
               maxSize={PANEL_SIZES.RIGHT.MAX}
