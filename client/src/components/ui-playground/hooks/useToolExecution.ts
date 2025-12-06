@@ -2,22 +2,17 @@
  * useToolExecution Hook
  *
  * Manages tool execution logic for the UI Playground.
- * Handles API calls, result processing, CSP extraction,
- * and pending execution state for chat injection.
+ * Handles API calls, result processing, and pending
+ * execution state for chat injection.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import type { FormField } from "@/lib/tool-form";
 import { buildParametersFromFields } from "@/lib/tool-form";
 import { executeToolApi } from "@/lib/apis/mcp-tools-api";
-import type { CspConfig } from "@/stores/ui-playground-store";
 
 // Result metadata type for tool responses
 interface ToolResponseMeta {
-  "openai/widgetCSP"?: {
-    connectDomains?: string[];
-    resourceDomains?: string[];
-  };
   [key: string]: unknown;
 }
 
@@ -37,7 +32,6 @@ export interface UseToolExecutionOptions {
   setExecutionError: (error: string | null) => void;
   setToolOutput: (output: unknown) => void;
   setToolResponseMetadata: (meta: Record<string, unknown> | null) => void;
-  setCsp: (csp: CspConfig | null) => void;
 }
 
 export interface UseToolExecutionReturn {
@@ -69,7 +63,6 @@ export function useToolExecution({
   setExecutionError,
   setToolOutput,
   setToolResponseMetadata,
-  setCsp,
 }: UseToolExecutionOptions): UseToolExecutionReturn {
   // Pending execution to inject into chat thread
   const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
@@ -113,15 +106,6 @@ export function useToolExecution({
       const meta = extractMetadata(result);
       setToolResponseMetadata(meta || null);
 
-      // Extract CSP for inspector
-      const widgetCsp = meta?.["openai/widgetCSP"];
-      if (widgetCsp) {
-        setCsp({
-          connectDomains: widgetCsp.connectDomains || [],
-          resourceDomains: widgetCsp.resourceDomains || [],
-        });
-      }
-
       // Set pending execution for chat thread to inject
       setPendingExecution({
         toolName: selectedTool,
@@ -145,7 +129,6 @@ export function useToolExecution({
     setExecutionError,
     setToolOutput,
     setToolResponseMetadata,
-    setCsp,
   ]);
 
   // Keyboard shortcut for execute (Cmd/Ctrl + Enter)
