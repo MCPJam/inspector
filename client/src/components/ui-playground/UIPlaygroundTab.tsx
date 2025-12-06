@@ -106,6 +106,7 @@ export function UIPlaygroundTab({
     setExecutionError,
     setWidgetState,
     setDeviceType,
+    setDisplayMode,
     updateGlobal,
     setCsp,
     toggleSidebar,
@@ -421,6 +422,7 @@ export function UIPlaygroundTab({
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             displayMode={displayMode}
+            onDisplayModeChange={setDisplayMode}
           />
         </ResizablePanel>
 

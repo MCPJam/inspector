@@ -52,6 +52,7 @@ interface PlaygroundMainProps {
   // Device emulation
   deviceType?: DeviceType;
   displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }
 
 function ScrollToBottomButton() {
@@ -108,6 +109,7 @@ export function PlaygroundMain({
   onExecutionInjected,
   deviceType = "mobile",
   displayMode = "inline",
+  onDisplayModeChange,
 }: PlaygroundMainProps) {
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
@@ -308,6 +310,8 @@ export function PlaygroundMain({
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={handleWidgetStateChange}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (

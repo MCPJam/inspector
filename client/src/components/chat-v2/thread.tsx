@@ -13,7 +13,7 @@ import {
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 import { useState } from "react";
 import { ChevronDown, MessageCircle, LayoutDashboard, PictureInPicture2, Maximize2 } from "lucide-react";
-import { useUIPlaygroundStore, type DisplayMode } from "@/stores/ui-playground-store";
+import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
@@ -57,6 +57,10 @@ interface ThreadProps {
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  /** Controlled display mode for widgets (inline/pip/fullscreen) */
+  displayMode?: DisplayMode;
+  /** Callback when display mode changes */
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }
 
 export function Thread({
@@ -67,6 +71,8 @@ export function Thread({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  displayMode,
+  onDisplayModeChange,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
 
@@ -95,6 +101,8 @@ export function Thread({
             pipWidgetId={pipWidgetId}
             onRequestPip={handleRequestPip}
             onExitPip={handleExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -113,6 +121,8 @@ function MessageView({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  displayMode,
+  onDisplayModeChange,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -123,6 +133,8 @@ function MessageView({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -146,6 +158,8 @@ function MessageView({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
           />
         ))}
       </UserMessageBubble>
@@ -182,6 +196,8 @@ function MessageView({
                 pipWidgetId={pipWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
               />
             ))}
           </div>
@@ -201,6 +217,8 @@ function PartSwitch({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  displayMode,
+  onDisplayModeChange,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -211,6 +229,8 @@ function PartSwitch({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
@@ -296,7 +316,7 @@ function PartSwitch({
 
       return (
         <>
-          <ToolPart part={toolPart} />
+          <ToolPart part={toolPart} displayMode={displayMode} onDisplayModeChange={onDisplayModeChange} />
           <ChatGPTAppRenderer
             serverId={serverId}
             toolCallId={toolInfo.toolCallId}
@@ -313,6 +333,8 @@ function PartSwitch({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
           />
         </>
       );
@@ -356,7 +378,15 @@ function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
   );
 }
 
-function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
+function ToolPart({
+  part,
+  displayMode,
+  onDisplayModeChange,
+}: {
+  part: ToolUIPart<UITools> | DynamicToolUIPart;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
+}) {
   const label = isDynamicTool(part)
     ? part.toolName
     : getToolNameFromType((part as any).type);
@@ -382,10 +412,8 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
   );
   const hasWidgetDebug = !!widgetDebugInfo;
 
-  // Playground display mode controls
-  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
-  const displayMode = useUIPlaygroundStore((s) => s.displayMode);
-  const setDisplayMode = useUIPlaygroundStore((s) => s.setDisplayMode);
+  // Show display mode controls only when controlled externally (playground mode)
+  const showDisplayModeControls = displayMode !== undefined && onDisplayModeChange !== undefined && hasWidgetDebug;
 
   const displayModeOptions: { mode: DisplayMode; icon: typeof LayoutDashboard; label: string }[] = [
     { mode: "inline", icon: LayoutDashboard, label: "Inline" },
@@ -416,8 +444,8 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
           </span>
         </span>
         <span className="inline-flex items-center gap-2 text-muted-foreground">
-          {/* Display mode controls - only in playground */}
-          {isPlaygroundActive && hasWidgetDebug && (
+          {/* Display mode controls - only when controlled externally (playground mode) */}
+          {showDisplayModeControls && (
             <span
               className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
               onClick={(e) => e.stopPropagation()}
@@ -428,7 +456,7 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setDisplayMode(mode);
+                    onDisplayModeChange?.(mode);
                   }}
                   className={`p-1 rounded transition-colors cursor-pointer ${
                     displayMode === mode

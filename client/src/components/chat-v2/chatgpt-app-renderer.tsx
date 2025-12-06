@@ -1,6 +1,5 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import {
   Dialog,
   DialogContent,
@@ -101,6 +100,10 @@ interface ChatGPTAppRendererProps {
   pipWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
+  /** Controlled display mode - when provided, component uses this instead of internal state */
+  displayMode?: DisplayMode;
+  /** Callback when display mode changes - required when displayMode is controlled */
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }
 
 // ============================================================================
@@ -369,20 +372,20 @@ export function ChatGPTAppRenderer({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  displayMode: displayModeProp,
+  onDisplayModeChange,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  // Read playground state from store
-  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
-  const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
-  const setPlaygroundDisplayMode = useUIPlaygroundStore((s) => s.setDisplayMode);
-
+  // Display mode: controlled (via props) or uncontrolled (internal state)
+  const isControlled = displayModeProp !== undefined;
   const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>("inline");
-  // When playground is active, use store's display mode; otherwise use internal state
-  const displayMode = isPlaygroundActive ? playgroundDisplayMode : internalDisplayMode;
-  const setDisplayMode = isPlaygroundActive ? setPlaygroundDisplayMode : setInternalDisplayMode;
+  const displayMode = isControlled ? displayModeProp : internalDisplayMode;
+  const setDisplayMode = isControlled
+    ? (mode: DisplayMode) => onDisplayModeChange?.(mode)
+    : setInternalDisplayMode;
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const [contentHeight, setContentHeight] = useState<number>(320);
   const [isReady, setIsReady] = useState(false);
@@ -747,11 +750,11 @@ export function ChatGPTAppRenderer({
     }
   }, [modalOpen]);
 
-  // Reset pip mode if pipWidgetId doesn't match (but not in playground mode where pip is controlled by store)
+  // Reset pip mode if pipWidgetId doesn't match (but not when controlled externally)
   useEffect(() => {
-    if (!isPlaygroundActive && displayMode === "pip" && pipWidgetId !== resolvedToolCallId)
+    if (!isControlled && displayMode === "pip" && pipWidgetId !== resolvedToolCallId)
       setDisplayMode("inline");
-  }, [displayMode, pipWidgetId, resolvedToolCallId, isPlaygroundActive, setDisplayMode]);
+  }, [displayMode, pipWidgetId, resolvedToolCallId, isControlled, setDisplayMode]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -824,8 +827,8 @@ export function ChatGPTAppRenderer({
       </div>
     );
 
-  // In playground mode, pip works directly from store; otherwise check pipWidgetId
-  const isPip = displayMode === "pip" && (isPlaygroundActive || pipWidgetId === resolvedToolCallId);
+  // When controlled, pip is determined by displayMode prop; otherwise check pipWidgetId
+  const isPip = displayMode === "pip" && (isControlled || pipWidgetId === resolvedToolCallId);
   const isFullscreen = displayMode === "fullscreen";
   const containerClassName = isFullscreen
     ? "fixed inset-0 z-50 w-full h-full bg-background flex flex-col"
