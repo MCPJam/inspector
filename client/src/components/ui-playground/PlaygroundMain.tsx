@@ -12,7 +12,7 @@
  */
 
 import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
-import { ArrowDown, Braces, LayoutTemplate, Loader2, Wrench, Smartphone, Tablet, Monitor, Trash2 } from "lucide-react";
+import { ArrowDown, Braces, LayoutTemplate, Loader2, Wrench, Smartphone, Tablet, Monitor, Trash2, Sun, Moon } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
@@ -23,6 +23,9 @@ import { ConfirmChatResetDialog } from "@/components/chat-v2/confirm-chat-reset-
 import { useChatSession } from "@/hooks/use-chat-session";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
 import { useUIPlaygroundStore, type DeviceType, type DisplayMode } from "@/stores/ui-playground-store";
@@ -51,6 +54,7 @@ interface PlaygroundMainProps {
   onExecutionInjected: () => void;
   // Device emulation
   deviceType?: DeviceType;
+  onDeviceTypeChange?: (type: DeviceType) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
 }
@@ -108,6 +112,7 @@ export function PlaygroundMain({
   pendingExecution,
   onExecutionInjected,
   deviceType = "mobile",
+  onDeviceTypeChange,
   displayMode = "inline",
   onDisplayModeChange,
 }: PlaygroundMainProps) {
@@ -120,6 +125,16 @@ export function PlaygroundMain({
   // Device config
   const deviceConfig = DEVICE_CONFIGS[deviceType];
   const DeviceIcon = deviceConfig.icon;
+
+  // Theme handling
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+
+  const handleThemeChange = useCallback(() => {
+    const newTheme = themeMode === "dark" ? "light" : "dark";
+    updateThemeMode(newTheme);
+    setThemeMode(newTheme);
+  }, [themeMode, setThemeMode]);
 
   // Single server for playground
   const selectedServers = useMemo(
@@ -348,7 +363,40 @@ export function PlaygroundMain({
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {/* Device frame header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
-        <div /> {/* Spacer for centering */}
+        {/* Device type toggle */}
+        <ToggleGroup
+          type="single"
+          value={deviceType}
+          onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
+          className="gap-0.5"
+        >
+          <ToggleGroupItem
+            value="mobile"
+            aria-label="Mobile"
+            title="Mobile (430×932)"
+            className="h-7 w-7 p-0"
+          >
+            <Smartphone className="h-3.5 w-3.5" />
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="tablet"
+            aria-label="Tablet"
+            title="Tablet (820×1180)"
+            className="h-7 w-7 p-0"
+          >
+            <Tablet className="h-3.5 w-3.5" />
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="desktop"
+            aria-label="Desktop"
+            title="Desktop (1280×800)"
+            className="h-7 w-7 p-0"
+          >
+            <Monitor className="h-3.5 w-3.5" />
+          </ToggleGroupItem>
+        </ToggleGroup>
+
+        {/* Device label */}
         <div className="flex items-center gap-2">
           <DeviceIcon className="h-3.5 w-3.5" />
           <span>{deviceConfig.label}</span>
@@ -356,14 +404,36 @@ export function PlaygroundMain({
             ({deviceConfig.width}×{deviceConfig.height})
           </span>
         </div>
-        <div className="w-8 flex justify-end">
+
+        {/* Right actions */}
+        <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleThemeChange}
+                className="h-7 w-7"
+                title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
+              >
+                {themeMode === "dark" ? (
+                  <Sun className="h-3.5 w-3.5" />
+                ) : (
+                  <Moon className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {themeMode === "dark" ? "Light mode" : "Dark mode"}
+            </TooltipContent>
+          </Tooltip>
           {!isThreadEmpty && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
                   onClick={() => setShowClearConfirm(true)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />

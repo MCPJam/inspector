@@ -14,13 +14,11 @@ import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
-import type { DeviceType, PlaygroundGlobals } from "@/stores/ui-playground-store";
 
 import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
 import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
-import { DeviceControls } from "./DeviceControls";
 
 interface PlaygroundLeftProps {
   tools: Record<string, Tool>;
@@ -38,12 +36,6 @@ interface PlaygroundLeftProps {
   isExecuting: boolean;
   onExecute: () => void;
   onSave: () => void;
-  // Device emulation
-  deviceType: DeviceType;
-  onDeviceTypeChange: (type: DeviceType) => void;
-  // Globals (theme, locale)
-  globals: PlaygroundGlobals;
-  onUpdateGlobal: <K extends keyof PlaygroundGlobals>(key: K, value: PlaygroundGlobals[K]) => void;
   // Saved requests
   savedRequests: SavedRequest[];
   filteredSavedRequests: SavedRequest[];
@@ -72,8 +64,6 @@ export function PlaygroundLeft({
   isExecuting,
   onExecute,
   onSave,
-  deviceType,
-  onDeviceTypeChange,
   savedRequests,
   filteredSavedRequests,
   highlightedRequestId,
@@ -156,12 +146,6 @@ export function PlaygroundLeft({
             />
           )}
         </div>
-
-        {/* Device & Display Mode Controls */}
-        <DeviceControls
-          deviceType={deviceType}
-          onDeviceTypeChange={onDeviceTypeChange}
-        />
       </div>
     </div>
   );
