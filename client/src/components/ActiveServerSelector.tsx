@@ -17,6 +17,8 @@ interface ActiveServerSelectorProps {
   onMultiServerToggle: (server: string) => void;
   onConnect: (formData: ServerFormData) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
+  showOnlyOpenAIAppsServers?: boolean; // Only show servers that have OpenAI apps tools
+  openAIAppsServers?: Set<string>; // Set of server names that have OpenAI apps
   hasMessages?: boolean;
 }
 
@@ -59,6 +61,8 @@ export function ActiveServerSelector({
   onMultiServerToggle,
   onConnect,
   showOnlyOAuthServers = false,
+  showOnlyOpenAIAppsServers = false,
+  openAIAppsServers,
   hasMessages = false,
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -79,8 +83,14 @@ export function ActiveServerSelector({
     );
   };
 
-  const servers = Object.entries(serverConfigs).filter(([, server]) => {
+  const servers = Object.entries(serverConfigs).filter(([name, server]) => {
     if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
+    if (
+      showOnlyOpenAIAppsServers &&
+      openAIAppsServers &&
+      !openAIAppsServers.has(name)
+    )
+      return false;
     return true;
   });
 
