@@ -16,9 +16,9 @@ import {
 } from "../ui/resizable";
 import { EmptyState } from "../ui/empty-state";
 import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
-import { PlaygroundToolsSidebar } from "./PlaygroundToolsSidebar";
-import { PlaygroundThread } from "./PlaygroundThread";
-import { PlaygroundInspector } from "./PlaygroundInspector";
+import { PlaygroundLeft } from "./PlaygroundLeft";
+import { PlaygroundMain } from "./PlaygroundMain";
+import { PlaygroundRight } from "./PlaygroundRight";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -363,7 +363,7 @@ export function UIPlaygroundTab({
         {isSidebarVisible ? (
           <>
             <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
-              <PlaygroundToolsSidebar
+              <PlaygroundLeft
               tools={tools}
               toolNames={toolNames}
               filteredToolNames={filteredToolNames}
@@ -405,7 +405,7 @@ export function UIPlaygroundTab({
 
         {/* Center Panel - Chat Thread */}
         <ResizablePanel defaultSize={isSidebarVisible && isInspectorVisible ? 45 : 70} minSize={30}>
-          <PlaygroundThread
+          <PlaygroundMain
             serverName={serverName || ""}
             isExecuting={isExecuting}
             executingToolName={selectedTool}
@@ -429,7 +429,7 @@ export function UIPlaygroundTab({
           <>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-              <PlaygroundInspector onClose={toggleInspector} />
+              <PlaygroundRight onClose={toggleInspector} />
             </ResizablePanel>
           </>
         ) : (

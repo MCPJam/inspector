@@ -1,5 +1,5 @@
 /**
- * PlaygroundToolsSidebar
+ * PlaygroundLeft
  *
  * Left panel of the UI Playground with:
  * - Collapsible tool list (collapses when tool is selected)
@@ -37,7 +37,7 @@ import type { DeviceType, PlaygroundGlobals } from "@/stores/ui-playground-store
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 
-interface PlaygroundToolsSidebarProps {
+interface PlaygroundLeftProps {
   tools: Record<string, Tool>;
   toolNames: string[];
   filteredToolNames: string[];
@@ -71,7 +71,7 @@ interface PlaygroundToolsSidebarProps {
   onClose?: () => void;
 }
 
-export function PlaygroundToolsSidebar({
+export function PlaygroundLeft({
   tools,
   toolNames,
   filteredToolNames,
@@ -99,7 +99,7 @@ export function PlaygroundToolsSidebar({
   onDuplicateRequest,
   onDeleteRequest,
   onClose,
-}: PlaygroundToolsSidebarProps) {
+}: PlaygroundLeftProps) {
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
