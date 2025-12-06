@@ -5,7 +5,16 @@
  * message injection for deterministic tool executions.
  */
 
-import { generateId, type UIMessage } from "ai";
+import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
+
+type DeterministicToolState = "output-available" | "output-error";
+
+interface DeterministicToolOptions {
+  /** Tool state - defaults to 'output-available' */
+  state?: DeterministicToolState;
+  /** Error text - required when state is 'output-error' */
+  errorText?: string;
+}
 
 /**
  * Create messages for a deterministic tool execution.
@@ -17,9 +26,16 @@ export function createDeterministicToolMessages(
   toolName: string,
   params: Record<string, unknown>,
   result: unknown,
-  toolMeta: Record<string, unknown> | undefined
+  toolMeta: Record<string, unknown> | undefined,
+  options?: DeterministicToolOptions
 ): { messages: UIMessage[]; toolCallId: string } {
+  // Validate toolName
+  if (!toolName?.trim()) {
+    throw new Error("toolName is required");
+  }
+
   const toolCallId = `playground-${generateId()}`;
+  const state = options?.state ?? "output-available";
 
   // Get custom invoked message from tool metadata if available
   const invokedMessage = toolMeta?.["openai/toolInvocation/invoked"] as
@@ -28,6 +44,26 @@ export function createDeterministicToolMessages(
 
   // Format invocation status text
   const invocationText = invokedMessage || `Invoked \`${toolName}\``;
+
+  // Properly typed dynamic tool part based on state
+  const toolPart: DynamicToolUIPart =
+    state === "output-error"
+      ? {
+          type: "dynamic-tool",
+          toolCallId,
+          toolName,
+          state: "output-error",
+          input: params,
+          errorText: options?.errorText ?? "Unknown error",
+        }
+      : {
+          type: "dynamic-tool",
+          toolCallId,
+          toolName,
+          state: "output-available",
+          input: params,
+          output: result,
+        };
 
   const messages: UIMessage[] = [
     // User message showing the deterministic execution request
@@ -42,7 +78,6 @@ export function createDeterministicToolMessages(
       ],
     },
     // Assistant message with invocation status and dynamic tool result
-    // Using "dynamic-tool" type so getToolInfo extracts toolName correctly
     {
       id: `assistant-${toolCallId}`,
       role: "assistant",
@@ -53,14 +88,7 @@ export function createDeterministicToolMessages(
           text: invocationText,
         },
         // Tool result (renders widget)
-        {
-          type: "dynamic-tool",
-          toolCallId,
-          toolName,
-          state: "output-available", // Required state for widget rendering
-          input: params,
-          output: result,
-        } as any,
+        toolPart,
       ],
     },
   ];
