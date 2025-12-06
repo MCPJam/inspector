@@ -177,6 +177,20 @@ MCP-UI components can:
 
 This enables MCP server developers to create custom user experiences beyond plain text responses.
 
+## MCP Apps support (SEP-1865)
+
+The playground supports rendering custom UI widgets from MCP tools using the MCP Apps protocol (SEP-1865). When a tool includes a `ui/resourceUri` metadata field, the playground renders the widget in a secure double-iframe sandbox with access to the `window.mcpApp` API.
+
+MCP Apps use JSON-RPC 2.0 over postMessage for communication and support:
+
+- Calling other MCP tools via `window.mcpApp.callTool()`
+- Reading MCP resources via `window.mcpApp.readResource()`
+- Sending follow-up messages via `window.mcpApp.sendMessage()`
+- Opening external links via `window.mcpApp.openLink()`
+- Automatic theme synchronization with the Inspector
+
+Servers with MCP Apps support display an MCP icon in the server info panel.
+
 ## OpenAI Apps SDK support
 
 The playground supports rendering custom UI components from MCP tools using the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk). When a tool includes an `openai/outputTemplate` metadata field pointing to a resource URI, the playground will render the custom HTML interface in an isolated iframe with access to the `window.openai` API.
@@ -192,3 +206,11 @@ OpenAI Apps can request different display modes to optimize their presentation:
 - **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
 
 Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-left corner of the widget.
+
+## UI rendering priority
+
+When a tool result contains UI metadata, the Inspector uses the following priority order:
+
+1. **MCP Apps** - `ui/resourceUri` in tool metadata
+2. **OpenAI Apps SDK** - `openai/outputTemplate` in tool metadata
+3. **MCP-UI** - Inline `ui://` resource in tool result
