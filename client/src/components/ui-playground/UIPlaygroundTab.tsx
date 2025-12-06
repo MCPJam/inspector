@@ -70,7 +70,6 @@ export function UIPlaygroundTab({
     setDeviceType,
     setDisplayMode,
     updateGlobal,
-    setCsp,
     toggleSidebar,
     toggleInspector,
     reset,
@@ -93,7 +92,6 @@ export function UIPlaygroundTab({
     setExecutionError,
     setToolOutput,
     setToolResponseMetadata,
-    setCsp,
   });
 
   // Saved requests hook
