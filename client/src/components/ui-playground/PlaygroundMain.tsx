@@ -12,7 +12,19 @@
  */
 
 import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
-import { ArrowDown, Braces, LayoutTemplate, Loader2, Wrench, Smartphone, Tablet, Monitor, Trash2, Sun, Moon } from "lucide-react";
+import {
+  ArrowDown,
+  Braces,
+  LayoutTemplate,
+  Loader2,
+  Wrench,
+  Smartphone,
+  Tablet,
+  Monitor,
+  Trash2,
+  Sun,
+  Moon,
+} from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
@@ -22,16 +34,27 @@ import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/confirm-chat-reset-dialog";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
-import { useUIPlaygroundStore, type DeviceType, type DisplayMode } from "@/stores/ui-playground-store";
+import {
+  useUIPlaygroundStore,
+  type DeviceType,
+  type DisplayMode,
+} from "@/stores/ui-playground-store";
 
 /** Device frame configurations */
-const DEVICE_CONFIGS: Record<DeviceType, { width: number; height: number; label: string; icon: typeof Smartphone }> = {
+const DEVICE_CONFIGS: Record<
+  DeviceType,
+  { width: number; height: number; label: string; icon: typeof Smartphone }
+> = {
   mobile: { width: 430, height: 932, label: "Phone", icon: Smartphone },
   tablet: { width: 820, height: 1180, label: "Tablet", icon: Tablet },
   desktop: { width: 1280, height: 800, label: "Desktop", icon: Monitor },
@@ -118,7 +141,7 @@ export function PlaygroundMain({
 }: PlaygroundMainProps) {
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
-    []
+    [],
   );
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
@@ -139,7 +162,7 @@ export function PlaygroundMain({
   // Single server for playground
   const selectedServers = useMemo(
     () => (serverName ? [serverName] : []),
-    [serverName]
+    [serverName],
   );
 
   // Use shared chat session hook
@@ -173,7 +196,9 @@ export function PlaygroundMain({
   });
 
   // Set playground active flag for widget renderers to read
-  const setPlaygroundActive = useUIPlaygroundStore((s) => s.setPlaygroundActive);
+  const setPlaygroundActive = useUIPlaygroundStore(
+    (s) => s.setPlaygroundActive,
+  );
   useEffect(() => {
     setPlaygroundActive(true);
     return () => setPlaygroundActive(false);
@@ -181,7 +206,7 @@ export function PlaygroundMain({
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
-    (msg) => msg.role === "user" || msg.role === "assistant"
+    (msg) => msg.role === "user" || msg.role === "assistant",
   );
 
   // Handle deterministic execution injection
@@ -193,7 +218,7 @@ export function PlaygroundMain({
       toolName,
       params,
       result,
-      toolMeta
+      toolMeta,
     );
 
     setMessages((prev) => [...prev, ...newMessages]);
@@ -205,7 +230,7 @@ export function PlaygroundMain({
     (toolCallId: string, state: unknown) => {
       onWidgetStateChange?.(toolCallId, state);
     },
-    [onWidgetStateChange]
+    [onWidgetStateChange],
   );
 
   // Handle follow-up messages from widgets
@@ -213,7 +238,7 @@ export function PlaygroundMain({
     (text: string) => {
       sendMessage({ text });
     },
-    [sendMessage]
+    [sendMessage],
   );
 
   // Handle clear chat
@@ -223,8 +248,7 @@ export function PlaygroundMain({
   }, [resetChat]);
 
   // Placeholder text
-  let placeholder =
-    "Ask about the tool result or continue the conversation...";
+  let placeholder = "Ask about the tool result or continue the conversation...";
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {

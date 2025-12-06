@@ -18,11 +18,17 @@ interface HttpConfig {
   url: URL | string;
 }
 
-function isStdioConfig(config: MCPServerConfig): config is MCPServerConfig & StdioConfig {
-  return "command" in config && typeof (config as StdioConfig).command === "string";
+function isStdioConfig(
+  config: MCPServerConfig,
+): config is MCPServerConfig & StdioConfig {
+  return (
+    "command" in config && typeof (config as StdioConfig).command === "string"
+  );
 }
 
-function isHttpConfig(config: MCPServerConfig): config is MCPServerConfig & HttpConfig {
+function isHttpConfig(
+  config: MCPServerConfig,
+): config is MCPServerConfig & HttpConfig {
   return "url" in config && (config as HttpConfig).url != null;
 }
 
@@ -57,6 +63,8 @@ export function computeServerKey(config: MCPServerConfig | undefined): string {
 /**
  * Hook that memoizes server key computation.
  */
-export function useServerKey(serverConfig: MCPServerConfig | undefined): string {
+export function useServerKey(
+  serverConfig: MCPServerConfig | undefined,
+): string {
   return useMemo(() => computeServerKey(serverConfig), [serverConfig]);
 }

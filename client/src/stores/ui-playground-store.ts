@@ -86,7 +86,7 @@ interface UIPlaygroundState {
   setDisplayMode: (mode: DisplayMode) => void;
   updateGlobal: <K extends keyof PlaygroundGlobals>(
     key: K,
-    value: PlaygroundGlobals[K]
+    value: PlaygroundGlobals[K],
   ) => void;
   setLastToolCallId: (id: string | null) => void;
   addFollowUpMessage: (text: string) => void;
@@ -158,14 +158,14 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
   updateFormField: (name, value) =>
     set((state) => ({
       formFields: state.formFields.map((field) =>
-        field.name === name ? { ...field, value } : field
+        field.name === name ? { ...field, value } : field,
       ),
     })),
 
   updateFormFieldIsSet: (name, isSet) =>
     set((state) => ({
       formFields: state.formFields.map((field) =>
-        field.name === name ? { ...field, isSet } : field
+        field.name === name ? { ...field, isSet } : field,
       ),
     })),
 
@@ -246,12 +246,13 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
 
   setPlaygroundActive: (active) => set({ isPlaygroundActive: active }),
 
-  reset: () => set((state) => ({
-    ...initialState,
-    // Preserve panel visibility on reset
-    isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
-    isInspectorVisible: getStoredVisibility(STORAGE_KEY_INSPECTOR, true),
-    // Preserve playground active state (controlled by PlaygroundMain mount/unmount)
-    isPlaygroundActive: state.isPlaygroundActive,
-  })),
+  reset: () =>
+    set((state) => ({
+      ...initialState,
+      // Preserve panel visibility on reset
+      isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
+      isInspectorVisible: getStoredVisibility(STORAGE_KEY_INSPECTOR, true),
+      // Preserve playground active state (controlled by PlaygroundMain mount/unmount)
+      isPlaygroundActive: state.isPlaygroundActive,
+    })),
 }));

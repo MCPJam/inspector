@@ -12,7 +12,13 @@ import {
 } from "@mcp-ui/client";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 import { useState } from "react";
-import { ChevronDown, MessageCircle, LayoutDashboard, PictureInPicture2, Maximize2 } from "lucide-react";
+import {
+  ChevronDown,
+  MessageCircle,
+  LayoutDashboard,
+  PictureInPicture2,
+  Maximize2,
+} from "lucide-react";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
@@ -316,7 +322,11 @@ function PartSwitch({
 
       return (
         <>
-          <ToolPart part={toolPart} displayMode={displayMode} onDisplayModeChange={onDisplayModeChange} />
+          <ToolPart
+            part={toolPart}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+          />
           <ChatGPTAppRenderer
             serverId={serverId}
             toolCallId={toolInfo.toolCallId}
@@ -413,9 +423,16 @@ function ToolPart({
   const hasWidgetDebug = !!widgetDebugInfo;
 
   // Show display mode controls only when controlled externally (playground mode)
-  const showDisplayModeControls = displayMode !== undefined && onDisplayModeChange !== undefined && hasWidgetDebug;
+  const showDisplayModeControls =
+    displayMode !== undefined &&
+    onDisplayModeChange !== undefined &&
+    hasWidgetDebug;
 
-  const displayModeOptions: { mode: DisplayMode; icon: typeof LayoutDashboard; label: string }[] = [
+  const displayModeOptions: {
+    mode: DisplayMode;
+    icon: typeof LayoutDashboard;
+    label: string;
+  }[] = [
     { mode: "inline", icon: LayoutDashboard, label: "Inline" },
     { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
     { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
