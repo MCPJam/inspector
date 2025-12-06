@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import {
   Dialog,
   DialogContent,
@@ -372,7 +373,16 @@ export function ChatGPTAppRenderer({
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
+
+  // Read playground state from store
+  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
+  const setPlaygroundDisplayMode = useUIPlaygroundStore((s) => s.setDisplayMode);
+
+  const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>("inline");
+  // When playground is active, use store's display mode; otherwise use internal state
+  const displayMode = isPlaygroundActive ? playgroundDisplayMode : internalDisplayMode;
+  const setDisplayMode = isPlaygroundActive ? setPlaygroundDisplayMode : setInternalDisplayMode;
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const [contentHeight, setContentHeight] = useState<number>(320);
   const [isReady, setIsReady] = useState(false);
@@ -737,10 +747,11 @@ export function ChatGPTAppRenderer({
     }
   }, [modalOpen]);
 
+  // Reset pip mode if pipWidgetId doesn't match (but not in playground mode where pip is controlled by store)
   useEffect(() => {
-    if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId)
+    if (!isPlaygroundActive && displayMode === "pip" && pipWidgetId !== resolvedToolCallId)
       setDisplayMode("inline");
-  }, [displayMode, pipWidgetId, resolvedToolCallId]);
+  }, [displayMode, pipWidgetId, resolvedToolCallId, isPlaygroundActive, setDisplayMode]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -813,7 +824,8 @@ export function ChatGPTAppRenderer({
       </div>
     );
 
-  const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
+  // In playground mode, pip works directly from store; otherwise check pipWidgetId
+  const isPip = displayMode === "pip" && (isPlaygroundActive || pipWidgetId === resolvedToolCallId);
   const isFullscreen = displayMode === "fullscreen";
   const containerClassName = isFullscreen
     ? "fixed inset-0 z-50 w-full h-full bg-background flex flex-col"
