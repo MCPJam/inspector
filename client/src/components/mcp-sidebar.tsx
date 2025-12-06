@@ -11,6 +11,7 @@ import {
   Box,
   FileCode,
   Activity,
+  LayoutGrid,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -37,9 +38,14 @@ const navigationSections = [
         icon: MCPIcon,
       },
       {
-        title: "Playground",
+        title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
+      },
+      {
+        title: "UI Playground",
+        url: "#ui-playground",
+        icon: LayoutGrid,
       },
     ],
   },

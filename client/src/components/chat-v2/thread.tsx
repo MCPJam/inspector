@@ -12,7 +12,14 @@ import {
 } from "@mcp-ui/client";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 import { useState } from "react";
-import { ChevronDown, MessageCircle } from "lucide-react";
+import {
+  ChevronDown,
+  MessageCircle,
+  LayoutDashboard,
+  PictureInPicture2,
+  Maximize2,
+} from "lucide-react";
+import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
@@ -46,6 +53,7 @@ import {
   safeStringify,
   type McpResource,
 } from "./thread-helpers";
+import { UserMessageBubble } from "./user-message-bubble";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -55,6 +63,10 @@ interface ThreadProps {
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  /** Controlled display mode for widgets (inline/pip/fullscreen) */
+  displayMode?: DisplayMode;
+  /** Callback when display mode changes */
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }
 
 export function Thread({
@@ -65,6 +77,8 @@ export function Thread({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  displayMode,
+  onDisplayModeChange,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
 
@@ -93,6 +107,8 @@ export function Thread({
             pipWidgetId={pipWidgetId}
             onRequestPip={handleRequestPip}
             onExitPip={handleExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -111,6 +127,8 @@ function MessageView({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  displayMode,
+  onDisplayModeChange,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -121,6 +139,8 @@ function MessageView({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -131,24 +151,24 @@ function MessageView({
 
   if (role === "user") {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-3xl max-h-[70vh] space-y-3 overflow-auto overscroll-contain rounded-xl border border-[#e5e7ec] bg-[#f9fafc] px-4 py-3 text-sm leading-6 text-[#1f2733] shadow-sm dark:border-[#4a5261] dark:bg-[#2f343e] dark:text-[#e6e8ed]">
-          {message.parts?.map((part, i) => (
-            <PartSwitch
-              key={i}
-              part={part}
-              role={role}
-              onSendFollowUp={onSendFollowUp}
-              toolsMetadata={toolsMetadata}
-              toolServerMap={toolServerMap}
-              onWidgetStateChange={onWidgetStateChange}
-              pipWidgetId={pipWidgetId}
-              onRequestPip={onRequestPip}
-              onExitPip={onExitPip}
-            />
-          ))}
-        </div>
-      </div>
+      <UserMessageBubble>
+        {message.parts?.map((part, i) => (
+          <PartSwitch
+            key={i}
+            part={part}
+            role={role}
+            onSendFollowUp={onSendFollowUp}
+            toolsMetadata={toolsMetadata}
+            toolServerMap={toolServerMap}
+            onWidgetStateChange={onWidgetStateChange}
+            pipWidgetId={pipWidgetId}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+          />
+        ))}
+      </UserMessageBubble>
     );
   }
 
@@ -182,6 +202,8 @@ function MessageView({
                 pipWidgetId={pipWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
               />
             ))}
           </div>
@@ -201,6 +223,8 @@ function PartSwitch({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  displayMode,
+  onDisplayModeChange,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -211,6 +235,8 @@ function PartSwitch({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
@@ -296,7 +322,11 @@ function PartSwitch({
 
       return (
         <>
-          <ToolPart part={toolPart} />
+          <ToolPart
+            part={toolPart}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+          />
           <ChatGPTAppRenderer
             serverId={serverId}
             toolCallId={toolInfo.toolCallId}
@@ -313,6 +343,8 @@ function PartSwitch({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
           />
         </>
       );
@@ -356,7 +388,15 @@ function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
   );
 }
 
-function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
+function ToolPart({
+  part,
+  displayMode,
+  onDisplayModeChange,
+}: {
+  part: ToolUIPart<UITools> | DynamicToolUIPart;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
+}) {
   const label = isDynamicTool(part)
     ? part.toolName
     : getToolNameFromType((part as any).type);
@@ -382,6 +422,22 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
   );
   const hasWidgetDebug = !!widgetDebugInfo;
 
+  // Show display mode controls only when controlled externally (playground mode)
+  const showDisplayModeControls =
+    displayMode !== undefined &&
+    onDisplayModeChange !== undefined &&
+    hasWidgetDebug;
+
+  const displayModeOptions: {
+    mode: DisplayMode;
+    icon: typeof LayoutDashboard;
+    label: string;
+  }[] = [
+    { mode: "inline", icon: LayoutDashboard, label: "Inline" },
+    { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
+    { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
+  ];
+
   return (
     <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
       <button
@@ -405,6 +461,32 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
           </span>
         </span>
         <span className="inline-flex items-center gap-2 text-muted-foreground">
+          {/* Display mode controls - only when controlled externally (playground mode) */}
+          {showDisplayModeControls && (
+            <span
+              className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {displayModeOptions.map(({ mode, icon: Icon, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDisplayModeChange?.(mode);
+                  }}
+                  className={`p-1 rounded transition-colors cursor-pointer ${
+                    displayMode === mode
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                  }`}
+                  title={label}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              ))}
+            </span>
+          )}
           {hasWidgetDebug && !isExpanded && (
             <span className="text-[10px] text-muted-foreground/60 font-normal normal-case">
               Click to debug

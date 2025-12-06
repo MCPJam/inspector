@@ -11,6 +11,7 @@ import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { RegistryTab } from "./components/RegistryTab";
+import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
@@ -40,10 +41,15 @@ import LoginPage from "./components/LoginPage";
 import { useLoginPage } from "./hooks/use-log-in-page";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
+import { listTools } from "./lib/apis/mcp-tools-api";
+import { isOpenAIApp } from "./lib/mcp-ui/mcp-apps-utils";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [chatHasMessages, setChatHasMessages] = useState(false);
+  const [openAIAppsServers, setOpenAIAppsServers] = useState<Set<string>>(
+    new Set(),
+  );
   const posthog = usePostHog();
   const { shouldShowLoginPage, isAuthenticated, isAuthLoading } =
     useLoginPage();
@@ -110,6 +116,42 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
+
+  // Create a stable key for connected servers to avoid infinite loops
+  // (connectedServerConfigs is a new object reference on every render)
+  const connectedServerNamesKey = useMemo(
+    () => Object.keys(connectedServerConfigs).sort().join(","),
+    [connectedServerConfigs],
+  );
+
+  // Check which connected servers have OpenAI apps tools
+  useEffect(() => {
+    const checkOpenAIAppsServers = async () => {
+      const connectedServerNames = Object.keys(connectedServerConfigs);
+      const serversWithOpenAIApps = new Set<string>();
+
+      await Promise.all(
+        connectedServerNames.map(async (serverName) => {
+          try {
+            const toolsData = await listTools(serverName);
+            if (isOpenAIApp(toolsData)) {
+              serversWithOpenAIApps.add(serverName);
+            }
+          } catch (error) {
+            console.debug(
+              `Failed to check OpenAI apps for server ${serverName}:`,
+              error,
+            );
+          }
+        }),
+      );
+
+      setOpenAIAppsServers(serversWithOpenAIApps);
+    };
+
+    checkOpenAIAppsServers();
+  }, [connectedServerNamesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
     const applyHash = () => {
@@ -178,14 +220,15 @@ export default function App() {
           onDeleteWorkspace={handleDeleteWorkspace}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, OAuth Flow, Chat, and Chat v2 pages */}
+          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, OAuth Flow, Chat, Chat v2, and UI Playground pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
             activeTab === "resource-templates" ||
             activeTab === "prompts" ||
             activeTab === "oauth-flow" ||
             activeTab === "chat" ||
-            activeTab === "chat-v2") && (
+            activeTab === "chat-v2" ||
+            activeTab === "ui-playground") && (
             <ActiveServerSelector
               serverConfigs={
                 activeTab === "oauth-flow"
@@ -201,6 +244,8 @@ export default function App() {
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
               showOnlyOAuthServers={activeTab === "oauth-flow"}
+              showOnlyOpenAIAppsServers={activeTab === "ui-playground"}
+              openAIAppsServers={openAIAppsServers}
               hasMessages={activeTab === "chat-v2" ? chatHasMessages : false}
             />
           )}
@@ -277,6 +322,12 @@ export default function App() {
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
+          {activeTab === "ui-playground" && (
+            <UIPlaygroundTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+            />
+          )}
           {activeTab === "settings" && <SettingsTab />}
         </div>
       </SidebarInset>
