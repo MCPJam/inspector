@@ -52,10 +52,21 @@ async function generateMacIcon() {
   await ensureDir(outDir);
 
   for (const [size, name] of sizes) {
+    // Scale down content to 85% to add padding (like other macOS icons)
+    const contentSize = Math.round(size * 0.85);
+    const padding = Math.round((size - contentSize) / 2);
+
     await sharp(svgPath)
-      .resize(size, size, {
+      .resize(contentSize, contentSize, {
         fit: "contain",
         background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
+      .extend({
+        top: padding,
+        bottom: padding,
+        left: padding,
+        right: padding,
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
       })
       .png()
       .toFile(join(iconsetDir, name));
@@ -67,7 +78,7 @@ async function generateMacIcon() {
   // Cleanup
   try {
     await fs.rm(dirname(iconsetDir), { recursive: true, force: true });
-  } catch {}
+  } catch { }
 
   console.log(`Generated ${outIcns}`);
 }
