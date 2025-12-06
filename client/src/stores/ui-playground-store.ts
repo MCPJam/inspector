@@ -28,19 +28,6 @@ export interface PlaygroundGlobals {
   userLocation: UserLocation | null;
 }
 
-export interface CspConfig {
-  connectDomains: string[];
-  resourceDomains: string[];
-}
-
-export interface CspViolation {
-  timestamp: number;
-  directive: string;
-  blockedUri: string;
-  sourceFile?: string;
-  lineNumber?: number;
-}
-
 export interface FollowUpMessage {
   id: string;
   text: string;
@@ -66,10 +53,6 @@ interface UIPlaygroundState {
   widgetUrl: string | null;
   widgetState: unknown;
   isWidgetTool: boolean;
-
-  // CSP (read-only, from server response)
-  csp: CspConfig | null;
-  cspViolations: CspViolation[];
 
   // Emulation
   deviceType: DeviceType;
@@ -105,9 +88,6 @@ interface UIPlaygroundState {
     key: K,
     value: PlaygroundGlobals[K]
   ) => void;
-  setCsp: (csp: CspConfig | null) => void;
-  addCspViolation: (violation: Omit<CspViolation, "timestamp">) => void;
-  clearCspViolations: () => void;
   setLastToolCallId: (id: string | null) => void;
   addFollowUpMessage: (text: string) => void;
   clearFollowUpMessages: () => void;
@@ -148,8 +128,6 @@ const initialState = {
   widgetUrl: null,
   widgetState: null,
   isWidgetTool: false,
-  csp: null,
-  cspViolations: [],
   deviceType: "desktop" as DeviceType,
   displayMode: "inline" as DisplayMode,
   globals: getInitialGlobals(),
@@ -173,8 +151,6 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
       widgetUrl: null,
       widgetState: null,
       isWidgetTool: false,
-      csp: null,
-      cspViolations: [],
     }),
 
   setFormFields: (formFields) => set({ formFields }),
@@ -227,18 +203,6 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
       ...(key === "deviceType" ? { deviceType: value as DeviceType } : {}),
       ...(key === "displayMode" ? { displayMode: value as DisplayMode } : {}),
     })),
-
-  setCsp: (csp) => set({ csp }),
-
-  addCspViolation: (violation) =>
-    set((state) => ({
-      cspViolations: [
-        { ...violation, timestamp: Date.now() },
-        ...state.cspViolations,
-      ].slice(0, 100), // Keep max 100 violations
-    })),
-
-  clearCspViolations: () => set({ cspViolations: [] }),
 
   setLastToolCallId: (lastToolCallId) => set({ lastToolCallId }),
 
