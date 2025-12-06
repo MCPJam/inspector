@@ -9,7 +9,7 @@
  * - useChat wrapper
  * - Token usage calculation
  *
- * Used by both ChatTabV2 (multi-server) and PlaygroundThread (single-server).
+ * Used by both ChatTabV2 (multi-server) and PlaygroundMain (single-server).
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef, useLayoutEffect } from "react";

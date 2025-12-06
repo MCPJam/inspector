@@ -1,7 +1,7 @@
 /**
- * PlaygroundThread
+ * PlaygroundMain
  *
- * Chat thread for the UI Playground that combines:
+ * Main center panel for the UI Playground that combines:
  * - Deterministic tool execution (injected as messages)
  * - LLM-driven chat continuation
  * - Widget rendering via Thread component
@@ -34,7 +34,7 @@ const DEVICE_CONFIGS: Record<DeviceType, { width: number; height: number; label:
   desktop: { width: 1280, height: 800, label: "Desktop", icon: Monitor },
 };
 
-interface PlaygroundThreadProps {
+interface PlaygroundMainProps {
   serverName: string;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   // Execution state for "Invoking" indicator
@@ -98,7 +98,7 @@ function InvokingIndicator({
   );
 }
 
-export function PlaygroundThread({
+export function PlaygroundMain({
   serverName,
   onWidgetStateChange,
   isExecuting,
@@ -108,7 +108,7 @@ export function PlaygroundThread({
   onExecutionInjected,
   deviceType = "mobile",
   displayMode = "inline",
-}: PlaygroundThreadProps) {
+}: PlaygroundMainProps) {
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     []
