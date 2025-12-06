@@ -492,7 +492,7 @@ export function PlaygroundToolsSidebar({
             {themeMode === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
 
-          {/* Locale Selector */}
+{/* Locale Selector - hidden for now, will introduce later
           <div className="relative">
             <Globe className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
             <select
@@ -510,6 +510,7 @@ export function PlaygroundToolsSidebar({
               <option value="pt-BR">PT</option>
             </select>
           </div>
+          */}
         </div>
       </div>
     </div>

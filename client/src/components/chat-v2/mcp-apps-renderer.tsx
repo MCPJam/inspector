@@ -488,7 +488,8 @@ export function MCPAppsRenderer({
     );
   }
 
-  const isPip = displayMode === "pip" && pipWidgetId === toolCallId;
+  // In playground mode, pip works directly from store; otherwise check pipWidgetId
+  const isPip = displayMode === "pip" && (isPlaygroundActive || pipWidgetId === toolCallId);
   const isFullscreen = displayMode === "fullscreen";
   // Apply maxHeight constraint, but no minimum - let widget control its size
   const appliedHeight = Math.min(contentHeight, maxHeight);

@@ -12,18 +12,18 @@
  */
 
 import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
-import { ArrowDown, Braces, LayoutTemplate, Loader2, Wrench, Smartphone, Tablet, Monitor } from "lucide-react";
+import { ArrowDown, Braces, LayoutTemplate, Loader2, Wrench, Smartphone, Tablet, Monitor, Trash2 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { formatErrorMessage } from "@/components/chat-v2/chat-helpers";
 import { ErrorBox } from "@/components/chat-v2/error";
+import { ConfirmChatResetDialog } from "@/components/chat-v2/confirm-chat-reset-dialog";
 import { useChatSession } from "@/hooks/use-chat-session";
-import {
-  createDeterministicToolMessages,
-  createFollowUpDisplayMessage,
-} from "./playground-helpers";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
 import { useUIPlaygroundStore, type DeviceType, type DisplayMode } from "@/stores/ui-playground-store";
 
@@ -113,6 +113,7 @@ export function PlaygroundThread({
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     []
   );
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   // Device config
   const deviceConfig = DEVICE_CONFIGS[deviceType];
@@ -197,6 +198,12 @@ export function PlaygroundThread({
     },
     [sendMessage]
   );
+
+  // Handle clear chat
+  const handleClearChat = useCallback(() => {
+    resetChat();
+    setShowClearConfirm(false);
+  }, [resetChat]);
 
   // Placeholder text
   let placeholder =
@@ -336,13 +343,39 @@ export function PlaygroundThread({
   return (
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {/* Device frame header */}
-      <div className="flex items-center justify-center gap-2 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
-        <DeviceIcon className="h-3.5 w-3.5" />
-        <span>{deviceConfig.label}</span>
-        <span className="text-[10px] text-muted-foreground/60">
-          ({deviceConfig.width}×{deviceConfig.height})
-        </span>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
+        <div /> {/* Spacer for centering */}
+        <div className="flex items-center gap-2">
+          <DeviceIcon className="h-3.5 w-3.5" />
+          <span>{deviceConfig.label}</span>
+          <span className="text-[10px] text-muted-foreground/60">
+            ({deviceConfig.width}×{deviceConfig.height})
+          </span>
+        </div>
+        <div className="w-8 flex justify-end">
+          {!isThreadEmpty && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowClearConfirm(true)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Clear chat</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
       </div>
+
+      <ConfirmChatResetDialog
+        open={showClearConfirm}
+        onCancel={() => setShowClearConfirm(false)}
+        onConfirm={handleClearChat}
+      />
 
       {/* Device frame container */}
       <div className="flex-1 flex items-center justify-center p-4 min-h-0 overflow-auto">
