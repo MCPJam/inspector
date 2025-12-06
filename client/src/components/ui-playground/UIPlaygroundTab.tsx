@@ -224,10 +224,6 @@ export function UIPlaygroundTab({
                 isExecuting={isExecuting}
                 onExecute={executeTool}
                 onSave={savedRequestsHook.openSaveDialog}
-                deviceType={deviceType}
-                onDeviceTypeChange={setDeviceType}
-                globals={globals}
-                onUpdateGlobal={updateGlobal}
                 savedRequests={savedRequestsHook.savedRequests}
                 filteredSavedRequests={filteredSavedRequests}
                 highlightedRequestId={savedRequestsHook.highlightedRequestId}
@@ -264,6 +260,7 @@ export function UIPlaygroundTab({
             onExecutionInjected={clearPendingExecution}
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
+            onDeviceTypeChange={setDeviceType}
             displayMode={displayMode}
             onDisplayModeChange={setDisplayMode}
           />
