@@ -747,10 +747,11 @@ export function ChatGPTAppRenderer({
     }
   }, [modalOpen]);
 
+  // Reset pip mode if pipWidgetId doesn't match (but not in playground mode where pip is controlled by store)
   useEffect(() => {
-    if (displayMode === "pip" && pipWidgetId !== resolvedToolCallId)
+    if (!isPlaygroundActive && displayMode === "pip" && pipWidgetId !== resolvedToolCallId)
       setDisplayMode("inline");
-  }, [displayMode, pipWidgetId, resolvedToolCallId]);
+  }, [displayMode, pipWidgetId, resolvedToolCallId, isPlaygroundActive, setDisplayMode]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -823,7 +824,8 @@ export function ChatGPTAppRenderer({
       </div>
     );
 
-  const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
+  // In playground mode, pip works directly from store; otherwise check pipWidgetId
+  const isPip = displayMode === "pip" && (isPlaygroundActive || pipWidgetId === resolvedToolCallId);
   const isFullscreen = displayMode === "fullscreen";
   const containerClassName = isFullscreen
     ? "fixed inset-0 z-50 w-full h-full bg-background flex flex-col"
