@@ -38,84 +38,88 @@ export function TabHeader({
 }: TabHeaderProps) {
   return (
     <div className="border-b border-border flex-shrink-0">
-      <div className="flex items-center">
-        <button
-          onClick={() => onTabChange("tools")}
-          className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
-            activeTab === "tools"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          Tools
-          <span className="ml-1 text-[10px] font-mono opacity-60">
-            {toolCount}
-          </span>
-        </button>
-        <button
-          onClick={() => onTabChange("saved")}
-          className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
-            activeTab === "saved"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          Saved
-          {savedCount > 0 && (
-            <span className="ml-1 text-[10px] font-mono opacity-60">
-              {savedCount}
+      {/* Top row: Tabs + primary Run */}
+      <div className="px-2 py-1.5 flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => onTabChange("tools")}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              activeTab === "tools"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Tools
+            <span className="ml-1 text-[10px] font-mono opacity-70">
+              {toolCount}
             </span>
-          )}
-        </button>
-        <div className="ml-auto flex items-center gap-1 pr-2">
-          <Button
-            onClick={onExecute}
-            disabled={isExecuting || !canExecute}
-            size="sm"
-            className="h-7 px-2.5 text-xs"
+          </button>
+          <button
+            onClick={() => onTabChange("saved")}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              activeTab === "saved"
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
           >
-            {isExecuting ? (
-              <RefreshCw className="h-3 w-3 animate-spin" />
-            ) : (
-              <Play className="h-3 w-3" />
+            Saved
+            {savedCount > 0 && (
+              <span className="ml-1 text-[10px] font-mono opacity-70">
+                {savedCount}
+              </span>
             )}
-            <span className="ml-1">Run</span>
-          </Button>
-          <Button
-            onClick={onSave}
-            disabled={!canSave}
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            title="Save request"
-          >
-            <Save className="h-3 w-3" />
-          </Button>
-          <div className="w-px h-4 bg-border mx-0.5" />
-          <Button
-            onClick={onRefresh}
-            variant="ghost"
-            size="sm"
-            disabled={fetchingTools}
-            className="h-7 w-7 p-0"
-            title="Refresh tools"
-          >
-            <RefreshCw
-              className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""}`}
-            />
-          </Button>
-          {onClose && (
-            <Button
-              onClick={onClose}
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              title="Hide sidebar"
-            >
-              <PanelLeftClose className="h-3 w-3" />
-            </Button>
-          )}
+          </button>
         </div>
+        <Button
+          onClick={onExecute}
+          disabled={isExecuting || !canExecute}
+          size="sm"
+          className="h-8 px-3 text-xs ml-auto"
+        >
+          {isExecuting ? (
+            <RefreshCw className="h-3 w-3 animate-spin" />
+          ) : (
+            <Play className="h-3 w-3" />
+          )}
+          <span className="ml-1">Run</span>
+        </Button>
+      </div>
+
+      {/* Secondary row: quiet actions */}
+      <div className="px-2 pb-1.5 flex items-center gap-1.5 text-muted-foreground/80">
+        <Button
+          onClick={onSave}
+          disabled={!canSave}
+          variant="ghost"
+          size="sm"
+          className="h-7 w-8 p-0"
+          title="Save request"
+        >
+          <Save className="h-3 w-3" />
+        </Button>
+        <Button
+          onClick={onRefresh}
+          variant="ghost"
+          size="sm"
+          disabled={fetchingTools}
+          className="h-7 w-8 p-0"
+          title="Refresh tools"
+        >
+          <RefreshCw
+            className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""}`}
+          />
+        </Button>
+        {onClose && (
+          <Button
+            onClick={onClose}
+            variant="ghost"
+            size="sm"
+            className="h-7 w-8 p-0"
+            title="Hide sidebar"
+          >
+            <PanelLeftClose className="h-3 w-3" />
+          </Button>
+        )}
       </div>
     </div>
   );
