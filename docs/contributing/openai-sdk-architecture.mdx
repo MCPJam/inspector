@@ -130,9 +130,9 @@ graph TB
 
 ### 1. Tool Execution & Detection
 
-When a tool is executed that returns OpenAI SDK components, the system detects this in two ways:
+When a tool is executed that returns OpenAI SDK components or MCP Apps, the system detects this in multiple ways:
 
-**Method A: `_meta["openai/outputTemplate"]` field**
+**Method A: `_meta["openai/outputTemplate"]` field (ChatGPT Apps)**
 
 ```typescript
 // Tool definition includes OpenAI output template
@@ -145,7 +145,20 @@ When a tool is executed that returns OpenAI SDK components, the system detects t
 }
 ```
 
-**Method B: `ui://` resource in response**
+**Method B: `_meta["ui/resourceUri"]` field (MCP Apps)**
+
+```typescript
+// Tool definition includes MCP Apps resource URI
+{
+  "name": "weather_widget",
+  "description": "Get weather with custom UI",
+  "_meta": {
+    "ui/resourceUri": "ui://weather/display"
+  }
+}
+```
+
+**Method C: `ui://` resource in response**
 
 ```typescript
 // Tool result contains ui:// resource
