@@ -248,7 +248,7 @@ export function PlaygroundMain({
   }, [resetChat]);
 
   // Placeholder text
-  let placeholder = "Ask about the tool result or continue the conversation...";
+  let placeholder = "Ask something to render UI...";
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -312,16 +312,9 @@ export function PlaygroundMain({
         <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
           <div className="w-full max-w-xl space-y-6 py-8">
             <div className="text-center max-w-md mx-auto">
-              <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
-                <LayoutTemplate className="h-7 w-7 text-muted-foreground" />
-              </div>
               <h3 className="text-sm font-semibold text-foreground mb-2">
-                Ready to test
+                Test ChatGPT Apps and MCP Apps
               </h3>
-              <p className="text-xs text-muted-foreground mb-4">
-                Select a tool from the sidebar and click Execute to see results
-                here. You can then chat to ask questions about the results.
-              </p>
               <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
                 <Wrench className="h-3.5 w-3.5" />
                 <span>
