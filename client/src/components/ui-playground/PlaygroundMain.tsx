@@ -15,7 +15,6 @@ import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
 import {
   ArrowDown,
   Braces,
-  LayoutTemplate,
   Loader2,
   Wrench,
   Smartphone,
@@ -390,24 +389,24 @@ export function PlaygroundMain({
           <ToggleGroupItem
             value="mobile"
             aria-label="Mobile"
-            title="Mobile (430×932)"
-            className="h-7 w-7 p-0"
+            title="Mobile (430x932)"
+            className="h-7 w-7 p-0 cursor-pointer"
           >
             <Smartphone className="h-3.5 w-3.5" />
           </ToggleGroupItem>
           <ToggleGroupItem
             value="tablet"
             aria-label="Tablet"
-            title="Tablet (820×1180)"
-            className="h-7 w-7 p-0"
+            title="Tablet (820x1180)"
+            className="h-7 w-7 p-0 cursor-pointer"
           >
             <Tablet className="h-3.5 w-3.5" />
           </ToggleGroupItem>
           <ToggleGroupItem
             value="desktop"
             aria-label="Desktop"
-            title="Desktop (1280×800)"
-            className="h-7 w-7 p-0"
+            title="Desktop (1280x800)"
+            className="h-7 w-7 p-0 cursor-pointer"
           >
             <Monitor className="h-3.5 w-3.5" />
           </ToggleGroupItem>

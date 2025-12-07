@@ -96,6 +96,18 @@ export function PlaygroundLeft({
     setActiveTab("tools");
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const tag = target.tagName;
+    // Avoid firing while typing in multiline fields
+    if (tag === "TEXTAREA") return;
+    if (!selectedToolName || isExecuting) return;
+    e.preventDefault();
+    onExecute();
+  };
+
   const mainContent = (
     <div className="flex-1 min-h-0 overflow-hidden">
       {activeTab === "saved" ? (
@@ -136,7 +148,10 @@ export function PlaygroundLeft({
   );
 
   return (
-    <div className="h-full flex flex-col border-r border-border bg-background overflow-hidden">
+    <div
+      className="h-full flex flex-col border-r border-border bg-background overflow-hidden"
+      onKeyDownCapture={handleKeyDown}
+    >
       {/* Header with tabs and actions */}
       <TabHeader
         activeTab={activeTab}
