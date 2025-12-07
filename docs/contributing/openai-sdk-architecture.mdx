@@ -130,9 +130,9 @@ graph TB
 
 ### 1. Tool Execution & Detection
 
-When a tool is executed that returns OpenAI SDK components, the system detects this in two ways:
+When a tool is executed that returns OpenAI SDK components or MCP Apps, the system detects this in multiple ways:
 
-**Method A: `_meta["openai/outputTemplate"]` field**
+**Method A: `_meta["openai/outputTemplate"]` field (ChatGPT Apps)**
 
 ```typescript
 // Tool definition includes OpenAI output template
@@ -145,7 +145,20 @@ When a tool is executed that returns OpenAI SDK components, the system detects t
 }
 ```
 
-**Method B: `ui://` resource in response**
+**Method B: `_meta["ui/resourceUri"]` field (MCP Apps)**
+
+```typescript
+// Tool definition includes MCP Apps resource URI
+{
+  "name": "weather_widget",
+  "description": "Get weather with custom UI",
+  "_meta": {
+    "ui/resourceUri": "ui://weather/display"
+  }
+}
+```
+
+**Method C: `ui://` resource in response**
 
 ```typescript
 // Tool result contains ui:// resource
@@ -165,12 +178,19 @@ When a tool is executed that returns OpenAI SDK components, the system detects t
 Located in `client/src/components/tools/ResultsPanel.tsx:100-104`:
 
 ```typescript
-// Check for OpenAI component using tool metadata from definition
+// Check for OpenAI component or MCP App using tool metadata from definition
 const openaiOutputTemplate = toolMeta?.[\"openai/outputTemplate\"];
+const mcpAppResourceUri = toolMeta?.[\"ui/resourceUri\"];
 const hasOpenAIComponent =
   openaiOutputTemplate && typeof openaiOutputTemplate === \"string\";
+const hasMCPApp = mcpAppResourceUri && typeof mcpAppResourceUri === \"string\";
 const uiResource = resolveUIResource(result);
 ```
+
+The system detects custom UI components by checking for:
+1. `openai/outputTemplate` metadata (ChatGPT Apps)
+2. `ui/resourceUri` metadata (MCP Apps)
+3. `ui://` URIs in tool results via `resolveUIResource`
 
 The `resolveUIResource` function searches for `ui://` URIs in:
 
