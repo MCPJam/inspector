@@ -102,6 +102,15 @@ export function SettingsTab() {
       placeholder: "xai-...",
       getApiKeyUrl: "https://console.x.ai/",
     },
+    {
+      id: "azure",
+      name: "azure",
+      logo: "/azure_logo.png",
+      logoAlt: "Azure OpenAI",
+      description: "GPT-4, GPT-5",
+      placeholder: "...",
+      getApiKeyUrl: "https://console.x.ai/",
+    },
   ];
 
   const handleEdit = (providerId: string) => {
