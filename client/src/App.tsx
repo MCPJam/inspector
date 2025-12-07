@@ -42,14 +42,14 @@ import { useLoginPage } from "./hooks/use-log-in-page";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import { listTools } from "./lib/apis/mcp-tools-api";
-import { isOpenAIApp } from "./lib/mcp-ui/mcp-apps-utils";
+import { isMCPApp, isOpenAIApp } from "./lib/mcp-ui/mcp-apps-utils";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [chatHasMessages, setChatHasMessages] = useState(false);
-  const [openAIAppsServers, setOpenAIAppsServers] = useState<Set<string>>(
-    new Set(),
-  );
+  const [openAiAppOrMcpAppsServers, setOpenAiAppOrMcpAppsServers] = useState<
+    Set<string>
+  >(new Set());
   const posthog = usePostHog();
   const { shouldShowLoginPage, isAuthenticated, isAuthLoading } =
     useLoginPage();
@@ -116,7 +116,6 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
-
   // Create a stable key for connected servers to avoid infinite loops
   // (connectedServerConfigs is a new object reference on every render)
   const connectedServerNamesKey = useMemo(
@@ -126,16 +125,16 @@ export default function App() {
 
   // Check which connected servers have OpenAI apps tools
   useEffect(() => {
-    const checkOpenAIAppsServers = async () => {
+    const checkOpenAiAppOrMcpAppsServers = async () => {
       const connectedServerNames = Object.keys(connectedServerConfigs);
-      const serversWithOpenAIApps = new Set<string>();
+      const serversWithOpenAiAppOrMcpApps = new Set<string>();
 
       await Promise.all(
         connectedServerNames.map(async (serverName) => {
           try {
             const toolsData = await listTools(serverName);
-            if (isOpenAIApp(toolsData)) {
-              serversWithOpenAIApps.add(serverName);
+            if (isOpenAIApp(toolsData) || isMCPApp(toolsData)) {
+              serversWithOpenAiAppOrMcpApps.add(serverName);
             }
           } catch (error) {
             console.debug(
@@ -146,11 +145,11 @@ export default function App() {
         }),
       );
 
-      setOpenAIAppsServers(serversWithOpenAIApps);
+      setOpenAiAppOrMcpAppsServers(serversWithOpenAiAppOrMcpApps);
     };
 
-    checkOpenAIAppsServers();
-  }, [connectedServerNamesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    checkOpenAiAppOrMcpAppsServers(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connectedServerNamesKey]);
 
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
@@ -245,7 +244,7 @@ export default function App() {
               selectedMultipleServers={appState.selectedMultipleServers}
               showOnlyOAuthServers={activeTab === "oauth-flow"}
               showOnlyOpenAIAppsServers={activeTab === "ui-playground"}
-              openAIAppsServers={openAIAppsServers}
+              openAiAppOrMcpAppsServers={openAiAppOrMcpAppsServers}
               hasMessages={activeTab === "chat-v2" ? chatHasMessages : false}
             />
           )}
