@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 
 export interface ProviderTokens {
   anthropic: string;
+  azure: string;
   openai: string;
   deepseek: string;
   google: string;
@@ -37,6 +38,7 @@ const STORAGE_KEY = "mcp-inspector-provider-tokens";
 
 const defaultTokens: ProviderTokens = {
   anthropic: "",
+  azure:"",
   openai: "",
   deepseek: "",
   google: "",
