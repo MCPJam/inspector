@@ -42,7 +42,7 @@ export function UIPlaygroundTab({
   serverName,
 }: UIPlaygroundTabProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-
+  console.log("serverConfig", serverConfig);
   // Compute server key for saved requests storage
   const serverKey = useServerKey(serverConfig);
 
@@ -110,11 +110,15 @@ export function UIPlaygroundTab({
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Compute tool names - only show OpenAI apps (tools with openai/outputTemplate metadata)
+  // Compute tool names - show ChatGPT/MCP apps (OpenAI SDK or MCP Apps metadata)
   const toolNames = useMemo(() => {
-    return Object.keys(tools).filter(
-      (name) => toolsMetadata[name]?.["openai/outputTemplate"] != null,
-    );
+    return Object.keys(tools).filter((name) => {
+      const meta = toolsMetadata[name];
+      return (
+        meta?.["openai/outputTemplate"] != null ||
+        meta?.["ui/resourceUri"] != null
+      );
+    });
   }, [tools, toolsMetadata]);
 
   // Filter tool names by search query
