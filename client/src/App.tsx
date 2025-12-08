@@ -5,6 +5,7 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { ResourceTemplatesTab } from "./components/ResourceTemplatesTab";
 import { PromptsTab } from "./components/PromptsTab";
+import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
@@ -244,6 +245,37 @@ export default function App() {
           activeServerSelectorProps={activeServerSelectorProps}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
+          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, Tasks, OAuth Flow, Chat, Chat v2, and UI Playground pages */}
+          {(activeTab === "tools" ||
+            activeTab === "resources" ||
+            activeTab === "resource-templates" ||
+            activeTab === "prompts" ||
+            activeTab === "tasks" ||
+            activeTab === "oauth-flow" ||
+            activeTab === "chat" ||
+            activeTab === "chat-v2" ||
+            activeTab === "ui-playground") && (
+            <ActiveServerSelector
+              serverConfigs={
+                activeTab === "oauth-flow"
+                  ? appState.servers
+                  : connectedServerConfigs
+              }
+              selectedServer={appState.selectedServer}
+              onServerChange={setSelectedServer}
+              onConnect={handleConnect}
+              isMultiSelectEnabled={
+                activeTab === "chat" || activeTab === "chat-v2"
+              }
+              onMultiServerToggle={toggleServerSelection}
+              selectedMultipleServers={appState.selectedMultipleServers}
+              showOnlyOAuthServers={activeTab === "oauth-flow"}
+              showOnlyOpenAIAppsServers={activeTab === "ui-playground"}
+              openAiAppOrMcpAppsServers={openAiAppOrMcpAppsServers}
+              hasMessages={activeTab === "chat-v2" ? chatHasMessages : false}
+            />
+          )}
+
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
@@ -281,6 +313,13 @@ export default function App() {
 
           {activeTab === "prompts" && (
             <PromptsTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+            />
+          )}
+
+          {activeTab === "tasks" && (
+            <TasksTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
             />

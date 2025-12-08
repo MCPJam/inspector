@@ -38,7 +38,9 @@ import {
   listTools,
   respondToElicitationApi,
   type ToolExecutionResponse,
+  type TaskOptions,
 } from "@/lib/apis/mcp-tools-api";
+import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig } from "@/sdk";
@@ -134,6 +136,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     title: string;
     description?: string;
   }>({ title: "" });
+  const [executeAsTask, setExecuteAsTask] = useState(false);
+  const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -149,6 +153,35 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       return "unknown";
     }
   }, [serverConfig]);
+
+  // Check if the selected tool requires task execution
+  // Per MCP Tasks spec: execution.taskSupport can be "required", "optional", or "forbidden"
+  // FastMCP uses execution.task with values "always", "optional", "never"
+  const selectedToolTaskSupport = useMemo((): "required" | "optional" | "forbidden" => {
+    if (!selectedTool || !tools[selectedTool]) return "optional";
+    const tool = tools[selectedTool];
+    const execution = (tool as any).execution;
+
+    // Check standard spec format: execution.taskSupport
+    const taskSupport = execution?.taskSupport;
+    if (taskSupport === "required" || taskSupport === "optional") {
+      return taskSupport;
+    }
+    if (taskSupport === "forbidden") {
+      return "forbidden";
+    }
+
+    // Check FastMCP format: execution.task ("always", "optional", "never")
+    const taskMode = execution?.task;
+    if (taskMode === "always") return "required";
+    if (taskMode === "optional") return "optional";
+    if (taskMode === "never") return "forbidden";
+
+    return "optional"; // Default to optional for inspector - allow testing
+  }, [selectedTool, tools]);
+
+  // For inspector tool, always allow task execution to enable testing
+  const canExecuteAsTask = true;
 
   useEffect(() => {
     if (!serverConfig || !serverName) {
@@ -308,6 +341,33 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       return;
     }
 
+    // Handle task creation response (MCP Tasks spec 2025-11-25)
+    if ("status" in response && response.status === "task_created") {
+      const { task } = response;
+      setCreatedTaskId(task.taskId);
+
+      // Track the task locally so it appears in the Tasks tab
+      trackTask({
+        taskId: task.taskId,
+        serverId: serverName,
+        createdAt: task.createdAt,
+        toolName,
+      });
+
+      logger.info("Background task created", {
+        toolName,
+        taskId: task.taskId,
+        status: task.status,
+        ttl: task.ttl,
+        pollInterval: task.pollInterval,
+        duration: Date.now() - startedAt,
+      });
+
+      // Navigate to Tasks tab to monitor the task
+      window.location.hash = "tasks";
+      return;
+    }
+
     if ("error" in response && response.error) {
       setError(response.error);
     }
@@ -330,6 +390,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setShowStructured(false);
     setValidationErrors(undefined);
     setUnstructuredValidationResult("not_applicable");
+    setCreatedTaskId(null);
 
     const executionStartTime = Date.now();
     const toolCallId = `tool-${executionStartTime}`;
@@ -340,7 +401,20 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setLastToolName(selectedTool);
       setLastToolParameters(params);
 
-      const response = await executeToolApi(serverName, selectedTool, params);
+      // Pass task options if executing as background task (MCP Tasks spec 2025-11-25)
+      // Use task execution if: user checked the option OR tool requires it
+      // TTL of 0 means no expiration
+      const shouldUseTask = executeAsTask || selectedToolTaskSupport === "required";
+      const taskOptions: TaskOptions | undefined = shouldUseTask
+        ? { ttl: 0 }
+        : undefined;
+
+      const response = await executeToolApi(
+        serverName,
+        selectedTool,
+        params,
+        taskOptions,
+      );
       handleExecutionResponse(response, selectedTool, executionStartTime);
     } catch (err) {
       console.error("executeTool", err);
@@ -519,6 +593,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 onExecute={executeTool}
                 onSave={handleSaveCurrent}
                 onFieldChange={updateFieldValue}
+                // Only show task execution option if server and tool support it
+                executeAsTask={canExecuteAsTask ? executeAsTask : undefined}
+                onExecuteAsTaskChange={canExecuteAsTask ? setExecuteAsTask : undefined}
+                taskRequired={selectedToolTaskSupport === "required"}
               />
             ) : (
               <ResizablePanel defaultSize={70} minSize={50}>

@@ -12,6 +12,21 @@ export type ListToolsResultWithMetadata = ListToolsResult & {
 
 export type ToolServerMap = Record<string, string>;
 
+export type TaskOptions = {
+  ttl?: number;
+};
+
+// Task data returned in CreateTaskResult (MCP Tasks spec 2025-11-25)
+export interface TaskData {
+  taskId: string;
+  status: "working" | "input_required" | "completed" | "failed" | "cancelled";
+  statusMessage?: string;
+  createdAt: string;
+  lastUpdatedAt: string;
+  ttl: number | null;
+  pollInterval?: number;
+}
+
 export type ToolExecutionResponse =
   | {
       status: "completed";
@@ -23,6 +38,10 @@ export type ToolExecutionResponse =
       requestId: string;
       request: ElicitRequest["params"];
       timestamp: string;
+    }
+  | {
+      status: "task_created";
+      task: TaskData;
     }
   | {
       error: string;
@@ -52,11 +71,12 @@ export async function executeToolApi(
   serverId: string,
   toolName: string,
   parameters: Record<string, unknown>,
+  taskOptions?: TaskOptions,
 ): Promise<ToolExecutionResponse> {
   const res = await fetch("/api/mcp/tools/execute", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, toolName, parameters }),
+    body: JSON.stringify({ serverId, toolName, parameters, taskOptions }),
   });
   let body: any = null;
   try {
@@ -67,6 +87,9 @@ export async function executeToolApi(
     const message = body?.error || `Execute tool failed (${res.status})`;
     return { error: message } as ToolExecutionResponse;
   }
+
+  // Server now returns { status: "task_created", task: { taskId, ... } } for task-augmented requests
+  // per MCP Tasks spec (2025-11-25)
   return body as ToolExecutionResponse;
 }
 
