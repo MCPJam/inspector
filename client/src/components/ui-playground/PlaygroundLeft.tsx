@@ -89,6 +89,9 @@ export function PlaygroundLeft({
 
   const handleTabChange = (tab: "tools" | "saved") => {
     setActiveTab(tab);
+    if (tab === "tools" && selectedToolName) {
+      onSelectTool(null);
+    }
   };
 
   const handleLoadRequest = (req: SavedRequest) => {
