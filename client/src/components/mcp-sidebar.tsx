@@ -11,7 +11,7 @@ import {
   Box,
   FileCode,
   Activity,
-  LayoutGrid,
+  Fish,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -43,9 +43,9 @@ const navigationSections = [
         icon: MessageCircle,
       },
       {
-        title: "UI Playground",
+        title: "MCP UI / ChatGPT Apps",
         url: "#ui-playground",
-        icon: LayoutGrid,
+        icon: Fish,
       },
     ],
   },
