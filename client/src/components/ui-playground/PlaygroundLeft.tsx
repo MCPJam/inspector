@@ -112,7 +112,7 @@ export function PlaygroundLeft({
   };
 
   const mainContent = (
-    <div className="flex-1 min-h-0 overflow-hidden">
+    <div className="h-full min-h-0">
       {activeTab === "saved" ? (
         <SavedRequestsTab
           searchQuery={searchQuery}
