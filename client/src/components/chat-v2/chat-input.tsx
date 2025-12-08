@@ -62,6 +62,8 @@ interface ChatInputProps {
   systemPromptTokenCountLoading?: boolean;
   mcpPromptResults: MCPPromptResult[];
   onChangeMcpPromptResults: (mcpPromptResults: MCPPromptResult[]) => void;
+  /** When true, shows icons only for a more compact layout */
+  compact?: boolean;
 }
 
 export function ChatInput({
@@ -92,6 +94,7 @@ export function ChatInput({
   systemPromptTokenCountLoading = false,
   mcpPromptResults,
   onChangeMcpPromptResults,
+  compact = false,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -218,14 +221,15 @@ export function ChatInput({
           autoFocus={!disabled}
         />
 
-        <div className="flex items-center justify-between gap-2 px-2">
-          <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between gap-2 px-2 flex-wrap">
+          <div className="flex items-center gap-1 min-w-0 flex-shrink">
             <ModelSelector
               currentModel={currentModel}
               availableModels={availableModels}
               onModelChange={onModelChange}
               isLoading={isLoading}
               hasMessages={hasMessages}
+              compact={compact}
             />
             <SystemPromptSelector
               systemPrompt={
@@ -239,10 +243,11 @@ export function ChatInput({
               hasMessages={hasMessages}
               onResetChat={onResetChat}
               currentModel={currentModel}
+              compact={compact}
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <Context
               usedTokens={tokenUsage?.totalTokens ?? 0}
               usage={

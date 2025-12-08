@@ -27,6 +27,8 @@ interface ModelSelectorProps {
   isLoading?: boolean;
   hideProvidedModels?: boolean;
   hasMessages?: boolean;
+  /** When true, shows icon only for compact layout */
+  compact?: boolean;
 }
 
 // Helper function to group models by provider
@@ -81,6 +83,7 @@ export function ModelSelector({
   isLoading,
   hideProvidedModels = false,
   hasMessages = false,
+  compact = false,
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const [pendingModel, setPendingModel] = useState<ModelDefinition | null>(
@@ -137,21 +140,32 @@ export function ModelSelector({
         open={isModelSelectorOpen}
         onOpenChange={setIsModelSelectorOpen}
       >
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={disabled || isLoading}
-            className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer"
-          >
-            <>
-              <ProviderLogo provider={currentModelData.provider} />
-              <span className="text-[10px] font-medium">
-                {currentModelData.name}
-              </span>
-            </>
-          </Button>
-        </DropdownMenuTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size={compact ? "icon" : "sm"}
+                disabled={disabled || isLoading}
+                className={
+                  compact
+                    ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
+                    : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[160px]"
+                }
+              >
+                <ProviderLogo provider={currentModelData.provider} />
+                {!compact && (
+                  <span className="text-[10px] font-medium truncate">
+                    {currentModelData.name}
+                  </span>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          {compact && (
+            <TooltipContent side="top">{currentModelData.name}</TooltipContent>
+          )}
+        </Tooltip>
         <DropdownMenuContent align="start" className="min-w-[200px]">
           {mcpjamProviders.length > 0 && (
             <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
