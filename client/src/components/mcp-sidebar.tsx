@@ -43,7 +43,7 @@ const navigationSections = [
         icon: MessageCircle,
       },
       {
-        title: "MCP UI / ChatGPT Apps",
+        title: "Apps",
         url: "#ui-playground",
         icon: Fish,
       },

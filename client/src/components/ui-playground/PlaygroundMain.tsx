@@ -314,12 +314,6 @@ export function PlaygroundMain({
               <h3 className="text-sm font-semibold text-foreground mb-2">
                 Test ChatGPT Apps and MCP Apps
               </h3>
-              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                <Wrench className="h-3.5 w-3.5" />
-                <span>
-                  Connected to <code className="font-mono">{serverName}</code>
-                </span>
-              </div>
             </div>
             <ChatInput {...sharedChatInputProps} hasMessages={false} />
           </div>
