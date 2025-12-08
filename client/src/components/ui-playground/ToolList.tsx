@@ -73,7 +73,7 @@ export function ToolList({
                       onSelectTool(name);
                     }
                   }}
-                  className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
+                  className={`w-full text-left px-3 py-2 cursor-pointer rounded-md transition-colors ${
                     isSelected
                       ? "bg-primary/10 border border-primary/30"
                       : "hover:bg-muted/50 border border-transparent"

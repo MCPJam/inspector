@@ -14,6 +14,12 @@ import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
+import { LoggerView } from "../logging/logger-view";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "../ui/resizable";
 
 import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
@@ -90,63 +96,98 @@ export function PlaygroundLeft({
     setActiveTab("tools");
   };
 
-  return (
-    <div className="h-full overflow-hidden">
-      <div className="h-full flex flex-col border-r border-border bg-background">
-        {/* Header with tabs and actions */}
-        <TabHeader
-          activeTab={activeTab}
-          onTabChange={handleTabChange}
-          toolCount={toolNames.length}
-          savedCount={savedRequests.length}
-          isExecuting={isExecuting}
-          canExecute={!!selectedToolName}
-          canSave={!!selectedToolName}
-          fetchingTools={fetchingTools}
-          onExecute={onExecute}
-          onSave={onSave}
-          onRefresh={onRefresh}
-          onClose={onClose}
-        />
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const tag = target.tagName;
+    // Avoid firing while typing in multiline fields
+    if (tag === "TEXTAREA") return;
+    if (!selectedToolName || isExecuting) return;
+    e.preventDefault();
+    onExecute();
+  };
 
-        {/* Middle Content Area */}
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {activeTab === "saved" ? (
-            <SavedRequestsTab
-              searchQuery={searchQuery}
-              onSearchQueryChange={onSearchQueryChange}
-              savedRequests={savedRequests}
-              filteredSavedRequests={filteredSavedRequests}
-              highlightedRequestId={highlightedRequestId}
-              onLoadRequest={handleLoadRequest}
-              onRenameRequest={onRenameRequest}
-              onDuplicateRequest={onDuplicateRequest}
-              onDeleteRequest={onDeleteRequest}
+  const mainContent = (
+    <div className="flex-1 min-h-0 overflow-hidden">
+      {activeTab === "saved" ? (
+        <SavedRequestsTab
+          searchQuery={searchQuery}
+          onSearchQueryChange={onSearchQueryChange}
+          savedRequests={savedRequests}
+          filteredSavedRequests={filteredSavedRequests}
+          highlightedRequestId={highlightedRequestId}
+          onLoadRequest={handleLoadRequest}
+          onRenameRequest={onRenameRequest}
+          onDuplicateRequest={onDuplicateRequest}
+          onDeleteRequest={onDeleteRequest}
+        />
+      ) : isListExpanded ? (
+        <ToolList
+          tools={tools}
+          toolNames={toolNames}
+          filteredToolNames={filteredToolNames}
+          selectedToolName={selectedToolName}
+          fetchingTools={fetchingTools}
+          searchQuery={searchQuery}
+          onSearchQueryChange={onSearchQueryChange}
+          onSelectTool={onSelectTool}
+          onCollapseList={() => setIsListExpanded(false)}
+        />
+      ) : (
+        <ToolParametersView
+          selectedToolName={selectedToolName!}
+          formFields={formFields}
+          onExpand={() => setIsListExpanded(true)}
+          onClear={() => onSelectTool(null)}
+          onFieldChange={onFieldChange}
+          onToggleField={onToggleField}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <div
+      className="h-full flex flex-col border-r border-border bg-background overflow-hidden"
+      onKeyDownCapture={handleKeyDown}
+    >
+      {/* Header with tabs and actions */}
+      <TabHeader
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        toolCount={toolNames.length}
+        savedCount={savedRequests.length}
+        isExecuting={isExecuting}
+        canExecute={!!selectedToolName}
+        canSave={!!selectedToolName}
+        fetchingTools={fetchingTools}
+        onExecute={onExecute}
+        onSave={onSave}
+        onRefresh={onRefresh}
+        onClose={onClose}
+      />
+
+      {/* Middle Content Area + Logger */}
+      <ResizablePanelGroup
+        direction="vertical"
+        className="flex-1 min-h-0"
+        autoSaveId="ui-playground-left-logger"
+      >
+        <ResizablePanel defaultSize={65} minSize={10}>
+          {mainContent}
+        </ResizablePanel>
+        <ResizableHandle withHandle />
+        <ResizablePanel defaultSize={35} minSize={10} maxSize={70}>
+          <div className="h-full min-h-0 flex flex-col border-t border-border bg-background">
+            <LoggerView
+              isCollapsable={false}
+              isLogLevelVisible={false}
+              isSearchVisible={false}
             />
-          ) : isListExpanded ? (
-            <ToolList
-              tools={tools}
-              toolNames={toolNames}
-              filteredToolNames={filteredToolNames}
-              selectedToolName={selectedToolName}
-              fetchingTools={fetchingTools}
-              searchQuery={searchQuery}
-              onSearchQueryChange={onSearchQueryChange}
-              onSelectTool={onSelectTool}
-              onCollapseList={() => setIsListExpanded(false)}
-            />
-          ) : (
-            <ToolParametersView
-              selectedToolName={selectedToolName!}
-              formFields={formFields}
-              onExpand={() => setIsListExpanded(true)}
-              onClear={() => onSelectTool(null)}
-              onFieldChange={onFieldChange}
-              onToggleField={onToggleField}
-            />
-          )}
-        </div>
-      </div>
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

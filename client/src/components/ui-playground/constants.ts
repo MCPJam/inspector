@@ -8,19 +8,14 @@
 // Panel size configuration (percentages)
 export const PANEL_SIZES = {
   LEFT: {
-    DEFAULT: 25,
-    MIN: 15,
+    DEFAULT: 30,
+    MIN: 0,
     MAX: 40,
   },
   CENTER: {
-    DEFAULT_WITH_PANELS: 45,
-    DEFAULT_WITHOUT_PANELS: 70,
+    DEFAULT_WITH_PANELS: 70,
+    DEFAULT_WITHOUT_PANELS: 100,
     MIN: 30,
-  },
-  RIGHT: {
-    DEFAULT: 30,
-    MIN: 20,
-    MAX: 50,
   },
 } as const;
 

@@ -18,7 +18,6 @@ import { EmptyState } from "../ui/empty-state";
 import { CollapsedPanelStrip } from "../ui/collapsed-panel-strip";
 import { PlaygroundLeft } from "./PlaygroundLeft";
 import { PlaygroundMain } from "./PlaygroundMain";
-import { PlaygroundRight } from "./PlaygroundRight";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -42,7 +41,6 @@ export function UIPlaygroundTab({
   serverName,
 }: UIPlaygroundTabProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  console.log("serverConfig", serverConfig);
   // Compute server key for saved requests storage
   const serverKey = useServerKey(serverConfig);
 
@@ -54,9 +52,7 @@ export function UIPlaygroundTab({
     isExecuting,
     deviceType,
     displayMode,
-    globals,
     isSidebarVisible,
-    isInspectorVisible,
     setTools,
     setSelectedTool,
     setFormFields,
@@ -71,9 +67,10 @@ export function UIPlaygroundTab({
     setDisplayMode,
     updateGlobal,
     toggleSidebar,
-    toggleInspector,
     reset,
   } = useUIPlaygroundStore();
+
+  const [isLoggerVisible, setIsLoggerVisible] = useState(true);
 
   // Sync theme from preferences to globals
   useEffect(() => {
@@ -187,10 +184,9 @@ export function UIPlaygroundTab({
   }, [selectedTool, toolsMetadata]);
 
   // Compute center panel default size based on sidebar/inspector visibility
-  const centerPanelDefaultSize =
-    isSidebarVisible && isInspectorVisible
-      ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
-      : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
+  const centerPanelDefaultSize = isSidebarVisible
+    ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
+    : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
 
   // No server selected
   if (!serverConfig) {
@@ -273,28 +269,6 @@ export function UIPlaygroundTab({
             onDisplayModeChange={setDisplayMode}
           />
         </ResizablePanel>
-
-        {/* Right Panel - Inspector */}
-        {isInspectorVisible ? (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              id="playground-right"
-              order={3}
-              defaultSize={PANEL_SIZES.RIGHT.DEFAULT}
-              minSize={PANEL_SIZES.RIGHT.MIN}
-              maxSize={PANEL_SIZES.RIGHT.MAX}
-            >
-              <PlaygroundRight onClose={toggleInspector} />
-            </ResizablePanel>
-          </>
-        ) : (
-          <CollapsedPanelStrip
-            side="right"
-            onOpen={toggleInspector}
-            tooltipText="Show inspector panel"
-          />
-        )}
       </ResizablePanelGroup>
 
       <SaveRequestDialog
