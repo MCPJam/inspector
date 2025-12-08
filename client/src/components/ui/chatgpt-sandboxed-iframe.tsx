@@ -10,6 +10,11 @@ import {
 
 export interface ChatGPTSandboxedIframeHandle {
   postMessage: (data: unknown) => void;
+  /**
+   * Imperatively set the outer iframe height. Used for resize notifications to
+   * avoid an extra React re-render when only the size changes.
+   */
+  setHeight: (height: number) => void;
 }
 
 interface ChatGPTSandboxedIframeProps {
@@ -88,6 +93,14 @@ export const ChatGPTSandboxedIframe = forwardRef<
     return [url, origin];
   }, []);
 
+  const setIframeHeight = useCallback((height: number) => {
+    if (!Number.isFinite(height) || height <= 0) return;
+    const rounded = Math.round(height);
+    if (outerIframeRef.current) {
+      outerIframeRef.current.style.height = `${rounded}px`;
+    }
+  }, []);
+
   // Expose postMessage to parent - routes through outer -> middle -> inner
   useImperativeHandle(
     ref,
@@ -96,8 +109,9 @@ export const ChatGPTSandboxedIframe = forwardRef<
         // Post to outer iframe, which forwards to middle
         outerIframeRef.current?.contentWindow?.postMessage(data, "*");
       },
+      setHeight: setIframeHeight,
     }),
-    [],
+    [setIframeHeight],
   );
 
   // Handle messages from the iframe chain
@@ -122,6 +136,12 @@ export const ChatGPTSandboxedIframe = forwardRef<
       // Accept messages from outer iframe (which relays from middle)
       if (event.source !== outerIframeRef.current?.contentWindow) return;
 
+      if (event.data?.type === "openai:resize") {
+        const nextHeight = Number(event.data.height);
+        if (Number.isFinite(nextHeight) && nextHeight > 0)
+          setIframeHeight(nextHeight);
+      }
+
       // Handle proxy ready signal
       if (event.data?.type === "openai:sandbox-ready") {
         console.log("[ChatGPTSandboxedIframe] Proxy ready signal received");
@@ -136,7 +156,7 @@ export const ChatGPTSandboxedIframe = forwardRef<
       );
       onMessage(event);
     },
-    [onMessage],
+    [onMessage, setIframeHeight],
   );
 
   // Set up message listener
