@@ -12,7 +12,11 @@ import { Slider } from "@/components/ui/slider";
 import { AlertTriangle, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ModelDefinition, isGPT5Model } from "@/shared/types";
 
 interface SystemPromptSelectorProps {
@@ -97,7 +101,9 @@ export function SystemPromptSelector({
                   : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[180px]"
               }
             >
-              <Settings2 className={compact ? "h-4 w-4" : "h-2 w-2 mr-1 flex-shrink-0"} />
+              <Settings2
+                className={compact ? "h-4 w-4" : "h-2 w-2 mr-1 flex-shrink-0"}
+              />
               {!compact && (
                 <span className="text-[10px] font-medium truncate">
                   System Prompt & Temperature
@@ -107,7 +113,9 @@ export function SystemPromptSelector({
           </DialogTrigger>
         </TooltipTrigger>
         {compact && (
-          <TooltipContent side="top">System Prompt & Temperature</TooltipContent>
+          <TooltipContent side="top">
+            System Prompt & Temperature
+          </TooltipContent>
         )}
       </Tooltip>
       <DialogContent className="sm:max-w-md">
