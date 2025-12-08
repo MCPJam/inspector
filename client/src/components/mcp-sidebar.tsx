@@ -43,7 +43,7 @@ const navigationSections = [
         icon: MessageCircle,
       },
       {
-        title: "Apps",
+        title: "App Builder",
         url: "#ui-playground",
         icon: Fish,
       },
