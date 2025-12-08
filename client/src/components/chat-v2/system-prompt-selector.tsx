@@ -12,6 +12,7 @@ import { Slider } from "@/components/ui/slider";
 import { AlertTriangle, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ModelDefinition, isGPT5Model } from "@/shared/types";
 
 interface SystemPromptSelectorProps {
@@ -24,6 +25,8 @@ interface SystemPromptSelectorProps {
   hasMessages?: boolean;
   onResetChat: () => void;
   currentModel: ModelDefinition;
+  /** When true, shows icon only for compact layout */
+  compact?: boolean;
 }
 
 export function SystemPromptSelector({
@@ -36,6 +39,7 @@ export function SystemPromptSelector({
   hasMessages,
   onResetChat,
   currentModel,
+  compact = false,
 }: SystemPromptSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
@@ -80,19 +84,32 @@ export function SystemPromptSelector({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={disabled || isLoading}
-          className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer"
-        >
-          <Settings2 className="h-2 w-2 mr-1" />
-          <span className="text-[10px] font-medium">
-            System Prompt & Temperature
-          </span>
-        </Button>
-      </DialogTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size={compact ? "icon" : "sm"}
+              disabled={disabled || isLoading}
+              className={
+                compact
+                  ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
+                  : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[180px]"
+              }
+            >
+              <Settings2 className={compact ? "h-4 w-4" : "h-2 w-2 mr-1 flex-shrink-0"} />
+              {!compact && (
+                <span className="text-[10px] font-medium truncate">
+                  System Prompt & Temperature
+                </span>
+              )}
+            </Button>
+          </DialogTrigger>
+        </TooltipTrigger>
+        {compact && (
+          <TooltipContent side="top">System Prompt & Temperature</TooltipContent>
+        )}
+      </Tooltip>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>System Prompt & Temperature</DialogTitle>
