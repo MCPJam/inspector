@@ -397,6 +397,7 @@ export function ChatGPTAppRenderer({
   const previousWidgetStateRef = useRef<string | null>(null);
   const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
+  const lastAppliedHeightRef = useRef<number>(0);
 
   const {
     resolvedToolCallId,
@@ -411,6 +412,11 @@ export function ChatGPTAppRenderer({
     toolOutputProp,
     toolMetadata,
   );
+  const isFullscreen = displayMode === "fullscreen";
+  const isPip =
+    displayMode === "pip" &&
+    (isControlled || pipWidgetId === resolvedToolCallId);
+  const allowAutoResize = !isFullscreen && !isPip;
   const { widgetUrl, widgetClosed, isStoringWidget, storeError } =
     useWidgetFetch(
       toolState,
@@ -424,6 +430,31 @@ export function ChatGPTAppRenderer({
       themeMode,
     );
 
+  const applyMeasuredHeight = useCallback(
+    (height: unknown) => {
+      const numericHeight = Number(height);
+      if (!Number.isFinite(numericHeight) || numericHeight <= 0) return;
+      const roundedHeight = Math.round(numericHeight);
+      if (roundedHeight === lastAppliedHeightRef.current) return;
+      lastAppliedHeightRef.current = roundedHeight;
+
+      setContentHeight((prev) =>
+        prev !== roundedHeight ? roundedHeight : prev,
+      );
+
+      const shouldApplyImperatively = allowAutoResize;
+
+      if (shouldApplyImperatively) {
+        const effectiveHeight =
+          typeof maxHeight === "number" && Number.isFinite(maxHeight)
+            ? Math.min(roundedHeight, maxHeight)
+            : roundedHeight;
+        sandboxRef.current?.setHeight?.(effectiveHeight);
+      }
+    },
+    [allowAutoResize, maxHeight],
+  );
+
   const appliedHeight = useMemo(() => {
     const baseHeight = contentHeight > 0 ? contentHeight : 320;
     return typeof maxHeight === "number" && Number.isFinite(maxHeight)
@@ -432,13 +463,10 @@ export function ChatGPTAppRenderer({
   }, [contentHeight, maxHeight]);
 
   const iframeHeight = useMemo(() => {
-    if (displayMode === "fullscreen") return "100%";
-    if (displayMode === "pip")
-      return pipWidgetId === resolvedToolCallId
-        ? "400px"
-        : `${appliedHeight}px`;
+    if (isFullscreen) return "100%";
+    if (displayMode === "pip") return isPip ? "400px" : `${appliedHeight}px`;
     return `${appliedHeight}px`;
-  }, [appliedHeight, displayMode, pipWidgetId, resolvedToolCallId]);
+  }, [appliedHeight, displayMode, isFullscreen, isPip]);
 
   const modalWidgetUrl = useMemo(() => {
     if (!widgetUrl || !modalOpen) return null;
@@ -488,6 +516,35 @@ export function ChatGPTAppRenderer({
     });
   }, [resolvedToolCallId, themeMode, displayMode, maxHeight, setWidgetGlobals]);
 
+  useEffect(() => {
+    lastAppliedHeightRef.current = 0;
+    if (!widgetUrl) return;
+    setContentHeight(320);
+    if (displayMode === "inline") {
+      const baseHeight =
+        typeof maxHeight === "number" && Number.isFinite(maxHeight)
+          ? Math.min(320, maxHeight)
+          : 320;
+      sandboxRef.current?.setHeight?.(baseHeight);
+    }
+  }, [widgetUrl, maxHeight]);
+
+  // When returning to inline, ask the widget to re-measure so backend-driven
+  // resize logic publishes the fresh height.
+  useEffect(() => {
+    if (!widgetUrl || displayMode !== "inline" || !isReady) return;
+    sandboxRef.current?.postMessage({ type: "openai:requestResize" });
+  }, [widgetUrl, displayMode, isReady]);
+
+  // When returning from pip/fullscreen to inline, push the latest measured
+  // height back into the iframe so it reflects current content.
+  useEffect(() => {
+    if (displayMode !== "inline") return;
+    if (!Number.isFinite(appliedHeight) || appliedHeight <= 0) return;
+    lastAppliedHeightRef.current = Math.round(appliedHeight);
+    sandboxRef.current?.setHeight?.(appliedHeight);
+  }, [appliedHeight, displayMode]);
+
   const postToWidget = useCallback(
     (data: unknown, targetModal?: boolean) => {
       addUiLog({
@@ -524,11 +581,7 @@ export function ChatGPTAppRenderer({
 
       switch (event.data?.type) {
         case "openai:resize": {
-          const rawHeight = Number(event.data.height);
-          if (Number.isFinite(rawHeight) && rawHeight > 0)
-            setContentHeight((prev) =>
-              Math.abs(prev - rawHeight) > 1 ? rawHeight : prev,
-            );
+          applyMeasuredHeight(event.data.height);
           break;
         }
         case "openai:setWidgetState": {
@@ -678,6 +731,7 @@ export function ChatGPTAppRenderer({
       postToWidget,
       serverId,
       setWidgetState,
+      applyMeasuredHeight,
     ],
   );
 
@@ -839,10 +893,6 @@ export function ChatGPTAppRenderer({
     );
 
   // When controlled, pip is determined by displayMode prop; otherwise check pipWidgetId
-  const isPip =
-    displayMode === "pip" &&
-    (isControlled || pipWidgetId === resolvedToolCallId);
-  const isFullscreen = displayMode === "fullscreen";
   const containerClassName = isFullscreen
     ? "fixed inset-0 z-50 w-full h-full bg-background flex flex-col"
     : isPip
@@ -872,16 +922,22 @@ export function ChatGPTAppRenderer({
       <ChatGPTSandboxedIframe
         ref={sandboxRef}
         url={widgetUrl}
+        allowAutoResize={allowAutoResize}
         onMessage={handleSandboxMessage}
         onReady={() => {
           setIsReady(true);
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className="w-full border border-border/40 rounded-md bg-background"
+        className="w-full border border-border/40 rounded-md bg-background overflow-hidden"
         style={{
           height: iframeHeight,
-          maxHeight: displayMode === "fullscreen" ? "90vh" : undefined,
+          maxHeight:
+            displayMode === "fullscreen"
+              ? "90vh"
+              : displayMode === "pip"
+                ? "90vh"
+                : undefined,
         }}
       />
       {outputTemplate && (
@@ -903,7 +959,7 @@ export function ChatGPTAppRenderer({
                 onMessage={handleModalSandboxMessage}
                 onReady={handleModalReady}
                 title={`ChatGPT App Modal: ${modalTitle}`}
-                className="w-full h-full border-0 rounded-md bg-background"
+                className="w-full h-full border-0 rounded-md bg-background overflow-hidden"
               />
             )}
           </div>
