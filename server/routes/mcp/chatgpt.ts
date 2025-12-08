@@ -243,6 +243,80 @@ function generateApiScript(opts: ApiScriptOptions): string {
     return subjectId;
   };
 
+  // Auto-resize support: mirror the Apps SDK measurement logic but emit openai:resize
+  const postHeight = (() => {
+    let lastHeight = 0;
+    return (height) => {
+      const numericHeight = Number(height);
+      if (!Number.isFinite(numericHeight) || numericHeight <= 0) return;
+      const roundedHeight = Math.round(numericHeight);
+      if (roundedHeight === lastHeight) return;
+      lastHeight = roundedHeight;
+      window.parent.postMessage({ type: 'openai:resize', height: roundedHeight }, '*');
+    };
+  })();
+
+  const measureAndNotifyHeight = () => {
+    try {
+      let contentHeight = 0;
+
+      if (document.body) {
+        const children = document.body.children;
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i];
+          if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE') continue;
+          const rect = child.getBoundingClientRect();
+          const bottom = rect.top + rect.height + window.scrollY;
+          contentHeight = Math.max(contentHeight, bottom);
+        }
+
+        const bodyStyle = window.getComputedStyle(document.body);
+        contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
+        contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
+      }
+
+      // Fallback to scroll-based measurement when no children found
+      if (contentHeight <= 0) {
+        const docEl = document.documentElement;
+        contentHeight = Math.max(
+          docEl ? docEl.scrollHeight : 0,
+          document.body ? document.body.scrollHeight : 0,
+        );
+      }
+
+      postHeight(Math.ceil(contentHeight));
+    } catch (err) {
+      console.error('[OpenAI Widget] Failed to measure height:', err);
+    }
+  };
+
+  const setupAutoResize = () => {
+    let scheduled = false;
+
+    const scheduleMeasure = () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        measureAndNotifyHeight();
+      });
+    };
+
+    scheduleMeasure();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const resizeObserver = new ResizeObserver(scheduleMeasure);
+      resizeObserver.observe(document.documentElement);
+      if (document.body) resizeObserver.observe(document.body);
+    } else {
+      window.addEventListener('resize', scheduleMeasure);
+    }
+
+    window.addEventListener('load', () => {
+      requestAnimationFrame(measureAndNotifyHeight);
+    });
+  };
+
   const openaiAPI = {
     toolInput: ${serializeForInlineScript(toolInput)},
     toolOutput: ${serializeForInlineScript(toolOutput)},
@@ -304,8 +378,7 @@ function generateApiScript(opts: ApiScriptOptions): string {
 
     /** Inspector-specific: Explicitly report content height. Widgets can also use openai:resize event. */
     notifyIntrinsicHeight(height) {
-      if (typeof height === 'number' && Number.isFinite(height) && height > 0)
-        window.parent.postMessage({ type: 'openai:resize', height: Math.round(height) }, '*');
+      postHeight(height);
     }
   };
 
@@ -354,88 +427,30 @@ function generateApiScript(opts: ApiScriptOptions): string {
           } catch (err) { console.error('[OpenAI Widget] Failed to apply pushed widget state:', err); }
         }
         break;
+      case 'openai:requestResize':
+        measureAndNotifyHeight();
+        break;
     }
   });
 
   window.addEventListener('openai:resize', (event) => {
     try {
-      let detail = event && typeof event === 'object' && 'detail' in event ? (event.detail || {}) : {};
-      const height = typeof detail?.height === 'number' ? detail.height : typeof detail?.size?.height === 'number' ? detail.size.height : null;
-      if (height && Number.isFinite(height)) window.parent.postMessage({ type: 'openai:resize', height }, '*');
-    } catch (err) { console.error('[OpenAI Widget] Failed to forward resize event:', err); }
+      const detail = event && typeof event === 'object' && 'detail' in event ? (event.detail || {}) : {};
+      const height = typeof detail?.height === 'number'
+        ? detail.height
+        : typeof detail?.size?.height === 'number'
+          ? detail.size.height
+          : null;
+      if (height != null) {
+        postHeight(height);
+      } else {
+        measureAndNotifyHeight();
+      }
+    } catch (err) { console.error('[OpenAI Widget] Failed to process resize event:', err); }
   });
 
-  // Auto-resize: Measure and report intrinsic content height
-  let lastReportedHeight = 0;
-  function measureAndReportHeight() {
-    try {
-      // Measure actual content height from body's children (not scrollHeight which reflects container size)
-      let contentHeight = 0;
-      if (document.body) {
-        const children = document.body.children;
-        for (let i = 0; i < children.length; i++) {
-          const child = children[i];
-          if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE') continue;
-          const rect = child.getBoundingClientRect();
-          const childBottom = rect.top + rect.height + window.scrollY;
-          contentHeight = Math.max(contentHeight, childBottom);
-        }
-        const bodyStyle = window.getComputedStyle(document.body);
-        contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
-        contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
-      }
-      
-      // Fall back to scrollHeight if content measurement fails
-      if (contentHeight <= 0) {
-        contentHeight = Math.max(
-          document.documentElement.scrollHeight,
-          document.body ? document.body.scrollHeight : 0
-        );
-      }
-      
-      const height = Math.ceil(contentHeight);
-      if (height && Number.isFinite(height) && height > 0 && Math.abs(height - lastReportedHeight) > 1) {
-        lastReportedHeight = height;
-        window.parent.postMessage({ type: 'openai:resize', height }, '*');
-      }
-    } catch (err) {
-      console.error('[OpenAI Widget] Failed to measure height:', err);
-    }
-  }
-
-  // Set up ResizeObserver for reliable size change detection
-  function setupResizeObserver() {
-    if (typeof ResizeObserver === 'undefined') return;
-    
-    let resizeTimeout;
-    const resizeObserver = new ResizeObserver(() => {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(measureAndReportHeight, 16); // ~1 frame
-    });
-    
-    // Observe both documentElement and body for comprehensive coverage
-    resizeObserver.observe(document.documentElement);
-    if (document.body) {
-      resizeObserver.observe(document.body);
-    }
-  }
-
-  // Report height on DOM ready and set up observers
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      measureAndReportHeight();
-      setupResizeObserver();
-    });
-  } else {
-    // DOM already loaded
-    measureAndReportHeight();
-    setupResizeObserver();
-  }
-
-  // Also report on window load (for async content like images)
-  window.addEventListener('load', () => {
-    setTimeout(measureAndReportHeight, 100);
-  });
+  // Auto-resize using ResizeObserver + rAF, mirroring Apps SDK behavior
+  setupAutoResize();
 })();
 </script>`;
 }
