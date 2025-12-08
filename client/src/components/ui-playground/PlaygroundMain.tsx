@@ -271,6 +271,9 @@ export function PlaygroundMain({
   const errorMessage = formatErrorMessage(error);
   const inputDisabled = status !== "ready" || submitBlocked;
 
+  // Compact mode for smaller devices
+  const isCompact = deviceType === "mobile" || deviceType === "tablet";
+
   // Shared chat input props
   const sharedChatInputProps = {
     value: input,
@@ -301,25 +304,20 @@ export function PlaygroundMain({
     systemPromptTokenCountLoading: false,
     mcpPromptResults,
     onChangeMcpPromptResults: setMcpPromptResults,
+    compact: isCompact,
   };
 
   // Thread content
   const threadContent = (
     <>
       {isThreadEmpty ? (
-        // Empty state
-        <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
-          <div className="w-full max-w-xl space-y-6 py-8">
+        // Empty state - min-h-0 allows flex child to shrink below content size
+        <div className="flex-1 flex items-center justify-center overflow-y-auto overflow-x-hidden px-4 min-h-0">
+          <div className="w-full max-w-xl space-y-6 py-8 min-w-0">
             <div className="text-center max-w-md mx-auto">
               <h3 className="text-sm font-semibold text-foreground mb-2">
                 Test ChatGPT Apps and MCP Apps
               </h3>
-              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                <Wrench className="h-3.5 w-3.5" />
-                <span>
-                  Connected to <code className="font-mono">{serverName}</code>
-                </span>
-              </div>
             </div>
             <ChatInput {...sharedChatInputProps} hasMessages={false} />
           </div>
