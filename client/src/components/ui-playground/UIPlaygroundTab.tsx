@@ -52,6 +52,7 @@ export function UIPlaygroundTab({
     isExecuting,
     deviceType,
     displayMode,
+    globals,
     isSidebarVisible,
     setTools,
     setSelectedTool,
@@ -76,6 +77,14 @@ export function UIPlaygroundTab({
   useEffect(() => {
     updateGlobal("theme", themeMode);
   }, [themeMode, updateGlobal]);
+
+  // Locale change handler
+  const handleLocaleChange = useCallback(
+    (locale: string) => {
+      updateGlobal("locale", locale);
+    },
+    [updateGlobal],
+  );
 
   // Tools metadata for filtering OpenAI apps
   const [toolsMetadata, setToolsMetadata] = useState<
@@ -267,6 +276,8 @@ export function UIPlaygroundTab({
             onDeviceTypeChange={setDeviceType}
             displayMode={displayMode}
             onDisplayModeChange={setDisplayMode}
+            locale={globals.locale}
+            onLocaleChange={handleLocaleChange}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

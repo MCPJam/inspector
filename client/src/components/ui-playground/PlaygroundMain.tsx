@@ -23,6 +23,7 @@ import {
   Trash2,
   Sun,
   Moon,
+  Globe,
 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
@@ -39,6 +40,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
@@ -58,6 +66,26 @@ const DEVICE_CONFIGS: Record<
   tablet: { width: 820, height: 1180, label: "Tablet", icon: Tablet },
   desktop: { width: 1280, height: 800, label: "Desktop", icon: Monitor },
 };
+
+/** Common BCP 47 locales for testing (per OpenAI Apps SDK spec) */
+const LOCALE_OPTIONS = [
+  { code: "en-US", label: "English (US)" },
+  { code: "en-GB", label: "English (UK)" },
+  { code: "es-ES", label: "Español" },
+  { code: "es-MX", label: "Español (MX)" },
+  { code: "fr-FR", label: "Français" },
+  { code: "de-DE", label: "Deutsch" },
+  { code: "it-IT", label: "Italiano" },
+  { code: "pt-BR", label: "Português (BR)" },
+  { code: "ja-JP", label: "日本語" },
+  { code: "zh-CN", label: "简体中文" },
+  { code: "zh-TW", label: "繁體中文" },
+  { code: "ko-KR", label: "한국어" },
+  { code: "ar-SA", label: "العربية" },
+  { code: "hi-IN", label: "हिन्दी" },
+  { code: "ru-RU", label: "Русский" },
+  { code: "nl-NL", label: "Nederlands" },
+];
 
 interface PlaygroundMainProps {
   serverName: string;
@@ -79,6 +107,9 @@ interface PlaygroundMainProps {
   onDeviceTypeChange?: (type: DeviceType) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  // Locale (BCP 47)
+  locale?: string;
+  onLocaleChange?: (locale: string) => void;
 }
 
 function ScrollToBottomButton() {
@@ -137,6 +168,8 @@ export function PlaygroundMain({
   onDeviceTypeChange,
   displayMode = "inline",
   onDisplayModeChange,
+  locale = "en-US",
+  onLocaleChange,
 }: PlaygroundMainProps) {
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
@@ -410,13 +443,38 @@ export function PlaygroundMain({
           </ToggleGroupItem>
         </ToggleGroup>
 
-        {/* Device label */}
-        <div className="flex items-center gap-2">
-          <DeviceIcon className="h-3.5 w-3.5" />
-          <span>{deviceConfig.label}</span>
-          <span className="text-[10px] text-muted-foreground/60">
-            ({deviceConfig.width}×{deviceConfig.height})
-          </span>
+        {/* Device label and locale */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <DeviceIcon className="h-3.5 w-3.5" />
+            <span>{deviceConfig.label}</span>
+            <span className="text-[10px] text-muted-foreground/60">
+              ({deviceConfig.width}×{deviceConfig.height})
+            </span>
+          </div>
+
+          {/* Locale selector */}
+          <Select value={locale} onValueChange={onLocaleChange}>
+            <SelectTrigger
+              size="sm"
+              className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              <SelectValue>{locale}</SelectValue>
+            </SelectTrigger>
+              <SelectContent>
+                {LOCALE_OPTIONS.map((option) => (
+                  <SelectItem key={option.code} value={option.code}>
+                    <span className="flex items-center gap-2">
+                      <span>{option.label}</span>
+                      <span className="text-muted-foreground text-[10px]">
+                        {option.code}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+          </Select>
         </div>
 
         {/* Right actions */}
