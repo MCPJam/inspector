@@ -19,6 +19,24 @@ import {
   ResourceUpdatedNotificationSchema,
   PromptListChangedNotificationSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+
+// Task schemas for MCP Tasks experimental feature (spec 2025-11-25)
+const TaskSchema = z.object({
+  taskId: z.string(),
+  status: z.enum(["working", "input_required", "completed", "failed", "cancelled"]),
+  statusMessage: z.string().optional(),
+  createdAt: z.string(),
+  lastUpdatedAt: z.string(),
+  ttl: z.number().nullable(),
+  pollInterval: z.number().optional(),
+});
+
+const ListTasksResultSchema = z.object({
+  tasks: z.array(TaskSchema),
+  nextCursor: z.string().optional(),
+});
+
 import type {
   ElicitRequest,
   ElicitResult,
@@ -115,6 +133,9 @@ type ServerSummary = {
 };
 
 export type ExecuteToolArguments = Record<string, unknown>;
+export type TaskOptions = {
+  ttl?: number;
+};
 export type ElicitationHandler = (
   params: ElicitRequest["params"],
 ) => Promise<ElicitResult> | ElicitResult;
@@ -510,6 +531,7 @@ export class MCPClientManager {
     toolName: string,
     args: ExecuteToolArguments = {},
     options?: CallToolOptions,
+    taskOptions?: TaskOptions,
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
@@ -524,11 +546,20 @@ export class MCPClientManager {
       };
     }
 
+    // Build tool call params - include task augmentation if provided
+    // Per MCP Tasks spec (2025-11-25), adding `task: { ttl }` to params
+    // tells the server to create a background task instead of running inline
+    const callParams: { name: string; arguments?: Record<string, unknown>; task?: { ttl?: number } } = {
+      name: toolName,
+      arguments: args,
+    };
+
+    if (taskOptions?.ttl !== undefined) {
+      callParams.task = { ttl: taskOptions.ttl };
+    }
+
     return client.callTool(
-      {
-        name: toolName,
-        arguments: args,
-      },
+      callParams,
       CallToolResultSchema,
       mergedOptions,
     );
@@ -665,6 +696,70 @@ export class MCPClientManager {
       };
     }
     return client.getPrompt(params, mergedOptions);
+  }
+
+  // Tasks methods - MCP Tasks experimental feature (spec 2025-11-25)
+  async listTasks(serverId: string, cursor?: string, options?: ClientRequestOptions) {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    try {
+      const result = await client.request(
+        {
+          method: "tasks/list",
+          params: cursor ? { cursor } : {},
+        },
+        ListTasksResultSchema,
+        this.withTimeout(serverId, options),
+      );
+      return result;
+    } catch (error) {
+      if (this.isMethodUnavailableError(error, "tasks/list")) {
+        return { tasks: [] };
+      }
+      throw error;
+    }
+  }
+
+  async getTask(serverId: string, taskId: string, options?: ClientRequestOptions) {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    return client.request(
+      {
+        method: "tasks/get",
+        params: { taskId },
+      },
+      TaskSchema,
+      this.withTimeout(serverId, options),
+    );
+  }
+
+  async getTaskResult(serverId: string, taskId: string, options?: ClientRequestOptions) {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    // Task result for tool calls returns CallToolResult
+    // Per MCP Tasks spec (2025-11-25), tasks/result returns exactly what the
+    // underlying request would have returned
+    return client.request(
+      {
+        method: "tasks/result",
+        params: { taskId },
+      },
+      CallToolResultSchema,
+      this.withTimeout(serverId, options),
+    );
+  }
+
+  async cancelTask(serverId: string, taskId: string, options?: ClientRequestOptions) {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    return client.request(
+      {
+        method: "tasks/cancel",
+        params: { taskId },
+      },
+      TaskSchema,
+      this.withTimeout(serverId, options),
+    );
   }
 
   getSessionIdByServer(serverId: string): string | undefined {
@@ -1212,3 +1307,18 @@ export type MCPConvertedToolSet<
   SCHEMAS extends ToolSchemaOverrides | "automatic",
 > = ConvertedToolSet<SCHEMAS>;
 export type MCPToolSchemaOverrides = ToolSchemaOverrides;
+
+// Tasks types - MCP Tasks experimental feature (spec 2025-11-25)
+export type MCPListTasksResult = {
+  tasks: MCPTask[];
+  nextCursor?: string;
+};
+export type MCPTask = {
+  taskId: string;
+  status: "working" | "input_required" | "completed" | "failed" | "cancelled";
+  statusMessage?: string;
+  createdAt: string;
+  lastUpdatedAt: string;
+  ttl: number | null;
+  pollInterval?: number;
+};

@@ -11,6 +11,7 @@ import {
   FileCode,
   Activity,
   Fish,
+  ListTodo,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -70,6 +71,11 @@ const navigationSections = [
         title: "Prompts",
         url: "#prompts",
         icon: MessageSquareCode,
+      },
+      {
+        title: "Tasks",
+        url: "#tasks",
+        icon: ListTodo,
       },
     ],
   },

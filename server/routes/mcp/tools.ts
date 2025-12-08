@@ -214,10 +214,12 @@ tools.post("/execute", async (c) => {
     serverId,
     toolName,
     parameters = {},
+    taskOptions,
   } = (await c.req.json()) as {
     serverId?: string;
     toolName?: string;
     parameters?: Record<string, unknown>;
+    taskOptions?: { ttl?: number };
   };
 
   if (!serverId) return c.json({ error: "serverId is required" }, 400);
@@ -239,7 +241,9 @@ tools.post("/execute", async (c) => {
       serverId,
       toolName,
       parameters,
-    ) as unknown as Promise<ListToolsResult>,
+      undefined, // options
+      taskOptions, // task options for background task creation
+    ) as Promise<ListToolsResult>,
     queue: [],
   };
 
@@ -285,6 +289,38 @@ tools.post("/execute", async (c) => {
 
     if (next.kind === "done") {
       resetExecution(context, () => manager.clearElicitationHandler(serverId));
+
+      // Check if result is a CreateTaskResult (MCP Tasks spec 2025-11-25)
+      // When task augmentation is used, server returns { task: { taskId, status, ... } }
+      const result = next.result as any;
+
+      // Standard MCP Tasks spec format: top-level task property
+      if (result?.task?.taskId && result?.task?.status) {
+        return c.json({
+          status: "task_created",
+          task: result.task,
+        });
+      }
+
+      // Some servers (e.g., FastMCP) embed task info in _meta
+      // Check for task info in _meta["modelcontextprotocol.io/task"] or _meta["io.modelcontextprotocol/related-task"]
+      const metaTask = result?._meta?.["modelcontextprotocol.io/task"]
+        || result?._meta?.["io.modelcontextprotocol/related-task"];
+      if (metaTask?.taskId && metaTask?.status) {
+        return c.json({
+          status: "task_created",
+          task: {
+            taskId: metaTask.taskId,
+            status: metaTask.status,
+            statusMessage: metaTask.statusMessage,
+            createdAt: metaTask.createdAt || new Date().toISOString(),
+            lastUpdatedAt: metaTask.lastUpdatedAt || new Date().toISOString(),
+            ttl: metaTask.ttl ?? null,
+            pollInterval: metaTask.pollInterval,
+          },
+        });
+      }
+
       return c.json({ status: "completed", result: next.result });
     }
 

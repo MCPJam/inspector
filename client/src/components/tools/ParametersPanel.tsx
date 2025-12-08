@@ -1,6 +1,6 @@
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
-import { RefreshCw, Play, Save as SaveIcon } from "lucide-react";
+import { RefreshCw, Play, Save as SaveIcon, Clock } from "lucide-react";
 import { TruncatedText } from "../ui/truncated-text";
 import { ResizablePanel } from "../ui/resizable";
 import { Input } from "../ui/input";
@@ -19,6 +19,10 @@ interface ParametersPanelProps {
   onSave: () => void;
   onFieldChange: (name: string, value: any) => void;
   onToggleField?: (name: string, isSet: boolean) => void;
+  executeAsTask?: boolean;
+  onExecuteAsTaskChange?: (value: boolean) => void;
+  /** If true, tool requires task execution (MCP Tasks spec) */
+  taskRequired?: boolean;
 }
 
 export function ParametersPanel({
@@ -31,6 +35,9 @@ export function ParametersPanel({
   onSave,
   onFieldChange,
   onToggleField,
+  executeAsTask,
+  onExecuteAsTaskChange,
+  taskRequired,
 }: ParametersPanelProps) {
   const posthog = usePostHog();
 
@@ -61,13 +68,39 @@ export function ParametersPanel({
               </code>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {/* Task execution option - show if server and tool support it */}
+            {taskRequired ? (
+              // Tool requires task execution (MCP Tasks spec)
+              <span
+                className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400"
+                title="This tool requires background task execution"
+              >
+                <Clock className="h-3 w-3" />
+                <span>Task required</span>
+              </span>
+            ) : onExecuteAsTaskChange ? (
+              <label
+                className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                title="Execute as a background task (MCP Tasks)"
+              >
+                <input
+                  type="checkbox"
+                  checked={executeAsTask ?? false}
+                  onChange={(e) => onExecuteAsTaskChange(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
+                />
+                <Clock className="h-3 w-3" />
+                <span>Task</span>
+              </label>
+            ) : null}
             <Button
               onClick={() => {
                 posthog.capture("execute_tool", {
                   location: "parameters_panel",
                   platform: detectPlatform(),
                   environment: detectEnvironment(),
+                  as_task: executeAsTask ?? false,
                 });
                 onExecute();
               }}
