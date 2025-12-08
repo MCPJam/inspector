@@ -427,6 +427,9 @@ function generateApiScript(opts: ApiScriptOptions): string {
           } catch (err) { console.error('[OpenAI Widget] Failed to apply pushed widget state:', err); }
         }
         break;
+      case 'openai:requestResize':
+        measureAndNotifyHeight();
+        break;
     }
   });
 

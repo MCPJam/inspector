@@ -22,6 +22,8 @@ interface ChatGPTSandboxedIframeProps {
   sandbox?: string;
   onReady?: () => void;
   onMessage: (event: MessageEvent) => void;
+  /** When false, ignore openai:resize events and let parent size the iframe */
+  allowAutoResize?: boolean;
   className?: string;
   style?: React.CSSProperties;
   title?: string;
@@ -50,6 +52,7 @@ export const ChatGPTSandboxedIframe = forwardRef<
     sandbox = "allow-scripts allow-same-origin allow-forms",
     onReady,
     onMessage,
+    allowAutoResize = true,
     className,
     style,
     title = "ChatGPT App Widget",
@@ -136,7 +139,7 @@ export const ChatGPTSandboxedIframe = forwardRef<
       // Accept messages from outer iframe (which relays from middle)
       if (event.source !== outerIframeRef.current?.contentWindow) return;
 
-      if (event.data?.type === "openai:resize") {
+      if (event.data?.type === "openai:resize" && allowAutoResize) {
         const nextHeight = Number(event.data.height);
         if (Number.isFinite(nextHeight) && nextHeight > 0)
           setIframeHeight(nextHeight);
@@ -156,7 +159,7 @@ export const ChatGPTSandboxedIframe = forwardRef<
       );
       onMessage(event);
     },
-    [onMessage, setIframeHeight],
+    [allowAutoResize, onMessage, setIframeHeight],
   );
 
   // Set up message listener
