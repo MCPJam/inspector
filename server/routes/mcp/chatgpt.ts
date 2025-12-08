@@ -493,11 +493,8 @@ const devResourceDomains = isDev
       "ws://localhost:5173",
     ]
   : [];
-// NOTE: We intentionally do NOT include "https:" wildcards here.
-// These would bypass CSP restrictions for external domains.
-// Only include specific localhost domains needed for dev asset loading.
-const devConnectDomains: string[] = [];
-const devScriptDomains: string[] = [];
+const devConnectDomains = isDev ? ["https:", "wss:", "ws:"] : [];
+const devScriptDomains = isDev ? ["https:"] : [];
 const trustedCdns = [
   "https://persistent.oaistatic.com",
   "https://*.oaistatic.com",
@@ -510,96 +507,6 @@ const trustedCdns = [
   "https://static.heygen.ai",
   "https://files2.heygen.ai",
 ].join(" ");
-
-/**
- * Build CSP header string from openai/widgetCSP metadata (per OpenAI Apps SDK spec)
- *
- * @param csp - CSP metadata with connectDomains and resourceDomains arrays
- * @returns CSP header string ready for Content-Security-Policy header
- */
-interface WidgetCSP {
-  connectDomains?: string[];
-  resourceDomains?: string[];
-}
-
-function buildCspHeader(csp: WidgetCSP | null): string {
-  // Base trusted sources always included for widget assets
-  const baseTrustedCdns = [
-    "https://persistent.oaistatic.com",
-    "https://*.oaistatic.com",
-    "https://unpkg.com",
-    "https://cdn.jsdelivr.net",
-    "https://cdnjs.cloudflare.com",
-    "https://cdn.skypack.dev",
-  ];
-
-  // Localhost sources for dev mode (widget assets served locally)
-  const localhostSources = isDev
-    ? [
-        "http://localhost:*",
-        "http://127.0.0.1:*",
-        "https://localhost:*",
-        "https://127.0.0.1:*",
-      ]
-    : [];
-
-  // Connect sources: 'self' + localhost + https: wildcard
-  // NOTE: ChatGPT ignores connect_domains and uses a permissive default CSP
-  // (see https://github.com/openai/openai-apps-sdk-examples/issues/85)
-  // We add https: wildcard for parity - widgets can fetch from any HTTPS API
-  const connectSources = ["'self'", "https:", ...localhostSources];
-  if (csp?.connectDomains?.length) {
-    connectSources.push(...csp.connectDomains);
-  }
-
-  // Resource sources for scripts/styles/fonts
-  const resourceSources = [
-    "'self'",
-    "data:",
-    "blob:",
-    ...baseTrustedCdns,
-    ...localhostSources,
-  ];
-  if (csp?.resourceDomains?.length) {
-    resourceSources.push(...csp.resourceDomains);
-  }
-
-  // Image sources: permissive to match ChatGPT behavior
-  // Widgets can load images from any HTTPS source
-  const imgSources = [
-    "'self'",
-    "data:",
-    "blob:",
-    "https:",
-    ...baseTrustedCdns,
-    ...localhostSources,
-  ];
-  if (csp?.resourceDomains?.length) {
-    imgSources.push(...csp.resourceDomains);
-  }
-
-  const connectSrc = connectSources.join(" ");
-  const resourceSrc = resourceSources.join(" ");
-  const imgSrc = imgSources.join(" ");
-
-  // Allow framing from both localhost and 127.0.0.1 for cross-origin sandbox architecture
-  const frameAncestors = isDev
-    ? "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
-    : "frame-ancestors 'self'";
-
-  return [
-    "default-src 'self'",
-    `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceSrc}`,
-    "worker-src 'self' blob:",
-    "child-src 'self' blob:",
-    `style-src 'self' 'unsafe-inline' ${resourceSrc}`,
-    `img-src ${imgSrc}`,
-    "media-src 'self' data: blob:",
-    `font-src 'self' data: ${resourceSrc}`,
-    `connect-src ${connectSrc}`,
-    frameAncestors,
-  ].join("; ");
-}
 
 // ============================================================================
 // Routes
@@ -836,36 +743,12 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       );
 
     const content = await mcpClientManager.readResource(resolved.id, { uri });
-    const { html: htmlContent, firstContent } = extractHtmlContent(content);
+    const { html: htmlContent } = extractHtmlContent(content);
     if (!htmlContent)
       return c.html(
         "<html><body>Error: No HTML content found</body></html>",
         404,
       );
-
-    // Extract openai/widgetCSP from resource metadata (per OpenAI Apps SDK spec)
-    const resourceMeta = firstContent?._meta as
-      | Record<string, unknown>
-      | undefined;
-    const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
-      | { connect_domains?: string[]; resource_domains?: string[] }
-      | undefined;
-
-    // Build CSP from metadata, merging with defaults and dev domains
-    const widgetCsp: WidgetCSP | null = widgetCspRaw
-      ? {
-          connectDomains: [
-            ...(widgetCspRaw.connect_domains || []),
-            ...devResourceDomains,
-            ...devConnectDomains,
-          ],
-          resourceDomains: [
-            ...(widgetCspRaw.resource_domains || defaultResourceDomains),
-            ...devResourceDomains,
-            ...devScriptDomains,
-          ],
-        }
-      : null; // null = use defaults in buildCspHeader
 
     const apiScript = generateApiScript({
       toolId,
@@ -889,8 +772,21 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       apiScript,
     );
 
-    // Apply dynamic CSP from openai/widgetCSP metadata (per OpenAI Apps SDK spec)
-    c.header("Content-Security-Policy", buildCspHeader(widgetCsp));
+    c.header(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`,
+        "worker-src 'self' blob:",
+        "child-src 'self' blob:",
+        `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
+        "img-src 'self' data: https: blob:",
+        "media-src 'self' data: https: blob:",
+        `font-src 'self' data: ${trustedCdns}`,
+        "connect-src 'self' https: wss: ws:",
+        "frame-ancestors 'self'",
+      ].join("; "),
+    );
     c.header("X-Frame-Options", "SAMEORIGIN");
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");

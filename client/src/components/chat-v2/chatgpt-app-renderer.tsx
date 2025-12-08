@@ -322,9 +322,8 @@ function useWidgetFetch(
           }
         }
 
-        // Set the widget URL - load /widget-content directly so CSP headers are applied
-        // (The /widget route uses fetch+document.write which ignores CSP headers)
-        setWidgetUrl(`/api/mcp/openai/widget-content/${resolvedToolCallId}`);
+        // Set the widget URL - the widget will be loaded via src, not srcdoc
+        setWidgetUrl(`/api/mcp/openai/widget/${resolvedToolCallId}`);
       } catch (err) {
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
