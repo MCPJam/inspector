@@ -397,6 +397,7 @@ export function ChatGPTAppRenderer({
   const previousWidgetStateRef = useRef<string | null>(null);
   const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
+  const lastAppliedHeightRef = useRef<number>(0);
 
   const {
     resolvedToolCallId,
@@ -423,6 +424,33 @@ export function ChatGPTAppRenderer({
       toolResponseMetadata,
       themeMode,
     );
+
+  const applyMeasuredHeight = useCallback(
+    (height: unknown) => {
+      const numericHeight = Number(height);
+      if (!Number.isFinite(numericHeight) || numericHeight <= 0) return;
+      const roundedHeight = Math.round(numericHeight);
+      if (roundedHeight === lastAppliedHeightRef.current) return;
+      lastAppliedHeightRef.current = roundedHeight;
+
+      setContentHeight((prev) =>
+        prev !== roundedHeight ? roundedHeight : prev,
+      );
+
+      const shouldApplyImperatively =
+        displayMode !== "fullscreen" &&
+        !(displayMode === "pip" && pipWidgetId === resolvedToolCallId);
+
+      if (shouldApplyImperatively) {
+        const effectiveHeight =
+          typeof maxHeight === "number" && Number.isFinite(maxHeight)
+            ? Math.min(roundedHeight, maxHeight)
+            : roundedHeight;
+        sandboxRef.current?.setHeight?.(effectiveHeight);
+      }
+    },
+    [displayMode, maxHeight, pipWidgetId, resolvedToolCallId],
+  );
 
   const appliedHeight = useMemo(() => {
     const baseHeight = contentHeight > 0 ? contentHeight : 320;
@@ -488,6 +516,19 @@ export function ChatGPTAppRenderer({
     });
   }, [resolvedToolCallId, themeMode, displayMode, maxHeight, setWidgetGlobals]);
 
+  useEffect(() => {
+    lastAppliedHeightRef.current = 0;
+    if (!widgetUrl) return;
+    setContentHeight(320);
+    if (displayMode !== "fullscreen") {
+      const baseHeight =
+        typeof maxHeight === "number" && Number.isFinite(maxHeight)
+          ? Math.min(320, maxHeight)
+          : 320;
+      sandboxRef.current?.setHeight?.(baseHeight);
+    }
+  }, [widgetUrl, displayMode, maxHeight]);
+
   const postToWidget = useCallback(
     (data: unknown, targetModal?: boolean) => {
       addUiLog({
@@ -524,11 +565,7 @@ export function ChatGPTAppRenderer({
 
       switch (event.data?.type) {
         case "openai:resize": {
-          const rawHeight = Number(event.data.height);
-          if (Number.isFinite(rawHeight) && rawHeight > 0)
-            setContentHeight((prev) =>
-              Math.abs(prev - rawHeight) > 1 ? rawHeight : prev,
-            );
+          applyMeasuredHeight(event.data.height);
           break;
         }
         case "openai:setWidgetState": {
@@ -678,6 +715,7 @@ export function ChatGPTAppRenderer({
       postToWidget,
       serverId,
       setWidgetState,
+      applyMeasuredHeight,
     ],
   );
 
@@ -878,7 +916,7 @@ export function ChatGPTAppRenderer({
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className="w-full border border-border/40 rounded-md bg-background"
+        className="w-full border border-border/40 rounded-md bg-background overflow-hidden"
         style={{
           height: iframeHeight,
           maxHeight: displayMode === "fullscreen" ? "90vh" : undefined,
@@ -903,7 +941,7 @@ export function ChatGPTAppRenderer({
                 onMessage={handleModalSandboxMessage}
                 onReady={handleModalReady}
                 title={`ChatGPT App Modal: ${modalTitle}`}
-                className="w-full h-full border-0 rounded-md bg-background"
+                className="w-full h-full border-0 rounded-md bg-background overflow-hidden"
               />
             )}
           </div>
