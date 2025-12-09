@@ -215,3 +215,44 @@ This helps you identify which external resources your widget needs and configure
 <Info>
   CSP mode only applies in the UI Playground. The Chat tab always uses permissive mode to avoid disrupting normal testing workflows.
 </Info>
+
+## UI Playground device settings
+
+The UI Playground provides controls to simulate different device environments for testing ChatGPT Apps and MCP Apps. These settings affect how widgets receive device context through the `window.openai` API.
+
+### Device type
+
+Select between mobile, tablet, or desktop device types. This affects the `window.openai.userAgent.device.type` value that widgets receive. The device type selector is located in the playground toolbar.
+
+### Device capabilities
+
+Toggle hover and touch capabilities to simulate different input methods:
+
+- **Hover** - Indicates whether the device supports hover interactions (typically enabled for desktop, disabled for mobile)
+- **Touch** - Indicates whether the device supports touch input (typically enabled for mobile/tablet, disabled for desktop)
+
+These settings are reflected in `window.openai.userAgent.capabilities.hover` and `window.openai.userAgent.capabilities.touch`.
+
+### Safe area insets
+
+Configure safe area insets to simulate device notches, rounded corners, and gesture areas. Click the safe area button in the toolbar to open the editor, which provides:
+
+- **Visual preview** - Shows how insets affect the content area
+- **Preset configurations** - Quick access to common device profiles:
+  - **None** - No insets (0px on all sides)
+  - **Notch** - iPhone with notch (44px top, 34px bottom)
+  - **Island** - iPhone with Dynamic Island (59px top, 34px bottom)
+  - **Android** - Android gesture navigation (24px top, 16px bottom)
+- **Custom values** - Manually adjust top, bottom, left, and right insets in pixels
+
+Widgets receive these values through `window.openai.safeArea.insets` and can use them to adjust their layout accordingly.
+
+#### Fullscreen navigation
+
+When a widget is in fullscreen mode, a navigation header appears at the top with:
+
+- **Back/Forward buttons** - Navigate through the widget's browsing history (enabled when navigation is available)
+- **Widget title** - Displays the tool name
+- **Close button** - Exit fullscreen mode
+
+The navigation buttons mirror the widget's internal history state, allowing you to navigate multi-page widgets without leaving fullscreen mode.

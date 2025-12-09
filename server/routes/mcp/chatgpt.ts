@@ -19,6 +19,18 @@ interface UserLocation {
   city: string;
 }
 
+interface DeviceCapabilities {
+  hover: boolean;
+  touch: boolean;
+}
+
+interface SafeAreaInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
 interface WidgetData {
   serverId: string;
   uri: string;
@@ -33,6 +45,8 @@ interface WidgetData {
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   maxHeight?: number | null; // ChatGPT provides maxHeight constraint for inline mode
   cspMode?: CspMode; // CSP enforcement mode
+  capabilities?: DeviceCapabilities; // Device capabilities (hover, touch)
+  safeAreaInsets?: SafeAreaInsets; // Safe area insets for device notches, etc.
   timestamp: number;
 }
 
@@ -120,6 +134,8 @@ interface ApiScriptOptions {
   deviceType: "mobile" | "tablet" | "desktop"; // Host-controlled device type
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   maxHeight?: number | null; // Host-controlled max height constraint (ChatGPT uses ~500px for inline)
+  capabilities?: DeviceCapabilities; // Host-controlled device capabilities
+  safeAreaInsets?: SafeAreaInsets; // Host-controlled safe area insets
   viewMode?: string;
   viewParams?: Record<string, any>;
   useMapPendingCalls?: boolean;
@@ -169,6 +185,8 @@ function generateApiScript(opts: ApiScriptOptions): string {
     deviceType,
     userLocation,
     maxHeight,
+    capabilities,
+    safeAreaInsets,
     viewMode = "inline",
     viewParams = {},
     useMapPendingCalls = true,
@@ -223,6 +241,15 @@ function generateApiScript(opts: ApiScriptOptions): string {
         }`
     : "";
 
+  // Host-controlled capabilities (with fallback to widget detection if not provided)
+  const hostCapabilities = capabilities ?? null;
+  const hostSafeAreaInsets = safeAreaInsets ?? {
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  };
+
   return `<script>
 (function() {
   'use strict';
@@ -230,13 +257,17 @@ function generateApiScript(opts: ApiScriptOptions): string {
   const hostLocale = ${JSON.stringify(locale)};
   const hostDeviceType = ${JSON.stringify(deviceType)};
   const hostUserLocation = ${JSON.stringify(userLocation ?? null)}; // { country, region, city } or null
+  const hostCapabilities = ${JSON.stringify(hostCapabilities)}; // Host-controlled capabilities or null
+  const hostSafeAreaInsets = ${JSON.stringify(hostSafeAreaInsets)}; // Host-controlled safe area insets
 
   // Set document lang attribute per SDK spec: "Host mirrors locale to document.documentElement.lang"
   try { document.documentElement.lang = hostLocale; } catch (e) {}
 
-  // Capability detection (still done in widget for accuracy)
-  const hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-  const hasHover = window.matchMedia('(hover: hover)').matches;
+  // Capability detection (fallback if host doesn't provide capabilities)
+  const detectedTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  const detectedHover = window.matchMedia('(hover: hover)').matches;
+  const hasTouch = hostCapabilities ? hostCapabilities.touch : detectedTouch;
+  const hasHover = hostCapabilities ? hostCapabilities.hover : detectedHover;
 
   const getSubjectId = () => {
     let subjectId = sessionStorage.getItem('openai_subject_id');
@@ -318,6 +349,61 @@ function generateApiScript(opts: ApiScriptOptions): string {
     });
   };
 
+  // Host-backed navigation: track iframe history and notify parent
+  // This allows the host to mirror navigation state in UI (e.g., fullscreen header back/forward buttons)
+  const navigationState = { currentIndex: 0, historyLength: 1 };
+  let lastHistoryLength = history.length;
+
+  const withNavigationIndex = (state, index) => {
+    return state && typeof state === 'object' ? { ...state, __navIndex: index } : { __navIndex: index };
+  };
+  
+  const notifyNavigationState = () => {
+    const canGoBack = navigationState.currentIndex > 0;
+    const canGoForward = navigationState.currentIndex < navigationState.historyLength - 1;
+    window.parent.postMessage({
+      type: 'openai:navigationStateChanged',
+      toolId: ${JSON.stringify(toolId)},
+      canGoBack,
+      canGoForward,
+      historyLength: navigationState.historyLength,
+      currentIndex: navigationState.currentIndex
+    }, '*');
+  };
+
+  // Wrap history.pushState to track navigation
+  const originalPushState = history.pushState.bind(history);
+  history.pushState = function(state, title, url) {
+    const nextIndex = navigationState.currentIndex + 1;
+    const stateWithIndex = withNavigationIndex(state, nextIndex);
+    originalPushState(stateWithIndex, title, url);
+    // New navigation: increment index and truncate forward history
+    navigationState.currentIndex = nextIndex;
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  };
+
+  // Wrap history.replaceState (doesn't change index/length, but still notify for consistency)
+  const originalReplaceState = history.replaceState.bind(history);
+  history.replaceState = function(state, title, url) {
+    const stateWithIndex = withNavigationIndex(state, navigationState.currentIndex);
+    originalReplaceState(stateWithIndex, title, url);
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  };
+
+  // Track popstate (browser/programmatic back/forward within iframe)
+  // Use explicit __navIndex stored in history.state to restore position
+  window.addEventListener('popstate', (event) => {
+    const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
+    navigationState.currentIndex = stateIndex;
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  });
+
   const openaiAPI = {
     toolInput: ${serializeForInlineScript(toolInput)},
     toolOutput: ${serializeForInlineScript(toolOutput)},
@@ -326,7 +412,7 @@ function generateApiScript(opts: ApiScriptOptions): string {
     theme: ${JSON.stringify(theme)},
     locale: hostLocale, // Host-controlled per SDK spec
     maxHeight: ${maxHeight != null ? maxHeight : "null"},
-    safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+    safeArea: { insets: hostSafeAreaInsets },
     userAgent: { device: { type: hostDeviceType }, capabilities: { hover: hasHover, touch: hasTouch } },
     view: { mode: ${JSON.stringify(viewMode)}, params: ${serializeForInlineScript(viewParams)} },
     widgetState: null,
@@ -380,6 +466,21 @@ function generateApiScript(opts: ApiScriptOptions): string {
     /** Inspector-specific: Explicitly report content height. Widgets can also use openai:resize event. */
     notifyIntrinsicHeight(height) {
       postHeight(height);
+    },
+
+    /** Host-backed navigation: programmatically navigate within the widget's history */
+    notifyNavigation(direction) {
+      if (direction === 'back') {
+        if (navigationState.currentIndex > 0) {
+          navigationState.currentIndex--;
+          history.back();
+        }
+      } else if (direction === 'forward') {
+        if (navigationState.currentIndex < navigationState.historyLength - 1) {
+          navigationState.currentIndex++;
+          history.forward();
+        }
+      }
     }
   };
 
@@ -430,6 +531,22 @@ function generateApiScript(opts: ApiScriptOptions): string {
         break;
       case 'openai:requestResize':
         measureAndNotifyHeight();
+        break;
+      case 'openai:navigate':
+        // Host-backed navigation: respond to navigation commands from parent
+        if (event.data.toolId === ${JSON.stringify(toolId)}) {
+          if (event.data.direction === 'back') {
+            if (navigationState.currentIndex > 0) {
+              navigationState.currentIndex--;
+              history.back();
+            }
+          } else if (event.data.direction === 'forward') {
+            if (navigationState.currentIndex < navigationState.historyLength - 1) {
+              navigationState.currentIndex++;
+              history.forward();
+            }
+          }
+        }
         break;
     }
   });
@@ -492,6 +609,18 @@ window.URL.revokeObjectURL=OrigURL.revokeObjectURL;window.URL.canParse=OrigURL.c
 })();</script>`;
 }
 
+// Widget base styles: prevent scrollbars by disabling overflow.
+// The auto-resize mechanism (measureAndNotifyHeight) reports content height
+// to the host, which expands the iframe accordingly - scrollbars are unnecessary.
+// This matches ChatGPT's inline widget behavior where the container sizes to content.
+const WIDGET_BASE_CSS = `<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevent scrollbars - iframe resizes to content via auto-resize */
+}
+</style>`;
+
 function injectScripts(
   html: string,
   urlPolyfill: string,
@@ -501,10 +630,10 @@ function injectScripts(
   if (/<html[^>]*>/i.test(html) && /<head[^>]*>/i.test(html)) {
     return html.replace(
       /<head[^>]*>/i,
-      `$&${urlPolyfill}${baseTag}${apiScript}`,
+      `$&${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}${apiScript}`,
     );
   }
-  return `<!DOCTYPE html><html><head>${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
+  return `<!DOCTYPE html><html><head>${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
 }
 
 // ============================================================================
@@ -675,10 +804,11 @@ function buildCspHeader(
       ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
       : "'self' data: blob: https:";
 
-  // Frame ancestors for cross-origin sandbox architecture
-  const frameAncestors = isDev
-    ? "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
-    : "frame-ancestors 'self'";
+  // Frame ancestors must always include localhost/127.0.0.1 for the cross-origin
+  // sandbox architecture to work (sandbox-proxy swaps localhost <-> 127.0.0.1)
+  // This is required regardless of NODE_ENV since the inspector is self-hosted
+  const frameAncestors =
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*";
 
   const headerString = [
     "default-src 'self'",
@@ -721,6 +851,8 @@ chatgpt.post("/widget/store", async (c) => {
       userLocation,
       maxHeight,
       cspMode,
+      capabilities,
+      safeAreaInsets,
     } = await c.req.json();
     if (!serverId || !uri || !toolId || !toolName)
       return c.json({ success: false, error: "Missing required fields" }, 400);
@@ -739,6 +871,13 @@ chatgpt.post("/widget/store", async (c) => {
       userLocation: userLocation ?? null, // Coarse IP-based location per SDK spec
       maxHeight: maxHeight ?? null, // Host-controlled max height constraint
       cspMode: cspMode ?? "permissive", // CSP enforcement mode
+      capabilities: capabilities ?? { hover: true, touch: false }, // Device capabilities
+      safeAreaInsets: safeAreaInsets ?? {
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+      }, // Safe area insets
       timestamp: Date.now(),
     });
     return c.json({ success: true });
@@ -790,6 +929,8 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       userLocation,
       maxHeight,
       cspMode,
+      capabilities,
+      safeAreaInsets,
     } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
@@ -826,6 +967,8 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
       maxHeight: maxHeight ?? null,
+      capabilities: capabilities ?? undefined,
+      safeAreaInsets: safeAreaInsets ?? undefined,
       useMapPendingCalls: true,
     });
     const modifiedHtml = injectScripts(
@@ -918,6 +1061,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       userLocation,
       maxHeight,
       cspMode: storedCspMode,
+      capabilities,
+      safeAreaInsets,
     } = widgetData;
 
     // Use query param override if provided, otherwise use stored mode
@@ -965,6 +1110,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
       maxHeight: maxHeight ?? null,
+      capabilities: capabilities ?? undefined,
+      safeAreaInsets: safeAreaInsets ?? undefined,
       viewMode,
       viewParams,
       useMapPendingCalls: false,
@@ -978,7 +1125,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
 
     // Apply the built CSP header
     c.header("Content-Security-Policy", cspConfig.headerString);
-    c.header("X-Frame-Options", "SAMEORIGIN");
+    // Note: X-Frame-Options removed - CSP frame-ancestors handles this and
+    // X-Frame-Options doesn't support multiple origins needed for cross-origin sandbox
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     c.header("Pragma", "no-cache");

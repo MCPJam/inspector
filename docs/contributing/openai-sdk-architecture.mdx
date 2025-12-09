@@ -23,7 +23,7 @@ MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://develop
 <Note>
   This document covers the **V1 Playground** implementation. As of PR #773,
   **Playground V2** (`ChatTabV2.tsx`) also supports OpenAI Apps with a
-  streamlined implementation using `openai-app-renderer.tsx`. The V2
+  streamlined implementation using `chatgpt-app-renderer.tsx`. The V2
   implementation uses MCP resources API to fetch widget templates and renders
   them with similar `window.openai` bridge capabilities.
 </Note>
@@ -225,7 +225,7 @@ sequenceDiagram
 
 #### Storage Implementation
 
-Located in `server/routes/mcp/openai.ts:14-32`:
+Located in `server/routes/mcp/chatgpt.ts:14-32`:
 
 ```typescript
 interface WidgetData {
@@ -289,7 +289,7 @@ sequenceDiagram
 
 #### Stage 1: Container Page
 
-Located in `server/routes/mcp/openai.ts:81-120`:
+Located in `server/routes/mcp/chatgpt.ts:81-120`:
 
 ```typescript
 openai.get(\"/widget/:toolId\", async (c) => {
@@ -331,7 +331,7 @@ openai.get(\"/widget/:toolId\", async (c) => {
 
 #### Stage 2: Content Injection
 
-Located in `server/routes/mcp/openai.ts:123-459`:
+Located in `server/routes/mcp/chatgpt.ts:123-459`:
 
 Key steps:
 
@@ -381,7 +381,7 @@ graph LR
 
 #### API Implementation
 
-Located in `server/routes/mcp/openai.ts:213-376`:
+Located in `server/routes/mcp/chatgpt.ts:213-376`:
 
 **Core API Methods:**
 
@@ -394,10 +394,10 @@ const openaiAPI = {
   maxHeight: 600,
   theme: ${JSON.stringify(theme ?? "dark")},
   locale: 'en-US',
-  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },  // Device safe area insets
   userAgent: {
-    device: { type: 'desktop' },
-    capabilities: { hover: true, touch: false }
+    device: { type: 'desktop' },  // 'mobile' | 'tablet' | 'desktop'
+    capabilities: { hover: true, touch: false }  // Device input capabilities
   },
   view: {
     mode: ${JSON.stringify(viewMode)},  // 'inline' or 'modal'
@@ -512,6 +512,28 @@ window.openai = openaiAPI;
 window.webplus = openaiAPI; // Compatibility alias
 ```
 
+**Device Globals:**
+
+The `window.openai` API provides device context to widgets through several properties:
+
+- **`userAgent.device.type`** - Device type: `'mobile'`, `'tablet'`, or `'desktop'`. In the UI Playground, this is controlled by the device type selector. Outside the playground, it's automatically detected from the browser window size.
+
+- **`userAgent.capabilities`** - Input capabilities:
+  - `hover` (boolean) - Whether the device supports hover interactions
+  - `touch` (boolean) - Whether the device supports touch input
+  
+  In the UI Playground, these are controlled by the hover and touch toggle buttons. Outside the playground, they default to `{ hover: true, touch: false }`.
+
+- **`safeArea.insets`** - Safe area insets in pixels for device notches, rounded corners, and gesture areas:
+  - `top` (number) - Top inset in pixels
+  - `bottom` (number) - Bottom inset in pixels
+  - `left` (number) - Left inset in pixels
+  - `right` (number) - Right inset in pixels
+  
+  In the UI Playground, these are configured through the safe area editor with presets for common devices (iPhone notch, Dynamic Island, Android gesture navigation). Outside the playground, all insets default to 0.
+
+Widgets can use these values to adapt their layout and interactions for different device contexts. For example, a widget might disable hover-based tooltips on touch devices or adjust padding to account for safe area insets.
+
 **Security Notes:**
 
 - API is frozen with `writable: false, configurable: false`
@@ -563,7 +585,7 @@ graph TB
 
 #### Modal Request Flow
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:380-388`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:380-388`:
 
 ```typescript
 case "openai:requestModal": {
@@ -601,7 +623,7 @@ if (window.openai.view.mode === "modal") {
 
 Modal and inline views share widget state automatically. When either view calls `setWidgetState()`, the state is propagated to the other view via `openai:pushWidgetState` messages.
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:269-284`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:269-284`:
 
 ```typescript
 // After state is set, push to other view
@@ -625,7 +647,7 @@ if (targetWindow) {
 
 The receiving view updates its local state and dispatches a `openai:widget_state` event:
 
-Located in `server/routes/mcp/openai.ts:410-428`:
+Located in `server/routes/mcp/chatgpt.ts:410-428`:
 
 ```javascript
 if (
@@ -711,14 +733,14 @@ const handleExitPip = (toolCallId: string) => {
 };
 ```
 
-**Mode Detection** (`client/src/components/chat-v2/openai-app-renderer.tsx:440-442`):
+**Mode Detection** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:440-442`):
 
 ```typescript
 const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
 const isFullscreen = displayMode === "fullscreen";
 ```
 
-**CSS Classes** (`client/src/components/chat-v2/openai-app-renderer.tsx:444-476`):
+**CSS Classes** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:444-476`):
 
 ```typescript
 let containerClassName = "mt-3 space-y-2 relative group";
@@ -756,7 +778,7 @@ if (isFullscreen) {
 }
 ```
 
-**Exit Button** (`client/src/components/chat-v2/openai-app-renderer.tsx:481-493`):
+**Exit Button** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:481-493`):
 
 ```typescript
 {shouldShowExitButton && (
@@ -805,9 +827,157 @@ await window.openai.requestDisplayMode({
 
 The parent component handles these requests and updates the widget's display mode accordingly.
 
+#### Fullscreen Navigation (PR #1033)
+
+When a widget is in fullscreen mode, a navigation header is rendered at the top with back/forward buttons, widget title, and close button. This enables users to navigate multi-page widgets without leaving fullscreen mode.
+
+**Architecture:**
+
+The fullscreen navigation system uses host-backed navigation tracking to mirror the widget's internal history state:
+
+```mermaid
+sequenceDiagram
+    participant Widget as Widget Iframe
+    participant History as History API
+    participant Parent as ChatGPTAppRenderer
+    participant Header as Fullscreen Header
+
+    Note over Widget,Header: Navigation Tracking
+    Widget->>History: history.pushState(state, title, url)
+    History->>History: Wrapped pushState increments index
+    History->>Parent: postMessage openai:navigationStateChanged
+    Parent->>Header: Update back/forward button states
+
+    Note over Widget,Header: User Navigation
+    Header->>Parent: User clicks back button
+    Parent->>Widget: postMessage openai:navigate {direction: 'back'}
+    Widget->>History: history.back()
+    History->>Parent: popstate event → postMessage navigationStateChanged
+    Parent->>Header: Update button states
+```
+
+**Implementation Details:**
+
+1. **History Wrapping** (`server/routes/mcp/chatgpt.ts:352-407`):
+
+```javascript
+// Track navigation state
+const navigationState = { currentIndex: 0, historyLength: 1 };
+
+// Wrap history.pushState to track navigation
+const originalPushState = history.pushState.bind(history);
+history.pushState = function(state, title, url) {
+  const nextIndex = navigationState.currentIndex + 1;
+  const stateWithIndex = { ...state, __navIndex: nextIndex };
+  originalPushState(stateWithIndex, title, url);
+  navigationState.currentIndex = nextIndex;
+  navigationState.historyLength = history.length;
+  notifyNavigationState();
+};
+
+// Track popstate for back/forward navigation
+window.addEventListener('popstate', (event) => {
+  const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
+  navigationState.currentIndex = stateIndex;
+  notifyNavigationState();
+});
+
+// Notify parent of navigation state changes
+const notifyNavigationState = () => {
+  window.parent.postMessage({
+    type: 'openai:navigationStateChanged',
+    toolId: toolId,
+    canGoBack: navigationState.currentIndex > 0,
+    canGoForward: navigationState.currentIndex < navigationState.historyLength - 1,
+    historyLength: navigationState.historyLength,
+    currentIndex: navigationState.currentIndex
+  }, '*');
+};
+```
+
+2. **Parent-Side Navigation Handler** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:888-896`):
+
+```typescript
+case "openai:navigationStateChanged": {
+  // Update navigation button state
+  if (event.data.toolId === resolvedToolCallId) {
+    setCanGoBack(event.data.canGoBack ?? false);
+    setCanGoForward(event.data.canGoForward ?? false);
+  }
+  break;
+}
+```
+
+3. **Navigation Command Handler** (`server/routes/mcp/chatgpt.ts:535-551`):
+
+```javascript
+case 'openai:navigate':
+  // Host-backed navigation: respond to commands from parent
+  if (event.data.toolId === toolId) {
+    if (event.data.direction === 'back') {
+      if (navigationState.currentIndex > 0) {
+        navigationState.currentIndex--;
+        history.back();
+      }
+    } else if (event.data.direction === 'forward') {
+      if (navigationState.currentIndex < navigationState.historyLength - 1) {
+        navigationState.currentIndex++;
+        history.forward();
+      }
+    }
+  }
+  break;
+```
+
+4. **Fullscreen Header UI** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:1117-1164`):
+
+```typescript
+{isFullscreen && (
+  <div className="flex items-center justify-between px-4 h-14 border-b">
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => navigateWidget("back")}
+        disabled={!canGoBack}
+        className={canGoBack ? "hover:bg-muted cursor-pointer" : "cursor-not-allowed"}
+      >
+        <ChevronLeft className="w-5 h-5" />
+      </button>
+      <button
+        onClick={() => navigateWidget("forward")}
+        disabled={!canGoForward}
+        className={canGoForward ? "hover:bg-muted cursor-pointer" : "cursor-not-allowed"}
+      >
+        <ChevronRight className="w-5 h-5" />
+      </button>
+    </div>
+
+    <div className="font-medium text-sm">{toolName || "ChatGPT App"}</div>
+
+    <button onClick={() => setDisplayMode("inline")}>
+      <X className="w-5 h-5" />
+    </button>
+  </div>
+)}
+```
+
+**Key Features:**
+
+- **Host-Backed Navigation**: Parent component mirrors widget's history state, enabling navigation controls outside the iframe
+- **State Persistence**: Navigation index stored in `history.state.__navIndex` to survive popstate events
+- **Automatic Tracking**: All `pushState`, `replaceState`, and `popstate` events automatically update navigation state
+- **Disabled State Management**: Back/forward buttons are disabled when navigation is not available
+- **Transform Isolation Fix**: Parent container's `transform: translateZ(0)` is removed in fullscreen mode to prevent z-index stacking issues
+
+**Use Cases:**
+
+- Multi-page dashboards with internal routing
+- Wizard-style forms with step navigation
+- Documentation browsers with history
+- Any widget using React Router or similar routing libraries
+
 ### 7. Parent-Side Message Handling
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:312-347`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:312-347`:
 
 ```typescript
 useEffect(() => {
@@ -883,7 +1053,7 @@ useEffect(() => {
 
 The component automatically resets to inline mode if another widget takes over PiP mode:
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:368-372`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:368-372`:
 
 ```typescript
 useEffect(() => {
@@ -899,7 +1069,7 @@ This ensures only one widget can be in PiP mode at a time, preventing overlappin
 
 The parent component automatically sends theme updates to widgets when the user changes between light and dark mode:
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:293-307`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:293-307`:
 
 ```typescript
 // Send theme updates to iframe when theme changes
@@ -935,7 +1105,7 @@ window.addEventListener("message", (event) => {
 
 As of PR #891, widget state changes are now propagated to the LLM model as hidden assistant messages. This allows the AI to understand and reason about widget interactions.
 
-**Implementation** (`client/src/components/chat-v2/openai-app-renderer.tsx:232-244`):
+**Implementation** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:232-244`):
 
 ```typescript
 case "openai:setWidgetState": {
@@ -1063,7 +1233,7 @@ const handleCallTool = async (
 
 ### Content Security Policy
 
-As of PR #1024, MCPJam Inspector implements configurable CSP enforcement for widget sandboxing with two modes:
+MCPJam Inspector implements configurable CSP enforcement for widget sandboxing with two modes:
 
 **CSP Modes:**
 
@@ -1213,7 +1383,7 @@ Located in `client/src/components/chat-v2/csp-debug-panel.tsx`.
 
 ### Iframe Sandbox
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:518-530`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:518-530`:
 
 ```typescript
 <iframe
@@ -1530,7 +1700,7 @@ document.addEventListener("securitypolicyviolation", (e) => {
 **Example: Adding a custom method:**
 
 ```typescript
-// 1. Server-side API injection (server/routes/mcp/openai.ts)
+// 1. Server-side API injection (server/routes/mcp/chatgpt.ts)
 openaiAPI.customMethod = async function(options) {
   window.parent.postMessage({
     type: 'openai:customMethod',
@@ -1538,7 +1708,7 @@ openaiAPI.customMethod = async function(options) {
   }, '*');
 };
 
-// 2. Parent-side handler (client/src/components/chat-v2/openai-app-renderer.tsx)
+// 2. Parent-side handler (client/src/components/chat-v2/chatgpt-app-renderer.tsx)
 case \"openai:customMethod\":
   handleCustomMethod(event.data.data);
   break;
