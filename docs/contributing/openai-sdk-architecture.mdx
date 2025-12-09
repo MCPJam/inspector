@@ -1233,31 +1233,153 @@ const handleCallTool = async (
 
 ### Content Security Policy
 
-Located in `server/routes/mcp/chatgpt.ts:408-437`:
+MCPJam Inspector implements configurable CSP enforcement for widget sandboxing with two modes:
+
+**CSP Modes:**
+
+- **Permissive** (default) - Allows all HTTPS resources for development and testing
+- **Strict** (widget-declared) - Only allows domains declared in the widget's `openai/widgetCSP` metadata
+
+#### Widget CSP Declaration
+
+Widgets can declare required domains using the `openai/widgetCSP` metadata field in their resource:
 
 ```typescript
-const trustedCdns = [
-  \"https://persistent.oaistatic.com\",
-  \"https://*.oaistatic.com\",
-  \"https://unpkg.com\",
-  \"https://cdn.jsdelivr.net\",
-  \"https://cdnjs.cloudflare.com\",
-  \"https://cdn.skypack.dev\"
-].join(\" \");
-
-c.header(\"Content-Security-Policy\", [
-  \"default-src 'self'\",
-  `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`,
-  \"worker-src 'self' blob:\",
-  \"child-src 'self' blob:\",
-  `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
-  \"img-src 'self' data: https: blob:\",
-  \"media-src 'self' data: https: blob:\",
-  `font-src 'self' data: ${trustedCdns}`,
-  \"connect-src 'self' https: wss: ws:\",
-  \"frame-ancestors 'self'\"
-].join(\"; \"));
+{
+  "_meta": {
+    "openai/widgetCSP": {
+      "connect_domains": [
+        "https://api.example.com",
+        "wss://websocket.example.com"
+      ],
+      "resource_domains": [
+        "https://cdn.example.com",
+        "https://fonts.googleapis.com"
+      ]
+    }
+  }
+}
 ```
+
+**Domain Types:**
+
+- `connect_domains` - Allowed origins for `fetch()`, `XMLHttpRequest`, and WebSocket connections (maps to `connect-src`)
+- `resource_domains` - Allowed origins for scripts, styles, images, fonts, and media (maps to `script-src`, `style-src`, `img-src`, `font-src`, `media-src`)
+
+#### CSP Header Generation
+
+Located in `server/routes/mcp/chatgpt.ts:571-701`:
+
+```typescript
+function buildCspHeader(
+  mode: CspMode,
+  widgetCsp?: WidgetCspMeta | null,
+): CspConfig {
+  // Base trusted CDNs (always included for widget asset loading)
+  const baseTrustedCdns = [
+    "https://persistent.oaistatic.com",
+    "https://*.oaistatic.com",
+    "https://unpkg.com",
+    "https://cdn.jsdelivr.net",
+    "https://cdnjs.cloudflare.com",
+    "https://cdn.skypack.dev",
+    "https://cdn.tailwindcss.com",
+  ];
+
+  let connectDomains: string[];
+  let resourceDomains: string[];
+
+  switch (mode) {
+    case "permissive":
+      // Allow https: wildcard
+      connectDomains = ["'self'", "https:", "wss:", "ws:"];
+      resourceDomains = ["'self'", "data:", "blob:", "https:", ...baseTrustedCdns];
+      break;
+
+    case "widget-declared":
+      // Honor widget's declared CSP
+      connectDomains = [
+        "'self'",
+        ...(widgetCsp?.connect_domains || []),
+      ];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        ...(widgetCsp?.resource_domains || baseTrustedCdns),
+      ];
+      break;
+  }
+
+  // Build full CSP header
+  const headerString = [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceDomains.join(" ")}`,
+    "worker-src 'self' blob:",
+    "child-src 'self' blob:",
+    `style-src 'self' 'unsafe-inline' ${resourceDomains.join(" ")}`,
+    `img-src ${mode === "widget-declared" ? resourceDomains.join(" ") : "'self' data: blob: https:"}`,
+    `media-src ${mode === "widget-declared" ? resourceDomains.join(" ") : "'self' data: blob: https:"}`,
+    `font-src 'self' data: ${resourceDomains.join(" ")}`,
+    `connect-src ${connectDomains.join(" ")}`,
+    "frame-ancestors 'self'",
+  ].join("; ");
+
+  return { mode, connectDomains, resourceDomains, headerString };
+}
+```
+
+The CSP header is applied in the `/widget-content/:toolId` endpoint based on the `csp_mode` query parameter.
+
+#### CSP Violation Reporting
+
+Widgets automatically report CSP violations to the parent for debugging. The injected widget script includes a violation listener:
+
+Located in `server/routes/mcp/chatgpt.ts:458-473`:
+
+```javascript
+document.addEventListener('securitypolicyviolation', (e) => {
+  const violation = {
+    type: 'openai:csp-violation',
+    toolId: toolId,
+    directive: e.violatedDirective,
+    blockedUri: e.blockedURI,
+    sourceFile: e.sourceFile || null,
+    lineNumber: e.lineNumber || null,
+    columnNumber: e.columnNumber || null,
+    originalPolicy: e.originalPolicy,
+    effectiveDirective: e.effectiveDirective,
+    disposition: e.disposition,
+    timestamp: Date.now(),
+  };
+
+  console.warn('[OpenAI Widget CSP Violation]', violation.directive, ':', violation.blockedUri);
+  window.parent.postMessage(violation, '*');
+});
+```
+
+Violations are collected in the widget debug store and displayed in the CSP debug panel with actionable suggestions for fixing CSP declarations.
+
+#### CSP Debug Panel
+
+The UI Playground includes a CSP debug tab (shield icon) that shows:
+
+- **Suggested fix** - Automatically generated `openai/widgetCSP` JSON snippet based on violations
+- **Blocked requests** - List of all CSP violations with directive, URI, and source location
+- **Declared domains** - Current `connect_domains` and `resource_domains` from widget metadata
+- **Full CSP header** - Complete CSP header string for advanced debugging
+
+Located in `client/src/components/chat-v2/csp-debug-panel.tsx`.
+
+#### Development vs Production
+
+- **Development**: Use permissive mode to avoid CSP issues while building widgets
+- **Testing**: Switch to strict mode in UI Playground to identify required domains
+- **Production**: Always use strict mode with properly declared `openai/widgetCSP` metadata
+
+<Warning>
+  The `'unsafe-inline'` and `'unsafe-eval'` directives are currently required for React and other frameworks. Future versions may support stricter CSP with nonces or hashes.
+</Warning>
 
 ### Iframe Sandbox
 
@@ -1529,6 +1651,13 @@ server.connect(transport);
    - Inspect localStorage for widget state key
    - Confirm both views have `openai:widget_state` event listener
 
+10. **CSP violations blocking resources**
+    - Check the CSP debug tab (shield icon) for violation details
+    - Switch to permissive mode in UI Playground to bypass CSP temporarily
+    - Add blocked domains to `openai/widgetCSP` metadata in your widget
+    - Verify CSP header in Network tab matches expected configuration
+    - Use the suggested fix snippet from the CSP debug panel
+
 **Debug Tools:**
 
 ```javascript
@@ -1548,6 +1677,16 @@ window.parent.postMessage = function (...args) {
 console.log("openai API:", window.openai);
 console.log("toolInput:", window.openai?.toolInput);
 console.log("toolOutput:", window.openai?.toolOutput);
+
+// Monitor CSP violations
+document.addEventListener("securitypolicyviolation", (e) => {
+  console.error("[CSP Violation]", {
+    directive: e.violatedDirective,
+    blockedUri: e.blockedURI,
+    sourceFile: e.sourceFile,
+    lineNumber: e.lineNumber,
+  });
+});
 ```
 
 ### Extending the Implementation
@@ -1635,11 +1774,17 @@ case \"openai:customMethod\":
 ## Related Files
 
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
-- `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
-- `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
+- `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
+- `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - ChatGPT Apps renderer with CSP support
+- `client/src/components/chat-v2/csp-debug-panel.tsx` - CSP debug panel UI
+- `client/src/components/chat-v2/thread.tsx` - Manages PiP state and CSP debug tab
 - `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
-- `server/routes/mcp/chatgpt.ts` - Widget storage, serving, and OpenAI bridge injection
+- `client/src/components/ui-playground/PlaygroundMain.tsx` - UI Playground with CSP mode selector
+- `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
+- `server/routes/mcp/chatgpt.ts` - CSP header generation and enforcement
 - `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
+- `client/src/stores/ui-playground-store.ts` - CSP mode state management
+- `client/src/stores/widget-debug-store.ts` - CSP violation tracking
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
 
 ## Resources

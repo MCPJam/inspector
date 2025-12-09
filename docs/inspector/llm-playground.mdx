@@ -197,6 +197,25 @@ OpenAI Apps can request different display modes to optimize their presentation:
 
 Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-left corner of the widget.
 
+### Content Security Policy (CSP)
+
+The UI Playground includes CSP enforcement controls to help you test widget security configurations. You can switch between two CSP modes using the shield icon in the toolbar:
+
+- **Permissive** (default) - Allows all HTTPS resources, suitable for development and testing
+- **Strict** - Only allows domains declared in the widget's `openai/widgetCSP` metadata field
+
+When a widget violates CSP rules in strict mode, you'll see a badge on the CSP debug tab showing the number of blocked requests. Click the CSP tab to view:
+
+- **Suggested fix** - Copyable JSON snippet to add to your widget's `openai/widgetCSP` field
+- **Blocked requests** - List of all CSP violations with directive and URI details
+- **Declared domains** - The `connect_domains` and `resource_domains` your widget currently declares
+
+This helps you identify which external resources your widget needs and configure proper CSP declarations before deploying to production environments.
+
+<Info>
+  CSP mode only applies in the UI Playground. The Chat tab always uses permissive mode to avoid disrupting normal testing workflows.
+</Info>
+
 ## UI Playground device settings
 
 The UI Playground provides controls to simulate different device environments for testing ChatGPT Apps and MCP Apps. These settings affect how widgets receive device context through the `window.openai` API.
