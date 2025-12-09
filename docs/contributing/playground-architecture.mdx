@@ -688,6 +688,44 @@ const metadata = mcpClientManager.getAllToolsMetadata("server1");
 // Returns: { tool1: { _meta: {...} }, tool2: { _meta: {...} } }
 ```
 
+### Device Globals for ChatGPT Apps
+
+As of PR #1026, the playground provides device context to ChatGPT Apps and MCP Apps through configurable device globals. These settings are only applied when the UI Playground is active; outside the playground, defaults are used.
+
+**Device Settings:**
+
+- **Device Type** - `'mobile'`, `'tablet'`, or `'desktop'`. Controlled by the device type selector in the playground toolbar. Outside the playground, automatically detected from window size via `getDeviceType()`.
+
+- **Device Capabilities** - Input method support:
+  - `hover` (boolean) - Whether hover interactions are supported
+  - `touch` (boolean) - Whether touch input is supported
+  
+  Controlled by hover and touch toggle buttons in the playground toolbar. Outside the playground, defaults to `{ hover: true, touch: false }`.
+
+- **Safe Area Insets** - Device notches, rounded corners, and gesture areas in pixels:
+  - `top`, `bottom`, `left`, `right` (numbers)
+  
+  Configured through the safe area editor with presets for common devices (iPhone notch, Dynamic Island, Android gesture navigation). Outside the playground, all insets default to 0.
+
+**Implementation:**
+
+The playground store (`ui-playground-store.ts`) maintains these settings and provides them to the ChatGPT app renderer. When widgets are initialized, these values are passed through the widget data store and injected into the `window.openai` API:
+
+```typescript
+// Passed to widget via window.openai
+{
+  userAgent: {
+    device: { type: deviceType },
+    capabilities: { hover, touch }
+  },
+  safeArea: {
+    insets: { top, bottom, left, right }
+  }
+}
+```
+
+Widgets can use these values to adapt their layout and interactions for different device contexts. For example, disabling hover-based tooltips on touch devices or adjusting padding for safe area insets.
+
 ### Server Instructions Integration
 
 As of PR #948, MCP server instructions are automatically included in the chat context as system messages. This enables the LLM to understand server-specific guidance and capabilities.
