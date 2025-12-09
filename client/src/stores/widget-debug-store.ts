@@ -28,14 +28,19 @@ export interface CspViolation {
 export interface WidgetCspInfo {
   /** Current CSP enforcement mode */
   mode: CspMode;
-  /** Allowed domains for fetch/XHR (connect-src) */
+  /** Allowed domains for fetch/XHR (connect-src) - effective values */
   connectDomains: string[];
-  /** Allowed domains for scripts/styles/fonts */
+  /** Allowed domains for scripts/styles/fonts - effective values */
   resourceDomains: string[];
   /** Full CSP header string (for advanced users) */
   headerString?: string;
   /** List of CSP violations for this widget */
   violations: CspViolation[];
+  /** Widget's actual openai/widgetCSP declaration (null if not declared) */
+  widgetDeclared?: {
+    connect_domains?: string[];
+    resource_domains?: string[];
+  } | null;
 }
 
 export interface WidgetGlobals {

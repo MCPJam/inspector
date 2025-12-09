@@ -23,10 +23,7 @@ import {
   Globe,
   Shield,
 } from "lucide-react";
-import {
-  useUIPlaygroundStore,
-  type DisplayMode,
-} from "@/stores/ui-playground-store";
+import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
@@ -426,9 +423,6 @@ function ToolPart({
     "data" | "state" | "globals" | "csp" | null
   >(null);
 
-  // Get CSP mode setter from playground store
-  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
-  const setCspMode = useUIPlaygroundStore((s) => s.setCspMode);
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const errorText = (part as any).errorText ?? (part as any).error;
@@ -555,7 +549,9 @@ function ToolPart({
                       className={`p-1 rounded transition-colors cursor-pointer relative ${
                         activeDebugTab === tab
                           ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                          : badge && badge > 0
+                            ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                            : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
                       }`}
                     >
                       <Icon className="h-3.5 w-3.5" />
@@ -665,11 +661,7 @@ function ToolPart({
             </div>
           )}
           {hasWidgetDebug && activeDebugTab === "csp" && (
-            <CspDebugPanel
-              cspInfo={widgetDebugInfo.csp}
-              onModeChange={setCspMode}
-              canChangeMode={isPlaygroundActive}
-            />
+            <CspDebugPanel cspInfo={widgetDebugInfo.csp} />
           )}
           {!hasWidgetDebug && (
             <div className="space-y-4">
