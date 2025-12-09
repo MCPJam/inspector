@@ -600,7 +600,7 @@ function IterationRow({
           </div>
           {isPending && (
             <div className="w-3.5 flex items-center justify-center">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />
             </div>
           )}
         </div>

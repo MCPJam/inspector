@@ -20,10 +20,17 @@ import {
   useCallback,
   useImperativeHandle,
   forwardRef,
+  useMemo,
 } from "react";
 
 export interface SandboxedIframeHandle {
   postMessage: (data: unknown) => void;
+}
+
+/** CSP metadata per SEP-1865 */
+interface UIResourceCSP {
+  connectDomains?: string[];
+  resourceDomains?: string[];
 }
 
 interface SandboxedIframeProps {
@@ -31,6 +38,8 @@ interface SandboxedIframeProps {
   html: string | null;
   /** Sandbox attribute for the inner iframe */
   sandbox?: string;
+  /** CSP metadata from resource _meta.ui.csp (SEP-1865) */
+  csp?: UIResourceCSP;
   /** Callback when sandbox proxy is ready */
   onProxyReady?: () => void;
   /** Callback for messages from guest UI (excluding sandbox-internal messages) */
@@ -58,6 +67,7 @@ export const SandboxedIframe = forwardRef<
   {
     html,
     sandbox = "allow-scripts allow-same-origin allow-forms allow-popups",
+    csp,
     onProxyReady,
     onMessage,
     className,
@@ -69,42 +79,70 @@ export const SandboxedIframe = forwardRef<
   const outerRef = useRef<HTMLIFrameElement>(null);
   const [proxyReady, setProxyReady] = useState(false);
 
-  // Expose postMessage to parent
+  // SEP-1865: Host and Sandbox MUST have different origins
+  const [sandboxProxyUrl] = useState(() => {
+    const currentHost = window.location.hostname;
+    const currentPort = window.location.port;
+    const protocol = window.location.protocol;
+
+    let sandboxHost: string;
+    if (currentHost === "localhost") {
+      sandboxHost = "127.0.0.1";
+    } else if (currentHost === "127.0.0.1") {
+      sandboxHost = "localhost";
+    } else {
+      throw new Error(
+        "[SandboxedIframe] SEP-1865 violation: Cannot use same-origin sandbox. " +
+          "Configure a sandbox subdomain (e.g., sandbox.example.com) or different port.",
+      );
+    }
+
+    const portSuffix = currentPort ? `:${currentPort}` : "";
+    return `${protocol}//${sandboxHost}${portSuffix}/api/mcp/sandbox-proxy?v=${Date.now()}`;
+  });
+
+  const sandboxProxyOrigin = useMemo(() => {
+    try {
+      return new URL(sandboxProxyUrl).origin;
+    } catch {
+      return "*";
+    }
+  }, [sandboxProxyUrl]);
+
   useImperativeHandle(
     ref,
     () => ({
       postMessage: (data: unknown) => {
-        outerRef.current?.contentWindow?.postMessage(data, "*");
+        outerRef.current?.contentWindow?.postMessage(data, sandboxProxyOrigin);
       },
     }),
-    [],
+    [sandboxProxyOrigin],
   );
 
-  // Handle messages from sandbox proxy
   const handleMessage = useCallback(
     (event: MessageEvent) => {
+      if (event.origin !== sandboxProxyOrigin && sandboxProxyOrigin !== "*") {
+        return;
+      }
       if (event.source !== outerRef.current?.contentWindow) return;
 
       const { jsonrpc, method } =
         (event.data as { jsonrpc?: string; method?: string }) || {};
       if (jsonrpc !== "2.0") return;
 
-      // Sandbox ready notification (per SEP-1865)
       if (method === "ui/notifications/sandbox-ready") {
         setProxyReady(true);
         onProxyReady?.();
         return;
       }
 
-      // Ignore other sandbox-internal messages
       if (method?.startsWith("ui/notifications/sandbox-")) {
         return;
       }
 
-      // Forward all other messages to parent handler
       onMessage(event);
     },
-    [onMessage, onProxyReady],
+    [onMessage, onProxyReady, sandboxProxyOrigin],
   );
 
   useEffect(() => {
@@ -112,7 +150,7 @@ export const SandboxedIframe = forwardRef<
     return () => window.removeEventListener("message", handleMessage);
   }, [handleMessage]);
 
-  // Send HTML to sandbox when ready
+  // Send HTML and CSP to sandbox when ready (SEP-1865)
   useEffect(() => {
     if (!proxyReady || !html) return;
 
@@ -120,16 +158,16 @@ export const SandboxedIframe = forwardRef<
       {
         jsonrpc: "2.0",
         method: "ui/notifications/sandbox-resource-ready",
-        params: { html, sandbox },
+        params: { html, sandbox, csp },
       },
-      "*",
+      sandboxProxyOrigin,
     );
-  }, [proxyReady, html, sandbox]);
+  }, [proxyReady, html, sandbox, csp, sandboxProxyOrigin]);
 
   return (
     <iframe
       ref={outerRef}
-      src="/api/mcp/sandbox-proxy"
+      src={sandboxProxyUrl}
       sandbox="allow-scripts allow-same-origin"
       title={title}
       className={className}

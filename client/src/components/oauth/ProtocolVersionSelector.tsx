@@ -1,6 +1,5 @@
 /**
  * Protocol Version Selector Component
- * Allows switching between 2025-06-18 (Stable) and 2025-11-25 (Draft) OAuth protocols
  */
 
 import { Info, CheckCircle2, AlertCircle } from "lucide-react";

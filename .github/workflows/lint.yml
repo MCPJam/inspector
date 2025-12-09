@@ -7,8 +7,9 @@ on:
     branches: [main]
 
 jobs:
-  prettier-and-build:
+  formatting:
     runs-on: ubuntu-latest
+    name: Check Code Formatting
 
     steps:
       - name: Checkout code
@@ -21,18 +22,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # Clean npm cache
-          npm cache clean --force
-
-          # Remove lock files and node_modules to ensure fresh install
-          rm -rf package-lock.json node_modules
-          rm -rf client/package-lock.json client/node_modules
-          rm -rf server/package-lock.json server/node_modules
-
-          # Install all dependencies (root + client + server)
-          npm install --legacy-peer-deps
-          cd client && npm install --legacy-peer-deps && cd ..
-          cd server && npm install --legacy-peer-deps && cd ..
+          npm ci
 
       - name: Check Prettier formatting
         run: |
@@ -47,6 +37,23 @@ jobs:
           else
             echo "✅ All files are properly formatted!"
           fi
+
+  build:
+    runs-on: ubuntu-latest
+    name: Build and Test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          npm ci
 
       - name: Build project
         run: |

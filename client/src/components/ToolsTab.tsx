@@ -15,7 +15,7 @@ import {
 } from "./ui/resizable";
 import { ParametersPanel } from "./tools/ParametersPanel";
 import { ResultsPanel } from "./tools/ResultsPanel";
-import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { LoggerView } from "./logging/logger-view";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
@@ -31,18 +31,18 @@ import {
   saveRequest,
   updateRequestMeta,
 } from "@/lib/request-storage";
-import type { SavedRequest } from "@/lib/request-types";
+import type { SavedRequest } from "@/lib/types/request-types";
 import { useLogger } from "@/hooks/use-logger";
 import {
   executeToolApi,
   listTools,
   respondToElicitationApi,
   type ToolExecutionResponse,
-} from "@/lib/mcp-tools-api";
+} from "@/lib/apis/mcp-tools-api";
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig } from "@/sdk";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 
 type ToolMap = Record<string, Tool>;
@@ -61,6 +61,30 @@ export type DialogElicitation = {
   schema?: Record<string, unknown>;
   timestamp: string;
 };
+
+function normalizeElicitationContent(
+  parameters?: Record<string, unknown>,
+): ElicitResult["content"] | undefined {
+  if (!parameters) return undefined;
+  const content: ElicitResult["content"] = {};
+  for (const [key, value] of Object.entries(parameters)) {
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      content[key] = value;
+    } else if (
+      Array.isArray(value) &&
+      value.every((v): v is string => typeof v === "string")
+    ) {
+      content[key] = value;
+    } else if (value !== undefined) {
+      content[key] = JSON.stringify(value);
+    }
+  }
+  return content;
+}
 
 interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
@@ -110,7 +134,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     title: string;
     description?: string;
   }>({ title: "" });
-
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -210,6 +233,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     );
   };
 
+  const updateFieldIsSet = (fieldName: string, isSet: boolean) => {
+    setFormFields((prev) =>
+      prev.map((field) =>
+        field.name === fieldName ? { ...field, isSet } : field,
+      ),
+    );
+  };
+
   const applyParametersToFields = (params: Record<string, unknown>) => {
     setFormFields((prev) => applyParamsToFields(prev, params));
   };
@@ -238,19 +269,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         setStructuredResult(
           rawResult.structuredContent as Record<string, unknown>,
         );
-        // Check for OpenAI or MCP Apps component using tool metadata from definition
-        const toolMeta = getToolMeta(toolName);
-        const hasOpenAIComponent = toolMeta?.["openai/outputTemplate"];
-        const hasMCPAppsComponent = toolMeta?.["ui/resourceUri"];
-        // Default to showing Component view for widgets, Raw JSON otherwise
-        setShowStructured(!hasOpenAIComponent && !hasMCPAppsComponent);
       } else {
         setStructuredResult(null);
-        // Also check for OpenAI or MCP Apps even without structuredContent
-        const toolMeta = getToolMeta(toolName);
-        const hasOpenAIComponent = toolMeta?.["openai/outputTemplate"];
-        const hasMCPAppsComponent = toolMeta?.["ui/resourceUri"];
-        setShowStructured(!hasOpenAIComponent && !hasMCPAppsComponent);
       }
 
       const currentTool = tools[toolName];
@@ -369,9 +389,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     setElicitationLoading(true);
     try {
+      const content = normalizeElicitationContent(parameters);
       const payload: ElicitResult =
-        action === "accept"
-          ? { action: "accept", content: parameters ?? {} }
+        action === "accept" && content
+          ? { action: "accept", content }
           : { action };
       const response = await respondToElicitationApi(
         activeElicitation.requestId,
@@ -491,6 +512,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 selectedTool={selectedTool}
                 toolDescription={tools[selectedTool]?.description}
                 formFields={formFields}
+                onToggleField={updateFieldIsSet}
                 loading={loading}
                 waitingOnElicitation={!!activeElicitation}
                 onExecute={executeTool}
@@ -522,9 +544,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView
-                serverIds={serverName ? [serverName] : undefined}
-              />
+              <LoggerView serverIds={serverName ? [serverName] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>

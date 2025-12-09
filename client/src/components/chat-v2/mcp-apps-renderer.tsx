@@ -16,6 +16,8 @@ import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
+import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -26,6 +28,12 @@ type ToolState =
   | "input-available"
   | "output-available"
   | "output-error";
+
+// CSP metadata type per SEP-1865
+interface UIResourceCSP {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+}
 
 interface MCPAppsRendererProps {
   serverId: string;
@@ -74,10 +82,13 @@ export function MCPAppsRenderer({
 
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
   const [contentHeight, setContentHeight] = useState<number>(400);
-  const [maxHeight] = useState<number>(600);
+  const [maxHeight] = useState<number>(800);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
+  const [widgetCsp, setWidgetCsp] = useState<UIResourceCSP | undefined>(
+    undefined,
+  );
 
   const pendingRequests = useRef<
     Map<
@@ -118,18 +129,21 @@ export function MCPAppsRenderer({
           );
         }
 
-        // Fetch the processed HTML with injected script
-        const htmlResponse = await fetch(
+        // Fetch widget content with CSP metadata (SEP-1865)
+        const contentResponse = await fetch(
           `/api/mcp/apps/widget-content/${toolCallId}`,
         );
-        if (!htmlResponse.ok) {
+        if (!contentResponse.ok) {
+          const errorData = await contentResponse.json().catch(() => ({}));
           throw new Error(
-            `Failed to fetch widget HTML: ${htmlResponse.statusText}`,
+            errorData.error ||
+              `Failed to fetch widget: ${contentResponse.statusText}`,
           );
         }
 
-        const html = await htmlResponse.text();
+        const { html, csp } = await contentResponse.json();
         setWidgetHtml(html);
+        setWidgetCsp(csp);
       } catch (err) {
         setLoadError(
           err instanceof Error ? err.message : "Failed to prepare widget",
@@ -150,10 +164,60 @@ export function MCPAppsRenderer({
     themeMode,
   ]);
 
+  // UI logging
+  const addUiLog = useUiLogStore((s) => s.addLog);
+
+  // Widget debug store
+  const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
+  const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+
+  // Initialize widget debug info
+  useEffect(() => {
+    setWidgetDebugInfo(toolCallId, {
+      toolName,
+      protocol: "mcp-apps",
+      widgetState: null, // MCP Apps don't have widget state in the same way
+      globals: {
+        theme: themeMode,
+        displayMode,
+        maxHeight,
+        locale: navigator.language,
+      },
+    });
+  }, [
+    toolCallId,
+    toolName,
+    setWidgetDebugInfo,
+    themeMode,
+    displayMode,
+    maxHeight,
+  ]);
+
+  // Update globals in debug store when they change
+  useEffect(() => {
+    setWidgetGlobals(toolCallId, {
+      theme: themeMode,
+      displayMode,
+      maxHeight,
+    });
+  }, [toolCallId, themeMode, displayMode, maxHeight, setWidgetGlobals]);
+
   // JSON-RPC helpers
-  const postMessage = useCallback((data: unknown) => {
-    sandboxRef.current?.postMessage(data);
-  }, []);
+  const postMessage = useCallback(
+    (data: unknown) => {
+      // Log outgoing message
+      addUiLog({
+        widgetId: toolCallId,
+        serverId,
+        direction: "host-to-ui",
+        protocol: "mcp-apps",
+        method: extractMethod(data, "mcp-apps"),
+        message: data,
+      });
+      sandboxRef.current?.postMessage(data);
+    },
+    [addUiLog, toolCallId, serverId],
+  );
 
   const sendNotification = useCallback(
     (method: string, params: unknown) => {
@@ -185,6 +249,16 @@ export function MCPAppsRenderer({
 
       // Not a JSON-RPC message
       if (jsonrpc !== "2.0") return;
+
+      // Log incoming message
+      addUiLog({
+        widgetId: toolCallId,
+        serverId,
+        direction: "ui-to-host",
+        protocol: "mcp-apps",
+        method: extractMethod(event.data, "mcp-apps"),
+        message: event.data,
+      });
 
       // Handle responses to our requests
       if (id !== undefined && !method) {
@@ -258,7 +332,8 @@ export function MCPAppsRenderer({
                 body: JSON.stringify({ serverId, uri: readParams.uri }),
               });
               const result = await response.json();
-              sendResponse(id, result);
+              // API returns { content: { contents: [...] } }, SDK expects { contents: [...] }
+              sendResponse(id, result.content);
             } catch (err) {
               sendResponse(id, undefined, {
                 code: -32000,
@@ -279,9 +354,22 @@ export function MCPAppsRenderer({
           }
 
           case "ui/message": {
-            const messageParams = params as { content?: { text?: string } };
-            if (onSendFollowUp && messageParams.content?.text) {
-              onSendFollowUp(messageParams.content.text);
+            // SEP-1865 specifies: { role: "user", content: { type: "text", text: "..." } }
+            // SDK sends array:    { role: "user", content: [{ type: "text", text: "..." }] }
+            // Support both formats for compatibility
+            const messageParams = params as {
+              role?: string;
+              content?:
+                | { type: string; text?: string }
+                | Array<{ type: string; text?: string }>;
+            };
+            const textContent = Array.isArray(messageParams.content)
+              ? messageParams.content.find((c) => c.type === "text")?.text
+              : messageParams.content?.type === "text"
+                ? messageParams.content.text
+                : undefined;
+            if (onSendFollowUp && textContent) {
+              onSendFollowUp(textContent);
             }
             sendResponse(id, {});
             break;
@@ -311,7 +399,7 @@ export function MCPAppsRenderer({
             }
             break;
 
-          case "ui/size-change": {
+          case "ui/notifications/size-change": {
             const sizeParams = params as { height?: number };
             if (typeof sizeParams.height === "number") {
               setContentHeight(Math.min(sizeParams.height, maxHeight));
@@ -333,21 +421,40 @@ export function MCPAppsRenderer({
       onCallTool,
       onSendFollowUp,
       serverId,
+      toolCallId,
       toolInput,
       toolOutput,
       toolState,
       sendResponse,
       sendNotification,
+      addUiLog,
     ],
   );
 
-  // Send theme updates when theme changes (per SEP-1865: ui/host-context-change)
+  // Track previous theme to avoid sending redundant notifications on mount
+  // (theme is already included in McpUiInitializeResult.hostContext)
+  const prevThemeRef = useRef<string | null>(null);
+
+  // Send theme updates only when theme actually changes (not on initial mount)
   useEffect(() => {
     if (!isReady) return;
-    sendNotification("ui/host-context-change", { theme: themeMode });
+
+    // Skip initial mount - theme was already sent in initialize response
+    if (prevThemeRef.current === null) {
+      prevThemeRef.current = themeMode;
+      return;
+    }
+
+    // Only send notification if theme actually changed
+    if (prevThemeRef.current !== themeMode) {
+      prevThemeRef.current = themeMode;
+      sendNotification("ui/notifications/host-context-changed", {
+        theme: themeMode,
+      });
+    }
   }, [themeMode, isReady, sendNotification]);
 
-  // Loading states (same patterns as openai-app-renderer.tsx)
+  // Loading states
   if (toolState !== "output-available") {
     return (
       <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
@@ -374,7 +481,8 @@ export function MCPAppsRenderer({
 
   const isPip = displayMode === "pip" && pipWidgetId === toolCallId;
   const isFullscreen = displayMode === "fullscreen";
-  const appliedHeight = Math.min(Math.max(contentHeight, 320), maxHeight);
+  // Apply maxHeight constraint, but no minimum - let widget control its size
+  const appliedHeight = Math.min(contentHeight, maxHeight);
 
   let containerClassName = "mt-3 space-y-2 relative group";
   if (isFullscreen) {
@@ -408,11 +516,11 @@ export function MCPAppsRenderer({
         ref={sandboxRef}
         html={widgetHtml}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        csp={widgetCsp}
         onMessage={handleMessage}
         title={`MCP App: ${toolName}`}
-        className="w-full border border-border/40 rounded-md bg-background"
+        className="w-full border border-border/40 rounded-md bg-background transition-[height] duration-200 ease-out overflow-auto"
         style={{
-          minHeight: "320px",
           height: isFullscreen ? "100%" : `${appliedHeight}px`,
         }}
       />

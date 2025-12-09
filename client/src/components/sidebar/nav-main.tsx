@@ -40,7 +40,7 @@ export function NavMain({ items, onItemClick }: NavMainProps) {
                 onClick={() => handleClick(item.url)}
                 className={
                   isItemActive(item)
-                    ? "[&[data-active=true]]:bg-black/5 dark:[&[data-active=true]]:bg-white/5 cursor-pointer"
+                    ? "[&[data-active=true]]:bg-accent cursor-pointer"
                     : "cursor-pointer"
                 }
               >

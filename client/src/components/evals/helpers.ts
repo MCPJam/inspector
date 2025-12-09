@@ -191,15 +191,15 @@ export function formatTokens(tokens: number): string {
 export function getIterationBorderColor(result: string): string {
   switch (result) {
     case RESULT_STATUS.PASSED:
-      return "bg-emerald-500/50";
+      return "bg-success/50";
     case RESULT_STATUS.FAILED:
-      return "bg-red-500/50";
+      return "bg-destructive/50";
     case RESULT_STATUS.CANCELLED:
-      return "bg-zinc-300/50";
+      return "bg-muted";
     case RESULT_STATUS.PENDING:
-      return "bg-amber-500/50";
+      return "bg-warning/50";
     default:
-      return "bg-gray-500/50";
+      return "bg-muted-foreground/50";
   }
 }
 
@@ -207,13 +207,13 @@ export function getIterationBorderColor(result: string): string {
  * Get status dot color
  */
 export function getStatusDotColor(result: string, status?: string): string {
-  if (result === RESULT_STATUS.PASSED) return "bg-emerald-500";
-  if (result === RESULT_STATUS.FAILED) return "bg-red-500";
-  if (result === RESULT_STATUS.CANCELLED) return "bg-gray-400";
+  if (result === RESULT_STATUS.PASSED) return "bg-success";
+  if (result === RESULT_STATUS.FAILED) return "bg-destructive";
+  if (result === RESULT_STATUS.CANCELLED) return "bg-muted-foreground";
   if (result === RESULT_STATUS.PENDING || status === "pending")
-    return "bg-amber-400";
-  if (status === "running") return "bg-amber-400";
-  return "bg-gray-400";
+    return "bg-warning";
+  if (status === "running") return "bg-warning";
+  return "bg-muted-foreground";
 }
 
 /**

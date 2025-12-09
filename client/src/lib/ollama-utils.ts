@@ -20,7 +20,7 @@ interface OllamaShowResponse {
   capabilities: string[];
 }
 
-export class OllamaClient {
+class OllamaClient {
   private baseUrl: string;
   private static normalizeBaseUrl(raw: string): string {
     const trimmed = (raw || "").replace(/\/+$/, "");
@@ -116,9 +116,6 @@ export class OllamaClient {
   }
 }
 
-// Create a singleton instance
-export const ollamaClient = new OllamaClient();
-
 // Utility functions
 export const detectOllamaModels = async (
   baseUrl?: string,
@@ -127,7 +124,7 @@ export const detectOllamaModels = async (
   availableModels: string[];
 }> => {
   // Use a temporary client with the provided base URL if given
-  const client = baseUrl ? new OllamaClient(baseUrl) : ollamaClient;
+  const client = baseUrl ? new OllamaClient(baseUrl) : new OllamaClient();
 
   const isRunning = await client.isOllamaRunning();
 
@@ -147,6 +144,6 @@ export const detectOllamaModels = async (
 export const detectOllamaToolCapableModels = async (
   baseUrl?: string,
 ): Promise<string[]> => {
-  const client = baseUrl ? new OllamaClient(baseUrl) : ollamaClient;
+  const client = baseUrl ? new OllamaClient(baseUrl) : new OllamaClient();
   return client.getToolCapableModels();
 };

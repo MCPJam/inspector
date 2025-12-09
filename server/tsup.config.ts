@@ -57,12 +57,20 @@ export default defineConfig({
   async onSuccess() {
     // Copy static assets to dist folder
     // Since the bundle is at dist/server/index.js, __dirname resolves to dist/server/
-    // so the HTML file needs to be at dist/server/sandbox-proxy.html
+    // so the HTML files need to live alongside it
     const distDir = join(rootDir, "dist/server");
     mkdirSync(distDir, { recursive: true });
-    copyFileSync(
-      join(serverDir, "routes/mcp/sandbox-proxy.html"),
-      join(distDir, "sandbox-proxy.html"),
-    );
+
+    const assets = [
+      { src: "routes/mcp/sandbox-proxy.html", dest: "sandbox-proxy.html" },
+      {
+        src: "routes/mcp/chatgpt-sandbox-proxy.html",
+        dest: "chatgpt-sandbox-proxy.html",
+      },
+    ];
+
+    for (const asset of assets) {
+      copyFileSync(join(serverDir, asset.src), join(distDir, asset.dest));
+    }
   },
 });

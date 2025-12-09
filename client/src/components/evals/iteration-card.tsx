@@ -30,15 +30,15 @@ export function IterationCard({
         <div className="flex items-center gap-4 flex-1">
           <div className="flex items-center gap-2">
             {isPending ? (
-              <Clock className="h-4 w-4 text-yellow-500" />
+              <Clock className="h-4 w-4 text-warning" />
             ) : iteration.result === "failed" ? (
-              <XCircle className="h-4 w-4 text-red-600" />
+              <XCircle className="h-4 w-4 text-destructive" />
             ) : (
-              <CheckCircle className="h-4 w-4 text-green-600" />
+              <CheckCircle className="h-4 w-4 text-success" />
             )}
             {iteration.error && (
               <AlertCircle
-                className="h-3.5 w-3.5 text-red-600"
+                className="h-3.5 w-3.5 text-destructive"
                 title="Error occurred"
               />
             )}

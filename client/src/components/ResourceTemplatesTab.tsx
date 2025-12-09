@@ -17,9 +17,9 @@ import {
   type MCPResourceTemplate,
   type MCPReadResourceResult,
 } from "@/sdk";
-import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/mcp-resource-templates-api";
-import { readResource as readResourceTemplateApi } from "@/lib/mcp-resources-api";
-import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/apis/mcp-resource-templates-api";
+import { readResource as readResourceTemplateApi } from "@/lib/apis/mcp-resources-api";
+import { LoggerView } from "./logging/logger-view";
 
 interface ResourceTemplatesTabProps {
   serverConfig?: MCPServerConfig;
@@ -351,13 +351,13 @@ export function ResourceTemplatesTab({
                       >
                         {loading ? (
                           <>
-                            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                            <span className="font-mono text-xs">Loading</span>
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Loading
                           </>
                         ) : (
                           <>
-                            <Eye className="h-3 w-3 mr-1.5 cursor-pointer" />
-                            <span className="font-mono text-xs">Read</span>
+                            <Eye className="h-3 w-3" />
+                            Read
                           </>
                         )}
                       </Button>
@@ -462,9 +462,7 @@ export function ResourceTemplatesTab({
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView
-                serverIds={serverName ? [serverName] : undefined}
-              />
+              <LoggerView serverIds={serverName ? [serverName] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>
