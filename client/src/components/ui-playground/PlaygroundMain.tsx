@@ -92,9 +92,21 @@ const LOCALE_OPTIONS = [
 ];
 
 /** CSP mode options for widget sandbox */
-const CSP_MODE_OPTIONS: { mode: CspMode; label: string; description: string }[] = [
-  { mode: "permissive", label: "Permissive", description: "Allows all HTTPS resources" },
-  { mode: "widget-declared", label: "Strict", description: "Only widget-declared domains" },
+const CSP_MODE_OPTIONS: {
+  mode: CspMode;
+  label: string;
+  description: string;
+}[] = [
+  {
+    mode: "permissive",
+    label: "Permissive",
+    description: "Allows all HTTPS resources",
+  },
+  {
+    mode: "widget-declared",
+    label: "Strict",
+    description: "Only widget-declared domains",
+  },
 ];
 
 interface PlaygroundMainProps {
@@ -514,7 +526,10 @@ export function PlaygroundMain({
           <Tooltip>
             <TooltipTrigger asChild>
               <div>
-                <Select value={cspMode} onValueChange={(v) => setCspMode(v as CspMode)}>
+                <Select
+                  value={cspMode}
+                  onValueChange={(v) => setCspMode(v as CspMode)}
+                >
                   <SelectTrigger
                     size="sm"
                     className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"

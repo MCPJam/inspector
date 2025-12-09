@@ -6,7 +6,14 @@
  */
 
 import { useMemo, useState } from "react";
-import { AlertCircle, ExternalLink, Copy, Check, Lightbulb, ChevronRight } from "lucide-react";
+import {
+  AlertCircle,
+  ExternalLink,
+  Copy,
+  Check,
+  Lightbulb,
+  ChevronRight,
+} from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import type { CspMode } from "@/stores/ui-playground-store";
@@ -30,7 +37,13 @@ interface CspDebugPanelProps {
  * Extract origin (scheme + host) from a URL string
  */
 function extractOrigin(url: string): string | null {
-  if (!url || url === "inline" || url === "eval" || url === "data" || url === "blob") {
+  if (
+    !url ||
+    url === "inline" ||
+    url === "eval" ||
+    url === "data" ||
+    url === "blob"
+  ) {
     return null;
   }
   try {
@@ -46,7 +59,9 @@ function extractOrigin(url: string): string | null {
 /**
  * Determine which widgetCSP field a directive maps to
  */
-function getFieldForDirective(directive: string): "connect_domains" | "resource_domains" | null {
+function getFieldForDirective(
+  directive: string,
+): "connect_domains" | "resource_domains" | null {
   const effectiveDirective = directive.replace(/-src$/, "");
 
   // connect-src → connect_domains
@@ -55,7 +70,11 @@ function getFieldForDirective(directive: string): "connect_domains" | "resource_
   }
 
   // script-src, style-src, img-src, font-src, media-src → resource_domains
-  if (["script", "style", "img", "font", "media", "default"].includes(effectiveDirective)) {
+  if (
+    ["script", "style", "img", "font", "media", "default"].includes(
+      effectiveDirective,
+    )
+  ) {
     return "resource_domains";
   }
 
@@ -82,7 +101,8 @@ function analyzeSuggestedFixes(violations: CspViolation[]): SuggestedFix[] {
 
     if (!field || !origin) continue;
 
-    const targetMap = field === "connect_domains" ? connectDomains : resourceDomains;
+    const targetMap =
+      field === "connect_domains" ? connectDomains : resourceDomains;
     const existing = targetMap.get(origin) || [];
     existing.push(v);
     targetMap.set(origin, existing);
@@ -114,13 +134,14 @@ function analyzeSuggestedFixes(violations: CspViolation[]): SuggestedFix[] {
  */
 function generateCodeSnippet(
   fixes: SuggestedFix[],
-  existing?: { connect_domains?: string[]; resource_domains?: string[] } | null
+  existing?: { connect_domains?: string[]; resource_domains?: string[] } | null,
 ): string {
   const connectDomains = new Set(existing?.connect_domains || []);
   const resourceDomains = new Set(existing?.resource_domains || []);
 
   for (const fix of fixes) {
-    const targetSet = fix.field === "connect_domains" ? connectDomains : resourceDomains;
+    const targetSet =
+      fix.field === "connect_domains" ? connectDomains : resourceDomains;
     for (const domain of fix.domains) {
       targetSet.add(domain);
     }
@@ -145,17 +166,21 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
 
   // Get widget's declared domains (what they put in openai/widgetCSP)
   const declaredConnectDomains = cspInfo?.widgetDeclared?.connect_domains ?? [];
-  const declaredResourceDomains = cspInfo?.widgetDeclared?.resource_domains ?? [];
+  const declaredResourceDomains =
+    cspInfo?.widgetDeclared?.resource_domains ?? [];
 
   // Analyze violations and generate suggested fixes
   const suggestedFixes = useMemo(
     () => analyzeSuggestedFixes(violations),
-    [violations]
+    [violations],
   );
 
   const codeSnippet = useMemo(
-    () => hasViolations ? generateCodeSnippet(suggestedFixes, cspInfo?.widgetDeclared) : "",
-    [suggestedFixes, cspInfo?.widgetDeclared, hasViolations]
+    () =>
+      hasViolations
+        ? generateCodeSnippet(suggestedFixes, cspInfo?.widgetDeclared)
+        : "",
+    [suggestedFixes, cspInfo?.widgetDeclared, hasViolations],
   );
 
   const handleCopy = async () => {
@@ -209,7 +234,8 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
             <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
             <AlertCircle className="h-3.5 w-3.5" />
             <span className="font-medium">
-              {violations.length} blocked request{violations.length !== 1 ? "s" : ""}
+              {violations.length} blocked request
+              {violations.length !== 1 ? "s" : ""}
             </span>
           </summary>
           <div className="mt-2 space-y-1 max-h-32 overflow-auto pl-5">
@@ -218,7 +244,10 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
                 key={i}
                 className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
               >
-                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 shrink-0">
+                <Badge
+                  variant="outline"
+                  className="text-[9px] px-1 py-0 h-4 shrink-0"
+                >
                   {v.effectiveDirective || v.directive}
                 </Badge>
                 <span className="font-mono truncate">
@@ -238,17 +267,19 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
           </Label>
           <div className="text-[10px]">
             {currentMode === "permissive" ? (
-              <span className="text-muted-foreground italic">Not enforced in permissive mode</span>
+              <span className="text-muted-foreground italic">
+                Not enforced in permissive mode
+              </span>
             ) : declaredConnectDomains.length > 0 ? (
               <div className="font-mono space-y-0.5">
                 {declaredConnectDomains.map((d, i) => (
-                  <div key={i} className="truncate">{d}</div>
+                  <div key={i} className="truncate">
+                    {d}
+                  </div>
                 ))}
               </div>
             ) : (
-              <span className="text-muted-foreground italic">
-                Not declared
-              </span>
+              <span className="text-muted-foreground italic">Not declared</span>
             )}
           </div>
         </div>
@@ -259,17 +290,19 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
           </Label>
           <div className="text-[10px]">
             {currentMode === "permissive" ? (
-              <span className="text-muted-foreground italic">Not enforced in permissive mode</span>
+              <span className="text-muted-foreground italic">
+                Not enforced in permissive mode
+              </span>
             ) : declaredResourceDomains.length > 0 ? (
               <div className="font-mono space-y-0.5">
                 {declaredResourceDomains.map((d, i) => (
-                  <div key={i} className="truncate">{d}</div>
+                  <div key={i} className="truncate">
+                    {d}
+                  </div>
                 ))}
               </div>
             ) : (
-              <span className="text-muted-foreground italic">
-                Not declared
-              </span>
+              <span className="text-muted-foreground italic">Not declared</span>
             )}
           </div>
         </div>
