@@ -499,6 +499,10 @@ export function ChatGPTAppRenderer({
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
   const lastAppliedHeightRef = useRef<number>(0);
 
+  // Host-backed navigation state for fullscreen header buttons
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
+
   // Get CSP mode, device type, capabilities, and safe area from playground store
   // Only apply custom settings when in UI Playground
   // ChatTabV2 and ResultsPanel should always use defaults
@@ -650,6 +654,9 @@ export function ChatGPTAppRenderer({
 
   useEffect(() => {
     lastAppliedHeightRef.current = 0;
+    // Reset navigation state when widget URL changes
+    setCanGoBack(false);
+    setCanGoForward(false);
     if (!widgetUrl) return;
     setContentHeight(320);
     if (displayMode === "inline") {
@@ -697,6 +704,18 @@ export function ChatGPTAppRenderer({
       }
     },
     [addUiLog, resolvedToolCallId, serverId, modalSandboxReady],
+  );
+
+  // Host-backed navigation: send navigation command to widget
+  const navigateWidget = useCallback(
+    (direction: "back" | "forward") => {
+      sandboxRef.current?.postMessage({
+        type: "openai:navigate",
+        direction,
+        toolId: resolvedToolCallId,
+      });
+    },
+    [resolvedToolCallId],
   );
 
   const handleSandboxMessage = useCallback(
@@ -866,6 +885,14 @@ export function ChatGPTAppRenderer({
           setModalTitle(event.data.title || "Modal");
           setModalParams(event.data.params || {});
           setModalOpen(true);
+          break;
+        }
+        case "openai:navigationStateChanged": {
+          // Host-backed navigation: update navigation button state
+          if (event.data.toolId === resolvedToolCallId) {
+            setCanGoBack(event.data.canGoBack ?? false);
+            setCanGoForward(event.data.canGoForward ?? false);
+          }
           break;
         }
       }
@@ -1094,15 +1121,25 @@ export function ChatGPTAppRenderer({
         <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-50 shrink-0">
           <div className="flex items-center gap-2">
             <button
-              disabled
-              className="p-2 rounded-lg hover:bg-muted text-muted-foreground/50 cursor-not-allowed transition-colors"
+              onClick={() => navigateWidget("back")}
+              disabled={!canGoBack}
+              className={`p-2 rounded-lg transition-colors ${
+                canGoBack
+                  ? "hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                  : "text-muted-foreground/50 cursor-not-allowed"
+              }`}
               aria-label="Go back"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
             <button
-              disabled
-              className="p-2 rounded-lg hover:bg-muted text-muted-foreground/50 cursor-not-allowed transition-colors"
+              onClick={() => navigateWidget("forward")}
+              disabled={!canGoForward}
+              className={`p-2 rounded-lg transition-colors ${
+                canGoForward
+                  ? "hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                  : "text-muted-foreground/50 cursor-not-allowed"
+              }`}
               aria-label="Go forward"
             >
               <ChevronRight className="w-5 h-5" />
