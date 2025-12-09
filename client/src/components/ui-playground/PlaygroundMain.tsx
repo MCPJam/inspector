@@ -59,6 +59,7 @@ import {
   type DeviceType,
   type DisplayMode,
   type CspMode,
+  type AppProtocol,
 } from "@/stores/ui-playground-store";
 import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
@@ -262,13 +263,26 @@ export function PlaygroundMain({
     return () => setPlaygroundActive(false);
   }, [setPlaygroundActive]);
 
-  // CSP mode from store
+  // CSP mode from store (ChatGPT Apps)
   const cspMode = useUIPlaygroundStore((s) => s.cspMode);
   const setCspMode = useUIPlaygroundStore((s) => s.setCspMode);
+
+  // CSP mode for MCP Apps (SEP-1865)
+  const mcpAppsCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
+  const setMcpAppsCspMode = useUIPlaygroundStore((s) => s.setMcpAppsCspMode);
+
+  // Currently selected protocol (detected from tool metadata)
+  const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
 
   // Device capabilities from store
   const capabilities = useUIPlaygroundStore((s) => s.capabilities);
   const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
+
+  // Show ChatGPT Apps controls when: no protocol selected (default) or openai-apps
+  const showChatGPTControls =
+    selectedProtocol === null || selectedProtocol === "openai-apps";
+  // Show MCP Apps controls when mcp-apps protocol is selected
+  const showMCPAppsControls = selectedProtocol === "mcp-apps";
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -452,168 +466,346 @@ export function PlaygroundMain({
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {/* Device frame header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
-        {/* Device type toggle - flex-1 to balance with right section */}
-        <div className="flex-1 flex justify-start">
-          <ToggleGroup
-            type="single"
-            value={deviceType}
-            onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
-            className="gap-0.5"
-          >
-            <ToggleGroupItem
-              value="mobile"
-              aria-label="Mobile"
-              title="Mobile (430x932)"
-              className="h-7 w-7 p-0 cursor-pointer"
+        {/* Left section - Device type toggle (ChatGPT Apps) or Protocol label (MCP Apps) */}
+        <div className="flex-1 flex justify-start items-center gap-2">
+          {showChatGPTControls && (
+            <ToggleGroup
+              type="single"
+              value={deviceType}
+              onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
+              className="gap-0.5"
             >
-              <Smartphone className="h-3.5 w-3.5" />
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="tablet"
-              aria-label="Tablet"
-              title="Tablet (820x1180)"
-              className="h-7 w-7 p-0 cursor-pointer"
-            >
-              <Tablet className="h-3.5 w-3.5" />
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="desktop"
-              aria-label="Desktop"
-              title="Desktop (1280x800)"
-              className="h-7 w-7 p-0 cursor-pointer"
-            >
-              <Monitor className="h-3.5 w-3.5" />
-            </ToggleGroupItem>
-          </ToggleGroup>
+              <ToggleGroupItem
+                value="mobile"
+                aria-label="Mobile"
+                title="Mobile (430x932)"
+                className="h-7 w-7 p-0 cursor-pointer"
+              >
+                <Smartphone className="h-3.5 w-3.5" />
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="tablet"
+                aria-label="Tablet"
+                title="Tablet (820x1180)"
+                className="h-7 w-7 p-0 cursor-pointer"
+              >
+                <Tablet className="h-3.5 w-3.5" />
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="desktop"
+                aria-label="Desktop"
+                title="Desktop (1280x800)"
+                className="h-7 w-7 p-0 cursor-pointer"
+              >
+                <Monitor className="h-3.5 w-3.5" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+          )}
+          {showMCPAppsControls && (
+            <>
+              <ToggleGroup
+                type="single"
+                value={deviceType}
+                onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
+                className="gap-0.5"
+              >
+                <ToggleGroupItem
+                  value="mobile"
+                  aria-label="Mobile"
+                  title="Mobile (430x932)"
+                  className="h-7 w-7 p-0 cursor-pointer"
+                >
+                  <Smartphone className="h-3.5 w-3.5" />
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="tablet"
+                  aria-label="Tablet"
+                  title="Tablet (820x1180)"
+                  className="h-7 w-7 p-0 cursor-pointer"
+                >
+                  <Tablet className="h-3.5 w-3.5" />
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="desktop"
+                  aria-label="Desktop"
+                  title="Desktop (1280x800)"
+                  className="h-7 w-7 p-0 cursor-pointer"
+                >
+                  <Monitor className="h-3.5 w-3.5" />
+                </ToggleGroupItem>
+              </ToggleGroup>
+              <span className="text-[10px] font-medium text-muted-foreground/60 px-1.5 py-0.5 bg-muted/30 rounded">
+                SEP-1865
+              </span>
+            </>
+          )}
         </div>
 
-        {/* Device label, locale, and theme */}
+        {/* Center section - Protocol-specific controls */}
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <DeviceIcon className="h-3.5 w-3.5" />
-            <span>{deviceConfig.label}</span>
-            <span className="text-[10px] text-muted-foreground/60">
-              ({deviceConfig.width}×{deviceConfig.height})
-            </span>
-          </div>
-
-          {/* Locale selector */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div>
-                <Select value={locale} onValueChange={onLocaleChange}>
-                  <SelectTrigger
-                    size="sm"
-                    className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
-                  >
-                    <Globe className="h-3.5 w-3.5" />
-                    <SelectValue>{locale}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LOCALE_OPTIONS.map((option) => (
-                      <SelectItem key={option.code} value={option.code}>
-                        <span className="flex items-center gap-2">
-                          <span>{option.label}</span>
-                          <span className="text-muted-foreground text-[10px]">
-                            {option.code}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+          {/* ChatGPT Apps: Device label and locale */}
+          {showChatGPTControls && (
+            <>
+              <div className="flex items-center gap-2">
+                <DeviceIcon className="h-3.5 w-3.5" />
+                <span>{deviceConfig.label}</span>
+                <span className="text-[10px] text-muted-foreground/60">
+                  ({deviceConfig.width}×{deviceConfig.height})
+                </span>
               </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className="font-medium">Locale</p>
-            </TooltipContent>
-          </Tooltip>
 
-          {/* CSP mode selector */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div>
-                <Select
-                  value={cspMode}
-                  onValueChange={(v) => setCspMode(v as CspMode)}
-                >
-                  <SelectTrigger
-                    size="sm"
-                    className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
-                  >
-                    <Shield className="h-3.5 w-3.5" />
-                    <SelectValue>
-                      {CSP_MODE_OPTIONS.find((o) => o.mode === cspMode)?.label}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CSP_MODE_OPTIONS.map((option) => (
-                      <SelectItem key={option.mode} value={option.mode}>
-                        <span className="flex items-center gap-2">
-                          <span className="font-medium">{option.label}</span>
-                          <span className="text-muted-foreground text-[10px]">
-                            {option.description}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* Locale selector */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <Select value={locale} onValueChange={onLocaleChange}>
+                      <SelectTrigger
+                        size="sm"
+                        className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                      >
+                        <Globe className="h-3.5 w-3.5" />
+                        <SelectValue>{locale}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {LOCALE_OPTIONS.map((option) => (
+                          <SelectItem key={option.code} value={option.code}>
+                            <span className="flex items-center gap-2">
+                              <span>{option.label}</span>
+                              <span className="text-muted-foreground text-[10px]">
+                                {option.code}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">Locale</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* CSP mode selector (ChatGPT Apps) */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <Select
+                      value={cspMode}
+                      onValueChange={(v) => setCspMode(v as CspMode)}
+                    >
+                      <SelectTrigger
+                        size="sm"
+                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                      >
+                        <Shield className="h-3.5 w-3.5" />
+                        <SelectValue>
+                          {CSP_MODE_OPTIONS.find((o) => o.mode === cspMode)?.label}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CSP_MODE_OPTIONS.map((option) => (
+                          <SelectItem key={option.mode} value={option.mode}>
+                            <span className="flex items-center gap-2">
+                              <span className="font-medium">{option.label}</span>
+                              <span className="text-muted-foreground text-[10px]">
+                                {option.description}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">CSP</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Capabilities toggles */}
+              <div className="flex items-center gap-0.5 border-l border-border/50 pl-3 ml-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={capabilities.hover ? "secondary" : "ghost"}
+                      size="icon"
+                      onClick={() =>
+                        setCapabilities({ hover: !capabilities.hover })
+                      }
+                      className="h-7 w-7"
+                    >
+                      <MousePointer2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Hover</p>
+                    <p className="text-xs text-muted-foreground">
+                      {capabilities.hover ? "Enabled" : "Disabled"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={capabilities.touch ? "secondary" : "ghost"}
+                      size="icon"
+                      onClick={() =>
+                        setCapabilities({ touch: !capabilities.touch })
+                      }
+                      className="h-7 w-7"
+                    >
+                      <Hand className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Touch</p>
+                    <p className="text-xs text-muted-foreground">
+                      {capabilities.touch ? "Enabled" : "Disabled"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
               </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className="font-medium">CSP</p>
-            </TooltipContent>
-          </Tooltip>
 
-          {/* Capabilities toggles */}
-          <div className="flex items-center gap-0.5 border-l border-border/50 pl-3 ml-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={capabilities.hover ? "secondary" : "ghost"}
-                  size="icon"
-                  onClick={() =>
-                    setCapabilities({ hover: !capabilities.hover })
-                  }
-                  className="h-7 w-7"
-                >
-                  <MousePointer2 className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="font-medium">Hover</p>
-                <p className="text-xs text-muted-foreground">
-                  {capabilities.hover ? "Enabled" : "Disabled"}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={capabilities.touch ? "secondary" : "ghost"}
-                  size="icon"
-                  onClick={() =>
-                    setCapabilities({ touch: !capabilities.touch })
-                  }
-                  className="h-7 w-7"
-                >
-                  <Hand className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="font-medium">Touch</p>
-                <p className="text-xs text-muted-foreground">
-                  {capabilities.touch ? "Enabled" : "Disabled"}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
+              {/* Safe area editor */}
+              <SafeAreaEditor />
+            </>
+          )}
 
-          {/* Safe area editor */}
-          <SafeAreaEditor />
+          {/* MCP Apps controls */}
+          {showMCPAppsControls && (
+            <>
+              {/* Device info */}
+              <div className="flex items-center gap-2">
+                <DeviceIcon className="h-3.5 w-3.5" />
+                <span>{deviceConfig.label}</span>
+                <span className="text-[10px] text-muted-foreground/60">
+                  ({deviceConfig.width}×{deviceConfig.height})
+                </span>
+              </div>
 
-          {/* Theme toggle */}
+              {/* Locale selector */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <Select value={locale} onValueChange={onLocaleChange}>
+                      <SelectTrigger
+                        size="sm"
+                        className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                      >
+                        <Globe className="h-3.5 w-3.5" />
+                        <SelectValue>{locale}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {LOCALE_OPTIONS.map((option) => (
+                          <SelectItem key={option.code} value={option.code}>
+                            <span className="flex items-center gap-2">
+                              <span>{option.label}</span>
+                              <span className="text-muted-foreground text-[10px]">
+                                {option.code}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">Locale</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* CSP mode selector */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <Select
+                      value={mcpAppsCspMode}
+                      onValueChange={(v) => setMcpAppsCspMode(v as CspMode)}
+                    >
+                      <SelectTrigger
+                        size="sm"
+                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                      >
+                        <Shield className="h-3.5 w-3.5" />
+                        <SelectValue>
+                          {CSP_MODE_OPTIONS.find((o) => o.mode === mcpAppsCspMode)?.label}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CSP_MODE_OPTIONS.map((option) => (
+                          <SelectItem key={option.mode} value={option.mode}>
+                            <span className="flex items-center gap-2">
+                              <span className="font-medium">{option.label}</span>
+                              <span className="text-muted-foreground text-[10px]">
+                                {option.description}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">CSP Mode</p>
+                  <p className="text-xs text-muted-foreground">
+                    Content Security Policy for MCP Apps
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Device capabilities toggles */}
+              <div className="flex items-center gap-0.5 border-l border-border/50 pl-3 ml-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={capabilities.hover ? "secondary" : "ghost"}
+                      size="icon"
+                      onClick={() =>
+                        setCapabilities({ hover: !capabilities.hover })
+                      }
+                      className="h-7 w-7"
+                    >
+                      <MousePointer2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Hover</p>
+                    <p className="text-xs text-muted-foreground">
+                      {capabilities.hover ? "Enabled" : "Disabled"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={capabilities.touch ? "secondary" : "ghost"}
+                      size="icon"
+                      onClick={() =>
+                        setCapabilities({ touch: !capabilities.touch })
+                      }
+                      className="h-7 w-7"
+                    >
+                      <Hand className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Touch</p>
+                    <p className="text-xs text-muted-foreground">
+                      {capabilities.touch ? "Enabled" : "Disabled"}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+
+              {/* Safe area editor */}
+              <SafeAreaEditor />
+            </>
+          )}
+
+          {/* Theme toggle - shown for both protocols */}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

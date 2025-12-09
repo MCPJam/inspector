@@ -11,6 +11,7 @@
 
 import { useRef, useState, useEffect, useCallback } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useUIPlaygroundStore, type CspMode } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
 import {
   SandboxedIframe,
@@ -80,6 +81,11 @@ export function MCPAppsRenderer({
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
+  // Get CSP mode from playground store when in playground, otherwise use permissive
+  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
+  const cspMode: CspMode = isPlaygroundActive ? playgroundCspMode : "permissive";
+
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
   const [contentHeight, setContentHeight] = useState<number>(400);
   const [maxHeight] = useState<number>(800);
@@ -120,6 +126,7 @@ export function MCPAppsRenderer({
             toolName,
             theme: themeMode,
             protocol: "mcp-apps",
+            cspMode, // Pass CSP mode preference
           }),
         });
 
@@ -131,7 +138,7 @@ export function MCPAppsRenderer({
 
         // Fetch widget content with CSP metadata (SEP-1865)
         const contentResponse = await fetch(
-          `/api/mcp/apps/widget-content/${toolCallId}`,
+          `/api/mcp/apps/widget-content/${toolCallId}?csp_mode=${cspMode}`,
         );
         if (!contentResponse.ok) {
           const errorData = await contentResponse.json().catch(() => ({}));
@@ -162,6 +169,7 @@ export function MCPAppsRenderer({
     toolOutput,
     toolName,
     themeMode,
+    cspMode,
   ]);
 
   // UI logging
