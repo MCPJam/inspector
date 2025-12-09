@@ -195,4 +195,14 @@ OpenAI Apps can request different display modes to optimize their presentation:
 - **Picture-in-Picture** - Widget floats at the top of the screen, staying visible while you scroll through the chat
 - **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
 
-Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-left corner of the widget.
+Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-right corner of the widget.
+
+#### Fullscreen navigation
+
+When a widget is in fullscreen mode, a navigation header appears at the top with:
+
+- **Back/Forward buttons** - Navigate through the widget's browsing history (enabled when navigation is available)
+- **Widget title** - Displays the tool name
+- **Close button** - Exit fullscreen mode
+
+The navigation buttons mirror the widget's internal history state, allowing you to navigate multi-page widgets without leaving fullscreen mode.
