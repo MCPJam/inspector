@@ -469,36 +469,45 @@ export function PlaygroundMain({
         {/* All controls centered */}
         <div className="flex items-center gap-4">
           {/* Device type selector */}
-          <Select
-            value={deviceType}
-            onValueChange={(v) => onDeviceTypeChange?.(v as DeviceType)}
-          >
-            <SelectTrigger
-              size="sm"
-              className="h-7 w-auto min-w-[100px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
-            >
-              <DeviceIcon className="h-3.5 w-3.5" />
-              <SelectValue>{deviceConfig.label}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.entries(DEVICE_CONFIGS) as [DeviceType, typeof deviceConfig][]).map(
-                ([type, config]) => {
-                  const Icon = config.icon;
-                  return (
-                    <SelectItem key={type} value={type}>
-                      <span className="flex items-center gap-2">
-                        <Icon className="h-3.5 w-3.5" />
-                        <span>{config.label}</span>
-                        <span className="text-muted-foreground text-[10px]">
-                          ({config.width}×{config.height})
-                        </span>
-                      </span>
-                    </SelectItem>
-                  );
-                }
-              )}
-            </SelectContent>
-          </Select>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select
+                  value={deviceType}
+                  onValueChange={(v) => onDeviceTypeChange?.(v as DeviceType)}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 w-auto min-w-[100px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                  >
+                    <DeviceIcon className="h-3.5 w-3.5" />
+                    <SelectValue>{deviceConfig.label}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.entries(DEVICE_CONFIGS) as [DeviceType, typeof deviceConfig][]).map(
+                      ([type, config]) => {
+                        const Icon = config.icon;
+                        return (
+                          <SelectItem key={type} value={type}>
+                            <span className="flex items-center gap-2">
+                              <Icon className="h-3.5 w-3.5" />
+                              <span>{config.label}</span>
+                              <span className="text-muted-foreground text-[10px]">
+                                ({config.width}×{config.height})
+                              </span>
+                            </span>
+                          </SelectItem>
+                        );
+                      }
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Device</p>
+            </TooltipContent>
+          </Tooltip>
           {/* Locale selector */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -613,7 +622,16 @@ export function PlaygroundMain({
           </div>
 
           {/* Safe area editor */}
-          <SafeAreaEditor />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <SafeAreaEditor />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Safe Area</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Theme toggle */}
           <Tooltip>
