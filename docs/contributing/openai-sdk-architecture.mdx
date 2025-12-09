@@ -394,10 +394,10 @@ const openaiAPI = {
   maxHeight: 600,
   theme: ${JSON.stringify(theme ?? "dark")},
   locale: 'en-US',
-  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },  // Device safe area insets
   userAgent: {
-    device: { type: 'desktop' },
-    capabilities: { hover: true, touch: false }
+    device: { type: 'desktop' },  // 'mobile' | 'tablet' | 'desktop'
+    capabilities: { hover: true, touch: false }  // Device input capabilities
   },
   view: {
     mode: ${JSON.stringify(viewMode)},  // 'inline' or 'modal'
