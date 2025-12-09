@@ -718,11 +718,6 @@ function buildCspHeader(
       ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
       : "'self' data: blob: https:";
 
-  // Frame ancestors for cross-origin sandbox architecture
-  const frameAncestors = isDev
-    ? "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
-    : "frame-ancestors 'self'";
-
   const headerString = [
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceSrc}`,
@@ -733,7 +728,7 @@ function buildCspHeader(
     `media-src ${mediaSrc}`,
     `font-src 'self' data: ${resourceSrc}`,
     `connect-src ${connectSrc}`,
-    frameAncestors,
+    "frame-ancestors *",
   ].join("; ");
 
   return {
@@ -816,7 +811,7 @@ chatgpt.get("/sandbox-proxy", (c) => {
   // Allow cross-origin framing between localhost and 127.0.0.1 for triple-iframe architecture
   c.header(
     "Content-Security-Policy",
-    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
+    "frame-ancestors *",
   );
   // Remove X-Frame-Options as it doesn't support multiple origins (CSP takes precedence)
   return c.body(html);
@@ -1038,7 +1033,6 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
 
     // Apply the built CSP header
     c.header("Content-Security-Policy", cspConfig.headerString);
-    c.header("X-Frame-Options", "SAMEORIGIN");
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     c.header("Pragma", "no-cache");
