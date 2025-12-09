@@ -14,47 +14,80 @@ import { getInitials } from "@/lib/utils";
 import { CircleUser, LogOut, RefreshCw, Settings } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { DiscordIcon } from "@/components/ui/discord-icon";
+import { GitHubIcon } from "@/components/ui/github-icon";
 
 export function AuthUpperArea() {
   const { isLoading } = useConvexAuth();
   const { user, signIn, signOut, signUp } = useAuth();
   const posthog = usePostHog();
-  if (isLoading) {
-    return (
-      <Button variant="outline" size="sm" disabled>
-        <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+
+  const communityLinks = (
+    <div className="flex items-center gap-1">
+      <Button asChild size="icon" variant="ghost">
+        <a
+          href="https://discord.gg/JEnDtz8X6z"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Join the Discord community"
+          title="Join the Discord community"
+        >
+          <DiscordIcon className="h-10 w-10" />
+          <span className="sr-only">Discord</span>
+        </a>
       </Button>
-    );
-  }
+      <Button asChild size="icon" variant="ghost">
+        <a
+          href="https://github.com/MCPJam/inspector"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Visit the GitHub repository"
+          title="Visit the GitHub repository"
+        >
+          <GitHubIcon className="h-10 w-10" />
+          <span className="sr-only">GitHub</span>
+        </a>
+      </Button>
+    </div>
+  );
 
   if (!user) {
     return (
       <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          onClick={() => {
-            posthog.capture("login_button_clicked", {
-              location: "auth_upper_area",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
-            });
-            signIn();
-          }}
-        >
-          Sign in
-        </Button>
-        <Button
-          onClick={() => {
-            posthog.capture("sign_up_button_clicked", {
-              location: "auth_upper_area",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
-            });
-            signUp();
-          }}
-        >
-          Create account
-        </Button>
+        {communityLinks}
+        {isLoading ? (
+          <Button variant="outline" size="sm" disabled>
+            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+          </Button>
+        ) : (
+          <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                posthog.capture("login_button_clicked", {
+                  location: "auth_upper_area",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                signIn();
+              }}
+            >
+              Sign in
+            </Button>
+            <Button
+              onClick={() => {
+                posthog.capture("sign_up_button_clicked", {
+                  location: "auth_upper_area",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                signUp();
+              }}
+            >
+              Create account
+            </Button>
+          </>
+        )}
       </div>
     );
   }
@@ -78,7 +111,7 @@ export function AuthUpperArea() {
 
   const avatarUrl = user.profilePictureUrl || undefined;
 
-  return (
+  const dropdown = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button className="flex size-10 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-sm outline-none transition hover:ring-2 hover:ring-ring/20 focus-visible:ring-2 focus-visible:ring-ring">
@@ -130,5 +163,23 @@ export function AuthUpperArea() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2">
+        {communityLinks}
+        <Button variant="outline" size="sm" disabled>
+          <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {communityLinks}
+      {dropdown}
+    </div>
   );
 }

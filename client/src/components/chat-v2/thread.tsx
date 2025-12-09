@@ -18,11 +18,15 @@ import {
   LayoutDashboard,
   PictureInPicture2,
   Maximize2,
+  Database,
+  Box,
+  Shield,
 } from "lucide-react";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
+import { CspDebugPanel } from "./csp-debug-panel";
 import {
   callTool,
   getToolServerId,
@@ -36,7 +40,12 @@ import {
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";
 import {
   AnyPart,
@@ -442,6 +451,10 @@ function ToolPart({
   const mcpIconClassName =
     themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const [isExpanded, setIsExpanded] = useState(false);
+  const [activeDebugTab, setActiveDebugTab] = useState<
+    "data" | "state" | "csp" | null
+  >(null);
+
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const errorText = (part as any).errorText ?? (part as any).error;
@@ -471,29 +484,56 @@ function ToolPart({
       { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
     ];
 
+  const debugOptions: {
+    tab: "data" | "state" | "csp";
+    icon: typeof Database;
+    label: string;
+    badge?: number;
+  }[] = [
+    { tab: "data", icon: Database, label: "Data" },
+    { tab: "state", icon: Box, label: "Widget State" },
+    {
+      tab: "csp",
+      icon: Shield,
+      label: "CSP",
+      badge: widgetDebugInfo?.csp?.violations?.length,
+    },
+  ];
+
+  const handleDebugClick = (tab: "data" | "state" | "csp") => {
+    if (activeDebugTab === tab) {
+      // Clicking the active tab closes the panel
+      setActiveDebugTab(null);
+      setIsExpanded(false);
+    } else {
+      setActiveDebugTab(tab);
+      setIsExpanded(true);
+    }
+  };
+
   return (
     <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
         onClick={() => setIsExpanded((prev) => !prev)}
         aria-expanded={isExpanded}
       >
-        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground">
-          <span className="inline-flex items-center gap-2">
+        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
+          <span className="inline-flex items-center gap-2 min-w-0">
             <img
               src="/mcp.svg"
               alt=""
               role="presentation"
               aria-hidden="true"
-              className={mcpIconClassName}
+              className={`${mcpIconClassName} shrink-0`}
             />
-            <span className="font-mono text-xs tracking-tight text-muted-foreground/80">
+            <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
               {label}
             </span>
           </span>
         </span>
-        <span className="inline-flex items-center gap-2 text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
           {/* Display mode controls - only when controlled externally (playground mode) */}
           {showDisplayModeControls && (
             <span
@@ -501,27 +541,64 @@ function ToolPart({
               onClick={(e) => e.stopPropagation()}
             >
               {displayModeOptions.map(({ mode, icon: Icon, label }) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDisplayModeChange?.(mode);
-                  }}
-                  className={`p-1 rounded transition-colors cursor-pointer ${displayMode === mode
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                    }`}
-                  title={label}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                </button>
+                <Tooltip key={mode}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDisplayModeChange?.(mode);
+                      }}
+                      className={`p-1 rounded transition-colors cursor-pointer ${
+                        displayMode === mode
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{label}</TooltipContent>
+                </Tooltip>
               ))}
             </span>
           )}
-          {hasWidgetDebug && !isExpanded && (
-            <span className="text-[10px] text-muted-foreground/60 font-normal normal-case">
-              Click to debug
+          {hasWidgetDebug && (
+            <span
+              className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
+                <Tooltip key={tab}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDebugClick(tab);
+                      }}
+                      className={`p-1 rounded transition-colors cursor-pointer relative ${
+                        activeDebugTab === tab
+                          ? "bg-background text-foreground shadow-sm"
+                          : badge && badge > 0
+                            ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                            : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {badge !== undefined && badge > 0 && (
+                        <Badge
+                          variant="destructive"
+                          className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                        >
+                          {badge}
+                        </Badge>
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{label}</TooltipContent>
+                </Tooltip>
+              ))}
             </span>
           )}
           {toolState && StatusIcon && (
@@ -542,89 +619,71 @@ function ToolPart({
 
       {isExpanded && (
         <div className="border-t border-border/40 px-3 py-3">
-          {hasWidgetDebug ? (
-            <Tabs defaultValue="data" className="w-full">
-              <TabsList className="mb-3 h-7">
-                <TabsTrigger value="data" className="text-[10px] px-2 py-1">
-                  Data
-                </TabsTrigger>
-                <TabsTrigger value="state" className="text-[10px] px-2 py-1">
-                  Widget State
-                </TabsTrigger>
-                <TabsTrigger value="globals" className="text-[10px] px-2 py-1">
-                  Globals
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="data" className="space-y-4">
-                {hasInput && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                      Input
-                    </div>
-                    <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
-                      {safeStringify(inputData)}
-                    </pre>
-                  </div>
-                )}
-                {hasOutput && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                      Result
-                    </div>
-                    <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
-                      {safeStringify(outputData)}
-                    </pre>
-                  </div>
-                )}
-                {hasError && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                      Error
-                    </div>
-                    <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
-                      {errorText}
-                    </div>
-                  </div>
-                )}
-                {!hasInput && !hasOutput && !hasError && (
-                  <div className="text-muted-foreground/70">
-                    No tool details available.
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="state" className="space-y-2">
-                <div className="flex items-center justify-between">
+          {hasWidgetDebug && activeDebugTab === "data" && (
+            <div className="space-y-4">
+              {hasInput && (
+                <div className="space-y-1">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                    Widget State
+                    Input
                   </div>
-                  <div className="text-[9px] text-muted-foreground/50">
-                    Updated:{" "}
-                    {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                    {safeStringify(inputData)}
+                  </pre>
+                </div>
+              )}
+              {hasOutput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Result
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                    {safeStringify(outputData)}
+                  </pre>
+                </div>
+              )}
+              {hasError && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Error
+                  </div>
+                  <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                    {errorText}
                   </div>
                 </div>
-                <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
-                  {widgetDebugInfo.widgetState
-                    ? safeStringify(widgetDebugInfo.widgetState)
-                    : "null (no state set)"}
-                </pre>
-                <div className="text-[9px] text-muted-foreground/50 mt-2">
-                  Tip: Widget state persists across follow-up turns. Keep under
-                  4k tokens.
+              )}
+              {!hasInput && !hasOutput && !hasError && (
+                <div className="text-muted-foreground/70">
+                  No tool details available.
                 </div>
-              </TabsContent>
-
-              <TabsContent value="globals" className="space-y-2">
+              )}
+            </div>
+          )}
+          {hasWidgetDebug && activeDebugTab === "state" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                  Globals ({widgetDebugInfo.protocol})
+                  Widget State
                 </div>
-                <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
-                  {safeStringify(widgetDebugInfo.globals)}
-                </pre>
-              </TabsContent>
-            </Tabs>
-          ) : (
+                <div className="text-[9px] text-muted-foreground/50">
+                  Updated:{" "}
+                  {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
+                </div>
+              </div>
+              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                {widgetDebugInfo.widgetState
+                  ? safeStringify(widgetDebugInfo.widgetState)
+                  : "null (no state set)"}
+              </pre>
+              <div className="text-[9px] text-muted-foreground/50 mt-2">
+                Tip: Widget state persists across follow-up turns. Keep under 4k
+                tokens.
+              </div>
+            </div>
+          )}
+          {hasWidgetDebug && activeDebugTab === "csp" && (
+            <CspDebugPanel cspInfo={widgetDebugInfo.csp} />
+          )}
+          {!hasWidgetDebug && (
             <div className="space-y-4">
               {hasInput && (
                 <div className="space-y-1">
