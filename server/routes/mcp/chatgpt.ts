@@ -19,6 +19,18 @@ interface UserLocation {
   city: string;
 }
 
+interface DeviceCapabilities {
+  hover: boolean;
+  touch: boolean;
+}
+
+interface SafeAreaInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
 interface WidgetData {
   serverId: string;
   uri: string;
@@ -32,6 +44,9 @@ interface WidgetData {
   deviceType?: "mobile" | "tablet" | "desktop";
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   maxHeight?: number | null; // ChatGPT provides maxHeight constraint for inline mode
+  cspMode?: CspMode; // CSP enforcement mode
+  capabilities?: DeviceCapabilities; // Device capabilities (hover, touch)
+  safeAreaInsets?: SafeAreaInsets; // Safe area insets for device notches, etc.
   timestamp: number;
 }
 
@@ -119,6 +134,8 @@ interface ApiScriptOptions {
   deviceType: "mobile" | "tablet" | "desktop"; // Host-controlled device type
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   maxHeight?: number | null; // Host-controlled max height constraint (ChatGPT uses ~500px for inline)
+  capabilities?: DeviceCapabilities; // Host-controlled device capabilities
+  safeAreaInsets?: SafeAreaInsets; // Host-controlled safe area insets
   viewMode?: string;
   viewParams?: Record<string, any>;
   useMapPendingCalls?: boolean;
@@ -168,6 +185,8 @@ function generateApiScript(opts: ApiScriptOptions): string {
     deviceType,
     userLocation,
     maxHeight,
+    capabilities,
+    safeAreaInsets,
     viewMode = "inline",
     viewParams = {},
     useMapPendingCalls = true,
@@ -222,6 +241,15 @@ function generateApiScript(opts: ApiScriptOptions): string {
         }`
     : "";
 
+  // Host-controlled capabilities (with fallback to widget detection if not provided)
+  const hostCapabilities = capabilities ?? null;
+  const hostSafeAreaInsets = safeAreaInsets ?? {
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  };
+
   return `<script>
 (function() {
   'use strict';
@@ -229,13 +257,17 @@ function generateApiScript(opts: ApiScriptOptions): string {
   const hostLocale = ${JSON.stringify(locale)};
   const hostDeviceType = ${JSON.stringify(deviceType)};
   const hostUserLocation = ${JSON.stringify(userLocation ?? null)}; // { country, region, city } or null
+  const hostCapabilities = ${JSON.stringify(hostCapabilities)}; // Host-controlled capabilities or null
+  const hostSafeAreaInsets = ${JSON.stringify(hostSafeAreaInsets)}; // Host-controlled safe area insets
 
   // Set document lang attribute per SDK spec: "Host mirrors locale to document.documentElement.lang"
   try { document.documentElement.lang = hostLocale; } catch (e) {}
 
-  // Capability detection (still done in widget for accuracy)
-  const hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-  const hasHover = window.matchMedia('(hover: hover)').matches;
+  // Capability detection (fallback if host doesn't provide capabilities)
+  const detectedTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  const detectedHover = window.matchMedia('(hover: hover)').matches;
+  const hasTouch = hostCapabilities ? hostCapabilities.touch : detectedTouch;
+  const hasHover = hostCapabilities ? hostCapabilities.hover : detectedHover;
 
   const getSubjectId = () => {
     let subjectId = sessionStorage.getItem('openai_subject_id');
@@ -325,7 +357,7 @@ function generateApiScript(opts: ApiScriptOptions): string {
     theme: ${JSON.stringify(theme)},
     locale: hostLocale, // Host-controlled per SDK spec
     maxHeight: ${maxHeight != null ? maxHeight : "null"},
-    safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+    safeArea: { insets: hostSafeAreaInsets },
     userAgent: { device: { type: hostDeviceType }, capabilities: { hover: hasHover, touch: hasTouch } },
     view: { mode: ${JSON.stringify(viewMode)}, params: ${serializeForInlineScript(viewParams)} },
     widgetState: null,
@@ -451,6 +483,27 @@ function generateApiScript(opts: ApiScriptOptions): string {
 
   // Auto-resize using ResizeObserver + rAF, mirroring Apps SDK behavior
   setupAutoResize();
+
+  // CSP Violation Reporting
+  // Captures violations and forwards to parent for logging
+  document.addEventListener('securitypolicyviolation', (e) => {
+    const violation = {
+      type: 'openai:csp-violation',
+      toolId: ${JSON.stringify(toolId)},
+      directive: e.violatedDirective,
+      blockedUri: e.blockedURI,
+      sourceFile: e.sourceFile || null,
+      lineNumber: e.lineNumber || null,
+      columnNumber: e.columnNumber || null,
+      originalPolicy: e.originalPolicy,
+      effectiveDirective: e.effectiveDirective,
+      disposition: e.disposition,
+      timestamp: Date.now(),
+    };
+
+    console.warn('[OpenAI Widget CSP Violation]', violation.directive, ':', violation.blockedUri);
+    window.parent.postMessage(violation, '*');
+  });
 })();
 </script>`;
 }
@@ -470,6 +523,18 @@ window.URL.revokeObjectURL=OrigURL.revokeObjectURL;window.URL.canParse=OrigURL.c
 })();</script>`;
 }
 
+// Widget base styles: prevent scrollbars by disabling overflow.
+// The auto-resize mechanism (measureAndNotifyHeight) reports content height
+// to the host, which expands the iframe accordingly - scrollbars are unnecessary.
+// This matches ChatGPT's inline widget behavior where the container sizes to content.
+const WIDGET_BASE_CSS = `<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevent scrollbars - iframe resizes to content via auto-resize */
+}
+</style>`;
+
 function injectScripts(
   html: string,
   urlPolyfill: string,
@@ -479,15 +544,38 @@ function injectScripts(
   if (/<html[^>]*>/i.test(html) && /<head[^>]*>/i.test(html)) {
     return html.replace(
       /<head[^>]*>/i,
-      `$&${urlPolyfill}${baseTag}${apiScript}`,
+      `$&${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}${apiScript}`,
     );
   }
-  return `<!DOCTYPE html><html><head>${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
+  return `<!DOCTYPE html><html><head>${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
 }
 
 // ============================================================================
 // CSP Configuration
 // ============================================================================
+
+/**
+ * CSP mode types
+ */
+type CspMode = "permissive" | "widget-declared";
+
+/**
+ * Widget CSP metadata from openai/widgetCSP
+ */
+interface WidgetCspMeta {
+  connect_domains?: string[];
+  resource_domains?: string[];
+}
+
+/**
+ * Parsed CSP configuration for client display
+ */
+interface CspConfig {
+  mode: CspMode;
+  connectDomains: string[];
+  resourceDomains: string[];
+  headerString: string;
+}
 
 const defaultResourceDomains = [
   "https://unpkg.com",
@@ -523,6 +611,140 @@ const trustedCdns = [
   "https://files2.heygen.ai",
 ].join(" ");
 
+/**
+ * Build CSP header string based on mode and widget metadata.
+ *
+ * @param mode - CSP enforcement mode
+ * @param widgetCsp - Widget's declared CSP from openai/widgetCSP metadata
+ * @returns CSP configuration including header string and parsed domains
+ */
+function buildCspHeader(
+  mode: CspMode,
+  widgetCsp?: WidgetCspMeta | null,
+): CspConfig {
+  // Base trusted CDNs (always included for widget asset loading)
+  const baseTrustedCdns = [
+    "https://persistent.oaistatic.com",
+    "https://*.oaistatic.com",
+    "https://unpkg.com",
+    "https://cdn.jsdelivr.net",
+    "https://cdnjs.cloudflare.com",
+    "https://cdn.skypack.dev",
+    "https://cdn.tailwindcss.com",
+  ];
+
+  // Localhost sources for development
+  const localhostSources = isDev
+    ? [
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+        "https://localhost:*",
+        "https://127.0.0.1:*",
+      ]
+    : [];
+
+  // WebSocket sources for development (HMR, etc.)
+  const wsSources = isDev
+    ? ["ws://localhost:*", "ws://127.0.0.1:*", "wss://localhost:*"]
+    : [];
+
+  let connectDomains: string[];
+  let resourceDomains: string[];
+
+  switch (mode) {
+    case "permissive":
+      // Most lenient - allow https: wildcard
+      connectDomains = [
+        "'self'",
+        "https:",
+        "wss:",
+        "ws:",
+        ...localhostSources,
+        ...wsSources,
+      ];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        "https:",
+        ...baseTrustedCdns,
+        ...localhostSources,
+      ];
+      break;
+
+    case "widget-declared":
+      // Honor widget's declared CSP, with sensible defaults
+      connectDomains = [
+        "'self'",
+        ...(widgetCsp?.connect_domains || []),
+        ...localhostSources,
+        ...wsSources,
+      ];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        ...(widgetCsp?.resource_domains || baseTrustedCdns),
+        ...localhostSources,
+      ];
+      break;
+
+    default:
+      // Fallback to permissive
+      connectDomains = ["'self'", "https:", ...localhostSources];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        "https:",
+        ...baseTrustedCdns,
+        ...localhostSources,
+      ];
+  }
+
+  const connectSrc = connectDomains.join(" ");
+  const resourceSrc = resourceDomains.join(" ");
+
+  // Image/media sources - respect mode for widget-declared CSP
+  // In permissive mode: allow all https: sources
+  // In widget-declared mode: only allow declared resource_domains
+  const imgSrc =
+    mode === "widget-declared"
+      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      : `'self' data: blob: https: ${localhostSources.join(" ")}`;
+
+  const mediaSrc =
+    mode === "widget-declared"
+      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      : "'self' data: blob: https:";
+
+  // Frame ancestors must always include localhost/127.0.0.1 for the cross-origin
+  // sandbox architecture to work (sandbox-proxy swaps localhost <-> 127.0.0.1)
+  // This is required regardless of NODE_ENV since the inspector is self-hosted
+  const frameAncestors =
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*";
+
+  const headerString = [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceSrc}`,
+    "worker-src 'self' blob:",
+    "child-src 'self' blob:",
+    `style-src 'self' 'unsafe-inline' ${resourceSrc}`,
+    `img-src ${imgSrc}`,
+    `media-src ${mediaSrc}`,
+    `font-src 'self' data: ${resourceSrc}`,
+    `connect-src ${connectSrc}`,
+    frameAncestors,
+  ].join("; ");
+
+  return {
+    mode,
+    connectDomains,
+    resourceDomains,
+    headerString,
+  };
+}
+
 // ============================================================================
 // Routes
 // ============================================================================
@@ -542,6 +764,9 @@ chatgpt.post("/widget/store", async (c) => {
       deviceType,
       userLocation,
       maxHeight,
+      cspMode,
+      capabilities,
+      safeAreaInsets,
     } = await c.req.json();
     if (!serverId || !uri || !toolId || !toolName)
       return c.json({ success: false, error: "Missing required fields" }, 400);
@@ -559,6 +784,14 @@ chatgpt.post("/widget/store", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null, // Coarse IP-based location per SDK spec
       maxHeight: maxHeight ?? null, // Host-controlled max height constraint
+      cspMode: cspMode ?? "permissive", // CSP enforcement mode
+      capabilities: capabilities ?? { hover: true, touch: false }, // Device capabilities
+      safeAreaInsets: safeAreaInsets ?? {
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+      }, // Safe area insets
       timestamp: Date.now(),
     });
     return c.json({ success: true });
@@ -609,6 +842,9 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       deviceType,
       userLocation,
       maxHeight,
+      cspMode,
+      capabilities,
+      safeAreaInsets,
     } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
@@ -622,36 +858,16 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent) return c.json({ error: "No HTML content found" }, 404);
 
+    // Extract openai/widgetCSP from resource metadata
     const resourceMeta = firstContent?._meta as
       | Record<string, unknown>
       | undefined;
     const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
-      | { connect_domains?: string[]; resource_domains?: string[] }
+      | WidgetCspMeta
       | undefined;
 
-    const baseResourceDomains =
-      widgetCspRaw?.resource_domains || defaultResourceDomains;
-    const csp = widgetCspRaw
-      ? {
-          connectDomains: [
-            ...(widgetCspRaw.connect_domains || []),
-            ...devResourceDomains,
-            ...devConnectDomains,
-          ],
-          resourceDomains: [
-            ...baseResourceDomains,
-            ...devResourceDomains,
-            ...devScriptDomains,
-          ],
-        }
-      : {
-          connectDomains: [...devResourceDomains, ...devConnectDomains],
-          resourceDomains: [
-            ...defaultResourceDomains,
-            ...devResourceDomains,
-            ...devScriptDomains,
-          ],
-        };
+    // Build CSP configuration based on mode
+    const cspConfig = buildCspHeader(cspMode ?? "permissive", widgetCspRaw);
 
     const baseUrl = extractBaseUrl(htmlContent);
     const apiScript = generateApiScript({
@@ -665,6 +881,8 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
       maxHeight: maxHeight ?? null,
+      capabilities: capabilities ?? undefined,
+      safeAreaInsets: safeAreaInsets ?? undefined,
       useMapPendingCalls: true,
     });
     const modifiedHtml = injectScripts(
@@ -677,7 +895,15 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
       html: modifiedHtml,
-      csp,
+      // Return full CSP config for client display
+      csp: {
+        mode: cspConfig.mode,
+        connectDomains: cspConfig.connectDomains,
+        resourceDomains: cspConfig.resourceDomains,
+        headerString: cspConfig.headerString,
+        // Also return the widget's declared CSP for reference
+        widgetDeclared: widgetCspRaw ?? null,
+      },
       widgetDescription: resourceMeta?.["openai/widgetDescription"] as
         | string
         | undefined,
@@ -719,6 +945,10 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
   try {
     const toolId = c.req.param("toolId");
     const viewMode = c.req.query("view_mode") || "inline";
+
+    // Read CSP mode from query param (allows override for testing)
+    const cspModeParam = c.req.query("csp_mode") as CspMode | undefined;
+
     let viewParams = {};
     try {
       const vp = c.req.query("view_params");
@@ -744,7 +974,14 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       deviceType,
       userLocation,
       maxHeight,
+      cspMode: storedCspMode,
+      capabilities,
+      safeAreaInsets,
     } = widgetData;
+
+    // Use query param override if provided, otherwise use stored mode
+    const effectiveCspMode = cspModeParam ?? storedCspMode ?? "permissive";
+
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
       .listServers()
@@ -758,12 +995,23 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       );
 
     const content = await mcpClientManager.readResource(resolved.id, { uri });
-    const { html: htmlContent } = extractHtmlContent(content);
+    const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent)
       return c.html(
         "<html><body>Error: No HTML content found</body></html>",
         404,
       );
+
+    // Extract openai/widgetCSP from resource metadata
+    const resourceMeta = firstContent?._meta as
+      | Record<string, unknown>
+      | undefined;
+    const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
+      | WidgetCspMeta
+      | undefined;
+
+    // Build CSP based on effective mode
+    const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw);
 
     const apiScript = generateApiScript({
       toolId,
@@ -776,6 +1024,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
       maxHeight: maxHeight ?? null,
+      capabilities: capabilities ?? undefined,
+      safeAreaInsets: safeAreaInsets ?? undefined,
       viewMode,
       viewParams,
       useMapPendingCalls: false,
@@ -787,22 +1037,10 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       apiScript,
     );
 
-    c.header(
-      "Content-Security-Policy",
-      [
-        "default-src 'self'",
-        `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`,
-        "worker-src 'self' blob:",
-        "child-src 'self' blob:",
-        `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
-        "img-src 'self' data: https: blob:",
-        "media-src 'self' data: https: blob:",
-        `font-src 'self' data: ${trustedCdns}`,
-        "connect-src 'self' https: wss: ws:",
-        "frame-ancestors 'self'",
-      ].join("; "),
-    );
-    c.header("X-Frame-Options", "SAMEORIGIN");
+    // Apply the built CSP header
+    c.header("Content-Security-Policy", cspConfig.headerString);
+    // Note: X-Frame-Options removed - CSP frame-ancestors handles this and
+    // X-Frame-Options doesn't support multiple origins needed for cross-origin sandbox
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     c.header("Pragma", "no-cache");

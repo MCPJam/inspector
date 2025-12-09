@@ -767,7 +767,7 @@ As of PR #891, widget state changes from OpenAI Apps are automatically propagate
 **Flow**:
 
 1. Widget calls `window.openai.setWidgetState(state)` in iframe
-2. `openai-app-renderer.tsx` receives `openai:setWidgetState` postMessage
+2. `chatgpt-app-renderer.tsx` receives `openai:setWidgetState` postMessage
 3. State is deduped by comparing serialized JSON
 4. `onWidgetStateChange` callback is invoked with `(toolCallId, state)`
 5. `ChatTabV2.tsx` adds/updates hidden assistant message with ID `widget-state-${toolCallId}`
