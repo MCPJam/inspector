@@ -474,7 +474,7 @@ export function PlaygroundMain({
             maxWidth: "100%",
             height: deviceConfig.height,
             maxHeight: "100%",
-            transform: "translateZ(0)", // Creates containing block for fixed positioned elements (fullscreen/pip modes)
+
           }}
         >
           {threadContent}
