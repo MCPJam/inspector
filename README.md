@@ -16,7 +16,9 @@ www.mcpjam.com
 
 </div>
 
-MCPJam Inspector is the local development platform for ChatGPT apps, MCP apps (Claude), and MCP servers. Build and test your apps with a full widget emulator, chat with any LLM, and inspect your server’s tools, resources, prompts, and OAuth flows. MCPJam is the fastest way to iterate on any MCP project.
+MCPJam Inspector is the local development client for ChatGPT apps, MCP apps (Claude), and MCP servers. Build and test your apps with a full widget emulator, chat with any LLM, and inspect your server’s tools, resources, prompts, and OAuth flows.
+
+No more ngrok or ChatGPT subscription needed. MCPJam is the fastest way to iterate on any MCP project.
 
 ### 🚀 Quick Start
 
@@ -32,7 +34,7 @@ npx @mcpjam/inspector@latest
 
 - [Installation Guides](#installation-guides)
 - [Key Features](#key-features)
-  - [OpenAI Apps & MCP-UI](#openai-apps--mcp-ui)
+  - [ChatGPT / MCP Apps Builder](#openai-apps--mcp-ui)
   - [OAuth Debugger](#oauth-debugger)
   - [LLM Playground](#llm-playground)
 - [Contributing](#contributing-)
@@ -63,41 +65,52 @@ We also have a Mac and Windows desktop app:
 
 # Key features
 
-| Capability             | Description                                                                                                |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Multi-protocol servers | Connect to STDIO, SSE, and streamable HTTP MCP servers.                                                    |
-| Flexible auth          | Supports OAuth 2.1 and bearer tokens, including custom scopes and client credentials.                      |
-| Rich configuration     | Configure environment variables, custom headers, and timeouts.                                             |
-| Manual tool invocation | Manually invoke MCP tools, resources, resource templates, and elicitation flows.                           |
-| Server info            | View server icons, version, capabilities, instructions, and ChatGPT widget metadata exposed by the server. |
+| Capability           | Description                                                                                                                                                                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ChatGPT Apps SDK     | Local development for ChatGPT Apps SDK support. Full support for the `windows.openai` API: `widgetState`, `callTool`, `structuredContent`, `sendFollowUpMessage`, `displayMode`, CSP, and more.No more ngrok or ChatGPT subscription needed. [Read more](https://www.mcpjam.com/blog/app-builder) |
+| MCP Apps (Claude)    | Full local development for MCP Apps (SEP-1865). Support for all JSON-RPC message types, such as `tools/call`, `ui/initialize`, `ui/message`, `ui/open-link`, and more. [Read more](https://www.mcpjam.com/blog/mcp-apps-preview)                                                                  |
+| OAuth Debugger       | Debug your MCP server's OAuth implementation at every step. Visually inspect every network message. Supports all protocol versions (03-26, 06-18, and 11-25). Support for client pre-registration, DCR, and CIMD. [Read more](https://www.mcpjam.com/blog/oauth-debugger)                         |
+| LLM playground       | Chat with your MCP server against any LLM in the playground. We provide frontier models such as GPT-5 and Claude Sonnet for free, or bring your own API key. Playground supports ChatGPT apps and MCP Apps. [Read more](https://www.mcpjam.com/blog/frontier-models)                              |
+| MCP server debugging | Connect to and test any MCP server local or remote. Manually invoke MCP tools, resources, resource templates, and elicitation flows. View all JSON-RPC logs. Support for all features from the official MCP inspector.                                                                            |
+| Server info          | View server icons, version, capabilities, instructions, and ChatGPT widget metadata exposed by the server. [Read more](https://www.mcpjam.com/blog/server-instructions)                                                                                                                           |
 
-## OpenAI Apps & MCP-UI
+## ChatGPT Apps / MCP Apps Builder
 
-Develop [OpenAI apps](https://developers.openai.com/apps-sdk/) or [MCP-UI](https://mcpui.dev/) apps locally. No ngrok needed. MCPJam is the only local-first OpenAI app emulator.
+Develop [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps (Claude)](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865) in MCPJam's Apps Builder. Apps Builder is a local emulator to quickly view and iterate on your widgets.
 
-<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-mcp-ui.png">
+- Manually invoke a tool to instantly view the widget, or chat with your server using an LLM.
+- View all JSON-RPC messages, `window.openai` messages in the logs.
+- Change emulator device to Desktop, Tablet, or Mobile views.
+- Test your app's locale change, CSP permissions, light / dark mode, hover & touch, and safe area insets.
+
+<img alt="MCPJam LLM playground" src="./docs/images/pizza-demo.png">
 
 ## OAuth Debugger
 
-View every step of the OAuth handshake in detail, with guided explanations.
+View every step of the OAuth handshake in detail, with guided explanations. Test with every version of the OAuth spec (03-26, 06-18, and 11-25). Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD).
 
-<img alt="MCPJam OAuth Flow Debugger" src="./docs/images/mcpjam-oauth-flow.png">
+<img alt="MCPJam OAuth Flow Debugger" src="./docs/images/oauth-debugger.png">
 
 ## LLM Playground
 
-Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5. No API key needed, it's on us.
+Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5 for free, or bring your own API key. View your server's token usage.
 
-<img alt="MCPJam LLM playground" src="./docs/images/mcpjam-llm-playground.png">
+<img alt="MCPJam LLM playground" src="./docs/images/playground.png">
+
+## MCP Inspector
+
+MCPJam contains all of the tooling to test your MCP server. Test your server's tools, resources, prompts, templates, with full JSON-RPC observability. MCPJam has all features from the original inspector and more.
+
+<img alt="MCPJam LLM playground" src="./docs/images/mcp-tools.png">
 
 # Contributing 👨‍💻
 
 We're grateful for you considering contributing to MCPJam. Please read our [contributing guide](CONTRIBUTING.md).
 
-You can also reach out to the contributors that hang out in our [Discord channel](https://discord.gg/JEnDtz8X6z).
+Join our [Discord community](https://discord.gg/JEnDtz8X6z) where the contributors hang out at.
 
 # Links 🔗
 
-- Roadmap (TBD)
 - [Website](https://www.mcpjam.com/)
 - [Blog](https://www.mcpjam.com/blog)
 - [Pricing](https://www.mcpjam.com/pricing)
@@ -107,7 +120,6 @@ You can also reach out to the contributors that hang out in our [Discord channel
 
 - [Discord](https://discord.gg/JEnDtz8X6z)
 - [𝕏 (Twitter)](https://x.com/mcpjams)
-- [Blog](https://www.mcpjam.com/blog)
 - [LinkedIn](https://www.linkedin.com/company/mcpjam)
 
 # Shoutouts 📣
@@ -115,9 +127,8 @@ You can also reach out to the contributors that hang out in our [Discord channel
 Some of our partners and favorite frameworks:
 
 - [Stytch](https://stytch.com) - Our favorite MCP OAuth provider
-- [DooiLabs/FastApps](https://github.com/DooiLabs/FastApps) - The Python framework to build OpenAI Apps.
 - [xMCP](https://xmcp.dev/) - The Typescript MCP framework. Ship on Vercel instantly.
-- [Alpic](https://alpic.ai/) - Host MCP servers
+- [Alpic](https://alpic.ai/) - Host MCP servers. Try their new [Skybridge framework](https://github.com/alpic-ai/skybridge) for ChatGPT apps!
 
 ---
 
