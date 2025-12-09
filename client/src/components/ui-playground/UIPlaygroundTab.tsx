@@ -24,6 +24,8 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { generateFormFieldsFromSchema } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@/sdk";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { usePostHog } from "posthog-js/react";
 
 // Custom hooks
 import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
@@ -40,6 +42,7 @@ export function UIPlaygroundTab({
   serverConfig,
   serverName,
 }: UIPlaygroundTabProps) {
+  const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Compute server key for saved requests storage
   const serverKey = useServerKey(serverConfig);
@@ -70,12 +73,19 @@ export function UIPlaygroundTab({
     reset,
   } = useUIPlaygroundStore();
 
-  const [isLoggerVisible, setIsLoggerVisible] = useState(true);
-
   // Sync theme from preferences to globals
   useEffect(() => {
     updateGlobal("theme", themeMode);
   }, [themeMode, updateGlobal]);
+
+  // Log when App Builder tab is viewed
+  useEffect(() => {
+    posthog.capture("app_builder_tab_viewed", {
+      location: "app_builder_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, []);
 
   // Tools metadata for filtering OpenAI apps
   const [toolsMetadata, setToolsMetadata] = useState<
