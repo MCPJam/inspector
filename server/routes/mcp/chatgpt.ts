@@ -718,10 +718,11 @@ function buildCspHeader(
       ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
       : "'self' data: blob: https:";
 
-  // Frame ancestors for cross-origin sandbox architecture
-  const frameAncestors = isDev
-    ? "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
-    : "frame-ancestors 'self'";
+  // Frame ancestors must always include localhost/127.0.0.1 for the cross-origin
+  // sandbox architecture to work (sandbox-proxy swaps localhost <-> 127.0.0.1)
+  // This is required regardless of NODE_ENV since the inspector is self-hosted
+  const frameAncestors =
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*";
 
   const headerString = [
     "default-src 'self'",
@@ -1038,7 +1039,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
 
     // Apply the built CSP header
     c.header("Content-Security-Policy", cspConfig.headerString);
-    c.header("X-Frame-Options", "SAMEORIGIN");
+    // Note: X-Frame-Options removed - CSP frame-ancestors handles this and
+    // X-Frame-Options doesn't support multiple origins needed for cross-origin sandbox
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     c.header("Pragma", "no-cache");
