@@ -1481,6 +1481,13 @@ server.connect(transport);
    - Inspect localStorage for widget state key
    - Confirm both views have `openai:widget_state` event listener
 
+10. **CSP violations blocking resources**
+    - Check the CSP debug tab (shield icon) for violation details
+    - Switch to permissive mode in UI Playground to bypass CSP temporarily
+    - Add blocked domains to `openai/widgetCSP` metadata in your widget
+    - Verify CSP header in Network tab matches expected configuration
+    - Use the suggested fix snippet from the CSP debug panel
+
 **Debug Tools:**
 
 ```javascript
