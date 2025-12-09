@@ -20,7 +20,6 @@ import {
   Maximize2,
   Database,
   Box,
-  Globe,
   Shield,
 } from "lucide-react";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -420,7 +419,7 @@ function ToolPart({
     themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "globals" | "csp" | null
+    "data" | "state" | "csp" | null
   >(null);
 
   const inputData = (part as any).input;
@@ -453,14 +452,13 @@ function ToolPart({
   ];
 
   const debugOptions: {
-    tab: "data" | "state" | "globals" | "csp";
+    tab: "data" | "state" | "csp";
     icon: typeof Database;
     label: string;
     badge?: number;
   }[] = [
     { tab: "data", icon: Database, label: "Data" },
     { tab: "state", icon: Box, label: "Widget State" },
-    { tab: "globals", icon: Globe, label: "Globals" },
     {
       tab: "csp",
       icon: Shield,
@@ -469,7 +467,7 @@ function ToolPart({
     },
   ];
 
-  const handleDebugClick = (tab: "data" | "state" | "globals" | "csp") => {
+  const handleDebugClick = (tab: "data" | "state" | "csp") => {
     if (activeDebugTab === tab) {
       // Clicking the active tab closes the panel
       setActiveDebugTab(null);
@@ -484,25 +482,25 @@ function ToolPart({
     <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
         onClick={() => setIsExpanded((prev) => !prev)}
         aria-expanded={isExpanded}
       >
-        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground">
-          <span className="inline-flex items-center gap-2">
+        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
+          <span className="inline-flex items-center gap-2 min-w-0">
             <img
               src="/mcp.svg"
               alt=""
               role="presentation"
               aria-hidden="true"
-              className={mcpIconClassName}
+              className={`${mcpIconClassName} shrink-0`}
             />
-            <span className="font-mono text-xs tracking-tight text-muted-foreground/80">
+            <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
               {label}
             </span>
           </span>
         </span>
-        <span className="inline-flex items-center gap-2 text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
           {/* Display mode controls - only when controlled externally (playground mode) */}
           {showDisplayModeControls && (
             <span
@@ -648,16 +646,6 @@ function ToolPart({
                 Tip: Widget state persists across follow-up turns. Keep under 4k
                 tokens.
               </div>
-            </div>
-          )}
-          {hasWidgetDebug && activeDebugTab === "globals" && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Globals ({widgetDebugInfo.protocol})
-              </div>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
-                {safeStringify(widgetDebugInfo.globals)}
-              </pre>
             </div>
           )}
           {hasWidgetDebug && activeDebugTab === "csp" && (

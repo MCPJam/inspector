@@ -199,6 +199,10 @@ interface UserLocation {
 let cachedLocation: UserLocation | null = null;
 let locationFetchPromise: Promise<UserLocation | null> | null = null;
 
+// Default values for non-playground contexts (defined outside component to avoid infinite loops)
+const DEFAULT_CAPABILITIES = { hover: true, touch: false };
+const DEFAULT_SAFE_AREA_INSETS = { top: 0, bottom: 0, left: 0, right: 0 };
+
 /**
  * Fetch coarse location from IP-based geolocation service.
  * Uses ip-api.com (free, no API key required, 45 req/min limit).
@@ -484,12 +488,13 @@ export function ChatGPTAppRenderer({
   const deviceType = isPlaygroundActive
     ? playgroundDeviceType
     : getDeviceType();
+  // Use stable default objects to avoid infinite re-renders in useWidgetFetch
   const capabilities = isPlaygroundActive
     ? playgroundCapabilities
-    : { hover: true, touch: false }; // Default for non-playground contexts
+    : DEFAULT_CAPABILITIES;
   const safeAreaInsets = isPlaygroundActive
     ? playgroundSafeAreaInsets
-    : { top: 0, bottom: 0, left: 0, right: 0 }; // Default for non-playground contexts
+    : DEFAULT_SAFE_AREA_INSETS;
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
 
   // Callback to handle CSP config received from server
