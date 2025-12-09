@@ -32,6 +32,7 @@ interface WidgetData {
   deviceType?: "mobile" | "tablet" | "desktop";
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   maxHeight?: number | null; // ChatGPT provides maxHeight constraint for inline mode
+  cspMode?: CspMode; // CSP enforcement mode
   timestamp: number;
 }
 
@@ -451,6 +452,27 @@ function generateApiScript(opts: ApiScriptOptions): string {
 
   // Auto-resize using ResizeObserver + rAF, mirroring Apps SDK behavior
   setupAutoResize();
+
+  // CSP Violation Reporting
+  // Captures violations and forwards to parent for logging
+  document.addEventListener('securitypolicyviolation', (e) => {
+    const violation = {
+      type: 'openai:csp-violation',
+      toolId: ${JSON.stringify(toolId)},
+      directive: e.violatedDirective,
+      blockedUri: e.blockedURI,
+      sourceFile: e.sourceFile || null,
+      lineNumber: e.lineNumber || null,
+      columnNumber: e.columnNumber || null,
+      originalPolicy: e.originalPolicy,
+      effectiveDirective: e.effectiveDirective,
+      disposition: e.disposition,
+      timestamp: Date.now(),
+    };
+
+    console.warn('[OpenAI Widget CSP Violation]', violation.directive, ':', violation.blockedUri);
+    window.parent.postMessage(violation, '*');
+  });
 })();
 </script>`;
 }
@@ -489,6 +511,29 @@ function injectScripts(
 // CSP Configuration
 // ============================================================================
 
+/**
+ * CSP mode types
+ */
+type CspMode = "permissive" | "widget-declared";
+
+/**
+ * Widget CSP metadata from openai/widgetCSP
+ */
+interface WidgetCspMeta {
+  connect_domains?: string[];
+  resource_domains?: string[];
+}
+
+/**
+ * Parsed CSP configuration for client display
+ */
+interface CspConfig {
+  mode: CspMode;
+  connectDomains: string[];
+  resourceDomains: string[];
+  headerString: string;
+}
+
 const defaultResourceDomains = [
   "https://unpkg.com",
   "https://cdn.jsdelivr.net",
@@ -523,6 +568,139 @@ const trustedCdns = [
   "https://files2.heygen.ai",
 ].join(" ");
 
+/**
+ * Build CSP header string based on mode and widget metadata.
+ *
+ * @param mode - CSP enforcement mode
+ * @param widgetCsp - Widget's declared CSP from openai/widgetCSP metadata
+ * @returns CSP configuration including header string and parsed domains
+ */
+function buildCspHeader(
+  mode: CspMode,
+  widgetCsp?: WidgetCspMeta | null,
+): CspConfig {
+  // Base trusted CDNs (always included for widget asset loading)
+  const baseTrustedCdns = [
+    "https://persistent.oaistatic.com",
+    "https://*.oaistatic.com",
+    "https://unpkg.com",
+    "https://cdn.jsdelivr.net",
+    "https://cdnjs.cloudflare.com",
+    "https://cdn.skypack.dev",
+    "https://cdn.tailwindcss.com",
+  ];
+
+  // Localhost sources for development
+  const localhostSources = isDev
+    ? [
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+        "https://localhost:*",
+        "https://127.0.0.1:*",
+      ]
+    : [];
+
+  // WebSocket sources for development (HMR, etc.)
+  const wsSources = isDev
+    ? ["ws://localhost:*", "ws://127.0.0.1:*", "wss://localhost:*"]
+    : [];
+
+  let connectDomains: string[];
+  let resourceDomains: string[];
+
+  switch (mode) {
+    case "permissive":
+      // Most lenient - allow https: wildcard
+      connectDomains = [
+        "'self'",
+        "https:",
+        "wss:",
+        "ws:",
+        ...localhostSources,
+        ...wsSources,
+      ];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        "https:",
+        ...baseTrustedCdns,
+        ...localhostSources,
+      ];
+      break;
+
+    case "widget-declared":
+      // Honor widget's declared CSP, with sensible defaults
+      connectDomains = [
+        "'self'",
+        ...(widgetCsp?.connect_domains || []),
+        ...localhostSources,
+        ...wsSources,
+      ];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        ...(widgetCsp?.resource_domains || baseTrustedCdns),
+        ...localhostSources,
+      ];
+      break;
+
+    default:
+      // Fallback to permissive
+      connectDomains = ["'self'", "https:", ...localhostSources];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        "https:",
+        ...baseTrustedCdns,
+        ...localhostSources,
+      ];
+  }
+
+  const connectSrc = connectDomains.join(" ");
+  const resourceSrc = resourceDomains.join(" ");
+
+  // Image/media sources - respect mode for widget-declared CSP
+  // In permissive mode: allow all https: sources
+  // In widget-declared mode: only allow declared resource_domains
+  const imgSrc =
+    mode === "widget-declared"
+      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      : `'self' data: blob: https: ${localhostSources.join(" ")}`;
+
+  const mediaSrc =
+    mode === "widget-declared"
+      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      : "'self' data: blob: https:";
+
+  // Frame ancestors for cross-origin sandbox architecture
+  const frameAncestors = isDev
+    ? "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
+    : "frame-ancestors 'self'";
+
+  const headerString = [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceSrc}`,
+    "worker-src 'self' blob:",
+    "child-src 'self' blob:",
+    `style-src 'self' 'unsafe-inline' ${resourceSrc}`,
+    `img-src ${imgSrc}`,
+    `media-src ${mediaSrc}`,
+    `font-src 'self' data: ${resourceSrc}`,
+    `connect-src ${connectSrc}`,
+    frameAncestors,
+  ].join("; ");
+
+  return {
+    mode,
+    connectDomains,
+    resourceDomains,
+    headerString,
+  };
+}
+
 // ============================================================================
 // Routes
 // ============================================================================
@@ -542,6 +720,7 @@ chatgpt.post("/widget/store", async (c) => {
       deviceType,
       userLocation,
       maxHeight,
+      cspMode,
     } = await c.req.json();
     if (!serverId || !uri || !toolId || !toolName)
       return c.json({ success: false, error: "Missing required fields" }, 400);
@@ -559,6 +738,7 @@ chatgpt.post("/widget/store", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null, // Coarse IP-based location per SDK spec
       maxHeight: maxHeight ?? null, // Host-controlled max height constraint
+      cspMode: cspMode ?? "permissive", // CSP enforcement mode
       timestamp: Date.now(),
     });
     return c.json({ success: true });
@@ -609,6 +789,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       deviceType,
       userLocation,
       maxHeight,
+      cspMode,
     } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
@@ -622,36 +803,16 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent) return c.json({ error: "No HTML content found" }, 404);
 
+    // Extract openai/widgetCSP from resource metadata
     const resourceMeta = firstContent?._meta as
       | Record<string, unknown>
       | undefined;
     const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
-      | { connect_domains?: string[]; resource_domains?: string[] }
+      | WidgetCspMeta
       | undefined;
 
-    const baseResourceDomains =
-      widgetCspRaw?.resource_domains || defaultResourceDomains;
-    const csp = widgetCspRaw
-      ? {
-          connectDomains: [
-            ...(widgetCspRaw.connect_domains || []),
-            ...devResourceDomains,
-            ...devConnectDomains,
-          ],
-          resourceDomains: [
-            ...baseResourceDomains,
-            ...devResourceDomains,
-            ...devScriptDomains,
-          ],
-        }
-      : {
-          connectDomains: [...devResourceDomains, ...devConnectDomains],
-          resourceDomains: [
-            ...defaultResourceDomains,
-            ...devResourceDomains,
-            ...devScriptDomains,
-          ],
-        };
+    // Build CSP configuration based on mode
+    const cspConfig = buildCspHeader(cspMode ?? "permissive", widgetCspRaw);
 
     const baseUrl = extractBaseUrl(htmlContent);
     const apiScript = generateApiScript({
@@ -677,7 +838,15 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
       html: modifiedHtml,
-      csp,
+      // Return full CSP config for client display
+      csp: {
+        mode: cspConfig.mode,
+        connectDomains: cspConfig.connectDomains,
+        resourceDomains: cspConfig.resourceDomains,
+        headerString: cspConfig.headerString,
+        // Also return the widget's declared CSP for reference
+        widgetDeclared: widgetCspRaw ?? null,
+      },
       widgetDescription: resourceMeta?.["openai/widgetDescription"] as
         | string
         | undefined,
@@ -719,6 +888,10 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
   try {
     const toolId = c.req.param("toolId");
     const viewMode = c.req.query("view_mode") || "inline";
+
+    // Read CSP mode from query param (allows override for testing)
+    const cspModeParam = c.req.query("csp_mode") as CspMode | undefined;
+
     let viewParams = {};
     try {
       const vp = c.req.query("view_params");
@@ -744,7 +917,12 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       deviceType,
       userLocation,
       maxHeight,
+      cspMode: storedCspMode,
     } = widgetData;
+
+    // Use query param override if provided, otherwise use stored mode
+    const effectiveCspMode = cspModeParam ?? storedCspMode ?? "permissive";
+
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
       .listServers()
@@ -758,12 +936,23 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       );
 
     const content = await mcpClientManager.readResource(resolved.id, { uri });
-    const { html: htmlContent } = extractHtmlContent(content);
+    const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent)
       return c.html(
         "<html><body>Error: No HTML content found</body></html>",
         404,
       );
+
+    // Extract openai/widgetCSP from resource metadata
+    const resourceMeta = firstContent?._meta as
+      | Record<string, unknown>
+      | undefined;
+    const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
+      | WidgetCspMeta
+      | undefined;
+
+    // Build CSP based on effective mode
+    const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw);
 
     const apiScript = generateApiScript({
       toolId,
@@ -787,21 +976,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       apiScript,
     );
 
-    c.header(
-      "Content-Security-Policy",
-      [
-        "default-src 'self'",
-        `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`,
-        "worker-src 'self' blob:",
-        "child-src 'self' blob:",
-        `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
-        "img-src 'self' data: https: blob:",
-        "media-src 'self' data: https: blob:",
-        `font-src 'self' data: ${trustedCdns}`,
-        "connect-src 'self' https: wss: ws:",
-        "frame-ancestors 'self'",
-      ].join("; "),
-    );
+    // Apply the built CSP header
+    c.header("Content-Security-Policy", cspConfig.headerString);
     c.header("X-Frame-Options", "SAMEORIGIN");
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");

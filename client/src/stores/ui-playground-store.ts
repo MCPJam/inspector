@@ -12,6 +12,7 @@ import type { FormField } from "@/lib/tool-form";
 
 export type DeviceType = "mobile" | "tablet" | "desktop";
 export type DisplayMode = "inline" | "pip" | "fullscreen";
+export type CspMode = "permissive" | "widget-declared";
 
 export interface UserLocation {
   country: string;
@@ -68,6 +69,9 @@ interface UIPlaygroundState {
   // Panel visibility
   isSidebarVisible: boolean;
 
+  // CSP enforcement mode for widget sandbox
+  cspMode: CspMode;
+
   // Actions
   setTools: (tools: Record<string, Tool>) => void;
   setSelectedTool: (tool: string | null) => void;
@@ -93,6 +97,7 @@ interface UIPlaygroundState {
   toggleSidebar: () => void;
   setSidebarVisible: (visible: boolean) => void;
   setPlaygroundActive: (active: boolean) => void;
+  setCspMode: (mode: CspMode) => void;
   reset: () => void;
 }
 
@@ -130,6 +135,7 @@ const initialState = {
   lastToolCallId: null,
   followUpMessages: [] as FollowUpMessage[],
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
+  cspMode: "permissive" as CspMode,
 };
 
 export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
@@ -228,6 +234,8 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
   },
 
   setPlaygroundActive: (active) => set({ isPlaygroundActive: active }),
+
+  setCspMode: (mode) => set({ cspMode: mode }),
 
   reset: () =>
     set((state) => ({
