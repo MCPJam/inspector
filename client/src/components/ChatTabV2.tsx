@@ -150,7 +150,7 @@ export function ChatTabV2({
           !(
             msg.role === "system" &&
             (msg as { metadata?: { source?: string } })?.metadata?.source ===
-              "server-instruction"
+            "server-instruction"
           ),
       );
 
@@ -435,7 +435,7 @@ export function ChatTabV2({
           minSize={40}
           className="min-w-0"
         >
-          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden [transform:translateZ(0)]">
+          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden">
             {isThreadEmpty ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">

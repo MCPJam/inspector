@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
+
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   Dialog,
@@ -6,7 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { X, Loader2 } from "lucide-react";
+import { X, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import {
@@ -58,10 +59,10 @@ function handleOAuthChallenge(wwwAuth: string, toolName: string): void {
     `[OAuth Challenge] Tool "${toolName}" requires authentication`,
     parsed
       ? {
-          realm: parsed.realm,
-          error: parsed.error,
-          description: parsed.errorDescription,
-        }
+        realm: parsed.realm,
+        error: parsed.error,
+        description: parsed.errorDescription,
+      }
       : { raw: wwwAuth },
   );
 
@@ -399,6 +400,8 @@ export function ChatGPTAppRenderer({
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
   const lastAppliedHeightRef = useRef<number>(0);
 
+
+
   const {
     resolvedToolCallId,
     outputTemplate,
@@ -429,6 +432,8 @@ export function ChatGPTAppRenderer({
       toolResponseMetadata,
       themeMode,
     );
+
+
 
   const applyMeasuredHeight = useCallback(
     (height: unknown) => {
@@ -657,7 +662,7 @@ export function ChatGPTAppRenderer({
               typeof event.data.message === "string"
                 ? event.data.message
                 : event.data.message.prompt ||
-                  JSON.stringify(event.data.message);
+                JSON.stringify(event.data.message);
             onSendFollowUp(message);
           }
           break;
@@ -901,7 +906,48 @@ export function ChatGPTAppRenderer({
 
   return (
     <div className={containerClassName}>
-      {(isPip || isFullscreen) && (
+      {/* Fullscreen Header */}
+      {isFullscreen && (
+        <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-50 shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              disabled
+              className="p-2 rounded-lg hover:bg-muted text-muted-foreground/50 cursor-not-allowed transition-colors"
+              aria-label="Go back"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button
+              disabled
+              className="p-2 rounded-lg hover:bg-muted text-muted-foreground/50 cursor-not-allowed transition-colors"
+              aria-label="Go forward"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="font-medium text-sm text-muted-foreground">
+            {toolName || "ChatGPT App"}
+          </div>
+
+          <button
+            onClick={() => {
+              setDisplayMode("inline");
+              // Also ensure we exit PiP if that was the origin, though fullscreen usually overrides it
+              if (pipWidgetId === resolvedToolCallId) {
+                onExitPip?.(resolvedToolCallId);
+              }
+            }}
+            className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Exit fullscreen"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
+      {/* PiP Close Button - only show in PiP mode, Fullscreen has its own header */}
+      {isPip && (
         <button
           onClick={() => {
             setDisplayMode("inline");
@@ -929,15 +975,15 @@ export function ChatGPTAppRenderer({
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className="w-full border border-border/40 rounded-md bg-background overflow-hidden"
+        className={`w-full border border-border/40 bg-background overflow-hidden ${isFullscreen ? "flex-1 border-0 rounded-none" : "rounded-md"
+          }`}
         style={{
           height: iframeHeight,
+          // Remove max-height in fullscreen to allow flex-1 to control size
           maxHeight:
-            displayMode === "fullscreen"
+            displayMode === "pip"
               ? "90vh"
-              : displayMode === "pip"
-                ? "90vh"
-                : undefined,
+              : undefined,
         }}
       />
       {outputTemplate && (
@@ -968,3 +1014,4 @@ export function ChatGPTAppRenderer({
     </div>
   );
 }
+
