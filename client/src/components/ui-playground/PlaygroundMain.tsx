@@ -385,9 +385,13 @@ export function PlaygroundMain({
   // Check if widget should take over the full container
   // Mobile: both fullscreen and pip take over
   // Tablet: only fullscreen takes over (pip stays floating)
-  const isMobileFullTakeover = deviceType === "mobile" && (displayMode === "fullscreen" || displayMode === "pip");
-  const isTabletFullscreenTakeover = deviceType === "tablet" && displayMode === "fullscreen";
-  const isWidgetFullTakeover = isMobileFullTakeover || isTabletFullscreenTakeover;
+  const isMobileFullTakeover =
+    deviceType === "mobile" &&
+    (displayMode === "fullscreen" || displayMode === "pip");
+  const isTabletFullscreenTakeover =
+    deviceType === "tablet" && displayMode === "fullscreen";
+  const isWidgetFullTakeover =
+    isMobileFullTakeover || isTabletFullscreenTakeover;
 
   // Thread content
   const threadContent = (
