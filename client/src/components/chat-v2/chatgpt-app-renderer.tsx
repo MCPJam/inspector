@@ -1,6 +1,9 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useUIPlaygroundStore, type CspMode } from "@/stores/ui-playground-store";
+import {
+  useUIPlaygroundStore,
+  type CspMode,
+} from "@/stores/ui-playground-store";
 import {
   Dialog,
   DialogContent,
