@@ -43,7 +43,7 @@ export function OpenRouterTableRow({
           </div>
           <div>
             <h3 className="text-md font-semibold text-foreground pb-1">
-              OpenRouter {isConfigured && <span className="text-md">√</span>}
+              OpenRouter {isConfigured && <span className="text-md">✔️</span>}
             </h3>
             <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
               {isConfigured

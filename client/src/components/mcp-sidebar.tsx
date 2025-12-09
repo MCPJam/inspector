@@ -11,6 +11,7 @@ import {
   Box,
   FileCode,
   Activity,
+  Fish,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -25,6 +26,8 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
+import { DiscordIcon } from "./ui/discord-icon";
+import { GitHubIcon } from "./ui/github-icon";
 
 // Define sections with their respective items
 const navigationSections = [
@@ -37,9 +40,14 @@ const navigationSections = [
         icon: MCPIcon,
       },
       {
-        title: "Playground",
+        title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
+      },
+      {
+        title: "App Builder",
+        url: "#ui-playground",
+        icon: Fish,
       },
     ],
   },

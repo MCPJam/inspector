@@ -10,6 +10,7 @@ import {
   AppWindow,
   PanelRightClose,
   Loader2,
+  Copy,
 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -59,6 +60,9 @@ interface RenderableRpcItem {
 interface LoggerViewProps {
   serverIds?: string[]; // Optional filter for specific server IDs
   onClose?: () => void; // Optional callback to close/hide the panel
+  isLogLevelVisible?: boolean;
+  isCollapsable?: boolean;
+  isSearchVisible?: boolean;
 }
 
 const LOGGING_LEVELS: LoggingLevel[] = [
@@ -80,7 +84,13 @@ function normalizePayload(
   return { value: payload } as Record<string, unknown>;
 }
 
-export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
+export function LoggerView({
+  serverIds,
+  onClose,
+  isLogLevelVisible = true,
+  isCollapsable = true,
+  isSearchVisible = true,
+}: LoggerViewProps = {}) {
   const appState = useSharedAppState();
   const [mcpServerItems, setMcpServerItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -88,6 +98,7 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedServerId, setSelectedServerId] = useState<string>("");
   const [selectedLevel, setSelectedLevel] = useState<LoggingLevel>("debug");
+  const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>("all");
   const [isUpdatingLevel, setIsUpdatingLevel] = useState(false);
 
   // Subscribe to UI log store for MCP Apps traffic
@@ -180,6 +191,23 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
     setExpanded(new Set());
   };
 
+  const copyLogs = async () => {
+    const logsText = filteredItems.map((item) => ({
+      timestamp: item.timestamp,
+      source: item.source,
+      serverId: item.serverId,
+      direction: item.direction,
+      method: item.method,
+      payload: item.payload,
+    }));
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(logsText, null, 2));
+      toast.success("Logs copied to clipboard");
+    } catch {
+      toast.error("Failed to copy logs");
+    }
+  };
+
   useEffect(() => {
     let es: EventSource | null = null;
     try {
@@ -246,6 +274,11 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
   const filteredItems = useMemo(() => {
     let result = allItems;
 
+    // Filter by source type
+    if (sourceFilter !== "all") {
+      result = result.filter((item) => item.source === sourceFilter);
+    }
+
     // Filter by serverIds if provided
     if (serverIds && serverIds.length > 0) {
       const serverIdSet = new Set(serverIds);
@@ -266,7 +299,7 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
     }
 
     return result;
-  }, [allItems, searchQuery, serverIds]);
+  }, [allItems, searchQuery, serverIds, sourceFilter]);
 
   const canUpdateLogLevel = !!selectedServerId && !isUpdatingLevel;
 
@@ -275,7 +308,55 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
       <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold text-foreground">Logs</h2>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
+            {/* Source filter buttons */}
+            <div className="flex items-center rounded-md border border-border overflow-hidden mr-1">
+              <button
+                onClick={() => setSourceFilter("all")}
+                className={`px-2 py-1 text-[10px] transition-colors ${
+                  sourceFilter === "all"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Show all logs"
+              >
+                All
+              </button>
+              <button
+                onClick={() => setSourceFilter("mcp-server")}
+                className={`px-2 py-1 text-[10px] flex items-center gap-1 border-l border-border transition-colors ${
+                  sourceFilter === "mcp-server"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Show MCP Server logs only"
+              >
+                <Server className="h-3 w-3" />
+                Server
+              </button>
+              <button
+                onClick={() => setSourceFilter("mcp-apps")}
+                className={`px-2 py-1 text-[10px] flex items-center gap-1 border-l border-border transition-colors ${
+                  sourceFilter === "mcp-apps"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Show UI/Apps logs only"
+              >
+                <AppWindow className="h-3 w-3" />
+                Apps
+              </button>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={copyLogs}
+              disabled={filteredItems.length === 0}
+              className="h-7 px-2"
+              title="Copy logs to clipboard"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -286,7 +367,7 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
-            {onClose && (
+            {onClose && isCollapsable && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -299,83 +380,95 @@ export function LoggerView({ serverIds, onClose }: LoggerViewProps = {}) {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search logs"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-7 pl-7 text-xs"
-            />
+        {isSearchVisible && (
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search logs"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-7 pl-7 text-xs"
+              />
+            </div>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {filteredItems.length} / {allItems.length}
+            </span>
           </div>
-          <span className="text-xs text-muted-foreground whitespace-nowrap">
-            {filteredItems.length} / {allItems.length}
-          </span>
-        </div>
-        <span className="mt-1 text-[9px] font-semibold uppercase text-muted-foreground">
-          Log Level
-        </span>
-        <div className="mt-0.5 flex w-full items-center gap-1 text-[10px]">
-          <div className="flex-[2] min-w-0">
-            <Select
-              value={selectedServerId}
-              onValueChange={setSelectedServerId}
-              disabled={selectableServers.length === 0 || isUpdatingLevel}
-            >
-              <SelectTrigger className="h-5 w-full bg-transparent px-1.5 py-0 text-[11px] cursor-pointer">
-                <SelectValue placeholder="Server" />
-              </SelectTrigger>
-              <SelectContent>
-                {selectableServers.length === 0 ? (
-                  <SelectItem value="none" disabled>
-                    No connected servers
-                  </SelectItem>
-                ) : (
-                  selectableServers.map((server) => (
-                    <SelectItem
-                      key={server.id}
-                      value={server.id}
-                      className="text-[10px]"
-                    >
-                      {server.id}
-                    </SelectItem>
-                  ))
+        )}
+        {isLogLevelVisible && (
+          <>
+            <span className="mt-1 text-[9px] font-semibold uppercase text-muted-foreground">
+              Log Level
+            </span>
+            <div className="mt-0.5 flex w-full items-center gap-1 text-[10px]">
+              <div className="flex-[2] min-w-0">
+                <Select
+                  value={selectedServerId}
+                  onValueChange={setSelectedServerId}
+                  disabled={selectableServers.length === 0 || isUpdatingLevel}
+                >
+                  <SelectTrigger className="h-5 w-full bg-transparent px-1.5 py-0 text-[11px] cursor-pointer">
+                    <SelectValue placeholder="Server" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectableServers.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        No connected servers
+                      </SelectItem>
+                    ) : (
+                      selectableServers.map((server) => (
+                        <SelectItem
+                          key={server.id}
+                          value={server.id}
+                          className="text-[10px]"
+                        >
+                          {server.id}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex-[1] min-w-0">
+                <Select
+                  value={selectedLevel}
+                  onValueChange={(value) =>
+                    setSelectedLevel(value as LoggingLevel)
+                  }
+                  disabled={!selectedServerId || isUpdatingLevel}
+                >
+                  <SelectTrigger className="h-5 w-full bg-transparent px-1.5 py-0 text-[11px] cursor-pointer">
+                    <SelectValue placeholder="Level" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LOGGING_LEVELS.map((level) => (
+                      <SelectItem
+                        key={level}
+                        value={level}
+                        className="text-[10px]"
+                      >
+                        {level}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleApplyLogLevel}
+                disabled={!canUpdateLogLevel}
+                className="flex-[1] h-9 justify-center px-1.5 text-[10px]"
+              >
+                {isUpdatingLevel && (
+                  <Loader2 className="mr-1 h-2 w-2 animate-spin" />
                 )}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex-[1] min-w-0">
-            <Select
-              value={selectedLevel}
-              onValueChange={(value) => setSelectedLevel(value as LoggingLevel)}
-              disabled={!selectedServerId || isUpdatingLevel}
-            >
-              <SelectTrigger className="h-5 w-full bg-transparent px-1.5 py-0 text-[11px] cursor-pointer">
-                <SelectValue placeholder="Level" />
-              </SelectTrigger>
-              <SelectContent>
-                {LOGGING_LEVELS.map((level) => (
-                  <SelectItem key={level} value={level} className="text-[10px]">
-                    {level}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleApplyLogLevel}
-            disabled={!canUpdateLogLevel}
-            className="flex-[1] h-9 justify-center px-1.5 text-[10px]"
-          >
-            {isUpdatingLevel && (
-              <Loader2 className="mr-1 h-2 w-2 animate-spin" />
-            )}
-            Apply
-          </Button>
-        </div>
+                Apply
+              </Button>
+            </div>
+          </>
+        )}
       </div>
 
       <div
