@@ -491,10 +491,10 @@ function ToolPart({
     icon: typeof LayoutDashboard;
     label: string;
   }[] = [
-      { mode: "inline", icon: LayoutDashboard, label: "Inline" },
-      { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
-      { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
-    ];
+    { mode: "inline", icon: LayoutDashboard, label: "Inline" },
+    { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
+    { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
+  ];
 
   const debugOptions: {
     tab: "data" | "state" | "csp";
@@ -502,15 +502,15 @@ function ToolPart({
     label: string;
     badge?: number;
   }[] = [
-      { tab: "data", icon: Database, label: "Data" },
-      { tab: "state", icon: Box, label: "Widget State" },
-      {
-        tab: "csp",
-        icon: Shield,
-        label: "CSP",
-        badge: widgetDebugInfo?.csp?.violations?.length,
-      },
-    ];
+    { tab: "data", icon: Database, label: "Data" },
+    { tab: "state", icon: Box, label: "Widget State" },
+    {
+      tab: "csp",
+      icon: Shield,
+      label: "CSP",
+      badge: widgetDebugInfo?.csp?.violations?.length,
+    },
+  ];
 
   const handleDebugClick = (tab: "data" | "state" | "csp") => {
     if (activeDebugTab === tab) {
@@ -580,10 +580,11 @@ function ToolPart({
 
                         onDisplayModeChange?.(mode);
                       }}
-                      className={`p-1 rounded transition-colors cursor-pointer ${displayMode === mode
+                      className={`p-1 rounded transition-colors cursor-pointer ${
+                        displayMode === mode
                           ? "bg-background text-foreground shadow-sm"
                           : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                        }`}
+                      }`}
                     >
                       <Icon className="h-3.5 w-3.5" />
                     </button>
@@ -607,12 +608,13 @@ function ToolPart({
                         e.stopPropagation();
                         handleDebugClick(tab);
                       }}
-                      className={`p-1 rounded transition-colors cursor-pointer relative ${activeDebugTab === tab
+                      className={`p-1 rounded transition-colors cursor-pointer relative ${
+                        activeDebugTab === tab
                           ? "bg-background text-foreground shadow-sm"
                           : badge && badge > 0
                             ? "text-destructive hover:text-destructive hover:bg-destructive/10"
                             : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                        }`}
+                      }`}
                     >
                       <Icon className="h-3.5 w-3.5" />
                       {badge !== undefined && badge > 0 && (
@@ -640,8 +642,9 @@ function ToolPart({
             </span>
           )}
           <ChevronDown
-            className={`h-4 w-4 transition-transform duration-150 ${isExpanded ? "rotate-180" : ""
-              }`}
+            className={`h-4 w-4 transition-transform duration-150 ${
+              isExpanded ? "rotate-180" : ""
+            }`}
           />
         </span>
       </button>
