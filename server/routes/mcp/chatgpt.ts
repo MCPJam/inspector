@@ -352,6 +352,11 @@ function generateApiScript(opts: ApiScriptOptions): string {
   // Host-backed navigation: track iframe history and notify parent
   // This allows the host to mirror navigation state in UI (e.g., fullscreen header back/forward buttons)
   const navigationState = { currentIndex: 0, historyLength: 1 };
+  let lastHistoryLength = history.length;
+
+  const withNavigationIndex = (state, index) => {
+    return state && typeof state === 'object' ? { ...state, __navIndex: index } : { __navIndex: index };
+  };
   
   const notifyNavigationState = () => {
     const canGoBack = navigationState.currentIndex > 0;
@@ -369,38 +374,33 @@ function generateApiScript(opts: ApiScriptOptions): string {
   // Wrap history.pushState to track navigation
   const originalPushState = history.pushState.bind(history);
   history.pushState = function(state, title, url) {
-    originalPushState(state, title, url);
+    const nextIndex = navigationState.currentIndex + 1;
+    const stateWithIndex = withNavigationIndex(state, nextIndex);
+    originalPushState(stateWithIndex, title, url);
     // New navigation: increment index and truncate forward history
-    navigationState.currentIndex++;
-    navigationState.historyLength = navigationState.currentIndex + 1;
+    navigationState.currentIndex = nextIndex;
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
     notifyNavigationState();
   };
 
   // Wrap history.replaceState (doesn't change index/length, but still notify for consistency)
   const originalReplaceState = history.replaceState.bind(history);
   history.replaceState = function(state, title, url) {
-    originalReplaceState(state, title, url);
+    const stateWithIndex = withNavigationIndex(state, navigationState.currentIndex);
+    originalReplaceState(stateWithIndex, title, url);
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
     notifyNavigationState();
   };
 
   // Track popstate (browser/programmatic back/forward within iframe)
-  // We detect direction by comparing history.length changes
-  let lastHistoryLength = history.length;
-  window.addEventListener('popstate', () => {
-    const currentLength = history.length;
-    // popstate doesn't tell us direction, but we can infer from our tracked state
-    // When going back, currentIndex decreases; when going forward, it increases
-    // Since we can't know for sure, we estimate based on history.state or just notify
-    // For accurate tracking, we use a heuristic: if history.length changed, reset tracking
-    if (currentLength !== lastHistoryLength) {
-      // History was modified externally, reset to safe state
-      navigationState.historyLength = currentLength;
-      navigationState.currentIndex = Math.min(navigationState.currentIndex, currentLength - 1);
-      lastHistoryLength = currentLength;
-    }
-    // Notify parent - the buttons will update based on current state
-    // Note: For back navigation, currentIndex should decrease
-    // We'll receive the correct state from the next pushState or user can track via state object
+  // Use explicit __navIndex stored in history.state to restore position
+  window.addEventListener('popstate', (event) => {
+    const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
+    navigationState.currentIndex = stateIndex;
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
     notifyNavigationState();
   });
 
