@@ -14,6 +14,36 @@ export type DeviceType = "mobile" | "tablet" | "desktop";
 export type DisplayMode = "inline" | "pip" | "fullscreen";
 export type CspMode = "permissive" | "widget-declared";
 
+export interface DeviceCapabilities {
+  hover: boolean;
+  touch: boolean;
+}
+
+export interface SafeAreaInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+export type SafeAreaPreset =
+  | "none"
+  | "iphone-notch"
+  | "iphone-dynamic-island"
+  | "android-gesture"
+  | "custom";
+
+/** Preset safe area configurations for common devices */
+export const SAFE_AREA_PRESETS: Record<
+  Exclude<SafeAreaPreset, "custom">,
+  SafeAreaInsets
+> = {
+  none: { top: 0, bottom: 0, left: 0, right: 0 },
+  "iphone-notch": { top: 44, bottom: 34, left: 0, right: 0 },
+  "iphone-dynamic-island": { top: 59, bottom: 34, left: 0, right: 0 },
+  "android-gesture": { top: 24, bottom: 16, left: 0, right: 0 },
+};
+
 export interface UserLocation {
   country: string;
   region: string;
@@ -72,6 +102,13 @@ interface UIPlaygroundState {
   // CSP enforcement mode for widget sandbox
   cspMode: CspMode;
 
+  // Device capabilities (hover/touch support)
+  capabilities: DeviceCapabilities;
+
+  // Safe area insets (for device notches, rounded corners, etc.)
+  safeAreaPreset: SafeAreaPreset;
+  safeAreaInsets: SafeAreaInsets;
+
   // Actions
   setTools: (tools: Record<string, Tool>) => void;
   setSelectedTool: (tool: string | null) => void;
@@ -98,6 +135,9 @@ interface UIPlaygroundState {
   setSidebarVisible: (visible: boolean) => void;
   setPlaygroundActive: (active: boolean) => void;
   setCspMode: (mode: CspMode) => void;
+  setCapabilities: (capabilities: Partial<DeviceCapabilities>) => void;
+  setSafeAreaPreset: (preset: SafeAreaPreset) => void;
+  setSafeAreaInsets: (insets: Partial<SafeAreaInsets>) => void;
   reset: () => void;
 }
 
@@ -115,6 +155,21 @@ const getStoredVisibility = (key: string, defaultValue: boolean): boolean => {
   if (typeof window === "undefined") return defaultValue;
   const stored = localStorage.getItem(key);
   return stored === null ? defaultValue : stored === "true";
+};
+
+/** Get default capabilities based on device type */
+const getDefaultCapabilities = (
+  deviceType: DeviceType = "desktop",
+): DeviceCapabilities => {
+  switch (deviceType) {
+    case "mobile":
+      return { hover: false, touch: true };
+    case "tablet":
+      return { hover: false, touch: true };
+    case "desktop":
+    default:
+      return { hover: true, touch: false };
+  }
 };
 
 const initialState = {
@@ -136,6 +191,9 @@ const initialState = {
   followUpMessages: [] as FollowUpMessage[],
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
+  capabilities: getDefaultCapabilities("desktop"),
+  safeAreaPreset: "none" as SafeAreaPreset,
+  safeAreaInsets: SAFE_AREA_PRESETS["none"],
 };
 
 export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
@@ -189,6 +247,8 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
     set((state) => ({
       deviceType,
       globals: { ...state.globals, deviceType },
+      // Auto-update capabilities based on device type
+      capabilities: getDefaultCapabilities(deviceType),
     })),
 
   setDisplayMode: (displayMode) =>
@@ -236,6 +296,26 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
   setPlaygroundActive: (active) => set({ isPlaygroundActive: active }),
 
   setCspMode: (mode) => set({ cspMode: mode }),
+
+  setCapabilities: (newCapabilities) =>
+    set((state) => ({
+      capabilities: { ...state.capabilities, ...newCapabilities },
+    })),
+
+  setSafeAreaPreset: (preset) =>
+    set((state) => ({
+      safeAreaPreset: preset,
+      safeAreaInsets:
+        preset === "custom"
+          ? state.safeAreaInsets // Keep current insets when switching to custom
+          : SAFE_AREA_PRESETS[preset],
+    })),
+
+  setSafeAreaInsets: (insets) =>
+    set((state) => ({
+      safeAreaPreset: "custom" as SafeAreaPreset,
+      safeAreaInsets: { ...state.safeAreaInsets, ...insets },
+    })),
 
   reset: () =>
     set((state) => ({
