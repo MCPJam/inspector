@@ -805,6 +805,154 @@ await window.openai.requestDisplayMode({
 
 The parent component handles these requests and updates the widget's display mode accordingly.
 
+#### Fullscreen Navigation (PR #1033)
+
+When a widget is in fullscreen mode, a navigation header is rendered at the top with back/forward buttons, widget title, and close button. This enables users to navigate multi-page widgets without leaving fullscreen mode.
+
+**Architecture:**
+
+The fullscreen navigation system uses host-backed navigation tracking to mirror the widget's internal history state:
+
+```mermaid
+sequenceDiagram
+    participant Widget as Widget Iframe
+    participant History as History API
+    participant Parent as ChatGPTAppRenderer
+    participant Header as Fullscreen Header
+
+    Note over Widget,Header: Navigation Tracking
+    Widget->>History: history.pushState(state, title, url)
+    History->>History: Wrapped pushState increments index
+    History->>Parent: postMessage openai:navigationStateChanged
+    Parent->>Header: Update back/forward button states
+
+    Note over Widget,Header: User Navigation
+    Header->>Parent: User clicks back button
+    Parent->>Widget: postMessage openai:navigate {direction: 'back'}
+    Widget->>History: history.back()
+    History->>Parent: popstate event → postMessage navigationStateChanged
+    Parent->>Header: Update button states
+```
+
+**Implementation Details:**
+
+1. **History Wrapping** (`server/routes/mcp/chatgpt.ts:352-407`):
+
+```javascript
+// Track navigation state
+const navigationState = { currentIndex: 0, historyLength: 1 };
+
+// Wrap history.pushState to track navigation
+const originalPushState = history.pushState.bind(history);
+history.pushState = function(state, title, url) {
+  const nextIndex = navigationState.currentIndex + 1;
+  const stateWithIndex = { ...state, __navIndex: nextIndex };
+  originalPushState(stateWithIndex, title, url);
+  navigationState.currentIndex = nextIndex;
+  navigationState.historyLength = history.length;
+  notifyNavigationState();
+};
+
+// Track popstate for back/forward navigation
+window.addEventListener('popstate', (event) => {
+  const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
+  navigationState.currentIndex = stateIndex;
+  notifyNavigationState();
+});
+
+// Notify parent of navigation state changes
+const notifyNavigationState = () => {
+  window.parent.postMessage({
+    type: 'openai:navigationStateChanged',
+    toolId: toolId,
+    canGoBack: navigationState.currentIndex > 0,
+    canGoForward: navigationState.currentIndex < navigationState.historyLength - 1,
+    historyLength: navigationState.historyLength,
+    currentIndex: navigationState.currentIndex
+  }, '*');
+};
+```
+
+2. **Parent-Side Navigation Handler** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:888-896`):
+
+```typescript
+case "openai:navigationStateChanged": {
+  // Update navigation button state
+  if (event.data.toolId === resolvedToolCallId) {
+    setCanGoBack(event.data.canGoBack ?? false);
+    setCanGoForward(event.data.canGoForward ?? false);
+  }
+  break;
+}
+```
+
+3. **Navigation Command Handler** (`server/routes/mcp/chatgpt.ts:535-551`):
+
+```javascript
+case 'openai:navigate':
+  // Host-backed navigation: respond to commands from parent
+  if (event.data.toolId === toolId) {
+    if (event.data.direction === 'back') {
+      if (navigationState.currentIndex > 0) {
+        navigationState.currentIndex--;
+        history.back();
+      }
+    } else if (event.data.direction === 'forward') {
+      if (navigationState.currentIndex < navigationState.historyLength - 1) {
+        navigationState.currentIndex++;
+        history.forward();
+      }
+    }
+  }
+  break;
+```
+
+4. **Fullscreen Header UI** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:1117-1164`):
+
+```typescript
+{isFullscreen && (
+  <div className="flex items-center justify-between px-4 h-14 border-b">
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => navigateWidget("back")}
+        disabled={!canGoBack}
+        className={canGoBack ? "hover:bg-muted cursor-pointer" : "cursor-not-allowed"}
+      >
+        <ChevronLeft className="w-5 h-5" />
+      </button>
+      <button
+        onClick={() => navigateWidget("forward")}
+        disabled={!canGoForward}
+        className={canGoForward ? "hover:bg-muted cursor-pointer" : "cursor-not-allowed"}
+      >
+        <ChevronRight className="w-5 h-5" />
+      </button>
+    </div>
+
+    <div className="font-medium text-sm">{toolName || "ChatGPT App"}</div>
+
+    <button onClick={() => setDisplayMode("inline")}>
+      <X className="w-5 h-5" />
+    </button>
+  </div>
+)}
+```
+
+**Key Features:**
+
+- **Host-Backed Navigation**: Parent component mirrors widget's history state, enabling navigation controls outside the iframe
+- **State Persistence**: Navigation index stored in `history.state.__navIndex` to survive popstate events
+- **Automatic Tracking**: All `pushState`, `replaceState`, and `popstate` events automatically update navigation state
+- **Disabled State Management**: Back/forward buttons are disabled when navigation is not available
+- **Transform Isolation Fix**: Parent container's `transform: translateZ(0)` is removed in fullscreen mode to prevent z-index stacking issues
+
+**Use Cases:**
+
+- Multi-page dashboards with internal routing
+- Wizard-style forms with step navigation
+- Documentation browsers with history
+- Any widget using React Router or similar routing libraries
+
 ### 7. Parent-Side Message Handling
 
 Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:312-347`:
