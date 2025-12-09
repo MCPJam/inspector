@@ -23,7 +23,7 @@ MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://develop
 <Note>
   This document covers the **V1 Playground** implementation. As of PR #773,
   **Playground V2** (`ChatTabV2.tsx`) also supports OpenAI Apps with a
-  streamlined implementation using `openai-app-renderer.tsx`. The V2
+  streamlined implementation using `chatgpt-app-renderer.tsx`. The V2
   implementation uses MCP resources API to fetch widget templates and renders
   them with similar `window.openai` bridge capabilities.
 </Note>
@@ -225,7 +225,7 @@ sequenceDiagram
 
 #### Storage Implementation
 
-Located in `server/routes/mcp/openai.ts:14-32`:
+Located in `server/routes/mcp/chatgpt.ts:14-32`:
 
 ```typescript
 interface WidgetData {
@@ -289,7 +289,7 @@ sequenceDiagram
 
 #### Stage 1: Container Page
 
-Located in `server/routes/mcp/openai.ts:81-120`:
+Located in `server/routes/mcp/chatgpt.ts:81-120`:
 
 ```typescript
 openai.get(\"/widget/:toolId\", async (c) => {
@@ -331,7 +331,7 @@ openai.get(\"/widget/:toolId\", async (c) => {
 
 #### Stage 2: Content Injection
 
-Located in `server/routes/mcp/openai.ts:123-459`:
+Located in `server/routes/mcp/chatgpt.ts:123-459`:
 
 Key steps:
 
@@ -381,7 +381,7 @@ graph LR
 
 #### API Implementation
 
-Located in `server/routes/mcp/openai.ts:213-376`:
+Located in `server/routes/mcp/chatgpt.ts:213-376`:
 
 **Core API Methods:**
 
@@ -563,7 +563,7 @@ graph TB
 
 #### Modal Request Flow
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:380-388`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:380-388`:
 
 ```typescript
 case "openai:requestModal": {
@@ -601,7 +601,7 @@ if (window.openai.view.mode === "modal") {
 
 Modal and inline views share widget state automatically. When either view calls `setWidgetState()`, the state is propagated to the other view via `openai:pushWidgetState` messages.
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:269-284`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:269-284`:
 
 ```typescript
 // After state is set, push to other view
@@ -625,7 +625,7 @@ if (targetWindow) {
 
 The receiving view updates its local state and dispatches a `openai:widget_state` event:
 
-Located in `server/routes/mcp/openai.ts:410-428`:
+Located in `server/routes/mcp/chatgpt.ts:410-428`:
 
 ```javascript
 if (
@@ -711,14 +711,14 @@ const handleExitPip = (toolCallId: string) => {
 };
 ```
 
-**Mode Detection** (`client/src/components/chat-v2/openai-app-renderer.tsx:440-442`):
+**Mode Detection** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:440-442`):
 
 ```typescript
 const isPip = displayMode === "pip" && pipWidgetId === resolvedToolCallId;
 const isFullscreen = displayMode === "fullscreen";
 ```
 
-**CSS Classes** (`client/src/components/chat-v2/openai-app-renderer.tsx:444-476`):
+**CSS Classes** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:444-476`):
 
 ```typescript
 let containerClassName = "mt-3 space-y-2 relative group";
@@ -756,7 +756,7 @@ if (isFullscreen) {
 }
 ```
 
-**Exit Button** (`client/src/components/chat-v2/openai-app-renderer.tsx:481-493`):
+**Exit Button** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:481-493`):
 
 ```typescript
 {shouldShowExitButton && (
@@ -807,7 +807,7 @@ The parent component handles these requests and updates the widget's display mod
 
 ### 7. Parent-Side Message Handling
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:312-347`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:312-347`:
 
 ```typescript
 useEffect(() => {
@@ -883,7 +883,7 @@ useEffect(() => {
 
 The component automatically resets to inline mode if another widget takes over PiP mode:
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:368-372`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:368-372`:
 
 ```typescript
 useEffect(() => {
@@ -899,7 +899,7 @@ This ensures only one widget can be in PiP mode at a time, preventing overlappin
 
 The parent component automatically sends theme updates to widgets when the user changes between light and dark mode:
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:293-307`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:293-307`:
 
 ```typescript
 // Send theme updates to iframe when theme changes
@@ -935,7 +935,7 @@ window.addEventListener("message", (event) => {
 
 As of PR #891, widget state changes are now propagated to the LLM model as hidden assistant messages. This allows the AI to understand and reason about widget interactions.
 
-**Implementation** (`client/src/components/chat-v2/openai-app-renderer.tsx:232-244`):
+**Implementation** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:232-244`):
 
 ```typescript
 case "openai:setWidgetState": {
@@ -1063,7 +1063,7 @@ const handleCallTool = async (
 
 ### Content Security Policy
 
-Located in `server/routes/mcp/openai.ts:408-437`:
+Located in `server/routes/mcp/chatgpt.ts:408-437`:
 
 ```typescript
 const trustedCdns = [
@@ -1091,7 +1091,7 @@ c.header(\"Content-Security-Policy\", [
 
 ### Iframe Sandbox
 
-Located in `client/src/components/chat-v2/openai-app-renderer.tsx:518-530`:
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:518-530`:
 
 ```typescript
 <iframe
@@ -1391,7 +1391,7 @@ console.log("toolOutput:", window.openai?.toolOutput);
 **Example: Adding a custom method:**
 
 ```typescript
-// 1. Server-side API injection (server/routes/mcp/openai.ts)
+// 1. Server-side API injection (server/routes/mcp/chatgpt.ts)
 openaiAPI.customMethod = async function(options) {
   window.parent.postMessage({
     type: 'openai:customMethod',
@@ -1399,7 +1399,7 @@ openaiAPI.customMethod = async function(options) {
   }, '*');
 };
 
-// 2. Parent-side handler (client/src/components/chat-v2/openai-app-renderer.tsx)
+// 2. Parent-side handler (client/src/components/chat-v2/chatgpt-app-renderer.tsx)
 case \"openai:customMethod\":
   handleCustomMethod(event.data.data);
   break;
@@ -1465,10 +1465,10 @@ case \"openai:customMethod\":
 ## Related Files
 
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
-- `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
+- `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
 - `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
 - `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
-- `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
+- `server/routes/mcp/chatgpt.ts` - Widget storage, serving, and OpenAI bridge injection
 - `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
 
