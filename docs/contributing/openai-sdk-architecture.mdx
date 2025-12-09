@@ -73,25 +73,32 @@ See [Playground Architecture - MCP-UI Integration](./playground-architecture#mcp
 
 ## Architecture Overview
 
+MCPJam Inspector implements a **triple-iframe architecture** matching ChatGPT's actual implementation for maximum compatibility and security isolation:
+
 ```mermaid
 graph TB
     subgraph Frontend["Frontend (React)"]
         Chat[ChatTab Component]
         Message[Message Component]
         Results[ResultsPanel Component]
-        Renderer[OpenAIComponentRenderer]
-        Iframe[Sandboxed Iframe]
+        Renderer[ChatGPTAppRenderer]
+        OuterIframe["Outer Iframe (about:blank)"]
+        MiddleIframe["Middle Iframe (sandbox-proxy)"]
+        InnerIframe["Inner Iframe (widget content)"]
 
         Chat --> Message
         Message --> Results
         Results --> Renderer
-        Renderer --> Iframe
+        Renderer --> OuterIframe
+        OuterIframe --> MiddleIframe
+        MiddleIframe --> InnerIframe
     end
 
     subgraph Backend["Backend (Hono.js)"]
         ToolExec[Tool Execution]
         Storage[Widget Data Store]
         StoreEndpoint["POST /openai/widget/store"]
+        ProxyEndpoint["GET /openai/sandbox-proxy"]
         WidgetEndpoint["GET /openai/widget/:toolId"]
         ContentEndpoint["GET /openai/widget-content/:toolId"]
         MCPRead[MCP Resource Read]
@@ -111,8 +118,12 @@ graph TB
     end
 
     Renderer -->|Store widget data| StoreEndpoint
-    Renderer -->|Load iframe| WidgetEndpoint
-    Iframe -->|postMessage| Renderer
+    Renderer -->|Load outer iframe| OuterIframe
+    OuterIframe -->|Load proxy| ProxyEndpoint
+    MiddleIframe -->|Load widget| WidgetEndpoint
+    InnerIframe -->|postMessage| MiddleIframe
+    MiddleIframe -->|postMessage| OuterIframe
+    OuterIframe -->|postMessage| Renderer
     Renderer -->|Call tool| ToolExec
     ContentEndpoint -->|Fetch HTML| MCPRead
     MCPRead -->|Read resource| Resource
@@ -121,10 +132,25 @@ graph TB
     classDef backend fill:#fff3e0,stroke:#f57c00
     classDef mcp fill:#f3e5f5,stroke:#7b1fa2
 
-    class Chat,Message,Results,Renderer,Iframe frontend
-    class ToolExec,Storage,WidgetEndpoint,ContentEndpoint,MCPRead backend
+    class Chat,Message,Results,Renderer,OuterIframe,MiddleIframe,InnerIframe frontend
+    class ToolExec,Storage,WidgetEndpoint,ContentEndpoint,MCPRead,ProxyEndpoint backend
     class Tool,Resource mcp
 ```
+
+### Triple-Iframe Architecture
+
+The triple-iframe design provides **true cross-origin isolation** for maximum security:
+
+1. **Outer Iframe** (`about:blank`) - Container with popup permissions
+2. **Middle Iframe** (cross-origin sandbox proxy) - Uses localhost ↔ 127.0.0.1 origin swap for isolation
+3. **Inner Iframe** (widget content via `src` URL) - Actual widget with proper URL context
+
+**Why Three Iframes?**
+
+- **Cross-origin isolation**: Middle iframe runs on different origin (localhost vs 127.0.0.1)
+- **URL context preservation**: Widget loads via `src` (not `srcdoc`) for Next.js/React Router compatibility
+- **Security boundaries**: Each layer enforces sandbox restrictions
+- **ChatGPT parity**: Matches OpenAI's production implementation exactly
 
 ## Component Flow
 
@@ -175,7 +201,7 @@ When a tool is executed that returns OpenAI SDK components or MCP Apps, the syst
 
 #### ResultsPanel Detection Logic
 
-Located in `client/src/components/tools/ResultsPanel.tsx:100-104`:
+Located in `client/src/components/tools/ResultsPanel.tsx`:
 
 ```typescript
 // Check for OpenAI component or MCP App using tool metadata from definition
@@ -225,7 +251,7 @@ sequenceDiagram
 
 #### Storage Implementation
 
-Located in `server/routes/mcp/chatgpt.ts:14-32`:
+Located in `server/routes/mcp/chatgpt.ts:14-51`:
 
 ```typescript
 interface WidgetData {
@@ -257,126 +283,189 @@ setInterval(
 ).unref();
 ```
 
-### 3. Two-Stage Widget Loading
+### 3. Triple-Iframe Widget Loading
 
-The system uses a clever two-stage loading process to ensure React Router compatibility:
+The system uses a sophisticated triple-iframe architecture with cross-origin isolation:
 
 ```mermaid
 sequenceDiagram
-    participant Browser
-    participant Stage1 as Stage 1 Container
-    participant Stage2 as Stage 2 Content
+    participant Host as Inspector Host
+    participant Outer as Outer Iframe (about:blank)
+    participant Middle as Middle Iframe (sandbox-proxy)
+    participant Inner as Inner Iframe (widget)
+    participant Backend as Backend API
     participant MCP as MCP Server
 
-    Browser->>Stage1: GET /widget/abc123
-    Stage1-->>Browser: Return container HTML
-    Note over Browser: Execute history.replaceState to change URL to /
-    Browser->>Stage2: Fetch /widget-content/abc123
-    Stage2->>MCP: Read resource from server
-    MCP-->>Stage2: Return HTML content
-    Stage2->>Stage2: Inject window.openai API script
-    Stage2->>Stage2: Add CSP headers
-    Stage2-->>Browser: Return enhanced HTML
-    Browser->>Browser: Render widget via document.write
+    Host->>Outer: Create iframe with src="about:blank"
+    Outer->>Outer: Inject middle iframe HTML
+    Note over Outer: Middle iframe uses different origin<br/>(localhost ↔ 127.0.0.1 swap)
+    Outer->>Middle: Load sandbox-proxy.html
+    Middle-->>Outer: Send openai:sandbox-ready
+    Outer-->>Host: Forward ready signal
+    Host->>Outer: Send openai:load-widget with URL
+    Outer->>Middle: Forward load-widget message
+    Middle->>Backend: GET /widget/:toolId
+    Backend->>Backend: history.replaceState to /
+    Backend->>Backend: Fetch /widget-content/:toolId
+    Backend->>MCP: Read resource from server
+    MCP-->>Backend: Return HTML content
+    Backend->>Backend: Inject window.openai API script
+    Backend-->>Middle: Return enhanced HTML
+    Middle->>Inner: Load widget via src URL
+    Inner->>Inner: Execute widget code
+    Inner->>Middle: postMessage to parent
+    Middle->>Outer: Relay message
+    Outer->>Host: Forward to Inspector
 ```
 
-**Why Two Stages?**
+**Why Triple-Iframe Architecture?**
 
-- Many widgets use React Router's `BrowserRouter` which expects clean URLs
-- Stage 1 changes URL to "/" before widget code loads
-- Stage 2 fetches actual content after URL is reset
-- Prevents routing conflicts and 404 errors
+- **Cross-origin isolation**: Middle iframe uses localhost ↔ 127.0.0.1 origin swap for true security boundary
+- **URL context preservation**: Widget loads via `src` (not `srcdoc`) for Next.js/React Router compatibility
+- **Message relay**: Each layer forwards postMessage events up/down the chain
+- **ChatGPT parity**: Matches OpenAI's production implementation exactly
+- **Sandbox enforcement**: Each iframe layer enforces its own sandbox restrictions
 
-#### Stage 1: Container Page
+#### Sandbox Proxy Implementation
 
-Located in `server/routes/mcp/chatgpt.ts:81-120`:
+The middle iframe serves as a cross-origin relay between the host and widget. Located in `server/routes/mcp/chatgpt-sandbox-proxy.html`:
 
-```typescript
-openai.get(\"/widget/:toolId\", async (c) => {
-  const toolId = c.req.param(\"toolId\");
-  const widgetData = widgetDataStore.get(toolId);
+```html
+<!doctype html>
+<html>
+  <head>
+    <title>ChatGPT Apps Sandbox Proxy</title>
+  </head>
+  <body>
+    <script>
+      // Validate sandbox tokens for security
+      const ALLOWED_SANDBOX_TOKENS = [
+        "allow-scripts",
+        "allow-same-origin",
+        "allow-forms",
+        "allow-popups",
+        "allow-popups-to-escape-sandbox",
+      ];
 
-  if (!widgetData) {
-    return c.html(\"Error: Widget data not found or expired\", 404);
-  }
+      // Create inner iframe for widget content
+      const inner = document.createElement("iframe");
+      inner.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+      inner.setAttribute("allow", "local-network-access *; microphone *; midi *");
+      document.body.appendChild(inner);
 
-  return c.html(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset=\"utf-8\">
-      <title>Loading Widget...</title>
-    </head>
-    <body>
-      <script>
-        (async function() {
-          // Change URL to \"/\" BEFORE loading widget
-          history.replaceState(null, '', '/');
+      let widgetLoaded = false;
 
-          // Fetch actual widget HTML
-          const response = await fetch('/api/mcp/openai/widget-content/${toolId}');
-          const html = await response.text();
+      // Message relay: Parent <-> Inner iframe
+      window.addEventListener("message", (event) => {
+        if (event.source === window.parent) {
+          // Load widget when host sends URL
+          if (event.data?.type === "openai:load-widget") {
+            const { url, sandbox } = event.data;
+            inner.setAttribute("sandbox", validateSandbox(sandbox));
+            inner.src = url; // Load via src for URL context
+            widgetLoaded = true;
+          } else if (widgetLoaded && inner.contentWindow) {
+            // Forward messages to widget
+            inner.contentWindow.postMessage(event.data, "*");
+          }
+        } else if (event.source === inner.contentWindow) {
+          // Forward messages from widget to host
+          window.parent.postMessage(event.data, "*");
+        }
+      });
 
-          // Replace entire document
-          document.open();
-          document.write(html);
-          document.close();
-        })();
-      </script>
-    </body>
-    </html>
-  `);
-});
+      // Signal ready to host
+      window.parent.postMessage({ type: "openai:sandbox-ready" }, "*");
+    </script>
+  </body>
+</html>
 ```
 
-#### Stage 2: Content Injection
+**Key Features:**
 
-Located in `server/routes/mcp/chatgpt.ts:123-459`:
+- **Cross-origin isolation**: Proxy runs on different origin (localhost ↔ 127.0.0.1)
+- **Message relay**: Bidirectional forwarding between host and widget
+- **Sandbox validation**: Only allows whitelisted sandbox tokens
+- **Widget loading via src**: Preserves URL context for React Router
+- **Ready signal**: Notifies host when proxy is initialized
 
-Key steps:
+#### Widget Content Injection
 
-1. Retrieve widget data from store
+The `/widget-content/:toolId` endpoint performs the following:
+
+1. Retrieve widget data from store (includes host-controlled globals)
 2. Read HTML from MCP server via `readResource(uri)`
 3. Parse view mode and params from query string (`view_mode`, `view_params`)
-4. Inject `window.openai` API script with bridge implementation
+4. Inject `window.openai` API script with:
+   - Host-controlled locale (BCP 47 format, e.g., 'en-US')
+   - Host-controlled deviceType ('mobile', 'tablet', 'desktop')
+   - Host-controlled userLocation (coarse IP-based geolocation)
+   - Host-controlled maxHeight constraint (ChatGPT uses ~500px for inline)
 5. Add security headers (CSP, X-Frame-Options)
 6. Set cache control headers (no-cache for fresh content)
 
+**Host-Controlled Globals (New in PR #1001):**
+
+Per the OpenAI Apps SDK spec, these values are **controlled by the host** (Inspector), not computed in the widget:
+
+- `locale`: Browser language from `navigator.language` (e.g., 'en-US', 'es-ES')
+- `deviceType`: Computed from viewport width (mobile: <768px, tablet: <1024px, desktop: ≥1024px)
+- `userLocation`: Coarse IP-based geolocation `{ country, region, city }` or `null` (uses ip-api.com, no API key required)
+- `maxHeight`: Maximum allowed height for inline mode (ChatGPT default: ~500px)
+
+These values are passed to the widget via `window.openai` and cannot be overridden by widget code.
+
 ### 4. window.openai API Bridge
 
-The injected script provides the OpenAI Apps SDK API to widget code:
+The injected script provides the OpenAI Apps SDK API to widget code. Messages flow through the triple-iframe chain:
 
 ```mermaid
 graph LR
-    subgraph IframeWidget["Iframe (Widget)"]
+    subgraph InnerIframe["Inner Iframe (Widget)"]
         Widget[Widget Code]
         API[window.openai]
     end
 
+    subgraph MiddleIframe["Middle Iframe (Proxy)"]
+        Relay[Message Relay]
+    end
+
+    subgraph OuterIframe["Outer Iframe"]
+        Container[Container]
+    end
+
     subgraph ParentInspector["Parent (Inspector)"]
-        Renderer[OpenAIComponentRenderer]
+        Renderer[ChatGPTAppRenderer]
         Backend[Backend API]
     end
 
     Widget -->|callTool| API
-    API -->|postMessage| Renderer
+    API -->|postMessage| Relay
+    Relay -->|forward| Container
+    Container -->|forward| Renderer
     Renderer -->|fetch tools API| Backend
     Backend -->|postMessage response| Renderer
-    Renderer -->|postMessage result| API
+    Renderer -->|postMessage| Container
+    Container -->|forward| Relay
+    Relay -->|forward| API
     API -->|Promise resolves| Widget
 
     Widget -->|setWidgetState| API
-    API -->|localStorage and postMessage| Renderer
+    API -->|localStorage and postMessage| Relay
+    Relay -->|forward| Renderer
 
-    Widget -->|sendFollowupTurn| API
-    API -->|postMessage| Renderer
+    Widget -->|sendFollowUpMessage| API
+    API -->|postMessage| Relay
+    Relay -->|forward| Renderer
     Renderer -->|Sends to chat| Backend
 
     classDef iframe fill:#ffe0b2,stroke:#e65100
+    classDef proxy fill:#fff3e0,stroke:#f57c00
     classDef parent fill:#e1f5ff,stroke:#0288d1
 
     class Widget,API iframe
-    class Renderer,Backend parent
+    class Relay proxy
+    class Container,Renderer,Backend parent
 ```
 
 #### API Implementation
@@ -391,7 +480,7 @@ const openaiAPI = {
   toolOutput: ${JSON.stringify(toolOutput)},
   toolResponseMetadata: ${JSON.stringify(toolResponseMetadata ?? null)},
   displayMode: 'inline',
-  maxHeight: 600,
+  maxHeight: ${maxHeight ?? null},  // Host-controlled constraint
   theme: ${JSON.stringify(theme ?? "dark")},
   locale: ${JSON.stringify(locale ?? "en-US")},  // From playground locale selector
   safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
@@ -422,30 +511,30 @@ const openaiAPI = {
   },
 
   // Call another MCP tool
-  async callTool(toolName, params = {}) {
+  async callTool(toolName, args = {}) {
+    const callId = ++this._callId;
     return new Promise((resolve, reject) => {
-      const requestId = `tool_${Date.now()}_${Math.random()}`;
-
-      const handler = (event) => {
-        if (event.data.type === 'openai:callTool:response' &&
-            event.data.requestId === requestId) {
-          window.removeEventListener('message', handler);
-          event.data.error ? reject(new Error(event.data.error))
-                           : resolve(event.data.result);
-        }
-      };
-
-      window.addEventListener('message', handler);
+      this._pendingCalls.set(callId, { resolve, reject });
+      
+      // Include client-supplied _meta per SDK spec
       window.parent.postMessage({
         type: 'openai:callTool',
-        requestId,
         toolName,
-        params
+        args,
+        callId,
+        toolId: ${JSON.stringify(toolId)},
+        _meta: Object.assign({
+          'openai/locale': hostLocale,
+          'openai/userAgent': navigator.userAgent,
+          'openai/subject': getSubjectId()
+        }, hostUserLocation ? { 'openai/userLocation': hostUserLocation } : {})
       }, '*');
 
       setTimeout(() => {
-        window.removeEventListener('message', handler);
-        reject(new Error('Tool call timeout'));
+        if (this._pendingCalls.has(callId)) {
+          this._pendingCalls.delete(callId);
+          reject(new Error('Tool call timeout'));
+        }
       }, 30000);
     });
   },
@@ -539,6 +628,36 @@ Widgets can use these values to adapt their layout and interactions for differen
 - API is frozen with `writable: false, configurable: false`
 - 30-second timeout on tool calls prevents hanging requests
 - Origin validation in parent ensures only iframe messages are processed
+
+**OAuth Challenge Handling (New in PR #1001):**
+
+When a tool returns a 401 status, the system checks for OAuth challenges per RFC 7235:
+
+```typescript
+// In ChatGPTAppRenderer message handler
+case "openai:callTool": {
+  const result = await onCallTool(toolName, args, _meta);
+  
+  // Check for OAuth challenge in response metadata
+  const resultMeta = result?._meta || result?.meta;
+  const wwwAuth = resultMeta?.["mcp/www_authenticate"];
+  
+  if (wwwAuth && typeof wwwAuth === "string") {
+    // Parse RFC 7235 challenge: Bearer realm="...", error="...", error_description="..."
+    handleOAuthChallenge(wwwAuth, toolName);
+  }
+  
+  postToWidget({
+    type: 'openai:callTool:response',
+    callId,
+    result,
+    error: result?.isError ? result?.content?.[0]?.text : undefined
+  });
+  break;
+}
+```
+
+The system displays user-friendly toast notifications when OAuth is required, guiding users to configure OAuth in server settings.
 
 ### 5. Modal Support
 
@@ -717,7 +836,7 @@ As of PR #927, widgets can request different display modes to optimize their pre
 
 The display mode system uses React state to track which widget (if any) is in PiP mode, and applies different CSS classes based on the current mode:
 
-**State Management** (`client/src/components/chat-v2/thread.tsx:62-72`):
+**State Management** (`client/src/components/chat-v2/thread.tsx`):
 
 ```typescript
 const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
@@ -1410,12 +1529,31 @@ Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:518-530`:
 
 ```typescript
 <iframe
-  ref={iframeRef}
-  src={widgetUrl}
-  sandbox=\"allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox\"
-  title={`OpenAI Component: ${toolCall.name}`}
-  allow=\"web-share\"
+  src="about:blank"
+  sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
+  allow="local-network-access *; microphone *; midi *"
+  title={title}
 />
+```
+
+**Middle Iframe** (injected into outer iframe):
+
+```html
+<iframe
+  id="middle"
+  src="${sandboxProxyUrl}"  <!-- Cross-origin: localhost ↔ 127.0.0.1 -->
+  sandbox="allow-scripts allow-same-origin allow-forms"
+  allow="local-network-access *; microphone *; midi *"
+></iframe>
+```
+
+**Inner Iframe** (created by sandbox proxy):
+
+```javascript
+const inner = document.createElement("iframe");
+inner.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+inner.setAttribute("allow", "local-network-access *; microphone *; midi *");
+inner.src = widgetUrl;  // Widget content loaded via src
 ```
 
 **Sandbox Permissions:**
@@ -1423,15 +1561,16 @@ Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:518-530`:
 - `allow-scripts`: Enable JavaScript execution
 - `allow-same-origin`: Allow localStorage access (required for state)
 - `allow-forms`: Support form submissions
-- `allow-popups`: Enable external link navigation
-- `allow-popups-to-escape-sandbox`: Allow popup windows to load normally
+- `allow-popups`: Enable external link navigation (outer iframe only)
+- `allow-popups-to-escape-sandbox`: Allow popup windows to load normally (outer iframe only)
 
-**Security Trade-offs:**
+**Security Architecture:**
 
-- `allow-same-origin` + `allow-scripts` = Full JavaScript capabilities
-- Required for React Router and modern frameworks
-- Mitigated by CSP headers and origin validation
-- Widgets should be treated as semi-trusted code
+- **Cross-origin isolation**: Middle iframe uses different origin (localhost ↔ 127.0.0.1) for true security boundary
+- **Message relay**: Each layer validates and forwards messages, preventing direct access
+- **CSP enforcement**: Each iframe layer enforces Content Security Policy
+- **Sandbox layering**: Permissions are progressively restricted at each level
+- **Widget trust model**: Widgets are semi-trusted code with limited host access
 
 ## Complete Data Flow Example
 
@@ -1716,8 +1855,8 @@ document.addEventListener("securitypolicyviolation", (e) => {
 
 **Adding New OpenAI API Methods:**
 
-1. Update server-side injection script (`server/routes/mcp/resources.ts:250-376`)
-2. Add postMessage handler in parent (`client/src/components/chat/openai-component-renderer.tsx:118-196`)
+1. Update server-side injection script (`server/routes/mcp/chatgpt.ts:213-376`)
+2. Add postMessage handler in parent (`client/src/components/chat-v2/chatgpt-app-renderer.tsx`)
 3. Update TypeScript types if needed
 
 **Example: Adding a custom method:**
@@ -1737,24 +1876,33 @@ case \"openai:customMethod\":
   break;
 ```
 
+**Note on Message Flow:**
+
+Remember that messages flow through the triple-iframe chain:
+- Widget → Middle Proxy → Outer Container → Host
+- Each layer forwards messages bidirectionally
+- Origin validation occurs at each boundary
+
 ## Performance Considerations
 
 ### Widget Data Storage
 
-- **TTL**: 1 hour default, configurable in `resources.ts:22`
+- **TTL**: 1 hour default, configurable in `chatgpt.ts:22`
 - **Cleanup**: Runs every 5 minutes
-- **Memory**: Each widget stores ~1-10KB (toolInput + toolOutput)
+- **Memory**: Each widget stores ~1-10KB (toolInput + toolOutput + host globals)
 - **Scale**: 1000 concurrent widgets ≈ 10MB memory
 - **Recommendation**: For production, use Redis instead of Map
 
 ### Iframe Rendering
 
-- **Initial Load**: 200-500ms (Stage 1 + Stage 2 + resource fetch)
-- **Tool Calls**: 100-300ms (postMessage + backend + MCP)
+- **Initial Load**: 300-700ms (triple-iframe setup + resource fetch + cross-origin relay)
+- **Tool Calls**: 100-300ms (postMessage relay through 3 iframes + backend + MCP)
+- **Message Latency**: Additional 5-10ms per iframe layer (3 layers = 15-30ms overhead)
 - **Optimization**:
   - Cache MCP resource reads (currently disabled with `no-cache`)
   - Preload widget data before iframe creation
   - Use service workers for offline support
+  - Consider WebSocket for high-frequency tool calls
 
 ### postMessage Overhead
 
@@ -1797,15 +1945,15 @@ case \"openai:customMethod\":
 ## Related Files
 
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
-- `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
-- `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - ChatGPT Apps renderer with CSP support
-- `client/src/components/chat-v2/csp-debug-panel.tsx` - CSP debug panel UI
-- `client/src/components/chat-v2/thread.tsx` - Manages PiP state and CSP debug tab
+- `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - Main renderer component with triple-iframe architecture
+- `client/src/components/ui/chatgpt-sandboxed-iframe.tsx` - Triple-iframe implementation with cross-origin isolation
+- `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
 - `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
+- `server/routes/mcp/chatgpt.ts` - Widget storage, serving, and OpenAI bridge injection
+- `server/routes/mcp/chatgpt-sandbox-proxy.html` - Middle iframe proxy for cross-origin message relay
+- `server/routes/mcp/index.ts` - Mounts ChatGPT routes at `/chatgpt`
+- `client/src/components/chat-v2/csp-debug-panel.tsx` - CSP debug panel UI
 - `client/src/components/ui-playground/PlaygroundMain.tsx` - UI Playground with CSP mode selector
-- `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
-- `server/routes/mcp/chatgpt.ts` - CSP header generation and enforcement
-- `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
 - `client/src/stores/ui-playground-store.ts` - CSP mode state management
 - `client/src/stores/widget-debug-store.ts` - CSP violation tracking
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
