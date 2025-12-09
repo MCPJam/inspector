@@ -459,8 +459,11 @@ export function ChatGPTAppRenderer({
     toolMetadata,
   );
 
-  // Get CSP mode from playground store - must be before useWidgetFetch
-  const cspMode = useUIPlaygroundStore((s) => s.cspMode);
+  // Get CSP mode from playground store - only apply custom mode when in UI Playground
+  // ChatTabV2 and ResultsPanel should always use permissive mode
+  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const playgroundCspMode = useUIPlaygroundStore((s) => s.cspMode);
+  const cspMode = isPlaygroundActive ? playgroundCspMode : "permissive";
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
 
   // Callback to handle CSP config received from server
