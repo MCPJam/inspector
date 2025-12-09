@@ -242,7 +242,7 @@ tools.post("/execute", async (c) => {
     execPromise: manager.executeTool(
       serverId,
       toolName,
-      parameters
+      parameters,
     ) as unknown as Promise<ListToolsResult>,
     queue: [],
   };
