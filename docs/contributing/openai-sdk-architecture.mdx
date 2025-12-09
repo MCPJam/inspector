@@ -1500,6 +1500,16 @@ window.parent.postMessage = function (...args) {
 console.log("openai API:", window.openai);
 console.log("toolInput:", window.openai?.toolInput);
 console.log("toolOutput:", window.openai?.toolOutput);
+
+// Monitor CSP violations
+document.addEventListener("securitypolicyviolation", (e) => {
+  console.error("[CSP Violation]", {
+    directive: e.violatedDirective,
+    blockedUri: e.blockedURI,
+    sourceFile: e.sourceFile,
+    lineNumber: e.lineNumber,
+  });
+});
 ```
 
 ### Extending the Implementation
