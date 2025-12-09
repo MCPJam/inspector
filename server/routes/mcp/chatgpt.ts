@@ -19,6 +19,18 @@ interface UserLocation {
   city: string;
 }
 
+interface DeviceCapabilities {
+  hover: boolean;
+  touch: boolean;
+}
+
+interface SafeAreaInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
 interface WidgetData {
   serverId: string;
   uri: string;
@@ -33,6 +45,8 @@ interface WidgetData {
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   maxHeight?: number | null; // ChatGPT provides maxHeight constraint for inline mode
   cspMode?: CspMode; // CSP enforcement mode
+  capabilities?: DeviceCapabilities; // Device capabilities (hover, touch)
+  safeAreaInsets?: SafeAreaInsets; // Safe area insets for device notches, etc.
   timestamp: number;
 }
 
@@ -120,6 +134,8 @@ interface ApiScriptOptions {
   deviceType: "mobile" | "tablet" | "desktop"; // Host-controlled device type
   userLocation?: UserLocation | null; // Coarse IP-based location per SDK spec
   maxHeight?: number | null; // Host-controlled max height constraint (ChatGPT uses ~500px for inline)
+  capabilities?: DeviceCapabilities; // Host-controlled device capabilities
+  safeAreaInsets?: SafeAreaInsets; // Host-controlled safe area insets
   viewMode?: string;
   viewParams?: Record<string, any>;
   useMapPendingCalls?: boolean;
@@ -169,6 +185,8 @@ function generateApiScript(opts: ApiScriptOptions): string {
     deviceType,
     userLocation,
     maxHeight,
+    capabilities,
+    safeAreaInsets,
     viewMode = "inline",
     viewParams = {},
     useMapPendingCalls = true,
@@ -223,6 +241,15 @@ function generateApiScript(opts: ApiScriptOptions): string {
         }`
     : "";
 
+  // Host-controlled capabilities (with fallback to widget detection if not provided)
+  const hostCapabilities = capabilities ?? null;
+  const hostSafeAreaInsets = safeAreaInsets ?? {
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  };
+
   return `<script>
 (function() {
   'use strict';
@@ -230,13 +257,17 @@ function generateApiScript(opts: ApiScriptOptions): string {
   const hostLocale = ${JSON.stringify(locale)};
   const hostDeviceType = ${JSON.stringify(deviceType)};
   const hostUserLocation = ${JSON.stringify(userLocation ?? null)}; // { country, region, city } or null
+  const hostCapabilities = ${JSON.stringify(hostCapabilities)}; // Host-controlled capabilities or null
+  const hostSafeAreaInsets = ${JSON.stringify(hostSafeAreaInsets)}; // Host-controlled safe area insets
 
   // Set document lang attribute per SDK spec: "Host mirrors locale to document.documentElement.lang"
   try { document.documentElement.lang = hostLocale; } catch (e) {}
 
-  // Capability detection (still done in widget for accuracy)
-  const hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-  const hasHover = window.matchMedia('(hover: hover)').matches;
+  // Capability detection (fallback if host doesn't provide capabilities)
+  const detectedTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  const detectedHover = window.matchMedia('(hover: hover)').matches;
+  const hasTouch = hostCapabilities ? hostCapabilities.touch : detectedTouch;
+  const hasHover = hostCapabilities ? hostCapabilities.hover : detectedHover;
 
   const getSubjectId = () => {
     let subjectId = sessionStorage.getItem('openai_subject_id');
@@ -326,7 +357,7 @@ function generateApiScript(opts: ApiScriptOptions): string {
     theme: ${JSON.stringify(theme)},
     locale: hostLocale, // Host-controlled per SDK spec
     maxHeight: ${maxHeight != null ? maxHeight : "null"},
-    safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+    safeArea: { insets: hostSafeAreaInsets },
     userAgent: { device: { type: hostDeviceType }, capabilities: { hover: hasHover, touch: hasTouch } },
     view: { mode: ${JSON.stringify(viewMode)}, params: ${serializeForInlineScript(viewParams)} },
     widgetState: null,
@@ -721,6 +752,8 @@ chatgpt.post("/widget/store", async (c) => {
       userLocation,
       maxHeight,
       cspMode,
+      capabilities,
+      safeAreaInsets,
     } = await c.req.json();
     if (!serverId || !uri || !toolId || !toolName)
       return c.json({ success: false, error: "Missing required fields" }, 400);
@@ -739,6 +772,13 @@ chatgpt.post("/widget/store", async (c) => {
       userLocation: userLocation ?? null, // Coarse IP-based location per SDK spec
       maxHeight: maxHeight ?? null, // Host-controlled max height constraint
       cspMode: cspMode ?? "permissive", // CSP enforcement mode
+      capabilities: capabilities ?? { hover: true, touch: false }, // Device capabilities
+      safeAreaInsets: safeAreaInsets ?? {
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+      }, // Safe area insets
       timestamp: Date.now(),
     });
     return c.json({ success: true });
@@ -790,6 +830,8 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       userLocation,
       maxHeight,
       cspMode,
+      capabilities,
+      safeAreaInsets,
     } = widgetData;
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager
@@ -826,6 +868,8 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
       maxHeight: maxHeight ?? null,
+      capabilities: capabilities ?? undefined,
+      safeAreaInsets: safeAreaInsets ?? undefined,
       useMapPendingCalls: true,
     });
     const modifiedHtml = injectScripts(
@@ -918,6 +962,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       userLocation,
       maxHeight,
       cspMode: storedCspMode,
+      capabilities,
+      safeAreaInsets,
     } = widgetData;
 
     // Use query param override if provided, otherwise use stored mode
@@ -965,6 +1011,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null,
       maxHeight: maxHeight ?? null,
+      capabilities: capabilities ?? undefined,
+      safeAreaInsets: safeAreaInsets ?? undefined,
       viewMode,
       viewParams,
       useMapPendingCalls: false,

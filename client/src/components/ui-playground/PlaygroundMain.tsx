@@ -25,6 +25,8 @@ import {
   Moon,
   Globe,
   Shield,
+  MousePointer2,
+  Hand,
 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
@@ -58,6 +60,7 @@ import {
   type DisplayMode,
   type CspMode,
 } from "@/stores/ui-playground-store";
+import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
@@ -262,6 +265,10 @@ export function PlaygroundMain({
   // CSP mode from store
   const cspMode = useUIPlaygroundStore((s) => s.cspMode);
   const setCspMode = useUIPlaygroundStore((s) => s.setCspMode);
+
+  // Device capabilities from store
+  const capabilities = useUIPlaygroundStore((s) => s.capabilities);
+  const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -558,6 +565,53 @@ export function PlaygroundMain({
               <p className="font-medium">CSP</p>
             </TooltipContent>
           </Tooltip>
+
+          {/* Capabilities toggles */}
+          <div className="flex items-center gap-0.5 border-l border-border/50 pl-3 ml-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={capabilities.hover ? "secondary" : "ghost"}
+                  size="icon"
+                  onClick={() =>
+                    setCapabilities({ hover: !capabilities.hover })
+                  }
+                  className="h-7 w-7"
+                >
+                  <MousePointer2 className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="font-medium">Hover</p>
+                <p className="text-xs text-muted-foreground">
+                  {capabilities.hover ? "Enabled" : "Disabled"}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={capabilities.touch ? "secondary" : "ghost"}
+                  size="icon"
+                  onClick={() =>
+                    setCapabilities({ touch: !capabilities.touch })
+                  }
+                  className="h-7 w-7"
+                >
+                  <Hand className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="font-medium">Touch</p>
+                <p className="text-xs text-muted-foreground">
+                  {capabilities.touch ? "Enabled" : "Disabled"}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+
+          {/* Safe area editor */}
+          <SafeAreaEditor />
 
           {/* Theme toggle */}
           <Tooltip>

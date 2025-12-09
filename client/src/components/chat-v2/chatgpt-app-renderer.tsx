@@ -268,6 +268,9 @@ function useWidgetFetch(
   themeMode: string,
   locale: string,
   cspMode: CspMode,
+  deviceType: string,
+  capabilities: { hover: boolean; touch: boolean },
+  safeAreaInsets: { top: number; bottom: number; left: number; right: number },
   onCspConfigReceived?: (csp: WidgetCspData) => void,
 ) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
@@ -310,7 +313,6 @@ function useWidgetFetch(
       setStoreError(null);
       try {
         // Host-controlled values per SDK spec
-        const deviceType = getDeviceType();
         const userLocation = await getUserLocation(); // Coarse IP-based location
 
         const storeResponse = await fetch("/api/mcp/openai/widget/store", {
@@ -326,9 +328,11 @@ function useWidgetFetch(
             toolName,
             theme: themeMode,
             locale, // BCP 47 locale from host
-            deviceType, // Device type from host
+            deviceType, // Device type from host (playground setting or computed)
             userLocation, // Coarse location { country, region, city } or null
             cspMode, // CSP enforcement mode
+            capabilities, // Device capabilities { hover, touch }
+            safeAreaInsets, // Safe area insets { top, bottom, left, right }
           }),
         });
         if (!storeResponse.ok)
@@ -394,6 +398,9 @@ function useWidgetFetch(
     themeMode,
     locale,
     cspMode,
+    deviceType,
+    capabilities,
+    safeAreaInsets,
     onCspConfigReceived,
   ]);
 
@@ -462,11 +469,27 @@ export function ChatGPTAppRenderer({
     toolMetadata,
   );
 
-  // Get CSP mode from playground store - only apply custom mode when in UI Playground
-  // ChatTabV2 and ResultsPanel should always use permissive mode
+  // Get CSP mode, device type, capabilities, and safe area from playground store
+  // Only apply custom settings when in UI Playground
+  // ChatTabV2 and ResultsPanel should always use defaults
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundCspMode = useUIPlaygroundStore((s) => s.cspMode);
+  const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
+  const playgroundSafeAreaInsets = useUIPlaygroundStore(
+    (s) => s.safeAreaInsets,
+  );
   const cspMode = isPlaygroundActive ? playgroundCspMode : "permissive";
+  // Use playground settings when active, otherwise compute from window
+  const deviceType = isPlaygroundActive
+    ? playgroundDeviceType
+    : getDeviceType();
+  const capabilities = isPlaygroundActive
+    ? playgroundCapabilities
+    : { hover: true, touch: false }; // Default for non-playground contexts
+  const safeAreaInsets = isPlaygroundActive
+    ? playgroundSafeAreaInsets
+    : { top: 0, bottom: 0, left: 0, right: 0 }; // Default for non-playground contexts
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
 
   // Callback to handle CSP config received from server
@@ -495,6 +518,9 @@ export function ChatGPTAppRenderer({
       themeMode,
       locale,
       cspMode,
+      deviceType,
+      capabilities,
+      safeAreaInsets,
       handleCspConfigReceived,
     );
 
@@ -560,11 +586,11 @@ export function ChatGPTAppRenderer({
         theme: themeMode,
         displayMode,
         maxHeight: maxHeight ?? undefined,
-        locale: "en-US",
-        safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+        locale,
+        safeArea: { insets: safeAreaInsets },
         userAgent: {
-          device: { type: "desktop" },
-          capabilities: { hover: true, touch: false },
+          device: { type: deviceType },
+          capabilities,
         },
       },
     });
@@ -575,6 +601,10 @@ export function ChatGPTAppRenderer({
     themeMode,
     displayMode,
     maxHeight,
+    locale,
+    deviceType,
+    capabilities,
+    safeAreaInsets,
   ]);
 
   useEffect(() => {
@@ -886,9 +916,22 @@ export function ChatGPTAppRenderer({
         displayMode: "inline",
         maxHeight: null,
         locale,
+        safeArea: { insets: safeAreaInsets },
+        userAgent: {
+          device: { type: deviceType },
+          capabilities,
+        },
       },
     });
-  }, [currentWidgetState, resolvedToolCallId, themeMode, locale]);
+  }, [
+    currentWidgetState,
+    resolvedToolCallId,
+    themeMode,
+    locale,
+    deviceType,
+    capabilities,
+    safeAreaInsets,
+  ]);
 
   // Reset modal sandbox state when modal closes
   useEffect(() => {
@@ -919,6 +962,11 @@ export function ChatGPTAppRenderer({
       theme: themeMode,
       displayMode,
       locale,
+      safeArea: { insets: safeAreaInsets },
+      userAgent: {
+        device: { type: deviceType },
+        capabilities,
+      },
     };
     if (typeof maxHeight === "number" && Number.isFinite(maxHeight))
       globals.maxHeight = maxHeight;
@@ -929,6 +977,9 @@ export function ChatGPTAppRenderer({
     maxHeight,
     displayMode,
     locale,
+    deviceType,
+    capabilities,
+    safeAreaInsets,
     isReady,
     modalOpen,
     postToWidget,
