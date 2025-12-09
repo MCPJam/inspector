@@ -662,8 +662,18 @@ function buildCspHeader(
   const connectSrc = connectDomains.join(" ");
   const resourceSrc = resourceDomains.join(" ");
 
-  // Image sources - permissive for UX (images from https: allowed)
-  const imgSrc = `'self' data: blob: https: ${localhostSources.join(" ")}`;
+  // Image/media sources - respect mode for widget-declared CSP
+  // In permissive mode: allow all https: sources
+  // In widget-declared mode: only allow declared resource_domains
+  const imgSrc =
+    mode === "widget-declared"
+      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      : `'self' data: blob: https: ${localhostSources.join(" ")}`;
+
+  const mediaSrc =
+    mode === "widget-declared"
+      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      : "'self' data: blob: https:";
 
   // Frame ancestors for cross-origin sandbox architecture
   const frameAncestors = isDev
@@ -677,7 +687,7 @@ function buildCspHeader(
     "child-src 'self' blob:",
     `style-src 'self' 'unsafe-inline' ${resourceSrc}`,
     `img-src ${imgSrc}`,
-    "media-src 'self' data: blob: https:",
+    `media-src ${mediaSrc}`,
     `font-src 'self' data: ${resourceSrc}`,
     `connect-src ${connectSrc}`,
     frameAncestors,

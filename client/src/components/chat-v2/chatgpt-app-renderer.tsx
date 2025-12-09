@@ -246,6 +246,11 @@ interface WidgetCspData {
   connectDomains: string[];
   resourceDomains: string[];
   headerString?: string;
+  /** Widget's actual openai/widgetCSP declaration (null if not declared) */
+  widgetDeclared?: {
+    connect_domains?: string[];
+    resource_domains?: string[];
+  } | null;
 }
 
 function useWidgetFetch(
@@ -343,6 +348,7 @@ function useWidgetFetch(
               connectDomains: data.csp.connectDomains,
               resourceDomains: data.csp.resourceDomains,
               headerString: data.csp.headerString,
+              widgetDeclared: data.csp.widgetDeclared,
             });
           }
 
@@ -626,8 +632,7 @@ export function ChatGPTAppRenderer({
 
   const handleSandboxMessage = useCallback(
     async (event: MessageEvent) => {
-      // Log all messages except CSP violations (those go to the CSP debug panel only)
-      if (event.data?.type && event.data.type !== "openai:csp-violation")
+      if (event.data?.type)
         addUiLog({
           widgetId: resolvedToolCallId,
           serverId,
