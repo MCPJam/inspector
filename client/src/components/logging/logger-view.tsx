@@ -10,6 +10,7 @@ import {
   AppWindow,
   PanelRightClose,
   Loader2,
+  Copy,
 } from "lucide-react";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -97,6 +98,7 @@ export function LoggerView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedServerId, setSelectedServerId] = useState<string>("");
   const [selectedLevel, setSelectedLevel] = useState<LoggingLevel>("debug");
+  const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>("all");
   const [isUpdatingLevel, setIsUpdatingLevel] = useState(false);
 
   // Subscribe to UI log store for MCP Apps traffic
@@ -189,6 +191,23 @@ export function LoggerView({
     setExpanded(new Set());
   };
 
+  const copyLogs = async () => {
+    const logsText = filteredItems.map((item) => ({
+      timestamp: item.timestamp,
+      source: item.source,
+      serverId: item.serverId,
+      direction: item.direction,
+      method: item.method,
+      payload: item.payload,
+    }));
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(logsText, null, 2));
+      toast.success("Logs copied to clipboard");
+    } catch {
+      toast.error("Failed to copy logs");
+    }
+  };
+
   useEffect(() => {
     let es: EventSource | null = null;
     try {
@@ -255,6 +274,11 @@ export function LoggerView({
   const filteredItems = useMemo(() => {
     let result = allItems;
 
+    // Filter by source type
+    if (sourceFilter !== "all") {
+      result = result.filter((item) => item.source === sourceFilter);
+    }
+
     // Filter by serverIds if provided
     if (serverIds && serverIds.length > 0) {
       const serverIdSet = new Set(serverIds);
@@ -275,7 +299,7 @@ export function LoggerView({
     }
 
     return result;
-  }, [allItems, searchQuery, serverIds]);
+  }, [allItems, searchQuery, serverIds, sourceFilter]);
 
   const canUpdateLogLevel = !!selectedServerId && !isUpdatingLevel;
 
@@ -284,7 +308,55 @@ export function LoggerView({
       <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold text-foreground">Logs</h2>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
+            {/* Source filter buttons */}
+            <div className="flex items-center rounded-md border border-border overflow-hidden mr-1">
+              <button
+                onClick={() => setSourceFilter("all")}
+                className={`px-2 py-1 text-[10px] transition-colors ${
+                  sourceFilter === "all"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Show all logs"
+              >
+                All
+              </button>
+              <button
+                onClick={() => setSourceFilter("mcp-server")}
+                className={`px-2 py-1 text-[10px] flex items-center gap-1 border-l border-border transition-colors ${
+                  sourceFilter === "mcp-server"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Show MCP Server logs only"
+              >
+                <Server className="h-3 w-3" />
+                Server
+              </button>
+              <button
+                onClick={() => setSourceFilter("mcp-apps")}
+                className={`px-2 py-1 text-[10px] flex items-center gap-1 border-l border-border transition-colors ${
+                  sourceFilter === "mcp-apps"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+                title="Show UI/Apps logs only"
+              >
+                <AppWindow className="h-3 w-3" />
+                Apps
+              </button>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={copyLogs}
+              disabled={filteredItems.length === 0}
+              className="h-7 px-2"
+              title="Copy logs to clipboard"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </Button>
             <Button
               variant="ghost"
               size="sm"

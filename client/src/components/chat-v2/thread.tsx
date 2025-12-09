@@ -20,12 +20,13 @@ import {
   Maximize2,
   Database,
   Box,
-  Globe,
+  Shield,
 } from "lucide-react";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
+import { CspDebugPanel } from "./csp-debug-panel";
 import {
   callTool,
   getToolServerId,
@@ -44,6 +45,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";
 import {
   AnyPart,
@@ -74,6 +76,7 @@ interface ThreadProps {
   displayMode?: DisplayMode;
   /** Callback when display mode changes */
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
 export function Thread({
@@ -86,8 +89,12 @@ export function Thread({
   onWidgetStateChange,
   displayMode,
   onDisplayModeChange,
+  onFullscreenChange,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
+  const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
+    null,
+  );
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);
@@ -96,6 +103,18 @@ export function Thread({
   const handleExitPip = (toolCallId: string) => {
     if (pipWidgetId === toolCallId) {
       setPipWidgetId(null);
+    }
+  };
+
+  const handleRequestFullscreen = (toolCallId: string) => {
+    setFullscreenWidgetId(toolCallId);
+    onFullscreenChange?.(true);
+  };
+
+  const handleExitFullscreen = (toolCallId: string) => {
+    if (fullscreenWidgetId === toolCallId) {
+      setFullscreenWidgetId(null);
+      onFullscreenChange?.(false);
     }
   };
 
@@ -114,6 +133,8 @@ export function Thread({
             pipWidgetId={pipWidgetId}
             onRequestPip={handleRequestPip}
             onExitPip={handleExitPip}
+            onRequestFullscreen={handleRequestFullscreen}
+            onExitFullscreen={handleExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -134,6 +155,8 @@ function MessageView({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
   displayMode,
   onDisplayModeChange,
 }: {
@@ -146,6 +169,8 @@ function MessageView({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  onRequestFullscreen: (toolCallId: string) => void;
+  onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
@@ -171,6 +196,8 @@ function MessageView({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -209,6 +236,8 @@ function MessageView({
                 pipWidgetId={pipWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
+                onRequestFullscreen={onRequestFullscreen}
+                onExitFullscreen={onExitFullscreen}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
               />
@@ -230,6 +259,8 @@ function PartSwitch({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
   displayMode,
   onDisplayModeChange,
 }: {
@@ -242,6 +273,8 @@ function PartSwitch({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  onRequestFullscreen: (toolCallId: string) => void;
+  onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
@@ -333,6 +366,10 @@ function PartSwitch({
             part={toolPart}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
           />
           <ChatGPTAppRenderer
             serverId={serverId}
@@ -350,6 +387,8 @@ function PartSwitch({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -399,10 +438,18 @@ function ToolPart({
   part,
   displayMode,
   onDisplayModeChange,
+  onRequestFullscreen,
+  onExitFullscreen,
+  onRequestPip,
+  onExitPip,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  onRequestFullscreen?: (toolCallId: string) => void;
+  onExitFullscreen?: (toolCallId: string) => void;
+  onRequestPip?: (toolCallId: string) => void;
+  onExitPip?: (toolCallId: string) => void;
 }) {
   const label = isDynamicTool(part)
     ? part.toolName
@@ -417,8 +464,9 @@ function ToolPart({
     themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "globals" | null
+    "data" | "state" | "csp" | null
   >(null);
+
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const errorText = (part as any).errorText ?? (part as any).error;
@@ -449,16 +497,22 @@ function ToolPart({
   ];
 
   const debugOptions: {
-    tab: "data" | "state" | "globals";
+    tab: "data" | "state" | "csp";
     icon: typeof Database;
     label: string;
+    badge?: number;
   }[] = [
     { tab: "data", icon: Database, label: "Data" },
     { tab: "state", icon: Box, label: "Widget State" },
-    { tab: "globals", icon: Globe, label: "Globals" },
+    {
+      tab: "csp",
+      icon: Shield,
+      label: "CSP",
+      badge: widgetDebugInfo?.csp?.violations?.length,
+    },
   ];
 
-  const handleDebugClick = (tab: "data" | "state" | "globals") => {
+  const handleDebugClick = (tab: "data" | "state" | "csp") => {
     if (activeDebugTab === tab) {
       // Clicking the active tab closes the panel
       setActiveDebugTab(null);
@@ -473,25 +527,25 @@ function ToolPart({
     <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
         onClick={() => setIsExpanded((prev) => !prev)}
         aria-expanded={isExpanded}
       >
-        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground">
-          <span className="inline-flex items-center gap-2">
+        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
+          <span className="inline-flex items-center gap-2 min-w-0">
             <img
               src="/mcp.svg"
               alt=""
               role="presentation"
               aria-hidden="true"
-              className={mcpIconClassName}
+              className={`${mcpIconClassName} shrink-0`}
             />
-            <span className="font-mono text-xs tracking-tight text-muted-foreground/80">
+            <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
               {label}
             </span>
           </span>
         </span>
-        <span className="inline-flex items-center gap-2 text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
           {/* Display mode controls - only when controlled externally (playground mode) */}
           {showDisplayModeControls && (
             <span
@@ -505,6 +559,25 @@ function ToolPart({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (toolCallId) {
+                          // Handle exits
+                          if (
+                            displayMode === "fullscreen" &&
+                            mode !== "fullscreen"
+                          ) {
+                            onExitFullscreen?.(toolCallId);
+                          } else if (displayMode === "pip" && mode !== "pip") {
+                            onExitPip?.(toolCallId);
+                          }
+
+                          // Handle entries
+                          if (mode === "fullscreen") {
+                            onRequestFullscreen?.(toolCallId);
+                          } else if (mode === "pip") {
+                            onRequestPip?.(toolCallId);
+                          }
+                        }
+
                         onDisplayModeChange?.(mode);
                       }}
                       className={`p-1 rounded transition-colors cursor-pointer ${
@@ -526,7 +599,7 @@ function ToolPart({
               className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
               onClick={(e) => e.stopPropagation()}
             >
-              {debugOptions.map(({ tab, icon: Icon, label }) => (
+              {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
                 <Tooltip key={tab}>
                   <TooltipTrigger asChild>
                     <button
@@ -535,13 +608,23 @@ function ToolPart({
                         e.stopPropagation();
                         handleDebugClick(tab);
                       }}
-                      className={`p-1 rounded transition-colors cursor-pointer ${
+                      className={`p-1 rounded transition-colors cursor-pointer relative ${
                         activeDebugTab === tab
                           ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                          : badge && badge > 0
+                            ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                            : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
                       }`}
                     >
                       <Icon className="h-3.5 w-3.5" />
+                      {badge !== undefined && badge > 0 && (
+                        <Badge
+                          variant="destructive"
+                          className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                        >
+                          {badge}
+                        </Badge>
+                      )}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{label}</TooltipContent>
@@ -629,15 +712,8 @@ function ToolPart({
               </div>
             </div>
           )}
-          {hasWidgetDebug && activeDebugTab === "globals" && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Globals ({widgetDebugInfo.protocol})
-              </div>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
-                {safeStringify(widgetDebugInfo.globals)}
-              </pre>
-            </div>
+          {hasWidgetDebug && activeDebugTab === "csp" && (
+            <CspDebugPanel cspInfo={widgetDebugInfo.csp} />
           )}
           {!hasWidgetDebug && (
             <div className="space-y-4">

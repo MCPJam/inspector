@@ -454,7 +454,7 @@ export function MCPAppsRenderer({
     }
   }, [themeMode, isReady, sendNotification]);
 
-  // Loading states (same patterns as openai-app-renderer.tsx)
+  // Loading states
   if (toolState !== "output-available") {
     return (
       <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">

@@ -6,6 +6,42 @@
  */
 
 import { create } from "zustand";
+import type { CspMode } from "./ui-playground-store";
+
+export interface CspViolation {
+  /** The CSP directive that was violated (e.g., "script-src") */
+  directive: string;
+  /** The effective directive that was violated */
+  effectiveDirective?: string;
+  /** The URI that was blocked */
+  blockedUri: string;
+  /** Source file where the violation occurred */
+  sourceFile?: string | null;
+  /** Line number in source file */
+  lineNumber?: number | null;
+  /** Column number in source file */
+  columnNumber?: number | null;
+  /** Timestamp of the violation */
+  timestamp: number;
+}
+
+export interface WidgetCspInfo {
+  /** Current CSP enforcement mode */
+  mode: CspMode;
+  /** Allowed domains for fetch/XHR (connect-src) - effective values */
+  connectDomains: string[];
+  /** Allowed domains for scripts/styles/fonts - effective values */
+  resourceDomains: string[];
+  /** Full CSP header string (for advanced users) */
+  headerString?: string;
+  /** List of CSP violations for this widget */
+  violations: CspViolation[];
+  /** Widget's actual openai/widgetCSP declaration (null if not declared) */
+  widgetDeclared?: {
+    connect_domains?: string[];
+    resource_domains?: string[];
+  } | null;
+}
 
 export interface WidgetGlobals {
   theme: "light" | "dark";
@@ -28,6 +64,8 @@ export interface WidgetDebugInfo {
   widgetState: unknown;
   globals: WidgetGlobals;
   updatedAt: number;
+  /** CSP configuration and violation tracking */
+  csp?: WidgetCspInfo;
 }
 
 interface WidgetDebugStore {
@@ -56,6 +94,15 @@ interface WidgetDebugStore {
 
   // Clear all widgets
   clear: () => void;
+
+  // Set CSP info for a widget
+  setWidgetCsp: (
+    toolCallId: string,
+    csp: Omit<WidgetCspInfo, "violations">,
+  ) => void;
+
+  // Add a CSP violation for a widget
+  addCspViolation: (toolCallId: string, violation: CspViolation) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -128,5 +175,48 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
 
   clear: () => {
     set({ widgets: new Map() });
+  },
+
+  setWidgetCsp: (toolCallId, csp) => {
+    set((state) => {
+      const existing = state.widgets.get(toolCallId);
+      if (!existing) return state;
+
+      const widgets = new Map(state.widgets);
+      widgets.set(toolCallId, {
+        ...existing,
+        csp: {
+          ...csp,
+          violations: existing.csp?.violations ?? [],
+        },
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  addCspViolation: (toolCallId, violation) => {
+    set((state) => {
+      const existing = state.widgets.get(toolCallId);
+      if (!existing) return state;
+
+      const widgets = new Map(state.widgets);
+      const currentCsp = existing.csp ?? {
+        mode: "permissive" as CspMode,
+        connectDomains: [],
+        resourceDomains: [],
+        violations: [],
+      };
+
+      widgets.set(toolCallId, {
+        ...existing,
+        csp: {
+          ...currentCsp,
+          violations: [...currentCsp.violations, violation],
+        },
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
   },
 }));
