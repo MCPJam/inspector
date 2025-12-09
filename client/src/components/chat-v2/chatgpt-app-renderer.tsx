@@ -63,10 +63,10 @@ function handleOAuthChallenge(wwwAuth: string, toolName: string): void {
     `[OAuth Challenge] Tool "${toolName}" requires authentication`,
     parsed
       ? {
-        realm: parsed.realm,
-        error: parsed.error,
-        description: parsed.errorDescription,
-      }
+          realm: parsed.realm,
+          error: parsed.error,
+          description: parsed.errorDescription,
+        }
       : { raw: wwwAuth },
   );
 
@@ -559,8 +559,6 @@ export function ChatGPTAppRenderer({
       handleCspConfigReceived,
     );
 
-
-
   const applyMeasuredHeight = useCallback(
     (height: unknown) => {
       const numericHeight = Number(height);
@@ -808,7 +806,7 @@ export function ChatGPTAppRenderer({
               typeof event.data.message === "string"
                 ? event.data.message
                 : event.data.message.prompt ||
-                JSON.stringify(event.data.message);
+                  JSON.stringify(event.data.message);
             onSendFollowUp(message);
           }
           break;
@@ -1195,15 +1193,13 @@ export function ChatGPTAppRenderer({
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className={`w-full border border-border/40 bg-background overflow-hidden ${isFullscreen ? "flex-1 border-0 rounded-none" : "rounded-md"
-          }`}
+        className={`w-full border border-border/40 bg-background overflow-hidden ${
+          isFullscreen ? "flex-1 border-0 rounded-none" : "rounded-md"
+        }`}
         style={{
           height: iframeHeight,
           // Remove max-height in fullscreen to allow flex-1 to control size
-          maxHeight:
-            displayMode === "pip"
-              ? "90vh"
-              : undefined,
+          maxHeight: displayMode === "pip" ? "90vh" : undefined,
         }}
       />
       {outputTemplate && (
@@ -1234,4 +1230,3 @@ export function ChatGPTAppRenderer({
     </div>
   );
 }
-
