@@ -84,6 +84,14 @@ You can also build each part individually:
 - `npm run build:server` - Build Hono backend
 - `npm run build:sdk` - Build MCP SDK wrapper
 
+### Deploy MCPJam
+
+To deploy MCPJam to a new version:
+
+1. Change the version in `package.json` to the next version. Commit and merge it to `main`.
+2. Run `git tag v1.2.3` with the correct version
+3. Run `git push origin v1.2.3`. This will kick off a GitHub action to deploy to npm and the electron desktop apps.
+
 ## Code Style
 
 We use [Prettier](https://prettier.io/) to maintain a consistent code style. Before you commit your changes, please format your code by running:
