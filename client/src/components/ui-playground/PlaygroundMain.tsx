@@ -16,7 +16,6 @@ import {
   ArrowDown,
   Braces,
   Loader2,
-  Wrench,
   Smartphone,
   Tablet,
   Monitor,
@@ -24,6 +23,9 @@ import {
   Sun,
   Moon,
   Globe,
+  Shield,
+  MousePointer2,
+  Hand,
 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
@@ -39,7 +41,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Select,
   SelectContent,
@@ -55,7 +56,9 @@ import {
   useUIPlaygroundStore,
   type DeviceType,
   type DisplayMode,
+  type CspMode,
 } from "@/stores/ui-playground-store";
+import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
@@ -87,6 +90,24 @@ const LOCALE_OPTIONS = [
   { code: "hi-IN", label: "हिन्दी" },
   { code: "ru-RU", label: "Русский" },
   { code: "nl-NL", label: "Nederlands" },
+];
+
+/** CSP mode options for widget sandbox */
+const CSP_MODE_OPTIONS: {
+  mode: CspMode;
+  label: string;
+  description: string;
+}[] = [
+  {
+    mode: "permissive",
+    label: "Permissive",
+    description: "Allows all HTTPS resources",
+  },
+  {
+    mode: "widget-declared",
+    label: "Strict",
+    description: "Only widget-declared domains",
+  },
 ];
 
 interface PlaygroundMainProps {
@@ -179,6 +200,7 @@ export function PlaygroundMain({
     [],
   );
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
 
   // Device config
   const deviceConfig = DEVICE_CONFIGS[deviceType];
@@ -238,6 +260,14 @@ export function PlaygroundMain({
     setPlaygroundActive(true);
     return () => setPlaygroundActive(false);
   }, [setPlaygroundActive]);
+
+  // CSP mode from store
+  const cspMode = useUIPlaygroundStore((s) => s.cspMode);
+  const setCspMode = useUIPlaygroundStore((s) => s.setCspMode);
+
+  // Device capabilities from store
+  const capabilities = useUIPlaygroundStore((s) => s.capabilities);
+  const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -351,6 +381,17 @@ export function PlaygroundMain({
     compact: isCompact,
   };
 
+  // Check if widget should take over the full container
+  // Mobile: both fullscreen and pip take over
+  // Tablet: only fullscreen takes over (pip stays floating)
+  const isMobileFullTakeover =
+    deviceType === "mobile" &&
+    (displayMode === "fullscreen" || displayMode === "pip");
+  const isTabletFullscreenTakeover =
+    deviceType === "tablet" && displayMode === "fullscreen";
+  const isWidgetFullTakeover =
+    isMobileFullTakeover || isTabletFullscreenTakeover;
+
   // Thread content
   const threadContent = (
     <>
@@ -385,6 +426,7 @@ export function PlaygroundMain({
                 onWidgetStateChange={handleWidgetStateChange}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
+                onFullscreenChange={setIsWidgetFullscreen}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -406,11 +448,14 @@ export function PlaygroundMain({
             <ScrollToBottomButton />
           </div>
 
-          <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
-            <div className="p-3">
-              <ChatInput {...sharedChatInputProps} hasMessages />
+          {/* Hide chat input when widget takes over (mobile fullscreen/pip, tablet fullscreen only) */}
+          {!isWidgetFullTakeover && (
+            <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+              <div className="p-3">
+                <ChatInput {...sharedChatInputProps} hasMessages />
+              </div>
             </div>
-          </div>
+          )}
         </StickToBottom>
       )}
     </>
@@ -420,74 +465,173 @@ export function PlaygroundMain({
   return (
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {/* Device frame header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
-        {/* Device type toggle - flex-1 to balance with right section */}
-        <div className="flex-1 flex justify-start">
-          <ToggleGroup
-            type="single"
-            value={deviceType}
-            onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
-            className="gap-0.5"
-          >
-            <ToggleGroupItem
-              value="mobile"
-              aria-label="Mobile"
-              title="Mobile (430x932)"
-              className="h-7 w-7 p-0 cursor-pointer"
-            >
-              <Smartphone className="h-3.5 w-3.5" />
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="tablet"
-              aria-label="Tablet"
-              title="Tablet (820x1180)"
-              className="h-7 w-7 p-0 cursor-pointer"
-            >
-              <Tablet className="h-3.5 w-3.5" />
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="desktop"
-              aria-label="Desktop"
-              title="Desktop (1280x800)"
-              className="h-7 w-7 p-0 cursor-pointer"
-            >
-              <Monitor className="h-3.5 w-3.5" />
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-
-        {/* Device label, locale, and theme */}
+      <div className="relative flex items-center justify-center px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
+        {/* All controls centered */}
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <DeviceIcon className="h-3.5 w-3.5" />
-            <span>{deviceConfig.label}</span>
-            <span className="text-[10px] text-muted-foreground/60">
-              ({deviceConfig.width}×{deviceConfig.height})
-            </span>
+          {/* Device type selector */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select
+                  value={deviceType}
+                  onValueChange={(v) => onDeviceTypeChange?.(v as DeviceType)}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 w-auto min-w-[100px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                  >
+                    <DeviceIcon className="h-3.5 w-3.5" />
+                    <SelectValue>{deviceConfig.label}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.entries(DEVICE_CONFIGS) as [DeviceType, typeof deviceConfig][]).map(
+                      ([type, config]) => {
+                        const Icon = config.icon;
+                        return (
+                          <SelectItem key={type} value={type}>
+                            <span className="flex items-center gap-2">
+                              <Icon className="h-3.5 w-3.5" />
+                              <span>{config.label}</span>
+                              <span className="text-muted-foreground text-[10px]">
+                                ({config.width}×{config.height})
+                              </span>
+                            </span>
+                          </SelectItem>
+                        );
+                      }
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Device</p>
+            </TooltipContent>
+          </Tooltip>
+          {/* Locale selector */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select value={locale} onValueChange={onLocaleChange}>
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                  >
+                    <Globe className="h-3.5 w-3.5" />
+                    <SelectValue>{locale}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LOCALE_OPTIONS.map((option) => (
+                      <SelectItem key={option.code} value={option.code}>
+                        <span className="flex items-center gap-2">
+                          <span>{option.label}</span>
+                          <span className="text-muted-foreground text-[10px]">
+                            {option.code}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Locale</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* CSP mode selector */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select
+                  value={cspMode}
+                  onValueChange={(v) => setCspMode(v as CspMode)}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                  >
+                    <Shield className="h-3.5 w-3.5" />
+                    <SelectValue>
+                      {CSP_MODE_OPTIONS.find((o) => o.mode === cspMode)?.label}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CSP_MODE_OPTIONS.map((option) => (
+                      <SelectItem key={option.mode} value={option.mode}>
+                        <span className="flex items-center gap-2">
+                          <span className="font-medium">{option.label}</span>
+                          <span className="text-muted-foreground text-[10px]">
+                            {option.description}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">CSP</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Capabilities toggles */}
+          <div className="flex items-center gap-0.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={capabilities.hover ? "secondary" : "ghost"}
+                  size="icon"
+                  onClick={() =>
+                    setCapabilities({ hover: !capabilities.hover })
+                  }
+                  className="h-7 w-7"
+                >
+                  <MousePointer2 className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="font-medium">Hover</p>
+                <p className="text-xs text-muted-foreground">
+                  {capabilities.hover ? "Enabled" : "Disabled"}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={capabilities.touch ? "secondary" : "ghost"}
+                  size="icon"
+                  onClick={() =>
+                    setCapabilities({ touch: !capabilities.touch })
+                  }
+                  className="h-7 w-7"
+                >
+                  <Hand className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="font-medium">Touch</p>
+                <p className="text-xs text-muted-foreground">
+                  {capabilities.touch ? "Enabled" : "Disabled"}
+                </p>
+              </TooltipContent>
+            </Tooltip>
           </div>
 
-          {/* Locale selector */}
-          <Select value={locale} onValueChange={onLocaleChange}>
-            <SelectTrigger
-              size="sm"
-              className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
-            >
-              <Globe className="h-3.5 w-3.5" />
-              <SelectValue>{locale}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {LOCALE_OPTIONS.map((option) => (
-                <SelectItem key={option.code} value={option.code}>
-                  <span className="flex items-center gap-2">
-                    <span>{option.label}</span>
-                    <span className="text-muted-foreground text-[10px]">
-                      {option.code}
-                    </span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* Safe area editor */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <SafeAreaEditor />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Safe Area</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Theme toggle */}
           <Tooltip>
@@ -511,9 +655,9 @@ export function PlaygroundMain({
           </Tooltip>
         </div>
 
-        {/* Right actions - flex-1 to balance with left section */}
-        <div className="flex-1 flex items-center justify-end">
-          {!isThreadEmpty && (
+        {/* Right actions - absolutely positioned */}
+        {!isThreadEmpty && (
+          <div className="absolute right-3">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -527,8 +671,8 @@ export function PlaygroundMain({
               </TooltipTrigger>
               <TooltipContent>Clear chat</TooltipContent>
             </Tooltip>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       <ConfirmChatResetDialog
@@ -544,9 +688,9 @@ export function PlaygroundMain({
           style={{
             width: deviceConfig.width,
             maxWidth: "100%",
-            height: deviceConfig.height,
+            height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
             maxHeight: "100%",
-            transform: "translateZ(0)", // Creates containing block for fixed positioned elements (fullscreen/pip modes)
+            transform: isWidgetFullscreen ? "none" : "translateZ(0)",
           }}
         >
           {threadContent}
