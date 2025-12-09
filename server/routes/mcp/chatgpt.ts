@@ -349,6 +349,61 @@ function generateApiScript(opts: ApiScriptOptions): string {
     });
   };
 
+  // Host-backed navigation: track iframe history and notify parent
+  // This allows the host to mirror navigation state in UI (e.g., fullscreen header back/forward buttons)
+  const navigationState = { currentIndex: 0, historyLength: 1 };
+  let lastHistoryLength = history.length;
+
+  const withNavigationIndex = (state, index) => {
+    return state && typeof state === 'object' ? { ...state, __navIndex: index } : { __navIndex: index };
+  };
+  
+  const notifyNavigationState = () => {
+    const canGoBack = navigationState.currentIndex > 0;
+    const canGoForward = navigationState.currentIndex < navigationState.historyLength - 1;
+    window.parent.postMessage({
+      type: 'openai:navigationStateChanged',
+      toolId: ${JSON.stringify(toolId)},
+      canGoBack,
+      canGoForward,
+      historyLength: navigationState.historyLength,
+      currentIndex: navigationState.currentIndex
+    }, '*');
+  };
+
+  // Wrap history.pushState to track navigation
+  const originalPushState = history.pushState.bind(history);
+  history.pushState = function(state, title, url) {
+    const nextIndex = navigationState.currentIndex + 1;
+    const stateWithIndex = withNavigationIndex(state, nextIndex);
+    originalPushState(stateWithIndex, title, url);
+    // New navigation: increment index and truncate forward history
+    navigationState.currentIndex = nextIndex;
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  };
+
+  // Wrap history.replaceState (doesn't change index/length, but still notify for consistency)
+  const originalReplaceState = history.replaceState.bind(history);
+  history.replaceState = function(state, title, url) {
+    const stateWithIndex = withNavigationIndex(state, navigationState.currentIndex);
+    originalReplaceState(stateWithIndex, title, url);
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  };
+
+  // Track popstate (browser/programmatic back/forward within iframe)
+  // Use explicit __navIndex stored in history.state to restore position
+  window.addEventListener('popstate', (event) => {
+    const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
+    navigationState.currentIndex = stateIndex;
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  });
+
   const openaiAPI = {
     toolInput: ${serializeForInlineScript(toolInput)},
     toolOutput: ${serializeForInlineScript(toolOutput)},
@@ -411,6 +466,21 @@ function generateApiScript(opts: ApiScriptOptions): string {
     /** Inspector-specific: Explicitly report content height. Widgets can also use openai:resize event. */
     notifyIntrinsicHeight(height) {
       postHeight(height);
+    },
+
+    /** Host-backed navigation: programmatically navigate within the widget's history */
+    notifyNavigation(direction) {
+      if (direction === 'back') {
+        if (navigationState.currentIndex > 0) {
+          navigationState.currentIndex--;
+          history.back();
+        }
+      } else if (direction === 'forward') {
+        if (navigationState.currentIndex < navigationState.historyLength - 1) {
+          navigationState.currentIndex++;
+          history.forward();
+        }
+      }
     }
   };
 
@@ -461,6 +531,22 @@ function generateApiScript(opts: ApiScriptOptions): string {
         break;
       case 'openai:requestResize':
         measureAndNotifyHeight();
+        break;
+      case 'openai:navigate':
+        // Host-backed navigation: respond to navigation commands from parent
+        if (event.data.toolId === ${JSON.stringify(toolId)}) {
+          if (event.data.direction === 'back') {
+            if (navigationState.currentIndex > 0) {
+              navigationState.currentIndex--;
+              history.back();
+            }
+          } else if (event.data.direction === 'forward') {
+            if (navigationState.currentIndex < navigationState.historyLength - 1) {
+              navigationState.currentIndex++;
+              history.forward();
+            }
+          }
+        }
         break;
     }
   });

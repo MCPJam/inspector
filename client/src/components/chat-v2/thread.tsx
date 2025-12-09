@@ -76,6 +76,7 @@ interface ThreadProps {
   displayMode?: DisplayMode;
   /** Callback when display mode changes */
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
 export function Thread({
@@ -88,8 +89,12 @@ export function Thread({
   onWidgetStateChange,
   displayMode,
   onDisplayModeChange,
+  onFullscreenChange,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
+  const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
+    null,
+  );
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);
@@ -98,6 +103,18 @@ export function Thread({
   const handleExitPip = (toolCallId: string) => {
     if (pipWidgetId === toolCallId) {
       setPipWidgetId(null);
+    }
+  };
+
+  const handleRequestFullscreen = (toolCallId: string) => {
+    setFullscreenWidgetId(toolCallId);
+    onFullscreenChange?.(true);
+  };
+
+  const handleExitFullscreen = (toolCallId: string) => {
+    if (fullscreenWidgetId === toolCallId) {
+      setFullscreenWidgetId(null);
+      onFullscreenChange?.(false);
     }
   };
 
@@ -116,6 +133,8 @@ export function Thread({
             pipWidgetId={pipWidgetId}
             onRequestPip={handleRequestPip}
             onExitPip={handleExitPip}
+            onRequestFullscreen={handleRequestFullscreen}
+            onExitFullscreen={handleExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -136,6 +155,8 @@ function MessageView({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
   displayMode,
   onDisplayModeChange,
 }: {
@@ -148,6 +169,8 @@ function MessageView({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  onRequestFullscreen: (toolCallId: string) => void;
+  onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
@@ -173,6 +196,8 @@ function MessageView({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -211,6 +236,8 @@ function MessageView({
                 pipWidgetId={pipWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
+                onRequestFullscreen={onRequestFullscreen}
+                onExitFullscreen={onExitFullscreen}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
               />
@@ -232,6 +259,8 @@ function PartSwitch({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
   displayMode,
   onDisplayModeChange,
 }: {
@@ -244,6 +273,8 @@ function PartSwitch({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  onRequestFullscreen: (toolCallId: string) => void;
+  onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
@@ -335,6 +366,10 @@ function PartSwitch({
             part={toolPart}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
           />
           <ChatGPTAppRenderer
             serverId={serverId}
@@ -352,6 +387,8 @@ function PartSwitch({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -401,10 +438,18 @@ function ToolPart({
   part,
   displayMode,
   onDisplayModeChange,
+  onRequestFullscreen,
+  onExitFullscreen,
+  onRequestPip,
+  onExitPip,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  onRequestFullscreen?: (toolCallId: string) => void;
+  onExitFullscreen?: (toolCallId: string) => void;
+  onRequestPip?: (toolCallId: string) => void;
+  onExitPip?: (toolCallId: string) => void;
 }) {
   const label = isDynamicTool(part)
     ? part.toolName
@@ -514,6 +559,25 @@ function ToolPart({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (toolCallId) {
+                          // Handle exits
+                          if (
+                            displayMode === "fullscreen" &&
+                            mode !== "fullscreen"
+                          ) {
+                            onExitFullscreen?.(toolCallId);
+                          } else if (displayMode === "pip" && mode !== "pip") {
+                            onExitPip?.(toolCallId);
+                          }
+
+                          // Handle entries
+                          if (mode === "fullscreen") {
+                            onRequestFullscreen?.(toolCallId);
+                          } else if (mode === "pip") {
+                            onRequestPip?.(toolCallId);
+                          }
+                        }
+
                         onDisplayModeChange?.(mode);
                       }}
                       className={`p-1 rounded transition-colors cursor-pointer ${

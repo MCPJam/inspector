@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
+
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useUIPlaygroundStore,
@@ -10,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { X, Loader2 } from "lucide-react";
+import { X, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import {
@@ -18,8 +19,8 @@ import {
   ChatGPTSandboxedIframeHandle,
 } from "@/components/ui/chatgpt-sandboxed-iframe";
 import { toast } from "sonner";
+import { type DisplayMode } from "@/stores/ui-playground-store";
 
-type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
   | "input-streaming"
   | "input-available"
@@ -108,6 +109,8 @@ interface ChatGPTAppRendererProps {
   displayMode?: DisplayMode;
   /** Callback when display mode changes - required when displayMode is controlled */
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  onRequestFullscreen?: (toolCallId: string) => void;
+  onExitFullscreen?: (toolCallId: string) => void;
 }
 
 // ============================================================================
@@ -431,6 +434,8 @@ export function ChatGPTAppRenderer({
   onExitPip,
   displayMode: displayModeProp,
   onDisplayModeChange,
+  onRequestFullscreen,
+  onExitFullscreen,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
@@ -438,26 +443,6 @@ export function ChatGPTAppRenderer({
   // Get locale from playground store, fallback to navigator.language
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const locale = playgroundLocale || navigator.language || "en-US";
-
-  // Display mode: controlled (via props) or uncontrolled (internal state)
-  const isControlled = displayModeProp !== undefined;
-  const [internalDisplayMode, setInternalDisplayMode] =
-    useState<DisplayMode>("inline");
-  const displayMode = isControlled ? displayModeProp : internalDisplayMode;
-  const setDisplayMode = isControlled
-    ? (mode: DisplayMode) => onDisplayModeChange?.(mode)
-    : setInternalDisplayMode;
-  const [maxHeight, setMaxHeight] = useState<number | null>(null);
-  const [contentHeight, setContentHeight] = useState<number>(320);
-  const [isReady, setIsReady] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalParams, setModalParams] = useState<Record<string, any>>({});
-  const [modalTitle, setModalTitle] = useState<string>("");
-  const previousWidgetStateRef = useRef<string | null>(null);
-  const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
-  const [modalSandboxReady, setModalSandboxReady] = useState(false);
-  const lastAppliedHeightRef = useRef<number>(0);
 
   const {
     resolvedToolCallId,
@@ -472,6 +457,51 @@ export function ChatGPTAppRenderer({
     toolOutputProp,
     toolMetadata,
   );
+
+  // Display mode: controlled (via props) or uncontrolled (internal state)
+  const isControlled = displayModeProp !== undefined;
+  const [internalDisplayMode, setInternalDisplayMode] =
+    useState<DisplayMode>("inline");
+  const displayMode = isControlled ? displayModeProp : internalDisplayMode;
+  const setDisplayMode = useCallback(
+    (mode: DisplayMode) => {
+      if (isControlled) {
+        onDisplayModeChange?.(mode);
+      } else {
+        setInternalDisplayMode(mode);
+      }
+
+      // Notify parent about fullscreen state changes regardless of controlled mode
+      if (mode === "fullscreen") {
+        onRequestFullscreen?.(resolvedToolCallId);
+      } else if (displayMode === "fullscreen") {
+        onExitFullscreen?.(resolvedToolCallId);
+      }
+    },
+    [
+      isControlled,
+      onDisplayModeChange,
+      resolvedToolCallId,
+      onRequestFullscreen,
+      onExitFullscreen,
+      displayMode,
+    ],
+  );
+  const [maxHeight, setMaxHeight] = useState<number | null>(null);
+  const [contentHeight, setContentHeight] = useState<number>(320);
+  const [isReady, setIsReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalParams, setModalParams] = useState<Record<string, any>>({});
+  const [modalTitle, setModalTitle] = useState<string>("");
+  const previousWidgetStateRef = useRef<string | null>(null);
+  const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
+  const [modalSandboxReady, setModalSandboxReady] = useState(false);
+  const lastAppliedHeightRef = useRef<number>(0);
+
+  // Host-backed navigation state for fullscreen header buttons
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
 
   // Get CSP mode, device type, capabilities, and safe area from playground store
   // Only apply custom settings when in UI Playground
@@ -622,6 +652,9 @@ export function ChatGPTAppRenderer({
 
   useEffect(() => {
     lastAppliedHeightRef.current = 0;
+    // Reset navigation state when widget URL changes
+    setCanGoBack(false);
+    setCanGoForward(false);
     if (!widgetUrl) return;
     setContentHeight(320);
     if (displayMode === "inline") {
@@ -669,6 +702,18 @@ export function ChatGPTAppRenderer({
       }
     },
     [addUiLog, resolvedToolCallId, serverId, modalSandboxReady],
+  );
+
+  // Host-backed navigation: send navigation command to widget
+  const navigateWidget = useCallback(
+    (direction: "back" | "forward") => {
+      sandboxRef.current?.postMessage({
+        type: "openai:navigate",
+        direction,
+        toolId: resolvedToolCallId,
+      });
+    },
+    [resolvedToolCallId],
   );
 
   const handleSandboxMessage = useCallback(
@@ -838,6 +883,14 @@ export function ChatGPTAppRenderer({
           setModalTitle(event.data.title || "Modal");
           setModalParams(event.data.params || {});
           setModalOpen(true);
+          break;
+        }
+        case "openai:navigationStateChanged": {
+          // Host-backed navigation: update navigation button state
+          if (event.data.toolId === resolvedToolCallId) {
+            setCanGoBack(event.data.canGoBack ?? false);
+            setCanGoForward(event.data.canGoForward ?? false);
+          }
           break;
         }
       }
@@ -1061,7 +1114,58 @@ export function ChatGPTAppRenderer({
 
   return (
     <div className={containerClassName}>
-      {(isPip || isFullscreen) && (
+      {/* Fullscreen Header */}
+      {isFullscreen && (
+        <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-50 shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigateWidget("back")}
+              disabled={!canGoBack}
+              className={`p-2 rounded-lg transition-colors ${
+                canGoBack
+                  ? "hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                  : "text-muted-foreground/50 cursor-not-allowed"
+              }`}
+              aria-label="Go back"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => navigateWidget("forward")}
+              disabled={!canGoForward}
+              className={`p-2 rounded-lg transition-colors ${
+                canGoForward
+                  ? "hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
+                  : "text-muted-foreground/50 cursor-not-allowed"
+              }`}
+              aria-label="Go forward"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="font-medium text-sm text-muted-foreground">
+            {toolName || "ChatGPT App"}
+          </div>
+
+          <button
+            onClick={() => {
+              setDisplayMode("inline");
+              // Also ensure we exit PiP if that was the origin, though fullscreen usually overrides it
+              if (pipWidgetId === resolvedToolCallId) {
+                onExitPip?.(resolvedToolCallId);
+              }
+            }}
+            className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Exit fullscreen"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
+      {/* PiP Close Button - only show in PiP mode, Fullscreen has its own header */}
+      {isPip && (
         <button
           onClick={() => {
             setDisplayMode("inline");
@@ -1089,15 +1193,13 @@ export function ChatGPTAppRenderer({
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className="w-full border border-border/40 rounded-md bg-background overflow-hidden"
+        className={`w-full border border-border/40 bg-background overflow-hidden ${
+          isFullscreen ? "flex-1 border-0 rounded-none" : "rounded-md"
+        }`}
         style={{
           height: iframeHeight,
-          maxHeight:
-            displayMode === "fullscreen"
-              ? "90vh"
-              : displayMode === "pip"
-                ? "90vh"
-                : undefined,
+          // Remove max-height in fullscreen to allow flex-1 to control size
+          maxHeight: displayMode === "pip" ? "90vh" : undefined,
         }}
       />
       {outputTemplate && (

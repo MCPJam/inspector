@@ -75,6 +75,7 @@ export function ChatTabV2({
     null,
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
+  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -435,7 +436,12 @@ export function ChatTabV2({
           minSize={40}
           className="min-w-0"
         >
-          <div className="flex flex-col bg-background h-full min-h-0 overflow-hidden [transform:translateZ(0)]">
+          <div
+            className="flex flex-col bg-background h-full min-h-0 overflow-hidden"
+            style={{
+              transform: isWidgetFullscreen ? "none" : "translateZ(0)",
+            }}
+          >
             {isThreadEmpty ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
@@ -504,6 +510,7 @@ export function ChatTabV2({
                       toolsMetadata={toolsMetadata}
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}
+                      onFullscreenChange={setIsWidgetFullscreen}
                     />
                     {errorMessage && (
                       <div className="px-4 pb-4 pt-4">
