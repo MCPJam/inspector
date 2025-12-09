@@ -523,6 +523,18 @@ window.URL.revokeObjectURL=OrigURL.revokeObjectURL;window.URL.canParse=OrigURL.c
 })();</script>`;
 }
 
+// Widget base styles: prevent scrollbars by disabling overflow.
+// The auto-resize mechanism (measureAndNotifyHeight) reports content height
+// to the host, which expands the iframe accordingly - scrollbars are unnecessary.
+// This matches ChatGPT's inline widget behavior where the container sizes to content.
+const WIDGET_BASE_CSS = `<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevent scrollbars - iframe resizes to content via auto-resize */
+}
+</style>`;
+
 function injectScripts(
   html: string,
   urlPolyfill: string,
@@ -532,10 +544,10 @@ function injectScripts(
   if (/<html[^>]*>/i.test(html) && /<head[^>]*>/i.test(html)) {
     return html.replace(
       /<head[^>]*>/i,
-      `$&${urlPolyfill}${baseTag}${apiScript}`,
+      `$&${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}${apiScript}`,
     );
   }
-  return `<!DOCTYPE html><html><head>${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
+  return `<!DOCTYPE html><html><head>${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
 }
 
 // ============================================================================
