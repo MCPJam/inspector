@@ -23,6 +23,7 @@ import {
   Trash2,
   Sun,
   Moon,
+  Globe,
 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
@@ -39,6 +40,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
@@ -61,6 +69,26 @@ const DEVICE_CONFIGS: Record<
   desktop: { width: 1280, height: 800, label: "Desktop", icon: Monitor },
 };
 
+/** Common BCP 47 locales for testing (per OpenAI Apps SDK spec) */
+const LOCALE_OPTIONS = [
+  { code: "en-US", label: "English (US)" },
+  { code: "en-GB", label: "English (UK)" },
+  { code: "es-ES", label: "Español" },
+  { code: "es-MX", label: "Español (MX)" },
+  { code: "fr-FR", label: "Français" },
+  { code: "de-DE", label: "Deutsch" },
+  { code: "it-IT", label: "Italiano" },
+  { code: "pt-BR", label: "Português (BR)" },
+  { code: "ja-JP", label: "日本語" },
+  { code: "zh-CN", label: "简体中文" },
+  { code: "zh-TW", label: "繁體中文" },
+  { code: "ko-KR", label: "한국어" },
+  { code: "ar-SA", label: "العربية" },
+  { code: "hi-IN", label: "हिन्दी" },
+  { code: "ru-RU", label: "Русский" },
+  { code: "nl-NL", label: "Nederlands" },
+];
+
 interface PlaygroundMainProps {
   serverName: string;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
@@ -81,6 +109,9 @@ interface PlaygroundMainProps {
   onDeviceTypeChange?: (type: DeviceType) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  // Locale (BCP 47)
+  locale?: string;
+  onLocaleChange?: (locale: string) => void;
 }
 
 function ScrollToBottomButton() {
@@ -139,6 +170,8 @@ export function PlaygroundMain({
   onDeviceTypeChange,
   displayMode = "inline",
   onDisplayModeChange,
+  locale = "en-US",
+  onLocaleChange,
 }: PlaygroundMainProps) {
   const posthog = usePostHog();
   const [input, setInput] = useState("");
@@ -388,50 +421,75 @@ export function PlaygroundMain({
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {/* Device frame header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
-        {/* Device type toggle */}
-        <ToggleGroup
-          type="single"
-          value={deviceType}
-          onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
-          className="gap-0.5"
-        >
-          <ToggleGroupItem
-            value="mobile"
-            aria-label="Mobile"
-            title="Mobile (430x932)"
-            className="h-7 w-7 p-0 cursor-pointer"
+        {/* Device type toggle - flex-1 to balance with right section */}
+        <div className="flex-1 flex justify-start">
+          <ToggleGroup
+            type="single"
+            value={deviceType}
+            onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
+            className="gap-0.5"
           >
-            <Smartphone className="h-3.5 w-3.5" />
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="tablet"
-            aria-label="Tablet"
-            title="Tablet (820x1180)"
-            className="h-7 w-7 p-0 cursor-pointer"
-          >
-            <Tablet className="h-3.5 w-3.5" />
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="desktop"
-            aria-label="Desktop"
-            title="Desktop (1280x800)"
-            className="h-7 w-7 p-0 cursor-pointer"
-          >
-            <Monitor className="h-3.5 w-3.5" />
-          </ToggleGroupItem>
-        </ToggleGroup>
-
-        {/* Device label */}
-        <div className="flex items-center gap-2">
-          <DeviceIcon className="h-3.5 w-3.5" />
-          <span>{deviceConfig.label}</span>
-          <span className="text-[10px] text-muted-foreground/60">
-            ({deviceConfig.width}×{deviceConfig.height})
-          </span>
+            <ToggleGroupItem
+              value="mobile"
+              aria-label="Mobile"
+              title="Mobile (430x932)"
+              className="h-7 w-7 p-0 cursor-pointer"
+            >
+              <Smartphone className="h-3.5 w-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="tablet"
+              aria-label="Tablet"
+              title="Tablet (820x1180)"
+              className="h-7 w-7 p-0 cursor-pointer"
+            >
+              <Tablet className="h-3.5 w-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="desktop"
+              aria-label="Desktop"
+              title="Desktop (1280x800)"
+              className="h-7 w-7 p-0 cursor-pointer"
+            >
+              <Monitor className="h-3.5 w-3.5" />
+            </ToggleGroupItem>
+          </ToggleGroup>
         </div>
 
-        {/* Right actions */}
-        <div className="flex items-center gap-1">
+        {/* Device label, locale, and theme */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <DeviceIcon className="h-3.5 w-3.5" />
+            <span>{deviceConfig.label}</span>
+            <span className="text-[10px] text-muted-foreground/60">
+              ({deviceConfig.width}×{deviceConfig.height})
+            </span>
+          </div>
+
+          {/* Locale selector */}
+          <Select value={locale} onValueChange={onLocaleChange}>
+            <SelectTrigger
+              size="sm"
+              className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+            >
+              <Globe className="h-3.5 w-3.5" />
+              <SelectValue>{locale}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {LOCALE_OPTIONS.map((option) => (
+                <SelectItem key={option.code} value={option.code}>
+                  <span className="flex items-center gap-2">
+                    <span>{option.label}</span>
+                    <span className="text-muted-foreground text-[10px]">
+                      {option.code}
+                    </span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Theme toggle */}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -439,7 +497,6 @@ export function PlaygroundMain({
                 size="icon"
                 onClick={handleThemeChange}
                 className="h-7 w-7"
-                title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
               >
                 {themeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
@@ -452,6 +509,10 @@ export function PlaygroundMain({
               {themeMode === "dark" ? "Light mode" : "Dark mode"}
             </TooltipContent>
           </Tooltip>
+        </div>
+
+        {/* Right actions - flex-1 to balance with left section */}
+        <div className="flex-1 flex items-center justify-end">
           {!isThreadEmpty && (
             <Tooltip>
               <TooltipTrigger asChild>

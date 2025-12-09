@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import {
   Dialog,
   DialogContent,
@@ -250,6 +251,7 @@ function useWidgetFetch(
   resolvedToolOutput: unknown,
   toolResponseMetadata: unknown,
   themeMode: string,
+  locale: string,
 ) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
@@ -282,7 +284,6 @@ function useWidgetFetch(
       setStoreError(null);
       try {
         // Host-controlled values per SDK spec
-        const locale = navigator.language || "en-US";
         const deviceType = getDeviceType();
         const userLocation = await getUserLocation(); // Coarse IP-based location
 
@@ -349,6 +350,7 @@ function useWidgetFetch(
     resolvedToolOutput,
     toolResponseMetadata,
     themeMode,
+    locale,
   ]);
 
   return { widgetUrl, widgetClosed, isStoringWidget, storeError };
@@ -378,6 +380,9 @@ export function ChatGPTAppRenderer({
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  // Get locale from playground store, fallback to navigator.language
+  const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
+  const locale = playgroundLocale || navigator.language || "en-US";
 
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
@@ -428,6 +433,7 @@ export function ChatGPTAppRenderer({
       resolvedToolOutput,
       toolResponseMetadata,
       themeMode,
+      locale,
     );
 
   const applyMeasuredHeight = useCallback(
@@ -794,9 +800,10 @@ export function ChatGPTAppRenderer({
         theme: themeMode,
         displayMode: "inline",
         maxHeight: null,
+        locale,
       },
     });
-  }, [currentWidgetState, resolvedToolCallId, themeMode]);
+  }, [currentWidgetState, resolvedToolCallId, themeMode, locale]);
 
   // Reset modal sandbox state when modal closes
   useEffect(() => {
@@ -823,12 +830,24 @@ export function ChatGPTAppRenderer({
 
   useEffect(() => {
     if (!isReady) return;
-    const globals: Record<string, unknown> = { theme: themeMode, displayMode };
+    const globals: Record<string, unknown> = {
+      theme: themeMode,
+      displayMode,
+      locale,
+    };
     if (typeof maxHeight === "number" && Number.isFinite(maxHeight))
       globals.maxHeight = maxHeight;
     postToWidget({ type: "openai:set_globals", globals });
     if (modalOpen) postToWidget({ type: "openai:set_globals", globals }, true);
-  }, [themeMode, maxHeight, displayMode, isReady, modalOpen, postToWidget]);
+  }, [
+    themeMode,
+    maxHeight,
+    displayMode,
+    locale,
+    isReady,
+    modalOpen,
+    postToWidget,
+  ]);
 
   const invokingText = toolMetadata?.["openai/toolInvocation/invoking"] as
     | string
