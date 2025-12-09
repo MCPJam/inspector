@@ -393,11 +393,11 @@ const openaiAPI = {
   displayMode: 'inline',
   maxHeight: 600,
   theme: ${JSON.stringify(theme ?? "dark")},
-  locale: 'en-US',
+  locale: ${JSON.stringify(locale ?? "en-US")},  // From playground locale selector
   safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
   userAgent: {
-    device: { type: 'desktop' },
-    capabilities: { hover: true, touch: false }
+    device: { type: 'desktop' },  // 'mobile' | 'tablet' | 'desktop'
+    capabilities: { hover: true, touch: false }  // Device input capabilities
   },
   view: {
     mode: ${JSON.stringify(viewMode)},  // 'inline' or 'modal'
@@ -511,6 +511,28 @@ const openaiAPI = {
 window.openai = openaiAPI;
 window.webplus = openaiAPI; // Compatibility alias
 ```
+
+**Device Globals:**
+
+The `window.openai` API provides device context to widgets through several properties:
+
+- **`userAgent.device.type`** - Device type: `'mobile'`, `'tablet'`, or `'desktop'`. In the UI Playground, this is controlled by the device type selector. Outside the playground, it's automatically detected from the browser window size.
+
+- **`userAgent.capabilities`** - Input capabilities:
+  - `hover` (boolean) - Whether the device supports hover interactions
+  - `touch` (boolean) - Whether the device supports touch input
+  
+  In the UI Playground, these are controlled by the hover and touch toggle buttons. Outside the playground, they default to `{ hover: true, touch: false }`.
+
+- **`safeArea.insets`** - Safe area insets in pixels for device notches, rounded corners, and gesture areas:
+  - `top` (number) - Top inset in pixels
+  - `bottom` (number) - Bottom inset in pixels
+  - `left` (number) - Left inset in pixels
+  - `right` (number) - Right inset in pixels
+  
+  In the UI Playground, these are configured through the safe area editor with presets for common devices (iPhone notch, Dynamic Island, Android gesture navigation). Outside the playground, all insets default to 0.
+
+Widgets can use these values to adapt their layout and interactions for different device contexts. For example, a widget might disable hover-based tooltips on touch devices or adjust padding to account for safe area insets.
 
 **Security Notes:**
 
@@ -805,6 +827,154 @@ await window.openai.requestDisplayMode({
 
 The parent component handles these requests and updates the widget's display mode accordingly.
 
+#### Fullscreen Navigation (PR #1033)
+
+When a widget is in fullscreen mode, a navigation header is rendered at the top with back/forward buttons, widget title, and close button. This enables users to navigate multi-page widgets without leaving fullscreen mode.
+
+**Architecture:**
+
+The fullscreen navigation system uses host-backed navigation tracking to mirror the widget's internal history state:
+
+```mermaid
+sequenceDiagram
+    participant Widget as Widget Iframe
+    participant History as History API
+    participant Parent as ChatGPTAppRenderer
+    participant Header as Fullscreen Header
+
+    Note over Widget,Header: Navigation Tracking
+    Widget->>History: history.pushState(state, title, url)
+    History->>History: Wrapped pushState increments index
+    History->>Parent: postMessage openai:navigationStateChanged
+    Parent->>Header: Update back/forward button states
+
+    Note over Widget,Header: User Navigation
+    Header->>Parent: User clicks back button
+    Parent->>Widget: postMessage openai:navigate {direction: 'back'}
+    Widget->>History: history.back()
+    History->>Parent: popstate event → postMessage navigationStateChanged
+    Parent->>Header: Update button states
+```
+
+**Implementation Details:**
+
+1. **History Wrapping** (`server/routes/mcp/chatgpt.ts:352-407`):
+
+```javascript
+// Track navigation state
+const navigationState = { currentIndex: 0, historyLength: 1 };
+
+// Wrap history.pushState to track navigation
+const originalPushState = history.pushState.bind(history);
+history.pushState = function(state, title, url) {
+  const nextIndex = navigationState.currentIndex + 1;
+  const stateWithIndex = { ...state, __navIndex: nextIndex };
+  originalPushState(stateWithIndex, title, url);
+  navigationState.currentIndex = nextIndex;
+  navigationState.historyLength = history.length;
+  notifyNavigationState();
+};
+
+// Track popstate for back/forward navigation
+window.addEventListener('popstate', (event) => {
+  const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
+  navigationState.currentIndex = stateIndex;
+  notifyNavigationState();
+});
+
+// Notify parent of navigation state changes
+const notifyNavigationState = () => {
+  window.parent.postMessage({
+    type: 'openai:navigationStateChanged',
+    toolId: toolId,
+    canGoBack: navigationState.currentIndex > 0,
+    canGoForward: navigationState.currentIndex < navigationState.historyLength - 1,
+    historyLength: navigationState.historyLength,
+    currentIndex: navigationState.currentIndex
+  }, '*');
+};
+```
+
+2. **Parent-Side Navigation Handler** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:888-896`):
+
+```typescript
+case "openai:navigationStateChanged": {
+  // Update navigation button state
+  if (event.data.toolId === resolvedToolCallId) {
+    setCanGoBack(event.data.canGoBack ?? false);
+    setCanGoForward(event.data.canGoForward ?? false);
+  }
+  break;
+}
+```
+
+3. **Navigation Command Handler** (`server/routes/mcp/chatgpt.ts:535-551`):
+
+```javascript
+case 'openai:navigate':
+  // Host-backed navigation: respond to commands from parent
+  if (event.data.toolId === toolId) {
+    if (event.data.direction === 'back') {
+      if (navigationState.currentIndex > 0) {
+        navigationState.currentIndex--;
+        history.back();
+      }
+    } else if (event.data.direction === 'forward') {
+      if (navigationState.currentIndex < navigationState.historyLength - 1) {
+        navigationState.currentIndex++;
+        history.forward();
+      }
+    }
+  }
+  break;
+```
+
+4. **Fullscreen Header UI** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:1117-1164`):
+
+```typescript
+{isFullscreen && (
+  <div className="flex items-center justify-between px-4 h-14 border-b">
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => navigateWidget("back")}
+        disabled={!canGoBack}
+        className={canGoBack ? "hover:bg-muted cursor-pointer" : "cursor-not-allowed"}
+      >
+        <ChevronLeft className="w-5 h-5" />
+      </button>
+      <button
+        onClick={() => navigateWidget("forward")}
+        disabled={!canGoForward}
+        className={canGoForward ? "hover:bg-muted cursor-pointer" : "cursor-not-allowed"}
+      >
+        <ChevronRight className="w-5 h-5" />
+      </button>
+    </div>
+
+    <div className="font-medium text-sm">{toolName || "ChatGPT App"}</div>
+
+    <button onClick={() => setDisplayMode("inline")}>
+      <X className="w-5 h-5" />
+    </button>
+  </div>
+)}
+```
+
+**Key Features:**
+
+- **Host-Backed Navigation**: Parent component mirrors widget's history state, enabling navigation controls outside the iframe
+- **State Persistence**: Navigation index stored in `history.state.__navIndex` to survive popstate events
+- **Automatic Tracking**: All `pushState`, `replaceState`, and `popstate` events automatically update navigation state
+- **Disabled State Management**: Back/forward buttons are disabled when navigation is not available
+- **Transform Isolation Fix**: Parent container's `transform: translateZ(0)` is removed in fullscreen mode to prevent z-index stacking issues
+
+**Use Cases:**
+
+- Multi-page dashboards with internal routing
+- Wizard-style forms with step navigation
+- Documentation browsers with history
+- Any widget using React Router or similar routing libraries
+
 ### 7. Parent-Side Message Handling
 
 Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:312-347`:
@@ -895,41 +1065,64 @@ useEffect(() => {
 
 This ensures only one widget can be in PiP mode at a time, preventing overlapping floating widgets.
 
-#### Theme Synchronization
+#### Global Values Synchronization
 
-The parent component automatically sends theme updates to widgets when the user changes between light and dark mode:
+The parent component automatically sends global values to widgets, including theme, display mode, locale, and maxHeight. These values update whenever the user changes settings in the playground.
 
-Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:293-307`:
-
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:831-850`:
 ```typescript
-// Send theme updates to iframe when theme changes
 useEffect(() => {
-  if (!isReady || !iframeRef.current?.contentWindow) return;
-
-  iframeRef.current.contentWindow.postMessage(
-    {
-      type: "openai:set_globals",
-      globals: {
-        theme: themeMode,
-      },
-    },
-    "*",
-  );
-}, [themeMode, isReady]);
+  if (!isReady) return;
+  const globals: Record<string, unknown> = {
+    theme: themeMode,
+    displayMode,
+    locale,
+  };
+  if (typeof maxHeight === "number" && Number.isFinite(maxHeight))
+    globals.maxHeight = maxHeight;
+  postToWidget({ type: "openai:set_globals", globals });
+  if (modalOpen) postToWidget({ type: "openai:set_globals", globals }, true);
+}, [
+  themeMode,
+  maxHeight,
+  displayMode,
+  locale,
+  isReady,
+  modalOpen,
+  postToWidget,
+]);
 ```
 
-Widgets can listen for theme changes using the `openai:set_globals` event:
+Widgets can listen for global value changes using the `openai:set_globals` event:
 
 ```javascript
 // In widget code
 window.addEventListener("message", (event) => {
   if (event.data.type === "openai:set_globals") {
-    const { theme } = event.data.globals;
+    const { theme, locale, displayMode, maxHeight } = event.data.globals;
+    
     // Update widget UI based on theme
     document.body.classList.toggle("dark", theme === "dark");
+    
+    // Adapt content for locale
+    if (locale.startsWith("ja")) {
+      // Show Japanese content
+    }
+    
+    // Adjust layout for display mode
+    if (displayMode === "fullscreen") {
+      // Expand to use full viewport
+    }
   }
 });
 ```
+
+**Available Global Values:**
+
+- `theme` - Current theme mode (`"light"` or `"dark"`)
+- `displayMode` - Current display mode (`"inline"`, `"pip"`, or `"fullscreen"`)
+- `locale` - BCP 47 locale code (e.g., `"en-US"`, `"es-ES"`, `"ja-JP"`)
+- `maxHeight` - Maximum height in pixels for inline mode (optional)
 
 #### Widget State Propagation to Model
 
@@ -1063,31 +1256,153 @@ const handleCallTool = async (
 
 ### Content Security Policy
 
-Located in `server/routes/mcp/chatgpt.ts:408-437`:
+MCPJam Inspector implements configurable CSP enforcement for widget sandboxing with two modes:
+
+**CSP Modes:**
+
+- **Permissive** (default) - Allows all HTTPS resources for development and testing
+- **Strict** (widget-declared) - Only allows domains declared in the widget's `openai/widgetCSP` metadata
+
+#### Widget CSP Declaration
+
+Widgets can declare required domains using the `openai/widgetCSP` metadata field in their resource:
 
 ```typescript
-const trustedCdns = [
-  \"https://persistent.oaistatic.com\",
-  \"https://*.oaistatic.com\",
-  \"https://unpkg.com\",
-  \"https://cdn.jsdelivr.net\",
-  \"https://cdnjs.cloudflare.com\",
-  \"https://cdn.skypack.dev\"
-].join(\" \");
-
-c.header(\"Content-Security-Policy\", [
-  \"default-src 'self'\",
-  `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${trustedCdns}`,
-  \"worker-src 'self' blob:\",
-  \"child-src 'self' blob:\",
-  `style-src 'self' 'unsafe-inline' ${trustedCdns}`,
-  \"img-src 'self' data: https: blob:\",
-  \"media-src 'self' data: https: blob:\",
-  `font-src 'self' data: ${trustedCdns}`,
-  \"connect-src 'self' https: wss: ws:\",
-  \"frame-ancestors 'self'\"
-].join(\"; \"));
+{
+  "_meta": {
+    "openai/widgetCSP": {
+      "connect_domains": [
+        "https://api.example.com",
+        "wss://websocket.example.com"
+      ],
+      "resource_domains": [
+        "https://cdn.example.com",
+        "https://fonts.googleapis.com"
+      ]
+    }
+  }
+}
 ```
+
+**Domain Types:**
+
+- `connect_domains` - Allowed origins for `fetch()`, `XMLHttpRequest`, and WebSocket connections (maps to `connect-src`)
+- `resource_domains` - Allowed origins for scripts, styles, images, fonts, and media (maps to `script-src`, `style-src`, `img-src`, `font-src`, `media-src`)
+
+#### CSP Header Generation
+
+Located in `server/routes/mcp/chatgpt.ts:571-701`:
+
+```typescript
+function buildCspHeader(
+  mode: CspMode,
+  widgetCsp?: WidgetCspMeta | null,
+): CspConfig {
+  // Base trusted CDNs (always included for widget asset loading)
+  const baseTrustedCdns = [
+    "https://persistent.oaistatic.com",
+    "https://*.oaistatic.com",
+    "https://unpkg.com",
+    "https://cdn.jsdelivr.net",
+    "https://cdnjs.cloudflare.com",
+    "https://cdn.skypack.dev",
+    "https://cdn.tailwindcss.com",
+  ];
+
+  let connectDomains: string[];
+  let resourceDomains: string[];
+
+  switch (mode) {
+    case "permissive":
+      // Allow https: wildcard
+      connectDomains = ["'self'", "https:", "wss:", "ws:"];
+      resourceDomains = ["'self'", "data:", "blob:", "https:", ...baseTrustedCdns];
+      break;
+
+    case "widget-declared":
+      // Honor widget's declared CSP
+      connectDomains = [
+        "'self'",
+        ...(widgetCsp?.connect_domains || []),
+      ];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        ...(widgetCsp?.resource_domains || baseTrustedCdns),
+      ];
+      break;
+  }
+
+  // Build full CSP header
+  const headerString = [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceDomains.join(" ")}`,
+    "worker-src 'self' blob:",
+    "child-src 'self' blob:",
+    `style-src 'self' 'unsafe-inline' ${resourceDomains.join(" ")}`,
+    `img-src ${mode === "widget-declared" ? resourceDomains.join(" ") : "'self' data: blob: https:"}`,
+    `media-src ${mode === "widget-declared" ? resourceDomains.join(" ") : "'self' data: blob: https:"}`,
+    `font-src 'self' data: ${resourceDomains.join(" ")}`,
+    `connect-src ${connectDomains.join(" ")}`,
+    "frame-ancestors 'self'",
+  ].join("; ");
+
+  return { mode, connectDomains, resourceDomains, headerString };
+}
+```
+
+The CSP header is applied in the `/widget-content/:toolId` endpoint based on the `csp_mode` query parameter.
+
+#### CSP Violation Reporting
+
+Widgets automatically report CSP violations to the parent for debugging. The injected widget script includes a violation listener:
+
+Located in `server/routes/mcp/chatgpt.ts:458-473`:
+
+```javascript
+document.addEventListener('securitypolicyviolation', (e) => {
+  const violation = {
+    type: 'openai:csp-violation',
+    toolId: toolId,
+    directive: e.violatedDirective,
+    blockedUri: e.blockedURI,
+    sourceFile: e.sourceFile || null,
+    lineNumber: e.lineNumber || null,
+    columnNumber: e.columnNumber || null,
+    originalPolicy: e.originalPolicy,
+    effectiveDirective: e.effectiveDirective,
+    disposition: e.disposition,
+    timestamp: Date.now(),
+  };
+
+  console.warn('[OpenAI Widget CSP Violation]', violation.directive, ':', violation.blockedUri);
+  window.parent.postMessage(violation, '*');
+});
+```
+
+Violations are collected in the widget debug store and displayed in the CSP debug panel with actionable suggestions for fixing CSP declarations.
+
+#### CSP Debug Panel
+
+The UI Playground includes a CSP debug tab (shield icon) that shows:
+
+- **Suggested fix** - Automatically generated `openai/widgetCSP` JSON snippet based on violations
+- **Blocked requests** - List of all CSP violations with directive, URI, and source location
+- **Declared domains** - Current `connect_domains` and `resource_domains` from widget metadata
+- **Full CSP header** - Complete CSP header string for advanced debugging
+
+Located in `client/src/components/chat-v2/csp-debug-panel.tsx`.
+
+#### Development vs Production
+
+- **Development**: Use permissive mode to avoid CSP issues while building widgets
+- **Testing**: Switch to strict mode in UI Playground to identify required domains
+- **Production**: Always use strict mode with properly declared `openai/widgetCSP` metadata
+
+<Warning>
+  The `'unsafe-inline'` and `'unsafe-eval'` directives are currently required for React and other frameworks. Future versions may support stricter CSP with nonces or hashes.
+</Warning>
 
 ### Iframe Sandbox
 
@@ -1359,6 +1674,13 @@ server.connect(transport);
    - Inspect localStorage for widget state key
    - Confirm both views have `openai:widget_state` event listener
 
+10. **CSP violations blocking resources**
+    - Check the CSP debug tab (shield icon) for violation details
+    - Switch to permissive mode in UI Playground to bypass CSP temporarily
+    - Add blocked domains to `openai/widgetCSP` metadata in your widget
+    - Verify CSP header in Network tab matches expected configuration
+    - Use the suggested fix snippet from the CSP debug panel
+
 **Debug Tools:**
 
 ```javascript
@@ -1378,6 +1700,16 @@ window.parent.postMessage = function (...args) {
 console.log("openai API:", window.openai);
 console.log("toolInput:", window.openai?.toolInput);
 console.log("toolOutput:", window.openai?.toolOutput);
+
+// Monitor CSP violations
+document.addEventListener("securitypolicyviolation", (e) => {
+  console.error("[CSP Violation]", {
+    directive: e.violatedDirective,
+    blockedUri: e.blockedURI,
+    sourceFile: e.sourceFile,
+    lineNumber: e.lineNumber,
+  });
+});
 ```
 
 ### Extending the Implementation
@@ -1465,11 +1797,17 @@ case \"openai:customMethod\":
 ## Related Files
 
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
-- `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
-- `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
+- `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
+- `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - ChatGPT Apps renderer with CSP support
+- `client/src/components/chat-v2/csp-debug-panel.tsx` - CSP debug panel UI
+- `client/src/components/chat-v2/thread.tsx` - Manages PiP state and CSP debug tab
 - `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
-- `server/routes/mcp/chatgpt.ts` - Widget storage, serving, and OpenAI bridge injection
+- `client/src/components/ui-playground/PlaygroundMain.tsx` - UI Playground with CSP mode selector
+- `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
+- `server/routes/mcp/chatgpt.ts` - CSP header generation and enforcement
 - `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
+- `client/src/stores/ui-playground-store.ts` - CSP mode state management
+- `client/src/stores/widget-debug-store.ts` - CSP violation tracking
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
 
 ## Resources
