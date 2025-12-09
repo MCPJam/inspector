@@ -98,7 +98,9 @@ export function LoggerView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedServerId, setSelectedServerId] = useState<string>("");
   const [selectedLevel, setSelectedLevel] = useState<LoggingLevel>("debug");
-  const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>("all");
+  const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
+    "all",
+  );
   const [isUpdatingLevel, setIsUpdatingLevel] = useState(false);
 
   // Subscribe to UI log store for MCP Apps traffic

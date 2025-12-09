@@ -9,9 +9,9 @@ icon: "puzzle-piece"
 This guide explains how MCPJam Inspector implements MCP Apps (SEP-1865) to render custom UI widgets for MCP tool results. MCP Apps use JSON-RPC 2.0 over postMessage with a double-iframe sandbox architecture for security isolation.
 
 <Note>
-  MCPJam Inspector also supports [OpenAI Apps SDK](./openai-sdk-architecture) and
-  [MCP-UI](./playground-architecture#mcp-ui-integration) for custom UI rendering.
-  MCP Apps takes priority when a tool has `ui/resourceUri` metadata.
+  MCPJam Inspector also supports [OpenAI Apps SDK](./openai-sdk-architecture)
+  and [MCP-UI](./playground-architecture#mcp-ui-integration) for custom UI
+  rendering. MCP Apps takes priority when a tool has `ui/resourceUri` metadata.
 </Note>
 
 ## Overview
@@ -240,18 +240,18 @@ All communication uses JSON-RPC 2.0 format:
 
 ### Supported methods
 
-| Method | Direction | Description |
-|--------|-----------|-------------|
-| `ui/initialize` | Widget → Host | Initialize widget, get host context |
-| `tools/call` | Widget → Host | Call an MCP tool |
-| `resources/read` | Widget → Host | Read an MCP resource |
-| `ui/open-link` | Widget → Host | Open external URL |
-| `ui/message` | Widget → Host | Send message to chat |
-| `ui/size-change` | Widget → Host | Notify of size change |
-| `ui/notifications/initialized` | Widget → Host | Widget finished initializing |
-| `ui/notifications/tool-input` | Host → Widget | Send tool input |
-| `ui/notifications/tool-result` | Host → Widget | Send tool result |
-| `ui/host-context-change` | Host → Widget | Theme or context changed |
+| Method                         | Direction     | Description                         |
+| ------------------------------ | ------------- | ----------------------------------- |
+| `ui/initialize`                | Widget → Host | Initialize widget, get host context |
+| `tools/call`                   | Widget → Host | Call an MCP tool                    |
+| `resources/read`               | Widget → Host | Read an MCP resource                |
+| `ui/open-link`                 | Widget → Host | Open external URL                   |
+| `ui/message`                   | Widget → Host | Send message to chat                |
+| `ui/size-change`               | Widget → Host | Notify of size change               |
+| `ui/notifications/initialized` | Widget → Host | Widget finished initializing        |
+| `ui/notifications/tool-input`  | Host → Widget | Send tool input                     |
+| `ui/notifications/tool-result` | Host → Widget | Send tool result                    |
+| `ui/host-context-change`       | Host → Widget | Theme or context changed            |
 
 ## Server routes
 
@@ -274,13 +274,16 @@ Serves the sandbox proxy HTML that creates the double-iframe architecture.
 The sandbox proxy uses a permissive CSP to allow widget content:
 
 ```html
-<meta http-equiv="Content-Security-Policy" content="
+<meta
+  http-equiv="Content-Security-Policy"
+  content="
   default-src 'self';
   script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com ...;
   style-src * blob: data: 'unsafe-inline';
   connect-src *;
   ...
-">
+"
+/>
 ```
 
 ### Iframe sandbox attributes
@@ -307,14 +310,14 @@ The sandbox proxy uses a permissive CSP to allow widget content:
 
 ## Comparison with OpenAI Apps SDK
 
-| Feature | MCP Apps (SEP-1865) | OpenAI Apps SDK |
-|---------|---------------------|-----------------|
-| Protocol | JSON-RPC 2.0 | Custom postMessage |
-| Sandbox | Double-iframe | Single iframe |
-| API | `window.mcpApp` | `window.openai` |
-| Metadata | `ui/resourceUri` | `openai/outputTemplate` |
-| State persistence | Not supported | localStorage |
-| Modal support | Not supported | Supported |
+| Feature           | MCP Apps (SEP-1865) | OpenAI Apps SDK         |
+| ----------------- | ------------------- | ----------------------- |
+| Protocol          | JSON-RPC 2.0        | Custom postMessage      |
+| Sandbox           | Double-iframe       | Single iframe           |
+| API               | `window.mcpApp`     | `window.openai`         |
+| Metadata          | `ui/resourceUri`    | `openai/outputTemplate` |
+| State persistence | Not supported       | localStorage            |
+| Modal support     | Not supported       | Supported               |
 
 ## Contributing
 

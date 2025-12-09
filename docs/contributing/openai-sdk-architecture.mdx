@@ -349,8 +349,14 @@ The middle iframe serves as a cross-origin relay between the host and widget. Lo
 
       // Create inner iframe for widget content
       const inner = document.createElement("iframe");
-      inner.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
-      inner.setAttribute("allow", "local-network-access *; microphone *; midi *");
+      inner.setAttribute(
+        "sandbox",
+        "allow-scripts allow-same-origin allow-forms",
+      );
+      inner.setAttribute(
+        "allow",
+        "local-network-access *; microphone *; midi *",
+      );
       document.body.appendChild(inner);
 
       let widgetLoaded = false;
@@ -515,7 +521,7 @@ const openaiAPI = {
     const callId = ++this._callId;
     return new Promise((resolve, reject) => {
       this._pendingCalls.set(callId, { resolve, reject });
-      
+
       // Include client-supplied _meta per SDK spec
       window.parent.postMessage({
         type: 'openai:callTool',
@@ -610,7 +616,7 @@ The `window.openai` API provides device context to widgets through several prope
 - **`userAgent.capabilities`** - Input capabilities:
   - `hover` (boolean) - Whether the device supports hover interactions
   - `touch` (boolean) - Whether the device supports touch input
-  
+
   In the UI Playground, these are controlled by the hover and touch toggle buttons. Outside the playground, they default to `{ hover: true, touch: false }`.
 
 - **`safeArea.insets`** - Safe area insets in pixels for device notches, rounded corners, and gesture areas:
@@ -618,7 +624,7 @@ The `window.openai` API provides device context to widgets through several prope
   - `bottom` (number) - Bottom inset in pixels
   - `left` (number) - Left inset in pixels
   - `right` (number) - Right inset in pixels
-  
+
   In the UI Playground, these are configured through the safe area editor with presets for common devices (iPhone notch, Dynamic Island, Android gesture navigation). Outside the playground, all insets default to 0.
 
 Widgets can use these values to adapt their layout and interactions for different device contexts. For example, a widget might disable hover-based tooltips on touch devices or adjust padding to account for safe area insets.
@@ -637,16 +643,16 @@ When a tool returns a 401 status, the system checks for OAuth challenges per RFC
 // In ChatGPTAppRenderer message handler
 case "openai:callTool": {
   const result = await onCallTool(toolName, args, _meta);
-  
+
   // Check for OAuth challenge in response metadata
   const resultMeta = result?._meta || result?.meta;
   const wwwAuth = resultMeta?.["mcp/www_authenticate"];
-  
+
   if (wwwAuth && typeof wwwAuth === "string") {
     // Parse RFC 7235 challenge: Bearer realm="...", error="...", error_description="..."
     handleOAuthChallenge(wwwAuth, toolName);
   }
-  
+
   postToWidget({
     type: 'openai:callTool:response',
     callId,
@@ -985,7 +991,7 @@ const navigationState = { currentIndex: 0, historyLength: 1 };
 
 // Wrap history.pushState to track navigation
 const originalPushState = history.pushState.bind(history);
-history.pushState = function(state, title, url) {
+history.pushState = function (state, title, url) {
   const nextIndex = navigationState.currentIndex + 1;
   const stateWithIndex = { ...state, __navIndex: nextIndex };
   originalPushState(stateWithIndex, title, url);
@@ -995,7 +1001,7 @@ history.pushState = function(state, title, url) {
 };
 
 // Track popstate for back/forward navigation
-window.addEventListener('popstate', (event) => {
+window.addEventListener("popstate", (event) => {
   const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
   navigationState.currentIndex = stateIndex;
   notifyNavigationState();
@@ -1003,14 +1009,18 @@ window.addEventListener('popstate', (event) => {
 
 // Notify parent of navigation state changes
 const notifyNavigationState = () => {
-  window.parent.postMessage({
-    type: 'openai:navigationStateChanged',
-    toolId: toolId,
-    canGoBack: navigationState.currentIndex > 0,
-    canGoForward: navigationState.currentIndex < navigationState.historyLength - 1,
-    historyLength: navigationState.historyLength,
-    currentIndex: navigationState.currentIndex
-  }, '*');
+  window.parent.postMessage(
+    {
+      type: "openai:navigationStateChanged",
+      toolId: toolId,
+      canGoBack: navigationState.currentIndex > 0,
+      canGoForward:
+        navigationState.currentIndex < navigationState.historyLength - 1,
+      historyLength: navigationState.historyLength,
+      currentIndex: navigationState.currentIndex,
+    },
+    "*",
+  );
 };
 ```
 
@@ -1189,6 +1199,7 @@ This ensures only one widget can be in PiP mode at a time, preventing overlappin
 The parent component automatically sends global values to widgets, including theme, display mode, locale, and maxHeight. These values update whenever the user changes settings in the playground.
 
 Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:831-850`:
+
 ```typescript
 useEffect(() => {
   if (!isReady) return;
@@ -1219,15 +1230,15 @@ Widgets can listen for global value changes using the `openai:set_globals` event
 window.addEventListener("message", (event) => {
   if (event.data.type === "openai:set_globals") {
     const { theme, locale, displayMode, maxHeight } = event.data.globals;
-    
+
     // Update widget UI based on theme
     document.body.classList.toggle("dark", theme === "dark");
-    
+
     // Adapt content for locale
     if (locale.startsWith("ja")) {
       // Show Japanese content
     }
-    
+
     // Adjust layout for display mode
     if (displayMode === "fullscreen") {
       // Expand to use full viewport
@@ -1435,15 +1446,18 @@ function buildCspHeader(
     case "permissive":
       // Allow https: wildcard
       connectDomains = ["'self'", "https:", "wss:", "ws:"];
-      resourceDomains = ["'self'", "data:", "blob:", "https:", ...baseTrustedCdns];
+      resourceDomains = [
+        "'self'",
+        "data:",
+        "blob:",
+        "https:",
+        ...baseTrustedCdns,
+      ];
       break;
 
     case "widget-declared":
       // Honor widget's declared CSP
-      connectDomains = [
-        "'self'",
-        ...(widgetCsp?.connect_domains || []),
-      ];
+      connectDomains = ["'self'", ...(widgetCsp?.connect_domains || [])];
       resourceDomains = [
         "'self'",
         "data:",
@@ -1480,9 +1494,9 @@ Widgets automatically report CSP violations to the parent for debugging. The inj
 Located in `server/routes/mcp/chatgpt.ts:458-473`:
 
 ```javascript
-document.addEventListener('securitypolicyviolation', (e) => {
+document.addEventListener("securitypolicyviolation", (e) => {
   const violation = {
-    type: 'openai:csp-violation',
+    type: "openai:csp-violation",
     toolId: toolId,
     directive: e.violatedDirective,
     blockedUri: e.blockedURI,
@@ -1495,8 +1509,13 @@ document.addEventListener('securitypolicyviolation', (e) => {
     timestamp: Date.now(),
   };
 
-  console.warn('[OpenAI Widget CSP Violation]', violation.directive, ':', violation.blockedUri);
-  window.parent.postMessage(violation, '*');
+  console.warn(
+    "[OpenAI Widget CSP Violation]",
+    violation.directive,
+    ":",
+    violation.blockedUri,
+  );
+  window.parent.postMessage(violation, "*");
 });
 ```
 
@@ -1520,7 +1539,9 @@ Located in `client/src/components/chat-v2/csp-debug-panel.tsx`.
 - **Production**: Always use strict mode with properly declared `openai/widgetCSP` metadata
 
 <Warning>
-  The `'unsafe-inline'` and `'unsafe-eval'` directives are currently required for React and other frameworks. Future versions may support stricter CSP with nonces or hashes.
+  The `'unsafe-inline'` and `'unsafe-eval'` directives are currently required
+  for React and other frameworks. Future versions may support stricter CSP with
+  nonces or hashes.
 </Warning>
 
 ### Iframe Sandbox
@@ -1553,7 +1574,7 @@ Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:518-530`:
 const inner = document.createElement("iframe");
 inner.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
 inner.setAttribute("allow", "local-network-access *; microphone *; midi *");
-inner.src = widgetUrl;  // Widget content loaded via src
+inner.src = widgetUrl; // Widget content loaded via src
 ```
 
 **Sandbox Permissions:**
@@ -1879,6 +1900,7 @@ case \"openai:customMethod\":
 **Note on Message Flow:**
 
 Remember that messages flow through the triple-iframe chain:
+
 - Widget → Middle Proxy → Outer Container → Host
 - Each layer forwards messages bidirectionally
 - Origin validation occurs at each boundary

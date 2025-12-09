@@ -484,22 +484,25 @@ export function PlaygroundMain({
                     <SelectValue>{deviceConfig.label}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {(Object.entries(DEVICE_CONFIGS) as [DeviceType, typeof deviceConfig][]).map(
-                      ([type, config]) => {
-                        const Icon = config.icon;
-                        return (
-                          <SelectItem key={type} value={type}>
-                            <span className="flex items-center gap-2">
-                              <Icon className="h-3.5 w-3.5" />
-                              <span>{config.label}</span>
-                              <span className="text-muted-foreground text-[10px]">
-                                ({config.width}×{config.height})
-                              </span>
+                    {(
+                      Object.entries(DEVICE_CONFIGS) as [
+                        DeviceType,
+                        typeof deviceConfig,
+                      ][]
+                    ).map(([type, config]) => {
+                      const Icon = config.icon;
+                      return (
+                        <SelectItem key={type} value={type}>
+                          <span className="flex items-center gap-2">
+                            <Icon className="h-3.5 w-3.5" />
+                            <span>{config.label}</span>
+                            <span className="text-muted-foreground text-[10px]">
+                              ({config.width}×{config.height})
                             </span>
-                          </SelectItem>
-                        );
-                      }
-                    )}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
