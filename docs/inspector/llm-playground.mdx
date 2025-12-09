@@ -197,6 +197,26 @@ OpenAI Apps can request different display modes to optimize their presentation:
 
 Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-left corner of the widget.
 
+### Device and locale testing
+
+The playground includes controls for testing widgets across different device types and locales:
+
+- **Device selector** - Switch between mobile, tablet, and desktop viewports to test responsive layouts
+- **Locale selector** - Choose from common BCP 47 locales (e.g., en-US, es-ES, ja-JP) to test internationalization
+- **Theme toggle** - Switch between light and dark modes
+
+These settings are automatically passed to widgets via the `window.openai` API, allowing them to adapt their UI accordingly.
+
+### Widget debugging
+
+When viewing tool results with custom UI components, you can access debugging information using the icon buttons in the tool header:
+
+- **Data** (database icon) - View tool input, output, and error details
+- **Widget State** (box icon) - Inspect the current widget state and see when it was last updated
+- **Globals** (globe icon) - View global values passed to the widget (theme, display mode, locale, etc.)
+
+Click any icon to toggle the corresponding debug panel. Click again to close it.
+
 ### Content Security Policy (CSP)
 
 The UI Playground includes CSP enforcement controls to help you test widget security configurations. You can switch between two CSP modes using the shield icon in the toolbar:

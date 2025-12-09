@@ -1258,6 +1258,104 @@ MCPJam Inspector supports both MCP-UI and OpenAI Apps SDK for custom UI renderin
 
 See [OpenAI SDK Architecture](./openai-sdk-architecture) for details on OpenAI Apps SDK implementation.
 
+## UI Playground (Apps Builder)
+
+The UI Playground is a specialized testing environment for ChatGPT Apps and MCP Apps, providing device emulation, locale testing, and widget debugging capabilities.
+
+### Playground Controls
+
+Located in `client/src/components/ui-playground/PlaygroundMain.tsx`, the playground header includes:
+
+**Device Selector** - Toggle between mobile (430×932), tablet (820×1180), and desktop (1280×800) viewports to test responsive layouts.
+
+**Locale Selector** - Choose from common BCP 47 locales for internationalization testing:
+- English: en-US, en-GB
+- European: es-ES, es-MX, fr-FR, de-DE, it-IT, pt-BR
+- Asian: ja-JP, zh-CN, zh-TW, ko-KR, hi-IN
+- Other: ar-SA, ru-RU, nl-NL
+
+The selected locale is passed to widgets via `window.openai.locale` and included in the `openai:set_globals` message.
+
+**Theme Toggle** - Switch between light and dark modes. Theme changes are automatically propagated to widgets.
+
+### Widget Debugging UI
+
+As of PR #1022, the debug interface uses icon buttons instead of tabs for a more compact layout:
+
+Located in `client/src/components/chat-v2/thread.tsx:416-568`:
+
+**Debug Controls:**
+- **Data** (database icon) - View tool input, output, and error details
+- **Widget State** (box icon) - Inspect current widget state with last updated timestamp
+- **Globals** (globe icon) - View global values (theme, displayMode, locale, maxHeight)
+
+**Display Mode Controls:**
+- **Inline** (layout icon) - Default message flow rendering
+- **Picture-in-Picture** (picture-in-picture icon) - Floating overlay at top of screen
+- **Fullscreen** (maximize icon) - Full viewport expansion
+
+All controls include tooltips for better discoverability. Clicking a debug icon toggles the corresponding panel; clicking again closes it.
+
+### Locale Propagation Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Playground as PlaygroundMain
+    participant Store as UIPlaygroundStore
+    participant Renderer as ChatGPTAppRenderer
+    participant Widget as Widget Iframe
+
+    User->>Playground: Select locale from dropdown
+    Playground->>Store: updateGlobal('locale', 'ja-JP')
+    Store->>Store: Update globals.locale
+    Store->>Renderer: Locale change detected
+    Renderer->>Renderer: Include locale in widget storage
+    Renderer->>Widget: POST openai:set_globals with locale
+    Widget->>Widget: Update window.openai.locale
+    Widget->>Widget: Adapt UI for locale
+```
+
+**Implementation Details:**
+
+1. **Locale Selection** (`client/src/components/ui-playground/PlaygroundMain.tsx:69-89`):
+   - Dropdown with 16 common locales
+   - Stored in `useUIPlaygroundStore` globals
+   - Fallback to `navigator.language` if not set
+
+2. **Widget Storage** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:284-349`):
+   - Locale included in widget storage payload
+   - Passed to backend for iframe initialization
+   - Available as `window.openai.locale` in widget
+
+3. **Global Synchronization** (`client/src/components/chat-v2/chatgpt-app-renderer.tsx:831-850`):
+   - Locale sent via `openai:set_globals` message
+   - Updates when user changes locale selector
+   - Propagated to both inline and modal views
+
+### Debug Panel State Management
+
+The debug UI uses local state to track which panel is active:
+
+```typescript
+const [activeDebugTab, setActiveDebugTab] = useState<
+  "data" | "state" | "globals" | null
+>(null);
+
+const handleDebugClick = (tab: "data" | "state" | "globals") => {
+  if (activeDebugTab === tab) {
+    // Clicking active tab closes panel
+    setActiveDebugTab(null);
+    setIsExpanded(false);
+  } else {
+    setActiveDebugTab(tab);
+    setIsExpanded(true);
+  }
+};
+```
+
+This provides a cleaner UX compared to the previous tabs-based approach, reducing visual clutter and improving mobile responsiveness.
+
 ## Related Documentation
 
 - [MCPClientManager](./mcp-client-manager) - MCP orchestration layer

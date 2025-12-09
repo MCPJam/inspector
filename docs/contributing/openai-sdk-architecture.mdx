@@ -393,8 +393,8 @@ const openaiAPI = {
   displayMode: 'inline',
   maxHeight: 600,
   theme: ${JSON.stringify(theme ?? "dark")},
-  locale: 'en-US',
-  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },  // Device safe area insets
+  locale: ${JSON.stringify(locale ?? "en-US")},  // From playground locale selector
+  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
   userAgent: {
     device: { type: 'desktop' },  // 'mobile' | 'tablet' | 'desktop'
     capabilities: { hover: true, touch: false }  // Device input capabilities
@@ -1065,41 +1065,64 @@ useEffect(() => {
 
 This ensures only one widget can be in PiP mode at a time, preventing overlapping floating widgets.
 
-#### Theme Synchronization
+#### Global Values Synchronization
 
-The parent component automatically sends theme updates to widgets when the user changes between light and dark mode:
+The parent component automatically sends global values to widgets, including theme, display mode, locale, and maxHeight. These values update whenever the user changes settings in the playground.
 
-Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:293-307`:
-
+Located in `client/src/components/chat-v2/chatgpt-app-renderer.tsx:831-850`:
 ```typescript
-// Send theme updates to iframe when theme changes
 useEffect(() => {
-  if (!isReady || !iframeRef.current?.contentWindow) return;
-
-  iframeRef.current.contentWindow.postMessage(
-    {
-      type: "openai:set_globals",
-      globals: {
-        theme: themeMode,
-      },
-    },
-    "*",
-  );
-}, [themeMode, isReady]);
+  if (!isReady) return;
+  const globals: Record<string, unknown> = {
+    theme: themeMode,
+    displayMode,
+    locale,
+  };
+  if (typeof maxHeight === "number" && Number.isFinite(maxHeight))
+    globals.maxHeight = maxHeight;
+  postToWidget({ type: "openai:set_globals", globals });
+  if (modalOpen) postToWidget({ type: "openai:set_globals", globals }, true);
+}, [
+  themeMode,
+  maxHeight,
+  displayMode,
+  locale,
+  isReady,
+  modalOpen,
+  postToWidget,
+]);
 ```
 
-Widgets can listen for theme changes using the `openai:set_globals` event:
+Widgets can listen for global value changes using the `openai:set_globals` event:
 
 ```javascript
 // In widget code
 window.addEventListener("message", (event) => {
   if (event.data.type === "openai:set_globals") {
-    const { theme } = event.data.globals;
+    const { theme, locale, displayMode, maxHeight } = event.data.globals;
+    
     // Update widget UI based on theme
     document.body.classList.toggle("dark", theme === "dark");
+    
+    // Adapt content for locale
+    if (locale.startsWith("ja")) {
+      // Show Japanese content
+    }
+    
+    // Adjust layout for display mode
+    if (displayMode === "fullscreen") {
+      // Expand to use full viewport
+    }
   }
 });
 ```
+
+**Available Global Values:**
+
+- `theme` - Current theme mode (`"light"` or `"dark"`)
+- `displayMode` - Current display mode (`"inline"`, `"pip"`, or `"fullscreen"`)
+- `locale` - BCP 47 locale code (e.g., `"en-US"`, `"es-ES"`, `"ja-JP"`)
+- `maxHeight` - Maximum height in pixels for inline mode (optional)
 
 #### Widget State Propagation to Model
 
