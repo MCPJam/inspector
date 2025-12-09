@@ -809,10 +809,7 @@ chatgpt.get("/sandbox-proxy", (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "public, max-age=3600");
   // Allow cross-origin framing between localhost and 127.0.0.1 for triple-iframe architecture
-  c.header(
-    "Content-Security-Policy",
-    "frame-ancestors *",
-  );
+  c.header("Content-Security-Policy", "frame-ancestors *");
   // Remove X-Frame-Options as it doesn't support multiple origins (CSP takes precedence)
   return c.body(html);
 });
