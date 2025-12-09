@@ -514,7 +514,7 @@ function injectScripts(
 /**
  * CSP mode types
  */
-type CspMode = "permissive" | "widget-declared" | "strict";
+type CspMode = "permissive" | "widget-declared";
 
 /**
  * Widget CSP metadata from openai/widgetCSP
@@ -646,12 +646,6 @@ function buildCspHeader(
       ];
       break;
 
-    case "strict":
-      // Most restrictive - only self and data URIs
-      connectDomains = ["'self'", ...localhostSources, ...wsSources];
-      resourceDomains = ["'self'", "data:", "blob:", ...localhostSources];
-      break;
-
     default:
       // Fallback to permissive
       connectDomains = ["'self'", "https:", ...localhostSources];
@@ -668,11 +662,8 @@ function buildCspHeader(
   const connectSrc = connectDomains.join(" ");
   const resourceSrc = resourceDomains.join(" ");
 
-  // Image sources - slightly more permissive for UX
-  const imgSrc =
-    mode === "strict"
-      ? "'self' data: blob:"
-      : `'self' data: blob: https: ${localhostSources.join(" ")}`;
+  // Image sources - permissive for UX (images from https: allowed)
+  const imgSrc = `'self' data: blob: https: ${localhostSources.join(" ")}`;
 
   // Frame ancestors for cross-origin sandbox architecture
   const frameAncestors = isDev

@@ -626,7 +626,8 @@ export function ChatGPTAppRenderer({
 
   const handleSandboxMessage = useCallback(
     async (event: MessageEvent) => {
-      if (event.data?.type)
+      // Log all messages except CSP violations (those go to the CSP debug panel only)
+      if (event.data?.type && event.data.type !== "openai:csp-violation")
         addUiLog({
           widgetId: resolvedToolCallId,
           serverId,

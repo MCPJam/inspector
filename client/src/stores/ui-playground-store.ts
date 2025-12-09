@@ -12,7 +12,7 @@ import type { FormField } from "@/lib/tool-form";
 
 export type DeviceType = "mobile" | "tablet" | "desktop";
 export type DisplayMode = "inline" | "pip" | "fullscreen";
-export type CspMode = "permissive" | "widget-declared" | "strict";
+export type CspMode = "permissive" | "widget-declared";
 
 export interface UserLocation {
   country: string;
