@@ -32,8 +32,7 @@ import {
 /**
  * Configuration for creating an OAuth state machine with protocol version selection
  */
-export interface OAuthStateMachineFactoryConfig
-  extends BaseOAuthStateMachineConfig {
+export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineConfig {
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy:
     | RegistrationStrategy2025_03_26

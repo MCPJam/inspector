@@ -16,7 +16,6 @@ import {
   ArrowDown,
   Braces,
   Loader2,
-  Wrench,
   Smartphone,
   Tablet,
   Monitor,

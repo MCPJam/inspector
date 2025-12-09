@@ -151,7 +151,7 @@ export function ChatTabV2({
           !(
             msg.role === "system" &&
             (msg as { metadata?: { source?: string } })?.metadata?.source ===
-            "server-instruction"
+              "server-instruction"
           ),
       );
 

@@ -366,6 +366,10 @@ function PartSwitch({
             part={toolPart}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
           />
           <ChatGPTAppRenderer
             serverId={serverId}
@@ -434,10 +438,18 @@ function ToolPart({
   part,
   displayMode,
   onDisplayModeChange,
+  onRequestFullscreen,
+  onExitFullscreen,
+  onRequestPip,
+  onExitPip,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  onRequestFullscreen?: (toolCallId: string) => void;
+  onExitFullscreen?: (toolCallId: string) => void;
+  onRequestPip?: (toolCallId: string) => void;
+  onExitPip?: (toolCallId: string) => void;
 }) {
   const label = isDynamicTool(part)
     ? part.toolName
@@ -479,10 +491,10 @@ function ToolPart({
     icon: typeof LayoutDashboard;
     label: string;
   }[] = [
-      { mode: "inline", icon: LayoutDashboard, label: "Inline" },
-      { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
-      { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
-    ];
+    { mode: "inline", icon: LayoutDashboard, label: "Inline" },
+    { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
+    { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
+  ];
 
   const debugOptions: {
     tab: "data" | "state" | "csp";
@@ -547,6 +559,27 @@ function ToolPart({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
+                        // Handle side effects for layout changes (fullscreen/pip)
+                        // This mirrors the logic in ChatGPTAppRenderer.setDisplayMode
+                        if (toolCallId) {
+                          // Handle exits
+                          if (
+                            displayMode === "fullscreen" &&
+                            mode !== "fullscreen"
+                          ) {
+                            onExitFullscreen?.(toolCallId);
+                          } else if (displayMode === "pip" && mode !== "pip") {
+                            onExitPip?.(toolCallId);
+                          }
+
+                          // Handle entries
+                          if (mode === "fullscreen") {
+                            onRequestFullscreen?.(toolCallId);
+                          } else if (mode === "pip") {
+                            onRequestPip?.(toolCallId);
+                          }
+                        }
+
                         onDisplayModeChange?.(mode);
                       }}
                       className={`p-1 rounded transition-colors cursor-pointer ${
@@ -611,8 +644,9 @@ function ToolPart({
             </span>
           )}
           <ChevronDown
-            className={`h-4 w-4 transition-transform duration-150 ${isExpanded ? "rotate-180" : ""
-              }`}
+            className={`h-4 w-4 transition-transform duration-150 ${
+              isExpanded ? "rotate-180" : ""
+            }`}
           />
         </span>
       </button>
