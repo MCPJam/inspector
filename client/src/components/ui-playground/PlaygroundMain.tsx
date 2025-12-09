@@ -479,27 +479,36 @@ export function PlaygroundMain({
           </div>
 
           {/* Locale selector */}
-          <Select value={locale} onValueChange={onLocaleChange}>
-            <SelectTrigger
-              size="sm"
-              className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
-            >
-              <Globe className="h-3.5 w-3.5" />
-              <SelectValue>{locale}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {LOCALE_OPTIONS.map((option) => (
-                <SelectItem key={option.code} value={option.code}>
-                  <span className="flex items-center gap-2">
-                    <span>{option.label}</span>
-                    <span className="text-muted-foreground text-[10px]">
-                      {option.code}
-                    </span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select value={locale} onValueChange={onLocaleChange}>
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                  >
+                    <Globe className="h-3.5 w-3.5" />
+                    <SelectValue>{locale}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LOCALE_OPTIONS.map((option) => (
+                      <SelectItem key={option.code} value={option.code}>
+                        <span className="flex items-center gap-2">
+                          <span>{option.label}</span>
+                          <span className="text-muted-foreground text-[10px]">
+                            {option.code}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Locale</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* CSP mode selector */}
           <Tooltip>
@@ -531,10 +540,7 @@ export function PlaygroundMain({
               </div>
             </TooltipTrigger>
             <TooltipContent>
-              <p className="font-medium">CSP Mode</p>
-              <p className="text-muted-foreground text-[10px]">
-                Content Security Policy for widget sandbox
-              </p>
+              <p className="font-medium">CSP</p>
             </TooltipContent>
           </Tooltip>
 
