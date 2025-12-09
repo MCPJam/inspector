@@ -1605,10 +1605,16 @@ case \"openai:customMethod\":
 
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
 - `client/src/components/chat-v2/openai-app-renderer.tsx` - Renders iframes, handles widget lifecycle, and manages display modes
-- `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
+- `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - ChatGPT Apps renderer with CSP support
+- `client/src/components/chat-v2/csp-debug-panel.tsx` - CSP debug panel UI
+- `client/src/components/chat-v2/thread.tsx` - Manages PiP state and CSP debug tab
 - `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
+- `client/src/components/ui-playground/PlaygroundMain.tsx` - UI Playground with CSP mode selector
 - `server/routes/mcp/openai.ts` - Widget storage, serving, and OpenAI bridge injection
+- `server/routes/mcp/chatgpt.ts` - CSP header generation and enforcement
 - `server/routes/mcp/index.ts` - Mounts OpenAI routes at `/openai`
+- `client/src/stores/ui-playground-store.ts` - CSP mode state management
+- `client/src/stores/widget-debug-store.ts` - CSP violation tracking
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
 
 ## Resources
