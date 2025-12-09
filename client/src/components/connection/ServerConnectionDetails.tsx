@@ -1,4 +1,4 @@
-import { JsonRpcLoggerView } from "../logging/json-rpc-logger-view";
+import { LoggerView } from "../logging/logger-view";
 
 interface ServerConnectionDetailsProps {
   serverCount?: number;
@@ -11,7 +11,7 @@ export function ServerConnectionDetails({
     <div className="h-full flex flex-col bg-background border-l border-border">
       {/* JSON-RPC Logger - Full Height */}
       <div className="flex-1 overflow-hidden">
-        <JsonRpcLoggerView key={serverCount} />
+        <LoggerView key={serverCount} />
       </div>
     </div>
   );

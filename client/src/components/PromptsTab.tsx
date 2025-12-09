@@ -24,8 +24,8 @@ import { MCPServerConfig, type MCPPrompt } from "@/sdk";
 import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,
-} from "@/lib/mcp-prompts-api";
-import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+} from "@/lib/apis/mcp-prompts-api";
+import { LoggerView } from "./logging/logger-view";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
@@ -341,15 +341,13 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                       >
                         {loading ? (
                           <>
-                            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                            <span className="font-mono text-xs">Loading</span>
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Loading
                           </>
                         ) : (
                           <>
-                            <Play className="h-3 w-3 mr-1.5 cursor-pointer" />
-                            <span className="font-mono text-xs">
-                              Get Prompt
-                            </span>
+                            <Play className="h-3 w-3" />
+                            Get Prompt
                           </>
                         )}
                       </Button>
@@ -532,9 +530,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView
-                serverIds={serverName ? [serverName] : undefined}
-              />
+              <LoggerView serverIds={serverName ? [serverName] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>

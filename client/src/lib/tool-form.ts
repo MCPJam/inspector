@@ -8,6 +8,7 @@ export interface FormField {
   minimum?: number;
   maximum?: number;
   pattern?: string;
+  isSet: boolean;
 }
 
 export function getDefaultValue(type: string, enumValues?: string[]) {
@@ -33,19 +34,37 @@ export function getDefaultValue(type: string, enumValues?: string[]) {
 export function generateFormFieldsFromSchema(schema: any): FormField[] {
   if (!schema || !schema.properties) return [];
   const fields: FormField[] = [];
-  const required = schema.required || [];
+  const requiredFields: string[] = schema.required || [];
   Object.entries(schema.properties).forEach(([key, prop]: [string, any]) => {
     const fieldType = prop.enum ? "enum" : prop.type || "string";
+    const isRequired = requiredFields.includes(key);
+
+    // Start with type-based default value
+    let value = getDefaultValue(fieldType, prop.enum);
+    // Required fields are considered "set" by default, optional fields are unset
+    let isSet = isRequired;
+
+    // If the schema provides a default, respect it and mark the field as set
+    if (prop.default !== undefined) {
+      if (fieldType === "array" || fieldType === "object") {
+        value = JSON.stringify(prop.default, null, 2);
+      } else {
+        value = prop.default;
+      }
+      isSet = true;
+    }
+
     fields.push({
       name: key,
       type: fieldType,
       description: prop.description,
-      required: required.includes(key),
-      value: getDefaultValue(fieldType, prop.enum),
+      required: isRequired,
+      value,
       enum: prop.enum,
       minimum: prop.minimum,
       maximum: prop.maximum,
       pattern: prop.pattern,
+      isSet,
     });
   });
   return fields;
@@ -59,9 +78,13 @@ export function applyParametersToFields(
     if (Object.prototype.hasOwnProperty.call(params, field.name)) {
       const raw = params[field.name];
       if (field.type === "array" || field.type === "object") {
-        return { ...field, value: JSON.stringify(raw, null, 2) };
+        return {
+          ...field,
+          value: JSON.stringify(raw, null, 2),
+          isSet: true,
+        };
       }
-      return { ...field, value: raw };
+      return { ...field, value: raw, isSet: true };
     }
     return field;
   });
@@ -73,9 +96,11 @@ export function buildParametersFromFields(
 ): Record<string, any> {
   const params: Record<string, any> = {};
   fields.forEach((field) => {
-    const shouldInclude =
-      field.required ||
-      (field.value !== "" && field.value !== null && field.value !== undefined);
+    const isSet = field.isSet ?? field.required ?? false;
+    const hasNonEmptyValue =
+      field.value !== "" && field.value !== null && field.value !== undefined;
+
+    const shouldInclude = field.required || (isSet && hasNonEmptyValue);
     if (!shouldInclude) return;
 
     let processedValue = field.value;

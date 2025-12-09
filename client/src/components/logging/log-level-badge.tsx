@@ -3,14 +3,11 @@ import { LogLevel } from "@/hooks/use-logger";
 import { cn } from "@/lib/utils";
 
 const LOG_LEVEL_COLORS: Record<LogLevel, string> = {
-  error:
-    "bg-red-500/10 text-red-700 border-red-200 dark:text-red-400 dark:border-red-800",
-  warn: "bg-yellow-500/10 text-yellow-700 border-yellow-200 dark:text-yellow-400 dark:border-yellow-800",
-  info: "bg-blue-500/10 text-blue-700 border-blue-200 dark:text-blue-400 dark:border-blue-800",
-  debug:
-    "bg-purple-500/10 text-purple-700 border-purple-200 dark:text-purple-400 dark:border-purple-800",
-  trace:
-    "bg-gray-500/10 text-gray-700 border-gray-200 dark:text-gray-400 dark:border-gray-800",
+  error: "bg-destructive/10 text-destructive border-destructive/20",
+  warn: "bg-warning/10 text-warning-foreground border-warning/20",
+  info: "bg-info/10 text-info border-info/20",
+  debug: "bg-secondary text-secondary-foreground border-border",
+  trace: "bg-muted text-muted-foreground border-border",
 };
 
 interface LogLevelBadgeProps {

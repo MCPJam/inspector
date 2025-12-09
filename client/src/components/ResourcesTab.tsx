@@ -16,7 +16,7 @@ import {
   type MCPReadResourceResult,
   type MCPResource,
 } from "@/sdk";
-import { JsonRpcLoggerView } from "./logging/json-rpc-logger-view";
+import { LoggerView } from "./logging/logger-view";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -276,13 +276,13 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                       >
                         {loading ? (
                           <>
-                            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin cursor-pointer" />
-                            <span className="font-mono text-xs">Reading</span>
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            Reading
                           </>
                         ) : (
                           <>
-                            <Eye className="h-3 w-3 mr-1.5 cursor-pointer" />
-                            <span className="font-mono text-xs">Read</span>
+                            <Eye className="h-3 w-3" />
+                            Read
                           </>
                         )}
                       </Button>
@@ -323,9 +323,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <JsonRpcLoggerView
-                serverIds={serverName ? [serverName] : undefined}
-              />
+              <LoggerView serverIds={serverName ? [serverName] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>

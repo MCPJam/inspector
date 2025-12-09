@@ -21,27 +21,30 @@ import {
   Check,
   Edit,
   ExternalLink,
-  Link,
   Cable,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { exportServerApi } from "@/lib/mcp-export-api";
+import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
   getServerTransportLabel,
 } from "./server-card-utils";
 import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   listTools,
   type ListToolsResultWithMetadata,
-} from "@/lib/mcp-tools-api";
+} from "@/lib/apis/mcp-tools-api";
 import { ServerInfoModal } from "./ServerInfoModal";
+import { isMCPApp, isOpenAIApp } from "@/lib/mcp-ui/mcp-apps-utils";
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
-  onReconnect: (serverName: string) => void;
+  onReconnect: (
+    serverName: string,
+    options?: { forceOAuthFlow?: boolean },
+  ) => void;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
   sharedTunnelUrl?: string | null;
@@ -96,18 +99,10 @@ export function ServerConnectionCard({
       serverTitle);
 
   // Check if this is an MCP App (has tools with ui/resourceUri metadata)
-  const isMCPApp =
-    toolsData?.toolsMetadata &&
-    Object.values(toolsData.toolsMetadata).some(
-      (meta: any) => meta?.["ui/resourceUri"],
-    );
+  const isMCPAppServer = isMCPApp(toolsData);
 
   // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
-  const isOpenAIApp =
-    toolsData?.toolsMetadata &&
-    Object.values(toolsData.toolsMetadata).some(
-      (meta: any) => meta?.["openai/outputTemplate"],
-    );
+  const isOpenAIAppServer = isOpenAIApp(toolsData);
 
   // Compute the server-specific tunnel URL from the shared tunnel
   // Only show tunnel URL if server is connected
@@ -146,10 +141,10 @@ export function ServerConnectionCard({
     }
   };
 
-  const handleReconnect = async () => {
+  const handleReconnect = async (options?: { forceOAuthFlow?: boolean }) => {
     setIsReconnecting(true);
     try {
-      onReconnect(server.name);
+      onReconnect(server.name, options);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -288,7 +283,12 @@ export function ServerConnectionCard({
                         platform: detectPlatform(),
                         environment: detectEnvironment(),
                       });
-                      handleReconnect();
+                      // Only force OAuth flow for servers that actually use OAuth
+                      const shouldForceOAuth =
+                        server.useOAuth === true || server.oauthTokens != null;
+                      handleReconnect(
+                        shouldForceOAuth ? { forceOAuthFlow: true } : undefined,
+                      );
                     }}
                     disabled={
                       isReconnecting ||
@@ -393,15 +393,15 @@ export function ServerConnectionCard({
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
                   <span>{"View server info"}</span>
-                  {isMCPApp && (
+                  {isMCPAppServer && (
                     <img
                       src="/mcp.svg"
                       alt="MCP App"
-                      className="h-4 w-4 flex-shrink-0"
+                      className="h-4 w-4 flex-shrink-0 dark:invert"
                       title="MCP App"
                     />
                   )}
-                  {isOpenAIApp && !isMCPApp && (
+                  {isOpenAIAppServer && !isMCPAppServer && (
                     <img
                       src="/openai_logo.png"
                       alt="OpenAI App"

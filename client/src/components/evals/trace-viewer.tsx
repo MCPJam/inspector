@@ -10,8 +10,8 @@ import {
 import { useState } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogo } from "@/lib/provider-logos";
-import { ToolServerMap, getToolServerId } from "@/lib/mcp-tools-api";
-import { OpenAIAppRenderer } from "@/components/chat-v2/openai-app-renderer";
+import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
+import { ChatGPTAppRenderer } from "@/components/chat-v2/chatgpt-app-renderer";
 
 interface ContentPart {
   type: string;
@@ -447,7 +447,7 @@ function CombinedToolPart({
             {isError ? (
               <AlertTriangle className="h-4 w-4 text-destructive" />
             ) : toolResult ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
             ) : (
               <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
             )}
@@ -507,7 +507,7 @@ function CombinedToolPart({
         !isError &&
         (() => {
           return (
-            <OpenAIAppRenderer
+            <ChatGPTAppRenderer
               serverId={serverId}
               toolCallId={toolCall?.toolCallId}
               toolName={toolName}

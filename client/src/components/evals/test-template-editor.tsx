@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
 import { Play, Loader2, Save } from "lucide-react";
 import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import {
   Tooltip,
   TooltipContent,

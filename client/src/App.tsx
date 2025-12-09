@@ -11,6 +11,7 @@ import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { RegistryTab } from "./components/RegistryTab";
+import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { ActiveServerSelector } from "./components/ActiveServerSelector";
@@ -23,10 +24,11 @@ import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
+import { AppStateProvider } from "./state/app-state-context";
 
 // Import global styles
 import "./index.css";
-import { detectEnvironment, detectPlatform } from "./logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "./lib/PosthogUtils";
 import {
   getInitialThemeMode,
   updateThemeMode,
@@ -39,10 +41,15 @@ import LoginPage from "./components/LoginPage";
 import { useLoginPage } from "./hooks/use-log-in-page";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
+import { listTools } from "./lib/apis/mcp-tools-api";
+import { isMCPApp, isOpenAIApp } from "./lib/mcp-ui/mcp-apps-utils";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [chatHasMessages, setChatHasMessages] = useState(false);
+  const [openAiAppOrMcpAppsServers, setOpenAiAppOrMcpAppsServers] = useState<
+    Set<string>
+  >(new Set());
   const posthog = usePostHog();
   const { shouldShowLoginPage, isAuthenticated, isAuthLoading } =
     useLoginPage();
@@ -98,17 +105,52 @@ export default function App() {
     handleRemoveServer,
     setSelectedServer,
     toggleServerSelection,
-    selectedMCPConfigsMap,
     setSelectedMultipleServersToAllServers,
     workspaces,
     activeWorkspaceId,
-    activeWorkspace,
     handleSwitchWorkspace,
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleDeleteWorkspace,
     saveServerConfigWithoutConnecting,
+    handleConnectWithTokensFromOAuthFlow,
+    handleRefreshTokensFromOAuthFlow,
   } = useAppState();
+  // Create a stable key for connected servers to avoid infinite loops
+  // (connectedServerConfigs is a new object reference on every render)
+  const connectedServerNamesKey = useMemo(
+    () => Object.keys(connectedServerConfigs).sort().join(","),
+    [connectedServerConfigs],
+  );
+
+  // Check which connected servers have OpenAI apps tools
+  useEffect(() => {
+    const checkOpenAiAppOrMcpAppsServers = async () => {
+      const connectedServerNames = Object.keys(connectedServerConfigs);
+      const serversWithOpenAiAppOrMcpApps = new Set<string>();
+
+      await Promise.all(
+        connectedServerNames.map(async (serverName) => {
+          try {
+            const toolsData = await listTools(serverName);
+            if (isOpenAIApp(toolsData) || isMCPApp(toolsData)) {
+              serversWithOpenAiAppOrMcpApps.add(serverName);
+            }
+          } catch (error) {
+            console.debug(
+              `Failed to check OpenAI apps for server ${serverName}:`,
+              error,
+            );
+          }
+        }),
+      );
+
+      setOpenAiAppOrMcpAppsServers(serversWithOpenAiAppOrMcpApps);
+    };
+
+    checkOpenAiAppOrMcpAppsServers(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connectedServerNamesKey]);
+
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
     const applyHash = () => {
@@ -177,16 +219,21 @@ export default function App() {
           onDeleteWorkspace={handleDeleteWorkspace}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, OAuth Flow, Chat, and Chat v2 pages */}
+          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, OAuth Flow, Chat, Chat v2, and UI Playground pages */}
           {(activeTab === "tools" ||
             activeTab === "resources" ||
             activeTab === "resource-templates" ||
             activeTab === "prompts" ||
             activeTab === "oauth-flow" ||
             activeTab === "chat" ||
-            activeTab === "chat-v2") && (
+            activeTab === "chat-v2" ||
+            activeTab === "ui-playground") && (
             <ActiveServerSelector
-              serverConfigs={appState.servers}
+              serverConfigs={
+                activeTab === "oauth-flow"
+                  ? appState.servers
+                  : connectedServerConfigs
+              }
               selectedServer={appState.selectedServer}
               onServerChange={setSelectedServer}
               onConnect={handleConnect}
@@ -196,6 +243,8 @@ export default function App() {
               onMultiServerToggle={toggleServerSelection}
               selectedMultipleServers={appState.selectedMultipleServers}
               showOnlyOAuthServers={activeTab === "oauth-flow"}
+              showOnlyOpenAIAppsServers={activeTab === "ui-playground"}
+              openAiAppOrMcpAppsServers={openAiAppOrMcpAppsServers}
               hasMessages={activeTab === "chat-v2" ? chatHasMessages : false}
             />
           )}
@@ -203,7 +252,7 @@ export default function App() {
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
-              connectedServerConfigs={connectedServerConfigs}
+              connectedServerConfigs={appState.servers}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
@@ -256,10 +305,12 @@ export default function App() {
 
           {activeTab === "oauth-flow" && (
             <OAuthFlowTab
-              serverConfigs={connectedServerConfigs}
+              serverConfigs={appState.servers}
               selectedServerName={appState.selectedServer}
               onSelectServer={setSelectedServer}
               onSaveServerConfig={saveServerConfigWithoutConnecting}
+              onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
+              onRefreshTokens={handleRefreshTokensFromOAuthFlow}
             />
           )}
           {activeTab === "chat-v2" && (
@@ -270,6 +321,12 @@ export default function App() {
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
+          {activeTab === "ui-playground" && (
+            <UIPlaygroundTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+            />
+          )}
           {activeTab === "settings" && <SettingsTab />}
         </div>
       </SidebarInset>
@@ -282,12 +339,14 @@ export default function App() {
       themePreset={initialThemePreset}
     >
       <RegistryStoreProvider>
-        <Toaster />
-        {shouldShowLoginPage && !isOAuthCallbackComplete ? (
-          <LoginPage />
-        ) : (
-          appContent
-        )}
+        <AppStateProvider appState={appState}>
+          <Toaster />
+          {shouldShowLoginPage && !isOAuthCallbackComplete ? (
+            <LoginPage />
+          ) : (
+            appContent
+          )}
+        </AppStateProvider>
       </RegistryStoreProvider>
     </PreferencesStoreProvider>
   );

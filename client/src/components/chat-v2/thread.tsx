@@ -3,7 +3,6 @@ import { UIMessage } from "@ai-sdk/react";
 import {
   UIActionResult,
   UIResourceRenderer,
-  isUIResource,
   basicComponentLibrary,
   remoteButtonDefinition,
   remoteCardDefinition,
@@ -11,36 +10,59 @@ import {
   remoteStackDefinition,
   remoteTextDefinition,
 } from "@mcp-ui/client";
-import {
-  UIDataTypes,
-  UIMessagePart,
-  UITools,
-  ToolUIPart,
-  DynamicToolUIPart,
-} from "ai";
+import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 import { useState } from "react";
 import {
-  AlertTriangle,
-  CheckCircle2,
   ChevronDown,
-  Loader2,
   MessageCircle,
-  type LucideIcon,
+  LayoutDashboard,
+  PictureInPicture2,
+  Maximize2,
+  Database,
+  Box,
+  Shield,
 } from "lucide-react";
+import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { OpenAIAppRenderer } from "./openai-app-renderer";
+import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
-import { callTool, getToolServerId, ToolServerMap } from "@/lib/mcp-tools-api";
+import { CspDebugPanel } from "./csp-debug-panel";
+import {
+  callTool,
+  getToolServerId,
+  ToolServerMap,
+} from "@/lib/apis/mcp-tools-api";
 import { MemoizedMarkdown } from "./memomized-markdown";
 import { getProviderLogoFromModel } from "./chat-helpers";
-import { detectUIType } from "@/lib/mcp-apps-utils";
-
-type AnyPart = UIMessagePart<UIDataTypes, UITools>;
-type ToolState =
-  | "input-streaming"
-  | "input-available"
-  | "output-available"
-  | "output-error";
+import {
+  detectUIType,
+  getUIResourceUri,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
+import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";
+import {
+  AnyPart,
+  ToolState,
+  extractUIResource,
+  getDataLabel,
+  getToolInfo,
+  getToolNameFromType,
+  getToolStateMeta,
+  groupAssistantPartsIntoSteps,
+  isDataPart,
+  isDynamicTool,
+  isToolPart,
+  safeStringify,
+  type McpResource,
+} from "./thread-helpers";
+import { UserMessageBubble } from "./user-message-bubble";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -50,6 +72,11 @@ interface ThreadProps {
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  /** Controlled display mode for widgets (inline/pip/fullscreen) */
+  displayMode?: DisplayMode;
+  /** Callback when display mode changes */
+  onDisplayModeChange?: (mode: DisplayMode) => void;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
 export function Thread({
@@ -60,8 +87,14 @@ export function Thread({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  displayMode,
+  onDisplayModeChange,
+  onFullscreenChange,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
+  const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
+    null,
+  );
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);
@@ -70,6 +103,18 @@ export function Thread({
   const handleExitPip = (toolCallId: string) => {
     if (pipWidgetId === toolCallId) {
       setPipWidgetId(null);
+    }
+  };
+
+  const handleRequestFullscreen = (toolCallId: string) => {
+    setFullscreenWidgetId(toolCallId);
+    onFullscreenChange?.(true);
+  };
+
+  const handleExitFullscreen = (toolCallId: string) => {
+    if (fullscreenWidgetId === toolCallId) {
+      setFullscreenWidgetId(null);
+      onFullscreenChange?.(false);
     }
   };
 
@@ -88,6 +133,10 @@ export function Thread({
             pipWidgetId={pipWidgetId}
             onRequestPip={handleRequestPip}
             onExitPip={handleExitPip}
+            onRequestFullscreen={handleRequestFullscreen}
+            onExitFullscreen={handleExitFullscreen}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
@@ -106,6 +155,10 @@ function MessageView({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
+  displayMode,
+  onDisplayModeChange,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -116,6 +169,10 @@ function MessageView({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  onRequestFullscreen: (toolCallId: string) => void;
+  onExitFullscreen: (toolCallId: string) => void;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -126,24 +183,26 @@ function MessageView({
 
   if (role === "user") {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-3xl max-h-[70vh] space-y-3 overflow-auto overscroll-contain rounded-xl border border-[#e5e7ec] bg-[#f9fafc] px-4 py-3 text-sm leading-6 text-[#1f2733] shadow-sm dark:border-[#4a5261] dark:bg-[#2f343e] dark:text-[#e6e8ed]">
-          {message.parts?.map((part, i) => (
-            <PartSwitch
-              key={i}
-              part={part}
-              role={role}
-              onSendFollowUp={onSendFollowUp}
-              toolsMetadata={toolsMetadata}
-              toolServerMap={toolServerMap}
-              onWidgetStateChange={onWidgetStateChange}
-              pipWidgetId={pipWidgetId}
-              onRequestPip={onRequestPip}
-              onExitPip={onExitPip}
-            />
-          ))}
-        </div>
-      </div>
+      <UserMessageBubble>
+        {message.parts?.map((part, i) => (
+          <PartSwitch
+            key={i}
+            part={part}
+            role={role}
+            onSendFollowUp={onSendFollowUp}
+            toolsMetadata={toolsMetadata}
+            toolServerMap={toolServerMap}
+            onWidgetStateChange={onWidgetStateChange}
+            pipWidgetId={pipWidgetId}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+          />
+        ))}
+      </UserMessageBubble>
     );
   }
 
@@ -177,6 +236,10 @@ function MessageView({
                 pipWidgetId={pipWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
+                onRequestFullscreen={onRequestFullscreen}
+                onExitFullscreen={onExitFullscreen}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
               />
             ))}
           </div>
@@ -184,23 +247,6 @@ function MessageView({
       </div>
     </article>
   );
-}
-
-function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
-  const groups: AnyPart[][] = [];
-  let current: AnyPart[] = [];
-  for (const part of parts) {
-    if ((part as any).type === "step-start") {
-      if (current.length > 0) groups.push(current);
-      current = [];
-      continue; // do not include the step-start part itself
-    }
-    current.push(part);
-  }
-  if (current.length > 0) groups.push(current);
-  return groups.length > 0
-    ? groups
-    : [parts.filter((p) => (p as any).type !== "step-start")];
 }
 
 function PartSwitch({
@@ -213,6 +259,10 @@ function PartSwitch({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
+  displayMode,
+  onDisplayModeChange,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -223,72 +273,56 @@ function PartSwitch({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  onRequestFullscreen: (toolCallId: string) => void;
+  onExitFullscreen: (toolCallId: string) => void;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
-    let maybeUiResource: any;
-    if (isToolPart(part)) {
-      maybeUiResource = (part as any)?.output?.value?.content?.[0];
-    } else {
-      maybeUiResource = (part as any)?.output?.content?.[0];
-    }
-    if (maybeUiResource && isUIResource(maybeUiResource)) {
+    const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
+    const toolInfo = getToolInfo(toolPart);
+    const partToolMeta = toolsMetadata[toolInfo.toolName];
+    const uiType = detectUIType(partToolMeta, toolInfo.rawOutput);
+    const uiResourceUri = getUIResourceUri(uiType, partToolMeta);
+    const uiResource =
+      uiType === UIType.MCP_UI ? extractUIResource(toolInfo.rawOutput) : null;
+    const serverId = getToolServerId(toolInfo.toolName, toolServerMap);
+
+    if (uiResource) {
       return (
         <>
-          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <ToolPart part={toolPart} />
           <MCPUIResourcePart
-            resource={maybeUiResource.resource}
+            resource={uiResource.resource}
             onSendFollowUp={onSendFollowUp}
           />
         </>
       );
     }
 
-    // MCP Apps detection (SEP-1865) - check for ui/resourceUri in tool metadata
-    const partToolName = isDynamicTool(part)
-      ? (part as DynamicToolUIPart).toolName
-      : getToolNameFromType((part as any).type);
-    const partToolMeta = toolsMetadata[partToolName];
-    const uiType = detectUIType(partToolMeta, (part as any).output);
-
-    if (uiType === "mcp-apps" && partToolMeta?.["ui/resourceUri"]) {
-      const toolState = (part as any).state as ToolState | undefined;
-      const serverId = getToolServerId(partToolName, toolServerMap);
-
-      if (!serverId) {
+    if (uiType === UIType.MCP_APPS) {
+      if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
         return (
           <>
-            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <ToolPart part={toolPart} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              Failed to load server id for MCP App.
+              Failed to load server id or resource uri for MCP App.
             </div>
           </>
         );
       }
 
-      let toolInput: Record<string, unknown> | undefined;
-      let toolOutput: unknown;
-      if (isDynamicTool(part)) {
-        toolInput = (part as DynamicToolUIPart).input as Record<
-          string,
-          unknown
-        >;
-        toolOutput = (part as DynamicToolUIPart).output;
-      } else {
-        toolInput = (part as any).input;
-        toolOutput = (part as any).output?.value;
-      }
-
       return (
         <>
-          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+          <ToolPart part={toolPart} />
           <MCPAppsRenderer
             serverId={serverId}
-            toolCallId={(part as any).toolCallId}
-            toolName={partToolName}
-            toolState={toolState}
-            toolInput={toolInput}
-            toolOutput={toolOutput}
-            resourceUri={partToolMeta["ui/resourceUri"] as string}
+            toolCallId={toolInfo.toolCallId}
+            toolName={toolInfo.toolName}
+            toolState={toolInfo.toolState}
+            toolInput={toolInfo.input}
+            toolOutput={toolInfo.output}
+            resourceUri={uiResourceUri}
             toolMetadata={partToolMeta}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
@@ -303,48 +337,24 @@ function PartSwitch({
       );
     }
 
-    // OpenAI Apps detection - check for openai/outputTemplate in tool metadata
-    if (
-      (isDynamicTool(part) || isToolPart(part)) &&
-      isPartOpenAIApp(part, toolsMetadata)
-    ) {
-      let toolInput: any = null;
-      let toolOutput: any = null;
-      let toolName: string | undefined;
-
-      // Check free chat or BYOK. isDynamicTool(part) is true for BYOK.
-      const toolState = (part as any).state ?? undefined;
-      if (toolState === "output-available") {
-        if (isDynamicTool(part)) {
-          toolName = (part as DynamicToolUIPart).toolName;
-          toolInput = (part as DynamicToolUIPart).input;
-          toolOutput = (part as DynamicToolUIPart).output;
-        } else {
-          toolName = getToolNameFromType((part as any).type);
-          toolInput = (part as any).input;
-          toolOutput = (part as any).output.value;
-        }
-      }
-      const serverId = toolName
-        ? getToolServerId(toolName, toolServerMap)
-        : undefined;
-
-      if (toolState !== "output-available") {
+    if (uiType === UIType.OPENAI_SDK) {
+      if (toolInfo.toolState !== "output-available") {
         return (
           <>
-            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <ToolPart part={toolPart} />
             <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-              Waiting for tool finish executing...
+              Waiting for tool to finish executing...
             </div>
           </>
         );
       }
-      if (!toolName || !serverId) {
+
+      if (!serverId) {
         return (
           <>
-            <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
+            <ToolPart part={toolPart} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              Failed to load tool name or server id.
+              Failed to load tool server id.
             </div>
           </>
         );
@@ -352,15 +362,23 @@ function PartSwitch({
 
       return (
         <>
-          <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />
-          <OpenAIAppRenderer
+          <ToolPart
+            part={toolPart}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
+          />
+          <ChatGPTAppRenderer
             serverId={serverId}
-            toolCallId={(part as any).toolCallId}
-            toolName={toolName}
-            toolState={(part as any).state as ToolState | undefined}
-            toolInput={toolInput ?? null}
-            toolOutput={toolOutput ?? null}
-            toolMetadata={toolsMetadata[toolName] ?? undefined}
+            toolCallId={toolInfo.toolCallId}
+            toolName={toolInfo.toolName}
+            toolState={toolInfo.toolState}
+            toolInput={toolInfo.input ?? null}
+            toolOutput={toolInfo.output ?? null}
+            toolMetadata={toolsMetadata[toolInfo.toolName] ?? undefined}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
               callTool(serverId, toolName, params)
@@ -369,11 +387,16 @@ function PartSwitch({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
           />
         </>
       );
     }
-    return <ToolPart part={part as ToolUIPart<UITools> | DynamicToolUIPart} />;
+
+    return <ToolPart part={toolPart} />;
   }
 
   if (isDataPart(part)) {
@@ -402,7 +425,7 @@ function PartSwitch({
 
 function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
   const textColorClass =
-    role === "user" ? "text-black dark:text-white" : "text-foreground";
+    role === "user" ? "text-foreground" : "text-foreground";
   return (
     <MemoizedMarkdown
       content={text}
@@ -411,11 +434,28 @@ function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
   );
 }
 
-function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
+function ToolPart({
+  part,
+  displayMode,
+  onDisplayModeChange,
+  onRequestFullscreen,
+  onExitFullscreen,
+  onRequestPip,
+  onExitPip,
+}: {
+  part: ToolUIPart<UITools> | DynamicToolUIPart;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
+  onRequestFullscreen?: (toolCallId: string) => void;
+  onExitFullscreen?: (toolCallId: string) => void;
+  onRequestPip?: (toolCallId: string) => void;
+  onExitPip?: (toolCallId: string) => void;
+}) {
   const label = isDynamicTool(part)
     ? part.toolName
     : getToolNameFromType((part as any).type);
 
+  const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
   const toolState = getToolStateMeta(state);
   const StatusIcon = toolState?.Icon;
@@ -423,6 +463,10 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
   const mcpIconClassName =
     themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const [isExpanded, setIsExpanded] = useState(false);
+  const [activeDebugTab, setActiveDebugTab] = useState<
+    "data" | "state" | "csp" | null
+  >(null);
+
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const errorText = (part as any).errorText ?? (part as any).error;
@@ -430,29 +474,164 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
   const hasOutput = outputData !== undefined && outputData !== null;
   const hasError = state === "output-error" && !!errorText;
 
+  // Get widget debug info if this is an OpenAI/MCP App
+  const widgetDebugInfo = useWidgetDebugStore((s) =>
+    toolCallId ? s.widgets.get(toolCallId) : undefined,
+  );
+  const hasWidgetDebug = !!widgetDebugInfo;
+
+  // Show display mode controls only when controlled externally (playground mode)
+  const showDisplayModeControls =
+    displayMode !== undefined &&
+    onDisplayModeChange !== undefined &&
+    hasWidgetDebug;
+
+  const displayModeOptions: {
+    mode: DisplayMode;
+    icon: typeof LayoutDashboard;
+    label: string;
+  }[] = [
+    { mode: "inline", icon: LayoutDashboard, label: "Inline" },
+    { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
+    { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
+  ];
+
+  const debugOptions: {
+    tab: "data" | "state" | "csp";
+    icon: typeof Database;
+    label: string;
+    badge?: number;
+  }[] = [
+    { tab: "data", icon: Database, label: "Data" },
+    { tab: "state", icon: Box, label: "Widget State" },
+    {
+      tab: "csp",
+      icon: Shield,
+      label: "CSP",
+      badge: widgetDebugInfo?.csp?.violations?.length,
+    },
+  ];
+
+  const handleDebugClick = (tab: "data" | "state" | "csp") => {
+    if (activeDebugTab === tab) {
+      // Clicking the active tab closes the panel
+      setActiveDebugTab(null);
+      setIsExpanded(false);
+    } else {
+      setActiveDebugTab(tab);
+      setIsExpanded(true);
+    }
+  };
+
   return (
     <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
         onClick={() => setIsExpanded((prev) => !prev)}
         aria-expanded={isExpanded}
       >
-        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground">
-          <span className="inline-flex items-center gap-2">
+        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
+          <span className="inline-flex items-center gap-2 min-w-0">
             <img
               src="/mcp.svg"
               alt=""
               role="presentation"
               aria-hidden="true"
-              className={mcpIconClassName}
+              className={`${mcpIconClassName} shrink-0`}
             />
-            <span className="font-mono text-xs tracking-tight text-muted-foreground/80">
+            <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
               {label}
             </span>
           </span>
         </span>
-        <span className="inline-flex items-center gap-2 text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
+          {/* Display mode controls - only when controlled externally (playground mode) */}
+          {showDisplayModeControls && (
+            <span
+              className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {displayModeOptions.map(({ mode, icon: Icon, label }) => (
+                <Tooltip key={mode}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (toolCallId) {
+                          // Handle exits
+                          if (
+                            displayMode === "fullscreen" &&
+                            mode !== "fullscreen"
+                          ) {
+                            onExitFullscreen?.(toolCallId);
+                          } else if (displayMode === "pip" && mode !== "pip") {
+                            onExitPip?.(toolCallId);
+                          }
+
+                          // Handle entries
+                          if (mode === "fullscreen") {
+                            onRequestFullscreen?.(toolCallId);
+                          } else if (mode === "pip") {
+                            onRequestPip?.(toolCallId);
+                          }
+                        }
+
+                        onDisplayModeChange?.(mode);
+                      }}
+                      className={`p-1 rounded transition-colors cursor-pointer ${
+                        displayMode === mode
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{label}</TooltipContent>
+                </Tooltip>
+              ))}
+            </span>
+          )}
+          {hasWidgetDebug && (
+            <span
+              className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
+                <Tooltip key={tab}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDebugClick(tab);
+                      }}
+                      className={`p-1 rounded transition-colors cursor-pointer relative ${
+                        activeDebugTab === tab
+                          ? "bg-background text-foreground shadow-sm"
+                          : badge && badge > 0
+                            ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                            : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {badge !== undefined && badge > 0 && (
+                        <Badge
+                          variant="destructive"
+                          className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                        >
+                          {badge}
+                        </Badge>
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{label}</TooltipContent>
+                </Tooltip>
+              ))}
+            </span>
+          )}
           {toolState && StatusIcon && (
             <span
               className="inline-flex h-5 w-5 items-center justify-center"
@@ -471,43 +650,111 @@ function ToolPart({ part }: { part: ToolUIPart<UITools> | DynamicToolUIPart }) {
       </button>
 
       {isExpanded && (
-        <div className="space-y-4 border-t border-border/40 px-3 py-3">
-          {hasInput && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Input
+        <div className="border-t border-border/40 px-3 py-3">
+          {hasWidgetDebug && activeDebugTab === "data" && (
+            <div className="space-y-4">
+              {hasInput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Input
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                    {safeStringify(inputData)}
+                  </pre>
+                </div>
+              )}
+              {hasOutput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Result
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                    {safeStringify(outputData)}
+                  </pre>
+                </div>
+              )}
+              {hasError && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Error
+                  </div>
+                  <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                    {errorText}
+                  </div>
+                </div>
+              )}
+              {!hasInput && !hasOutput && !hasError && (
+                <div className="text-muted-foreground/70">
+                  No tool details available.
+                </div>
+              )}
+            </div>
+          )}
+          {hasWidgetDebug && activeDebugTab === "state" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                  Widget State
+                </div>
+                <div className="text-[9px] text-muted-foreground/50">
+                  Updated:{" "}
+                  {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
+                </div>
               </div>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
-                {safeStringify(inputData)}
+              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                {widgetDebugInfo.widgetState
+                  ? safeStringify(widgetDebugInfo.widgetState)
+                  : "null (no state set)"}
               </pre>
-            </div>
-          )}
-
-          {hasOutput && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Result
-              </div>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
-                {safeStringify(outputData)}
-              </pre>
-            </div>
-          )}
-
-          {hasError && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Error
-              </div>
-              <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
-                {errorText}
+              <div className="text-[9px] text-muted-foreground/50 mt-2">
+                Tip: Widget state persists across follow-up turns. Keep under 4k
+                tokens.
               </div>
             </div>
           )}
+          {hasWidgetDebug && activeDebugTab === "csp" && (
+            <CspDebugPanel cspInfo={widgetDebugInfo.csp} />
+          )}
+          {!hasWidgetDebug && (
+            <div className="space-y-4">
+              {hasInput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Input
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
+                    {safeStringify(inputData)}
+                  </pre>
+                </div>
+              )}
 
-          {!hasInput && !hasOutput && !hasError && (
-            <div className="text-muted-foreground/70">
-              No tool details available.
+              {hasOutput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Result
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
+                    {safeStringify(outputData)}
+                  </pre>
+                </div>
+              )}
+
+              {hasError && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Error
+                  </div>
+                  <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                    {errorText}
+                  </div>
+                </div>
+              )}
+
+              {!hasInput && !hasOutput && !hasError && (
+                <div className="text-muted-foreground/70">
+                  No tool details available.
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -635,16 +882,6 @@ function ThinkingIndicator({ model }: { model: ModelDefinition }) {
   );
 }
 
-function isToolPart(part: AnyPart): part is ToolUIPart<UITools> {
-  const t = (part as any).type;
-  return typeof t === "string" && t.startsWith("tool-");
-}
-
-type McpResource = {
-  uri: string;
-  [key: string]: unknown;
-};
-
 function MCPUIResourcePart({
   resource,
   onSendFollowUp,
@@ -691,7 +928,7 @@ function MCPUIResourcePart({
   return (
     <div className="w-full overflow-hidden rounded-2xl border border-border/40 bg-muted/20 shadow-sm">
       <UIResourceRenderer
-        resource={resource}
+        resource={resource as Partial<EmbeddedResource>}
         htmlProps={{
           style: {
             border: "2px",
@@ -717,84 +954,4 @@ function MCPUIResourcePart({
       />
     </div>
   );
-}
-
-function isDynamicTool(part: unknown): part is DynamicToolUIPart {
-  return (
-    !!part &&
-    typeof (part as any).type === "string" &&
-    (part as any).type === "dynamic-tool"
-  );
-}
-
-function isPartOpenAIApp(
-  part: unknown,
-  toolsMetadata: Record<string, Record<string, any>>,
-): part is DynamicToolUIPart {
-  const toolName = (part as DynamicToolUIPart).toolName;
-  const toolNameFromType = getToolNameFromType((part as any).type);
-  return (
-    toolsMetadata[toolName]?.["openai/outputTemplate"] !== undefined ||
-    toolsMetadata[toolNameFromType]?.["openai/outputTemplate"] !== undefined
-  );
-}
-
-function isDataPart(part: AnyPart): boolean {
-  const t = (part as any).type;
-  return typeof t === "string" && t.startsWith("data-");
-}
-
-function getDataLabel(type: string): string {
-  return type === "data-" ? "Data" : `Data (${type.replace(/^data-/, "")})`;
-}
-
-function getToolNameFromType(type: string | undefined): string {
-  if (!type) return "Tool";
-  return type.startsWith("tool-") ? type.replace(/^tool-/, "") : "Tool";
-}
-
-function safeStringify(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-type ToolStateMeta = {
-  Icon: LucideIcon;
-  label: string;
-  className: string;
-};
-
-function getToolStateMeta(state: ToolState | undefined): ToolStateMeta | null {
-  if (!state) return null;
-  switch (state) {
-    case "input-streaming":
-      return {
-        Icon: Loader2,
-        label: "Input streaming",
-        className: "h-4 w-4 animate-spin text-muted-foreground",
-      };
-    case "input-available":
-      return {
-        Icon: CheckCircle2,
-        label: "Input available",
-        className: "h-4 w-4 text-muted-foreground",
-      };
-    case "output-available":
-      return {
-        Icon: CheckCircle2,
-        label: "Output available",
-        className: "h-4 w-4 text-emerald-500",
-      };
-    case "output-error":
-      return {
-        Icon: AlertTriangle,
-        label: "Output error",
-        className: "h-4 w-4 text-destructive",
-      };
-    default:
-      return null;
-  }
 }

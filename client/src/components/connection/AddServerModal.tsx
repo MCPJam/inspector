@@ -12,7 +12,7 @@ import {
 } from "../ui/select";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import { useServerForm } from "./hooks/use-server-form";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
@@ -124,7 +124,11 @@ export function AddServerModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent
+        className="max-w-2xl max-h-[90vh] overflow-y-auto"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Add MCP Server

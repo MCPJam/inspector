@@ -8,7 +8,7 @@
  * - Client ID Metadata Documents (CIMD) support per draft-parecki-oauth-client-id-metadata-document-03
  */
 
-import { decodeJWT, formatJWTTimestamp } from "../../jwt-decoder";
+import { decodeJWT, formatJWTTimestamp } from "../jwt-decoder";
 import { MCPJAM_CLIENT_ID } from "../constants";
 import { EMPTY_OAUTH_FLOW_STATE } from "./types";
 import type {

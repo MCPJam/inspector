@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
 import { Check } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/logs/PosthogUtils";
-import { hasOAuthConfig } from "@/lib/mcp-oauth";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { ConfirmChatResetDialog } from "./chat-v2/confirm-chat-reset-dialog";
 interface ActiveServerSelectorProps {
   serverConfigs: Record<string, ServerWithName>;
@@ -17,6 +17,8 @@ interface ActiveServerSelectorProps {
   onMultiServerToggle: (server: string) => void;
   onConnect: (formData: ServerFormData) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
+  showOnlyOpenAIAppsServers?: boolean; // Only show servers that have OpenAI apps tools
+  openAiAppOrMcpAppsServers?: Set<string>; // Set of server names that have OpenAI apps or MCP apps
   hasMessages?: boolean;
 }
 
@@ -59,6 +61,8 @@ export function ActiveServerSelector({
   onMultiServerToggle,
   onConnect,
   showOnlyOAuthServers = false,
+  showOnlyOpenAIAppsServers = false,
+  openAiAppOrMcpAppsServers,
   hasMessages = false,
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -79,10 +83,28 @@ export function ActiveServerSelector({
     );
   };
 
-  const servers = Object.entries(serverConfigs).filter(([, server]) => {
+  const servers = Object.entries(serverConfigs).filter(([name, server]) => {
     if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
+    if (
+      showOnlyOpenAIAppsServers &&
+      openAiAppOrMcpAppsServers &&
+      !openAiAppOrMcpAppsServers.has(name)
+    )
+      return false;
     return true;
   });
+
+  // Auto-select first available server if current selection is not in the list
+  useEffect(() => {
+    if (isMultiSelectEnabled) return; // Don't auto-select in multi-select mode
+
+    const serverNames = servers.map(([name]) => name);
+    const isCurrentSelectionValid = serverNames.includes(selectedServer);
+
+    if (!isCurrentSelectionValid && serverNames.length > 0) {
+      onServerChange(serverNames[0]);
+    }
+  }, [servers.length, selectedServer, isMultiSelectEnabled, onServerChange]);
 
   const handleServerClick = (name: string) => {
     if (isMultiSelectEnabled) {
