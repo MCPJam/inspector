@@ -26,11 +26,19 @@ export interface SafeAreaInsets {
   right: number;
 }
 
-export type SafeAreaPreset = "none" | "iphone-notch" | "iphone-dynamic-island" | "android-gesture" | "custom";
+export type SafeAreaPreset =
+  | "none"
+  | "iphone-notch"
+  | "iphone-dynamic-island"
+  | "android-gesture"
+  | "custom";
 
 /** Preset safe area configurations for common devices */
-export const SAFE_AREA_PRESETS: Record<Exclude<SafeAreaPreset, "custom">, SafeAreaInsets> = {
-  "none": { top: 0, bottom: 0, left: 0, right: 0 },
+export const SAFE_AREA_PRESETS: Record<
+  Exclude<SafeAreaPreset, "custom">,
+  SafeAreaInsets
+> = {
+  none: { top: 0, bottom: 0, left: 0, right: 0 },
   "iphone-notch": { top: 44, bottom: 34, left: 0, right: 0 },
   "iphone-dynamic-island": { top: 59, bottom: 34, left: 0, right: 0 },
   "android-gesture": { top: 24, bottom: 16, left: 0, right: 0 },

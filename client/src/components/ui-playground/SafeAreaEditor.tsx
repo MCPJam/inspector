@@ -22,13 +22,18 @@ const PRESET_OPTIONS: {
 }[] = [
   { preset: "none", label: "None", shortLabel: "None" },
   { preset: "iphone-notch", label: "iPhone Notch", shortLabel: "Notch" },
-  { preset: "iphone-dynamic-island", label: "Dynamic Island", shortLabel: "Island" },
+  {
+    preset: "iphone-dynamic-island",
+    label: "Dynamic Island",
+    shortLabel: "Island",
+  },
   { preset: "android-gesture", label: "Android", shortLabel: "Android" },
 ];
 
 /** Safe Area Visualization - shows the insets visually */
 function SafeAreaVisualization({ insets }: { insets: SafeAreaInsets }) {
-  const hasAnyInset = insets.top > 0 || insets.bottom > 0 || insets.left > 0 || insets.right > 0;
+  const hasAnyInset =
+    insets.top > 0 || insets.bottom > 0 || insets.left > 0 || insets.right > 0;
 
   return (
     <div className="relative w-full h-[140px] rounded-lg border-2 border-dashed border-border overflow-hidden bg-muted/30">
@@ -187,12 +192,14 @@ export function SafeAreaEditor() {
             {PRESET_OPTIONS.map((option) => (
               <Button
                 key={option.preset}
-                variant={safeAreaPreset === option.preset ? "secondary" : "ghost"}
+                variant={
+                  safeAreaPreset === option.preset ? "secondary" : "ghost"
+                }
                 size="sm"
                 onClick={() => setSafeAreaPreset(option.preset)}
                 className={cn(
                   "flex-1 h-6 text-[10px] px-1",
-                  safeAreaPreset === option.preset && "ring-1 ring-ring"
+                  safeAreaPreset === option.preset && "ring-1 ring-ring",
                 )}
               >
                 {option.shortLabel}

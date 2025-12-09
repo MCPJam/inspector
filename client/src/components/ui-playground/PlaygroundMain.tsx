@@ -573,7 +573,9 @@ export function PlaygroundMain({
                 <Button
                   variant={capabilities.hover ? "secondary" : "ghost"}
                   size="icon"
-                  onClick={() => setCapabilities({ hover: !capabilities.hover })}
+                  onClick={() =>
+                    setCapabilities({ hover: !capabilities.hover })
+                  }
                   className="h-7 w-7"
                 >
                   <MousePointer2 className="h-3.5 w-3.5" />
@@ -591,7 +593,9 @@ export function PlaygroundMain({
                 <Button
                   variant={capabilities.touch ? "secondary" : "ghost"}
                   size="icon"
-                  onClick={() => setCapabilities({ touch: !capabilities.touch })}
+                  onClick={() =>
+                    setCapabilities({ touch: !capabilities.touch })
+                  }
                   className="h-7 w-7"
                 >
                   <Hand className="h-3.5 w-3.5" />
