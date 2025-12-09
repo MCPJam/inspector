@@ -243,7 +243,7 @@ tools.post("/execute", async (c) => {
       serverId,
       toolName,
       parameters,
-    ) as Promise<ListToolsResult>,
+    ) as unknown as Promise<ListToolsResult>,
     queue: [],
   };
 

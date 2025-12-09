@@ -349,6 +349,61 @@ function generateApiScript(opts: ApiScriptOptions): string {
     });
   };
 
+  // Host-backed navigation: track iframe history and notify parent
+  // This allows the host to mirror navigation state in UI (e.g., fullscreen header back/forward buttons)
+  const navigationState = { currentIndex: 0, historyLength: 1 };
+  let lastHistoryLength = history.length;
+
+  const withNavigationIndex = (state, index) => {
+    return state && typeof state === 'object' ? { ...state, __navIndex: index } : { __navIndex: index };
+  };
+  
+  const notifyNavigationState = () => {
+    const canGoBack = navigationState.currentIndex > 0;
+    const canGoForward = navigationState.currentIndex < navigationState.historyLength - 1;
+    window.parent.postMessage({
+      type: 'openai:navigationStateChanged',
+      toolId: ${JSON.stringify(toolId)},
+      canGoBack,
+      canGoForward,
+      historyLength: navigationState.historyLength,
+      currentIndex: navigationState.currentIndex
+    }, '*');
+  };
+
+  // Wrap history.pushState to track navigation
+  const originalPushState = history.pushState.bind(history);
+  history.pushState = function(state, title, url) {
+    const nextIndex = navigationState.currentIndex + 1;
+    const stateWithIndex = withNavigationIndex(state, nextIndex);
+    originalPushState(stateWithIndex, title, url);
+    // New navigation: increment index and truncate forward history
+    navigationState.currentIndex = nextIndex;
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  };
+
+  // Wrap history.replaceState (doesn't change index/length, but still notify for consistency)
+  const originalReplaceState = history.replaceState.bind(history);
+  history.replaceState = function(state, title, url) {
+    const stateWithIndex = withNavigationIndex(state, navigationState.currentIndex);
+    originalReplaceState(stateWithIndex, title, url);
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  };
+
+  // Track popstate (browser/programmatic back/forward within iframe)
+  // Use explicit __navIndex stored in history.state to restore position
+  window.addEventListener('popstate', (event) => {
+    const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
+    navigationState.currentIndex = stateIndex;
+    navigationState.historyLength = history.length;
+    lastHistoryLength = history.length;
+    notifyNavigationState();
+  });
+
   const openaiAPI = {
     toolInput: ${serializeForInlineScript(toolInput)},
     toolOutput: ${serializeForInlineScript(toolOutput)},
@@ -411,6 +466,21 @@ function generateApiScript(opts: ApiScriptOptions): string {
     /** Inspector-specific: Explicitly report content height. Widgets can also use openai:resize event. */
     notifyIntrinsicHeight(height) {
       postHeight(height);
+    },
+
+    /** Host-backed navigation: programmatically navigate within the widget's history */
+    notifyNavigation(direction) {
+      if (direction === 'back') {
+        if (navigationState.currentIndex > 0) {
+          navigationState.currentIndex--;
+          history.back();
+        }
+      } else if (direction === 'forward') {
+        if (navigationState.currentIndex < navigationState.historyLength - 1) {
+          navigationState.currentIndex++;
+          history.forward();
+        }
+      }
     }
   };
 
@@ -461,6 +531,22 @@ function generateApiScript(opts: ApiScriptOptions): string {
         break;
       case 'openai:requestResize':
         measureAndNotifyHeight();
+        break;
+      case 'openai:navigate':
+        // Host-backed navigation: respond to navigation commands from parent
+        if (event.data.toolId === ${JSON.stringify(toolId)}) {
+          if (event.data.direction === 'back') {
+            if (navigationState.currentIndex > 0) {
+              navigationState.currentIndex--;
+              history.back();
+            }
+          } else if (event.data.direction === 'forward') {
+            if (navigationState.currentIndex < navigationState.historyLength - 1) {
+              navigationState.currentIndex++;
+              history.forward();
+            }
+          }
+        }
         break;
     }
   });
@@ -523,6 +609,18 @@ window.URL.revokeObjectURL=OrigURL.revokeObjectURL;window.URL.canParse=OrigURL.c
 })();</script>`;
 }
 
+// Widget base styles: prevent scrollbars by disabling overflow.
+// The auto-resize mechanism (measureAndNotifyHeight) reports content height
+// to the host, which expands the iframe accordingly - scrollbars are unnecessary.
+// This matches ChatGPT's inline widget behavior where the container sizes to content.
+const WIDGET_BASE_CSS = `<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Prevent scrollbars - iframe resizes to content via auto-resize */
+}
+</style>`;
+
 function injectScripts(
   html: string,
   urlPolyfill: string,
@@ -532,10 +630,10 @@ function injectScripts(
   if (/<html[^>]*>/i.test(html) && /<head[^>]*>/i.test(html)) {
     return html.replace(
       /<head[^>]*>/i,
-      `$&${urlPolyfill}${baseTag}${apiScript}`,
+      `$&${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}${apiScript}`,
     );
   }
-  return `<!DOCTYPE html><html><head>${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
+  return `<!DOCTYPE html><html><head>${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
 }
 
 // ============================================================================
@@ -706,10 +804,11 @@ function buildCspHeader(
       ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
       : "'self' data: blob: https:";
 
-  // Frame ancestors for cross-origin sandbox architecture
-  const frameAncestors = isDev
-    ? "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*"
-    : "frame-ancestors 'self'";
+  // Frame ancestors must always include localhost/127.0.0.1 for the cross-origin
+  // sandbox architecture to work (sandbox-proxy swaps localhost <-> 127.0.0.1)
+  // This is required regardless of NODE_ENV since the inspector is self-hosted
+  const frameAncestors =
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*";
 
   const headerString = [
     "default-src 'self'",
@@ -1026,7 +1125,8 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
 
     // Apply the built CSP header
     c.header("Content-Security-Policy", cspConfig.headerString);
-    c.header("X-Frame-Options", "SAMEORIGIN");
+    // Note: X-Frame-Options removed - CSP frame-ancestors handles this and
+    // X-Frame-Options doesn't support multiple origins needed for cross-origin sandbox
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     c.header("Pragma", "no-cache");
