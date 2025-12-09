@@ -27,7 +27,6 @@ import {
   Shield,
   MousePointer2,
   Hand,
-  RectangleHorizontal,
 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
@@ -57,12 +56,11 @@ import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
 import {
   useUIPlaygroundStore,
-  SAFE_AREA_PRESETS,
   type DeviceType,
   type DisplayMode,
   type CspMode,
-  type SafeAreaPreset,
 } from "@/stores/ui-playground-store";
+import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
@@ -112,19 +110,6 @@ const CSP_MODE_OPTIONS: {
     label: "Strict",
     description: "Only widget-declared domains",
   },
-];
-
-/** Safe area preset options for device notches/insets */
-const SAFE_AREA_OPTIONS: {
-  preset: SafeAreaPreset;
-  label: string;
-  description: string;
-}[] = [
-  { preset: "none", label: "None", description: "No safe area insets" },
-  { preset: "iphone-notch", label: "iPhone Notch", description: "44px top, 34px bottom" },
-  { preset: "iphone-dynamic-island", label: "Dynamic Island", description: "59px top, 34px bottom" },
-  { preset: "android-gesture", label: "Android Gesture", description: "24px top, 16px bottom" },
-  { preset: "custom", label: "Custom", description: "Set custom inset values" },
 ];
 
 interface PlaygroundMainProps {
@@ -284,11 +269,6 @@ export function PlaygroundMain({
   // Device capabilities from store
   const capabilities = useUIPlaygroundStore((s) => s.capabilities);
   const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
-
-  // Safe area insets from store
-  const safeAreaPreset = useUIPlaygroundStore((s) => s.safeAreaPreset);
-  const safeAreaInsets = useUIPlaygroundStore((s) => s.safeAreaInsets);
-  const setSafeAreaPreset = useUIPlaygroundStore((s) => s.setSafeAreaPreset);
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -626,45 +606,8 @@ export function PlaygroundMain({
             </Tooltip>
           </div>
 
-          {/* Safe area preset selector */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div>
-                <Select
-                  value={safeAreaPreset}
-                  onValueChange={(v) => setSafeAreaPreset(v as SafeAreaPreset)}
-                >
-                  <SelectTrigger
-                    size="sm"
-                    className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
-                  >
-                    <RectangleHorizontal className="h-3.5 w-3.5" />
-                    <SelectValue>
-                      {SAFE_AREA_OPTIONS.find((o) => o.preset === safeAreaPreset)?.label}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SAFE_AREA_OPTIONS.map((option) => (
-                      <SelectItem key={option.preset} value={option.preset}>
-                        <span className="flex items-center gap-2">
-                          <span className="font-medium">{option.label}</span>
-                          <span className="text-muted-foreground text-[10px]">
-                            {option.description}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className="font-medium">Safe Area</p>
-              <p className="text-xs text-muted-foreground">
-                T:{safeAreaInsets.top} B:{safeAreaInsets.bottom} L:{safeAreaInsets.left} R:{safeAreaInsets.right}
-              </p>
-            </TooltipContent>
-          </Tooltip>
+          {/* Safe area editor */}
+          <SafeAreaEditor />
 
           {/* Theme toggle */}
           <Tooltip>
