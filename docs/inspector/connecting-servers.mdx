@@ -113,3 +113,23 @@ MCPJam is compliant with the MCP OAuth spec and Dynamic Client Registration (DCR
 1. Choose `No Authentication`
 2. Choose `Bearer Token`. Use this if you already have an API token and don't need to go through DCR.
 3. Choose `OAuth 2.0`. This will take you through [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to fetch a bearer token. You can also configure OAuth Scopes or custom OAuth credentials.
+
+## Tunneling
+
+Expose your local MCP servers over HTTPS for remote access. This lets you share your servers with external clients and applications without deploying them.
+
+### Create a tunnel
+
+1. Go to the **MCP Servers** tab
+2. Click **Create Tunnel** in the header
+3. The tunnel URL is automatically copied to your clipboard
+
+Once created, each connected server gets its own tunnel URL. Click **Copy Tunnel Url** on any server card to copy its specific endpoint.
+
+### Close a tunnel
+
+Click **Close Tunnel** in the header to stop remote access. The tunnel closes immediately and all remote connections are terminated.
+
+<Warning>
+  Tunnel URLs are publicly accessible without authentication. Only create tunnels when you need remote access, and close them when done.
+</Warning>
