@@ -15,8 +15,8 @@ import {
   ChatGPTSandboxedIframeHandle,
 } from "@/components/ui/chatgpt-sandboxed-iframe";
 import { toast } from "sonner";
+import { type DisplayMode } from "@/stores/ui-playground-store";
 
-type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
   | "input-streaming"
   | "input-available"
@@ -105,6 +105,8 @@ interface ChatGPTAppRendererProps {
   displayMode?: DisplayMode;
   /** Callback when display mode changes - required when displayMode is controlled */
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  onRequestFullscreen?: (toolCallId: string) => void;
+  onExitFullscreen?: (toolCallId: string) => void;
 }
 
 // ============================================================================
@@ -375,32 +377,12 @@ export function ChatGPTAppRenderer({
   onExitPip,
   displayMode: displayModeProp,
   onDisplayModeChange,
+  onRequestFullscreen,
+  onExitFullscreen,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-
-  // Display mode: controlled (via props) or uncontrolled (internal state)
-  const isControlled = displayModeProp !== undefined;
-  const [internalDisplayMode, setInternalDisplayMode] =
-    useState<DisplayMode>("inline");
-  const displayMode = isControlled ? displayModeProp : internalDisplayMode;
-  const setDisplayMode = isControlled
-    ? (mode: DisplayMode) => onDisplayModeChange?.(mode)
-    : setInternalDisplayMode;
-  const [maxHeight, setMaxHeight] = useState<number | null>(null);
-  const [contentHeight, setContentHeight] = useState<number>(320);
-  const [isReady, setIsReady] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalParams, setModalParams] = useState<Record<string, any>>({});
-  const [modalTitle, setModalTitle] = useState<string>("");
-  const previousWidgetStateRef = useRef<string | null>(null);
-  const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
-  const [modalSandboxReady, setModalSandboxReady] = useState(false);
-  const lastAppliedHeightRef = useRef<number>(0);
-
-
 
   const {
     resolvedToolCallId,
@@ -415,6 +397,51 @@ export function ChatGPTAppRenderer({
     toolOutputProp,
     toolMetadata,
   );
+
+  // Display mode: controlled (via props) or uncontrolled (internal state)
+  const isControlled = displayModeProp !== undefined;
+  const [internalDisplayMode, setInternalDisplayMode] =
+    useState<DisplayMode>("inline");
+  const displayMode = isControlled ? displayModeProp : internalDisplayMode;
+  const setDisplayMode = useCallback(
+    (mode: DisplayMode) => {
+      if (isControlled) {
+        onDisplayModeChange?.(mode);
+      } else {
+        setInternalDisplayMode(mode);
+      }
+
+      // Notify parent about fullscreen state changes regardless of controlled mode
+      if (mode === "fullscreen") {
+        onRequestFullscreen?.(resolvedToolCallId);
+      } else if (displayMode === "fullscreen") {
+        onExitFullscreen?.(resolvedToolCallId);
+      }
+    },
+    [
+      isControlled,
+      onDisplayModeChange,
+      resolvedToolCallId,
+      onRequestFullscreen,
+      onExitFullscreen,
+      displayMode,
+    ],
+  );
+  const [maxHeight, setMaxHeight] = useState<number | null>(null);
+  const [contentHeight, setContentHeight] = useState<number>(320);
+  const [isReady, setIsReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalParams, setModalParams] = useState<Record<string, any>>({});
+  const [modalTitle, setModalTitle] = useState<string>("");
+  const previousWidgetStateRef = useRef<string | null>(null);
+  const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
+  const [modalSandboxReady, setModalSandboxReady] = useState(false);
+  const lastAppliedHeightRef = useRef<number>(0);
+
+
+
+
   const isFullscreen = displayMode === "fullscreen";
   const isPip =
     displayMode === "pip" &&

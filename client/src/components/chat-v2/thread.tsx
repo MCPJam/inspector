@@ -67,6 +67,7 @@ interface ThreadProps {
   displayMode?: DisplayMode;
   /** Callback when display mode changes */
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
 export function Thread({
@@ -79,8 +80,12 @@ export function Thread({
   onWidgetStateChange,
   displayMode,
   onDisplayModeChange,
+  onFullscreenChange,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
+  const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
+    null,
+  );
 
   const handleRequestPip = (toolCallId: string) => {
     setPipWidgetId(toolCallId);
@@ -89,6 +94,18 @@ export function Thread({
   const handleExitPip = (toolCallId: string) => {
     if (pipWidgetId === toolCallId) {
       setPipWidgetId(null);
+    }
+  };
+
+  const handleRequestFullscreen = (toolCallId: string) => {
+    setFullscreenWidgetId(toolCallId);
+    onFullscreenChange?.(true);
+  };
+
+  const handleExitFullscreen = (toolCallId: string) => {
+    if (fullscreenWidgetId === toolCallId) {
+      setFullscreenWidgetId(null);
+      onFullscreenChange?.(false);
     }
   };
 
@@ -107,6 +124,8 @@ export function Thread({
             pipWidgetId={pipWidgetId}
             onRequestPip={handleRequestPip}
             onExitPip={handleExitPip}
+            onRequestFullscreen={handleRequestFullscreen}
+            onExitFullscreen={handleExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -127,6 +146,8 @@ function MessageView({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
   displayMode,
   onDisplayModeChange,
 }: {
@@ -139,6 +160,8 @@ function MessageView({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  onRequestFullscreen: (toolCallId: string) => void;
+  onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
@@ -164,6 +187,8 @@ function MessageView({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -202,6 +227,8 @@ function MessageView({
                 pipWidgetId={pipWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
+                onRequestFullscreen={onRequestFullscreen}
+                onExitFullscreen={onExitFullscreen}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
               />
@@ -223,6 +250,8 @@ function PartSwitch({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
   displayMode,
   onDisplayModeChange,
 }: {
@@ -235,6 +264,8 @@ function PartSwitch({
   pipWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
+  onRequestFullscreen: (toolCallId: string) => void;
+  onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
 }) {
@@ -343,6 +374,8 @@ function PartSwitch({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
@@ -433,10 +466,10 @@ function ToolPart({
     icon: typeof LayoutDashboard;
     label: string;
   }[] = [
-    { mode: "inline", icon: LayoutDashboard, label: "Inline" },
-    { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
-    { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
-  ];
+      { mode: "inline", icon: LayoutDashboard, label: "Inline" },
+      { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
+      { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
+    ];
 
   return (
     <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
@@ -475,11 +508,10 @@ function ToolPart({
                     e.stopPropagation();
                     onDisplayModeChange?.(mode);
                   }}
-                  className={`p-1 rounded transition-colors cursor-pointer ${
-                    displayMode === mode
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                  }`}
+                  className={`p-1 rounded transition-colors cursor-pointer ${displayMode === mode
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                    }`}
                   title={label}
                 >
                   <Icon className="h-3.5 w-3.5" />
@@ -502,9 +534,8 @@ function ToolPart({
             </span>
           )}
           <ChevronDown
-            className={`h-4 w-4 transition-transform duration-150 ${
-              isExpanded ? "rotate-180" : ""
-            }`}
+            className={`h-4 w-4 transition-transform duration-150 ${isExpanded ? "rotate-180" : ""
+              }`}
           />
         </span>
       </button>
