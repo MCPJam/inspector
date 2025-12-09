@@ -839,7 +839,15 @@ export function ChatGPTAppRenderer({
       globals.maxHeight = maxHeight;
     postToWidget({ type: "openai:set_globals", globals });
     if (modalOpen) postToWidget({ type: "openai:set_globals", globals }, true);
-  }, [themeMode, maxHeight, displayMode, locale, isReady, modalOpen, postToWidget]);
+  }, [
+    themeMode,
+    maxHeight,
+    displayMode,
+    locale,
+    isReady,
+    modalOpen,
+    postToWidget,
+  ]);
 
   const invokingText = toolMetadata?.["openai/toolInvocation/invoking"] as
     | string
