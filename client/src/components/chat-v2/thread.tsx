@@ -471,7 +471,7 @@ function ToolPart({
       tab: "csp",
       icon: Shield,
       label: "CSP",
-      badge: widgetDebugInfo?.csp?.violationCount,
+      badge: widgetDebugInfo?.csp?.violations?.length,
     },
   ];
 

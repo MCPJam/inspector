@@ -8,6 +8,23 @@
 import { create } from "zustand";
 import type { CspMode } from "./ui-playground-store";
 
+export interface CspViolation {
+  /** The CSP directive that was violated (e.g., "script-src") */
+  directive: string;
+  /** The effective directive that was violated */
+  effectiveDirective?: string;
+  /** The URI that was blocked */
+  blockedUri: string;
+  /** Source file where the violation occurred */
+  sourceFile?: string | null;
+  /** Line number in source file */
+  lineNumber?: number | null;
+  /** Column number in source file */
+  columnNumber?: number | null;
+  /** Timestamp of the violation */
+  timestamp: number;
+}
+
 export interface WidgetCspInfo {
   /** Current CSP enforcement mode */
   mode: CspMode;
@@ -17,8 +34,8 @@ export interface WidgetCspInfo {
   resourceDomains: string[];
   /** Full CSP header string (for advanced users) */
   headerString?: string;
-  /** Count of CSP violations for this widget */
-  violationCount: number;
+  /** List of CSP violations for this widget */
+  violations: CspViolation[];
 }
 
 export interface WidgetGlobals {
@@ -76,11 +93,11 @@ interface WidgetDebugStore {
   // Set CSP info for a widget
   setWidgetCsp: (
     toolCallId: string,
-    csp: Omit<WidgetCspInfo, "violationCount">,
+    csp: Omit<WidgetCspInfo, "violations">,
   ) => void;
 
-  // Increment CSP violation count for a widget
-  incrementCspViolation: (toolCallId: string) => void;
+  // Add a CSP violation for a widget
+  addCspViolation: (toolCallId: string, violation: CspViolation) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -165,7 +182,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         ...existing,
         csp: {
           ...csp,
-          violationCount: existing.csp?.violationCount ?? 0,
+          violations: existing.csp?.violations ?? [],
         },
         updatedAt: Date.now(),
       });
@@ -173,17 +190,24 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
     });
   },
 
-  incrementCspViolation: (toolCallId) => {
+  addCspViolation: (toolCallId, violation) => {
     set((state) => {
       const existing = state.widgets.get(toolCallId);
-      if (!existing?.csp) return state;
+      if (!existing) return state;
 
       const widgets = new Map(state.widgets);
+      const currentCsp = existing.csp ?? {
+        mode: "permissive" as CspMode,
+        connectDomains: [],
+        resourceDomains: [],
+        violations: [],
+      };
+
       widgets.set(toolCallId, {
         ...existing,
         csp: {
-          ...existing.csp,
-          violationCount: (existing.csp.violationCount ?? 0) + 1,
+          ...currentCsp,
+          violations: [...currentCsp.violations, violation],
         },
         updatedAt: Date.now(),
       });
