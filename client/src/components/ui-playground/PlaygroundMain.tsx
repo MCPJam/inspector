@@ -418,31 +418,31 @@ export function PlaygroundMain({
             onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
             className="gap-0.5"
           >
-          <ToggleGroupItem
-            value="mobile"
-            aria-label="Mobile"
-            title="Mobile (430x932)"
-            className="h-7 w-7 p-0 cursor-pointer"
-          >
-            <Smartphone className="h-3.5 w-3.5" />
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="tablet"
-            aria-label="Tablet"
-            title="Tablet (820x1180)"
-            className="h-7 w-7 p-0 cursor-pointer"
-          >
-            <Tablet className="h-3.5 w-3.5" />
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="desktop"
-            aria-label="Desktop"
-            title="Desktop (1280x800)"
-            className="h-7 w-7 p-0 cursor-pointer"
-          >
-            <Monitor className="h-3.5 w-3.5" />
-          </ToggleGroupItem>
-        </ToggleGroup>
+            <ToggleGroupItem
+              value="mobile"
+              aria-label="Mobile"
+              title="Mobile (430x932)"
+              className="h-7 w-7 p-0 cursor-pointer"
+            >
+              <Smartphone className="h-3.5 w-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="tablet"
+              aria-label="Tablet"
+              title="Tablet (820x1180)"
+              className="h-7 w-7 p-0 cursor-pointer"
+            >
+              <Tablet className="h-3.5 w-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="desktop"
+              aria-label="Desktop"
+              title="Desktop (1280x800)"
+              className="h-7 w-7 p-0 cursor-pointer"
+            >
+              <Monitor className="h-3.5 w-3.5" />
+            </ToggleGroupItem>
+          </ToggleGroup>
         </div>
 
         {/* Device label, locale, and theme */}
@@ -464,18 +464,18 @@ export function PlaygroundMain({
               <Globe className="h-3.5 w-3.5" />
               <SelectValue>{locale}</SelectValue>
             </SelectTrigger>
-              <SelectContent>
-                {LOCALE_OPTIONS.map((option) => (
-                  <SelectItem key={option.code} value={option.code}>
-                    <span className="flex items-center gap-2">
-                      <span>{option.label}</span>
-                      <span className="text-muted-foreground text-[10px]">
-                        {option.code}
-                      </span>
+            <SelectContent>
+              {LOCALE_OPTIONS.map((option) => (
+                <SelectItem key={option.code} value={option.code}>
+                  <span className="flex items-center gap-2">
+                    <span>{option.label}</span>
+                    <span className="text-muted-foreground text-[10px]">
+                      {option.code}
                     </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
 
           {/* Theme toggle */}

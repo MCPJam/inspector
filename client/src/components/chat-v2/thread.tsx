@@ -624,8 +624,8 @@ function ToolPart({
                   : "null (no state set)"}
               </pre>
               <div className="text-[9px] text-muted-foreground/50 mt-2">
-                Tip: Widget state persists across follow-up turns. Keep under
-                4k tokens.
+                Tip: Widget state persists across follow-up turns. Keep under 4k
+                tokens.
               </div>
             </div>
           )}
