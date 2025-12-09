@@ -21,11 +21,13 @@ import {
   Database,
   Box,
   Globe,
+  Shield,
 } from "lucide-react";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
+import { CspDebugPanel } from "./csp-debug-panel";
 import {
   callTool,
   getToolServerId,
@@ -44,6 +46,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";
 import {
   AnyPart,
@@ -417,8 +420,9 @@ function ToolPart({
     themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "globals" | null
+    "data" | "state" | "globals" | "csp" | null
   >(null);
+
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const errorText = (part as any).errorText ?? (part as any).error;
@@ -449,16 +453,23 @@ function ToolPart({
   ];
 
   const debugOptions: {
-    tab: "data" | "state" | "globals";
+    tab: "data" | "state" | "globals" | "csp";
     icon: typeof Database;
     label: string;
+    badge?: number;
   }[] = [
     { tab: "data", icon: Database, label: "Data" },
     { tab: "state", icon: Box, label: "Widget State" },
     { tab: "globals", icon: Globe, label: "Globals" },
+    {
+      tab: "csp",
+      icon: Shield,
+      label: "CSP",
+      badge: widgetDebugInfo?.csp?.violations?.length,
+    },
   ];
 
-  const handleDebugClick = (tab: "data" | "state" | "globals") => {
+  const handleDebugClick = (tab: "data" | "state" | "globals" | "csp") => {
     if (activeDebugTab === tab) {
       // Clicking the active tab closes the panel
       setActiveDebugTab(null);
@@ -526,7 +537,7 @@ function ToolPart({
               className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
               onClick={(e) => e.stopPropagation()}
             >
-              {debugOptions.map(({ tab, icon: Icon, label }) => (
+              {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
                 <Tooltip key={tab}>
                   <TooltipTrigger asChild>
                     <button
@@ -535,13 +546,23 @@ function ToolPart({
                         e.stopPropagation();
                         handleDebugClick(tab);
                       }}
-                      className={`p-1 rounded transition-colors cursor-pointer ${
+                      className={`p-1 rounded transition-colors cursor-pointer relative ${
                         activeDebugTab === tab
                           ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                          : badge && badge > 0
+                            ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                            : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
                       }`}
                     >
                       <Icon className="h-3.5 w-3.5" />
+                      {badge !== undefined && badge > 0 && (
+                        <Badge
+                          variant="destructive"
+                          className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                        >
+                          {badge}
+                        </Badge>
+                      )}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>{label}</TooltipContent>
@@ -638,6 +659,9 @@ function ToolPart({
                 {safeStringify(widgetDebugInfo.globals)}
               </pre>
             </div>
+          )}
+          {hasWidgetDebug && activeDebugTab === "csp" && (
+            <CspDebugPanel cspInfo={widgetDebugInfo.csp} />
           )}
           {!hasWidgetDebug && (
             <div className="space-y-4">

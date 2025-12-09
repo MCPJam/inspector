@@ -24,6 +24,7 @@ import {
   Sun,
   Moon,
   Globe,
+  Shield,
 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
@@ -55,6 +56,7 @@ import {
   useUIPlaygroundStore,
   type DeviceType,
   type DisplayMode,
+  type CspMode,
 } from "@/stores/ui-playground-store";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -87,6 +89,24 @@ const LOCALE_OPTIONS = [
   { code: "hi-IN", label: "हिन्दी" },
   { code: "ru-RU", label: "Русский" },
   { code: "nl-NL", label: "Nederlands" },
+];
+
+/** CSP mode options for widget sandbox */
+const CSP_MODE_OPTIONS: {
+  mode: CspMode;
+  label: string;
+  description: string;
+}[] = [
+  {
+    mode: "permissive",
+    label: "Permissive",
+    description: "Allows all HTTPS resources",
+  },
+  {
+    mode: "widget-declared",
+    label: "Strict",
+    description: "Only widget-declared domains",
+  },
 ];
 
 interface PlaygroundMainProps {
@@ -238,6 +258,10 @@ export function PlaygroundMain({
     setPlaygroundActive(true);
     return () => setPlaygroundActive(false);
   }, [setPlaygroundActive]);
+
+  // CSP mode from store
+  const cspMode = useUIPlaygroundStore((s) => s.cspMode);
+  const setCspMode = useUIPlaygroundStore((s) => s.setCspMode);
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -467,27 +491,73 @@ export function PlaygroundMain({
           </div>
 
           {/* Locale selector */}
-          <Select value={locale} onValueChange={onLocaleChange}>
-            <SelectTrigger
-              size="sm"
-              className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
-            >
-              <Globe className="h-3.5 w-3.5" />
-              <SelectValue>{locale}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {LOCALE_OPTIONS.map((option) => (
-                <SelectItem key={option.code} value={option.code}>
-                  <span className="flex items-center gap-2">
-                    <span>{option.label}</span>
-                    <span className="text-muted-foreground text-[10px]">
-                      {option.code}
-                    </span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select value={locale} onValueChange={onLocaleChange}>
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                  >
+                    <Globe className="h-3.5 w-3.5" />
+                    <SelectValue>{locale}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LOCALE_OPTIONS.map((option) => (
+                      <SelectItem key={option.code} value={option.code}>
+                        <span className="flex items-center gap-2">
+                          <span>{option.label}</span>
+                          <span className="text-muted-foreground text-[10px]">
+                            {option.code}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Locale</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* CSP mode selector */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div>
+                <Select
+                  value={cspMode}
+                  onValueChange={(v) => setCspMode(v as CspMode)}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                  >
+                    <Shield className="h-3.5 w-3.5" />
+                    <SelectValue>
+                      {CSP_MODE_OPTIONS.find((o) => o.mode === cspMode)?.label}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CSP_MODE_OPTIONS.map((option) => (
+                      <SelectItem key={option.mode} value={option.mode}>
+                        <span className="flex items-center gap-2">
+                          <span className="font-medium">{option.label}</span>
+                          <span className="text-muted-foreground text-[10px]">
+                            {option.description}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">CSP</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Theme toggle */}
           <Tooltip>

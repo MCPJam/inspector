@@ -1,6 +1,9 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import {
+  useUIPlaygroundStore,
+  type CspMode,
+} from "@/stores/ui-playground-store";
 import {
   Dialog,
   DialogContent,
@@ -241,6 +244,18 @@ async function getUserLocation(): Promise<UserLocation | null> {
   return locationFetchPromise;
 }
 
+interface WidgetCspData {
+  mode: CspMode;
+  connectDomains: string[];
+  resourceDomains: string[];
+  headerString?: string;
+  /** Widget's actual openai/widgetCSP declaration (null if not declared) */
+  widgetDeclared?: {
+    connect_domains?: string[];
+    resource_domains?: string[];
+  } | null;
+}
+
 function useWidgetFetch(
   toolState: ToolState | undefined,
   resolvedToolCallId: string,
@@ -252,11 +267,22 @@ function useWidgetFetch(
   toolResponseMetadata: unknown,
   themeMode: string,
   locale: string,
+  cspMode: CspMode,
+  onCspConfigReceived?: (csp: WidgetCspData) => void,
 ) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
+  const [prevCspMode, setPrevCspMode] = useState(cspMode);
+
+  // Reset widget URL when CSP mode changes to trigger reload
+  useEffect(() => {
+    if (cspMode !== prevCspMode && widgetUrl) {
+      setPrevCspMode(cspMode);
+      setWidgetUrl(null);
+    }
+  }, [cspMode, prevCspMode, widgetUrl]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -302,6 +328,7 @@ function useWidgetFetch(
             locale, // BCP 47 locale from host
             deviceType, // Device type from host
             userLocation, // Coarse location { country, region, city } or null
+            cspMode, // CSP enforcement mode
           }),
         });
         if (!storeResponse.ok)
@@ -310,12 +337,24 @@ function useWidgetFetch(
           );
         if (isCancelled) return;
 
-        // Check if widget should close
+        // Check if widget should close and get CSP config
         const htmlResponse = await fetch(
           `/api/mcp/openai/widget-html/${resolvedToolCallId}`,
         );
         if (htmlResponse.ok) {
           const data = await htmlResponse.json();
+
+          // Update CSP info in widget debug store
+          if (data.csp && onCspConfigReceived) {
+            onCspConfigReceived({
+              mode: data.csp.mode,
+              connectDomains: data.csp.connectDomains,
+              resourceDomains: data.csp.resourceDomains,
+              headerString: data.csp.headerString,
+              widgetDeclared: data.csp.widgetDeclared,
+            });
+          }
+
           if (data.closeWidget) {
             setWidgetClosed(true);
             setIsStoringWidget(false);
@@ -323,8 +362,11 @@ function useWidgetFetch(
           }
         }
 
-        // Set the widget URL - the widget will be loaded via src, not srcdoc
-        setWidgetUrl(`/api/mcp/openai/widget/${resolvedToolCallId}`);
+        // Set the widget URL with CSP mode query param
+        // Use /widget-content directly so CSP headers are applied by the browser
+        setWidgetUrl(
+          `/api/mcp/openai/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`,
+        );
       } catch (err) {
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
@@ -351,9 +393,11 @@ function useWidgetFetch(
     toolResponseMetadata,
     themeMode,
     locale,
+    cspMode,
+    onCspConfigReceived,
   ]);
 
-  return { widgetUrl, widgetClosed, isStoringWidget, storeError };
+  return { widgetUrl, widgetClosed, isStoringWidget, storeError, setWidgetUrl };
 }
 
 // ============================================================================
@@ -417,6 +461,22 @@ export function ChatGPTAppRenderer({
     toolOutputProp,
     toolMetadata,
   );
+
+  // Get CSP mode from playground store - only apply custom mode when in UI Playground
+  // ChatTabV2 and ResultsPanel should always use permissive mode
+  const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const playgroundCspMode = useUIPlaygroundStore((s) => s.cspMode);
+  const cspMode = isPlaygroundActive ? playgroundCspMode : "permissive";
+  const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
+
+  // Callback to handle CSP config received from server
+  const handleCspConfigReceived = useCallback(
+    (csp: WidgetCspData) => {
+      setWidgetCsp(resolvedToolCallId, csp);
+    },
+    [resolvedToolCallId, setWidgetCsp],
+  );
+
   const isFullscreen = displayMode === "fullscreen";
   const isPip =
     displayMode === "pip" &&
@@ -434,6 +494,8 @@ export function ChatGPTAppRenderer({
       toolResponseMetadata,
       themeMode,
       locale,
+      cspMode,
+      handleCspConfigReceived,
     );
 
   const applyMeasuredHeight = useCallback(
@@ -486,6 +548,7 @@ export function ChatGPTAppRenderer({
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
   const setWidgetState = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+  const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
 
   useEffect(() => {
     if (!toolName) return;
@@ -696,10 +759,31 @@ export function ChatGPTAppRenderer({
           break;
         }
         case "openai:csp-violation": {
-          const { directive, blockedUri, sourceFile, lineNumber } = event.data;
+          const {
+            directive,
+            blockedUri,
+            sourceFile,
+            lineNumber,
+            columnNumber,
+            effectiveDirective,
+            timestamp,
+          } = event.data;
+
+          // Add violation to widget debug store for display in CSP panel
+          addCspViolation(resolvedToolCallId, {
+            directive,
+            effectiveDirective,
+            blockedUri,
+            sourceFile,
+            lineNumber,
+            columnNumber,
+            timestamp: timestamp || Date.now(),
+          });
+
+          // Also log to console for developers
           console.warn(
-            `[ChatGPT Widget CSP] Blocked ${blockedUri} by ${directive}`,
-            sourceFile ? `at ${sourceFile}:${lineNumber}` : "",
+            `[CSP Violation] ${directive}: Blocked ${blockedUri}`,
+            sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
           );
           break;
         }
@@ -738,6 +822,7 @@ export function ChatGPTAppRenderer({
       serverId,
       setWidgetState,
       applyMeasuredHeight,
+      addCspViolation,
     ],
   );
 
