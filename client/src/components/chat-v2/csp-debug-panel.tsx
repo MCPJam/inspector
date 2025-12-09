@@ -6,7 +6,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { AlertCircle, ExternalLink, Copy, Check, Lightbulb } from "lucide-react";
+import { AlertCircle, ExternalLink, Copy, Check, Lightbulb, ChevronRight } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import type { CspMode } from "@/stores/ui-playground-store";
@@ -173,7 +173,8 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
       {/* Suggested Fix */}
       {hasViolations && suggestedFixes.length > 0 && (
         <details className="group">
-          <summary className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 cursor-pointer">
+          <summary className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 cursor-pointer list-none">
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
             <Lightbulb className="h-3.5 w-3.5" />
             <span className="font-medium">Suggested fix</span>
           </summary>
@@ -204,7 +205,8 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
       {/* Violations Summary */}
       {hasViolations && (
         <details className="group">
-          <summary className="flex items-center gap-1.5 text-destructive cursor-pointer">
+          <summary className="flex items-center gap-1.5 text-destructive cursor-pointer list-none">
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
             <AlertCircle className="h-3.5 w-3.5" />
             <span className="font-medium">
               {violations.length} blocked request{violations.length !== 1 ? "s" : ""}
