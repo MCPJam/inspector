@@ -536,9 +536,7 @@ export function ChatGPTAppRenderer({
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
   const setWidgetState = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
-  const incrementCspViolation = useWidgetDebugStore(
-    (s) => s.incrementCspViolation,
-  );
+  const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
 
   useEffect(() => {
     if (!toolName) return;
@@ -755,34 +753,20 @@ export function ChatGPTAppRenderer({
             sourceFile,
             lineNumber,
             columnNumber,
-            originalPolicy,
             effectiveDirective,
-            disposition,
             timestamp,
           } = event.data;
 
-          // Log to UI log store for display in Logs panel
-          addUiLog({
-            widgetId: resolvedToolCallId,
-            serverId,
-            direction: "ui-to-host",
-            protocol: "openai-apps",
-            method: "csp-violation",
-            message: {
-              directive,
-              effectiveDirective,
-              blockedUri,
-              sourceFile,
-              lineNumber,
-              columnNumber,
-              originalPolicy,
-              disposition,
-              timestamp,
-            },
+          // Add violation to widget debug store for display in CSP panel
+          addCspViolation(resolvedToolCallId, {
+            directive,
+            effectiveDirective,
+            blockedUri,
+            sourceFile,
+            lineNumber,
+            columnNumber,
+            timestamp: timestamp || Date.now(),
           });
-
-          // Increment violation count in widget debug store
-          incrementCspViolation(resolvedToolCallId);
 
           // Also log to console for developers
           console.warn(
@@ -826,7 +810,7 @@ export function ChatGPTAppRenderer({
       serverId,
       setWidgetState,
       applyMeasuredHeight,
-      incrementCspViolation,
+      addCspViolation,
     ],
   );
 

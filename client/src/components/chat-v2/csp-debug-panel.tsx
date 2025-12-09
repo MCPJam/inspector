@@ -22,6 +22,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { CspMode } from "@/stores/ui-playground-store";
+import type { CspViolation } from "@/stores/widget-debug-store";
 
 interface CspDebugPanelProps {
   /** Current CSP configuration */
@@ -30,7 +31,7 @@ interface CspDebugPanelProps {
     connectDomains: string[];
     resourceDomains: string[];
     headerString?: string;
-    violationCount: number;
+    violations: CspViolation[];
   };
   /** Callback when CSP mode changes */
   onModeChange?: (mode: CspMode) => void;
@@ -122,18 +123,37 @@ export function CspDebugPanel({
         )}
       </div>
 
-      {/* Violation Count */}
-      {(cspInfo?.violationCount ?? 0) > 0 && (
-        <div className="flex items-center gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/20">
-          <AlertCircle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
-          <div className="flex-1">
-            <span className="text-destructive font-medium">
-              {cspInfo!.violationCount} CSP violation
-              {cspInfo!.violationCount > 1 ? "s" : ""}
-            </span>
-            <p className="text-muted-foreground text-[10px]">
-              Check the Logs panel for details
-            </p>
+      {/* Violations List */}
+      {(cspInfo?.violations?.length ?? 0) > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5 text-destructive" />
+            <Label className="text-xs font-medium text-destructive">
+              {cspInfo!.violations.length} CSP Violation
+              {cspInfo!.violations.length > 1 ? "s" : ""}
+            </Label>
+          </div>
+          <div className="space-y-1 max-h-40 overflow-auto">
+            {cspInfo!.violations.map((v, i) => (
+              <div
+                key={i}
+                className="p-2 rounded-md bg-destructive/10 border border-destructive/20 text-[10px]"
+              >
+                <div className="font-medium text-destructive truncate">
+                  {v.effectiveDirective || v.directive}
+                </div>
+                <div className="font-mono text-muted-foreground truncate">
+                  {v.blockedUri || "(empty)"}
+                </div>
+                {v.sourceFile && (
+                  <div className="text-muted-foreground/70 truncate">
+                    {v.sourceFile}
+                    {v.lineNumber ? `:${v.lineNumber}` : ""}
+                    {v.columnNumber ? `:${v.columnNumber}` : ""}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
