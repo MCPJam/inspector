@@ -10,6 +10,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormField } from "@/lib/tool-form";
 import { buildParametersFromFields } from "@/lib/tool-form";
 import { executeToolApi } from "@/lib/apis/mcp-tools-api";
+import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 // Result metadata type for tool responses
 interface ToolResponseMeta {
@@ -64,6 +66,8 @@ export function useToolExecution({
   setToolOutput,
   setToolResponseMetadata,
 }: UseToolExecutionOptions): UseToolExecutionReturn {
+  const posthog = usePostHog();
+
   // Pending execution to inject into chat thread
   const [pendingExecution, setPendingExecution] =
     useState<PendingExecution | null>(null);
@@ -85,6 +89,16 @@ export function useToolExecution({
       const response = await executeToolApi(serverName, selectedTool, params);
 
       if ("error" in response) {
+        // Log tool execution failure
+        posthog.capture("app_builder_tool_executed", {
+          location: "app_builder_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          toolName: selectedTool,
+          success: false,
+          errorType: "api_error",
+        });
+
         setExecutionError(response.error);
         setIsExecuting(false);
         return;
@@ -114,11 +128,30 @@ export function useToolExecution({
         result,
         toolMeta: meta,
       });
+
+      // Log successful tool execution
+      posthog.capture("app_builder_tool_executed", {
+        location: "app_builder_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        toolName: selectedTool,
+        success: true,
+      });
     } catch (err) {
       console.error("Tool execution error:", err);
-      setExecutionError(
-        err instanceof Error ? err.message : "Tool execution failed",
-      );
+      const errorMessage =
+        err instanceof Error ? err.message : "Tool execution failed";
+
+      posthog.capture("app_builder_tool_executed", {
+        location: "app_builder_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        toolName: selectedTool,
+        success: false,
+        errorType: "exception",
+      });
+
+      setExecutionError(errorMessage);
     } finally {
       setIsExecuting(false);
     }
