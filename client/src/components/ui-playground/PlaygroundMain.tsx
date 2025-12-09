@@ -382,6 +382,17 @@ export function PlaygroundMain({
     compact: isCompact,
   };
 
+  // Check if widget should take over the full container
+  // Mobile: both fullscreen and pip take over
+  // Tablet: only fullscreen takes over (pip stays floating)
+  const isMobileFullTakeover =
+    deviceType === "mobile" &&
+    (displayMode === "fullscreen" || displayMode === "pip");
+  const isTabletFullscreenTakeover =
+    deviceType === "tablet" && displayMode === "fullscreen";
+  const isWidgetFullTakeover =
+    isMobileFullTakeover || isTabletFullscreenTakeover;
+
   // Thread content
   const threadContent = (
     <>
@@ -438,11 +449,14 @@ export function PlaygroundMain({
             <ScrollToBottomButton />
           </div>
 
-          <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
-            <div className="p-3">
-              <ChatInput {...sharedChatInputProps} hasMessages />
+          {/* Hide chat input when widget takes over (mobile fullscreen/pip, tablet fullscreen only) */}
+          {!isWidgetFullTakeover && (
+            <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+              <div className="p-3">
+                <ChatInput {...sharedChatInputProps} hasMessages />
+              </div>
             </div>
-          </div>
+          )}
         </StickToBottom>
       )}
     </>
@@ -669,7 +683,7 @@ export function PlaygroundMain({
           style={{
             width: deviceConfig.width,
             maxWidth: "100%",
-            height: deviceConfig.height,
+            height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
             maxHeight: "100%",
             transform: isWidgetFullscreen ? "none" : "translateZ(0)",
           }}

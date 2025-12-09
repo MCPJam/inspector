@@ -527,6 +527,12 @@ export function ChatGPTAppRenderer({
     : DEFAULT_SAFE_AREA_INSETS;
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
 
+  // Mobile playground mode detection
+  const isMobilePlaygroundMode = isPlaygroundActive && deviceType === "mobile";
+  // Contained fullscreen mode detection (mobile + tablet should stay in container)
+  const isContainedFullscreenMode =
+    isPlaygroundActive && (deviceType === "mobile" || deviceType === "tablet");
+
   // Callback to handle CSP config received from server
   const handleCspConfigReceived = useCallback(
     (csp: WidgetCspData) => {
@@ -593,9 +599,13 @@ export function ChatGPTAppRenderer({
 
   const iframeHeight = useMemo(() => {
     if (isFullscreen) return "100%";
-    if (displayMode === "pip") return isPip ? "400px" : `${appliedHeight}px`;
+    if (displayMode === "pip") {
+      // In mobile playground mode, PiP should be fullscreen (100% height)
+      if (isMobilePlaygroundMode && isPip) return "100%";
+      return isPip ? "400px" : `${appliedHeight}px`;
+    }
     return `${appliedHeight}px`;
-  }, [appliedHeight, displayMode, isFullscreen, isPip]);
+  }, [appliedHeight, displayMode, isFullscreen, isPip, isMobilePlaygroundMode]);
 
   const modalWidgetUrl = useMemo(() => {
     if (!widgetUrl || !modalOpen) return null;
@@ -1105,17 +1115,53 @@ export function ChatGPTAppRenderer({
       </div>
     );
 
-  // When controlled, pip is determined by displayMode prop; otherwise check pipWidgetId
-  const containerClassName = isFullscreen
-    ? "fixed inset-0 z-50 w-full h-full bg-background flex flex-col"
-    : isPip
-      ? "fixed top-4 inset-x-0 z-40 w-full max-w-4xl mx-auto space-y-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-xl border border-border/60 rounded-xl p-3"
-      : "mt-3 space-y-2 relative group";
+  // Determine container className based on display mode
+  const containerClassName = (() => {
+    // Fullscreen modes
+    if (isFullscreen) {
+      if (isContainedFullscreenMode) {
+        // Mobile/tablet fullscreen: contained within device frame
+        return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
+      }
+      // Desktop fullscreen: breaks out to viewport
+      return "fixed inset-0 z-50 w-full h-full bg-background flex flex-col";
+    }
+
+    // PiP modes
+    if (isPip) {
+      if (isMobilePlaygroundMode) {
+        // Mobile PiP acts like fullscreen: contained within device frame
+        return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
+      }
+      // Desktop/tablet PiP: floating at top
+      return "fixed top-4 inset-x-0 z-40 w-full max-w-4xl mx-auto space-y-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-xl border border-border/60 rounded-xl p-3";
+    }
+
+    // Inline mode
+    return "mt-3 space-y-2 relative group";
+  })();
 
   return (
     <div className={containerClassName}>
-      {/* Fullscreen Header */}
-      {isFullscreen && (
+      {/* Contained fullscreen modes: simple floating X button */}
+      {((isFullscreen && isContainedFullscreenMode) ||
+        (isPip && isMobilePlaygroundMode)) && (
+        <button
+          onClick={() => {
+            setDisplayMode("inline");
+            if (pipWidgetId === resolvedToolCallId) {
+              onExitPip?.(resolvedToolCallId);
+            }
+          }}
+          className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
+          aria-label="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      )}
+
+      {/* Breakout fullscreen: full header with navigation */}
+      {isFullscreen && !isContainedFullscreenMode && (
         <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-50 shrink-0">
           <div className="flex items-center gap-2">
             <button
@@ -1165,7 +1211,7 @@ export function ChatGPTAppRenderer({
       )}
 
       {/* PiP Close Button - only show in PiP mode, Fullscreen has its own header */}
-      {isPip && (
+      {isPip && !isMobilePlaygroundMode && (
         <button
           onClick={() => {
             setDisplayMode("inline");
@@ -1199,7 +1245,11 @@ export function ChatGPTAppRenderer({
         style={{
           height: iframeHeight,
           // Remove max-height in fullscreen to allow flex-1 to control size
-          maxHeight: displayMode === "pip" ? "90vh" : undefined,
+          // In mobile playground mode, PiP should not be constrained by 90vh
+          maxHeight:
+            displayMode === "pip" && !isMobilePlaygroundMode
+              ? "90vh"
+              : undefined,
         }}
       />
       {outputTemplate && (
