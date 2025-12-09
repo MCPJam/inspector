@@ -393,7 +393,7 @@ const openaiAPI = {
   displayMode: 'inline',
   maxHeight: 600,
   theme: ${JSON.stringify(theme ?? "dark")},
-  locale: 'en-US',
+  locale: ${JSON.stringify(locale ?? "en-US")},  // From playground locale selector
   safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
   userAgent: {
     device: { type: 'desktop' },
