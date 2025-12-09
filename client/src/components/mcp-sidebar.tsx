@@ -26,6 +26,8 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
+import { DiscordIcon } from "./ui/discord-icon";
+import { GitHubIcon } from "./ui/github-icon";
 
 // Define sections with their respective items
 const navigationSections = [

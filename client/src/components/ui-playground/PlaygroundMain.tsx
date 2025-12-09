@@ -56,6 +56,8 @@ import {
   type DeviceType,
   type DisplayMode,
 } from "@/stores/ui-playground-store";
+import { usePostHog } from "posthog-js/react";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 /** Device frame configurations */
 const DEVICE_CONFIGS: Record<
@@ -171,6 +173,7 @@ export function PlaygroundMain({
   locale = "en-US",
   onLocaleChange,
 }: PlaygroundMainProps) {
+  const posthog = usePostHog();
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
@@ -295,6 +298,14 @@ export function PlaygroundMain({
       status === "ready" &&
       !submitBlocked
     ) {
+      posthog.capture("app_builder_send_message", {
+        location: "app_builder_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        model_id: selectedModel?.id ?? null,
+        model_name: selectedModel?.name ?? null,
+        model_provider: selectedModel?.provider ?? null,
+      });
       sendMessage({ text: input });
       setInput("");
       setMcpPromptResults([]);
