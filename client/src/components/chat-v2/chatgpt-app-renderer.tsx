@@ -476,10 +476,14 @@ export function ChatGPTAppRenderer({
   const playgroundCspMode = useUIPlaygroundStore((s) => s.cspMode);
   const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
-  const playgroundSafeAreaInsets = useUIPlaygroundStore((s) => s.safeAreaInsets);
+  const playgroundSafeAreaInsets = useUIPlaygroundStore(
+    (s) => s.safeAreaInsets,
+  );
   const cspMode = isPlaygroundActive ? playgroundCspMode : "permissive";
   // Use playground settings when active, otherwise compute from window
-  const deviceType = isPlaygroundActive ? playgroundDeviceType : getDeviceType();
+  const deviceType = isPlaygroundActive
+    ? playgroundDeviceType
+    : getDeviceType();
   const capabilities = isPlaygroundActive
     ? playgroundCapabilities
     : { hover: true, touch: false }; // Default for non-playground contexts
@@ -919,7 +923,15 @@ export function ChatGPTAppRenderer({
         },
       },
     });
-  }, [currentWidgetState, resolvedToolCallId, themeMode, locale, deviceType, capabilities, safeAreaInsets]);
+  }, [
+    currentWidgetState,
+    resolvedToolCallId,
+    themeMode,
+    locale,
+    deviceType,
+    capabilities,
+    safeAreaInsets,
+  ]);
 
   // Reset modal sandbox state when modal closes
   useEffect(() => {

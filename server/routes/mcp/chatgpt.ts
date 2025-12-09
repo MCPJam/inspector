@@ -243,7 +243,12 @@ function generateApiScript(opts: ApiScriptOptions): string {
 
   // Host-controlled capabilities (with fallback to widget detection if not provided)
   const hostCapabilities = capabilities ?? null;
-  const hostSafeAreaInsets = safeAreaInsets ?? { top: 0, bottom: 0, left: 0, right: 0 };
+  const hostSafeAreaInsets = safeAreaInsets ?? {
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  };
 
   return `<script>
 (function() {
@@ -768,7 +773,12 @@ chatgpt.post("/widget/store", async (c) => {
       maxHeight: maxHeight ?? null, // Host-controlled max height constraint
       cspMode: cspMode ?? "permissive", // CSP enforcement mode
       capabilities: capabilities ?? { hover: true, touch: false }, // Device capabilities
-      safeAreaInsets: safeAreaInsets ?? { top: 0, bottom: 0, left: 0, right: 0 }, // Safe area insets
+      safeAreaInsets: safeAreaInsets ?? {
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+      }, // Safe area insets
       timestamp: Date.now(),
     });
     return c.json({ success: true });
