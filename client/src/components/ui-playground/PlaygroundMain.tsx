@@ -410,13 +410,14 @@ export function PlaygroundMain({
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {/* Device frame header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
-        {/* Device type toggle */}
-        <ToggleGroup
-          type="single"
-          value={deviceType}
-          onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
-          className="gap-0.5"
-        >
+        {/* Device type toggle - flex-1 to balance with right section */}
+        <div className="flex-1 flex justify-start">
+          <ToggleGroup
+            type="single"
+            value={deviceType}
+            onValueChange={(v) => v && onDeviceTypeChange?.(v as DeviceType)}
+            className="gap-0.5"
+          >
           <ToggleGroupItem
             value="mobile"
             aria-label="Mobile"
@@ -442,8 +443,9 @@ export function PlaygroundMain({
             <Monitor className="h-3.5 w-3.5" />
           </ToggleGroupItem>
         </ToggleGroup>
+        </div>
 
-        {/* Device label and locale */}
+        {/* Device label, locale, and theme */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <DeviceIcon className="h-3.5 w-3.5" />
@@ -475,10 +477,8 @@ export function PlaygroundMain({
                 ))}
               </SelectContent>
           </Select>
-        </div>
 
-        {/* Right actions */}
-        <div className="flex items-center gap-1">
+          {/* Theme toggle */}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -486,7 +486,6 @@ export function PlaygroundMain({
                 size="icon"
                 onClick={handleThemeChange}
                 className="h-7 w-7"
-                title={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
               >
                 {themeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
@@ -499,6 +498,10 @@ export function PlaygroundMain({
               {themeMode === "dark" ? "Light mode" : "Dark mode"}
             </TooltipContent>
           </Tooltip>
+        </div>
+
+        {/* Right actions - flex-1 to balance with left section */}
+        <div className="flex-1 flex items-center justify-end">
           {!isThreadEmpty && (
             <Tooltip>
               <TooltipTrigger asChild>
