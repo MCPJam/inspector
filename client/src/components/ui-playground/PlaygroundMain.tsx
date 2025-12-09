@@ -16,7 +16,6 @@ import {
   ArrowDown,
   Braces,
   Loader2,
-  Wrench,
   Smartphone,
   Tablet,
   Monitor,
@@ -202,6 +201,7 @@ export function PlaygroundMain({
     [],
   );
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
 
   // Device config
   const deviceConfig = DEVICE_CONFIGS[deviceType];
@@ -416,6 +416,7 @@ export function PlaygroundMain({
                 onWidgetStateChange={handleWidgetStateChange}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
+                onFullscreenChange={setIsWidgetFullscreen}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -670,7 +671,7 @@ export function PlaygroundMain({
             maxWidth: "100%",
             height: deviceConfig.height,
             maxHeight: "100%",
-            transform: "translateZ(0)", // Creates containing block for fixed positioned elements (fullscreen/pip modes)
+            transform: isWidgetFullscreen ? "none" : "translateZ(0)",
           }}
         >
           {threadContent}
