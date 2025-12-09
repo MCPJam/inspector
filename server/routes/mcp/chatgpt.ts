@@ -349,6 +349,61 @@ function generateApiScript(opts: ApiScriptOptions): string {
     });
   };
 
+  // Host-backed navigation: track iframe history and notify parent
+  // This allows the host to mirror navigation state in UI (e.g., fullscreen header back/forward buttons)
+  const navigationState = { currentIndex: 0, historyLength: 1 };
+  
+  const notifyNavigationState = () => {
+    const canGoBack = navigationState.currentIndex > 0;
+    const canGoForward = navigationState.currentIndex < navigationState.historyLength - 1;
+    window.parent.postMessage({
+      type: 'openai:navigationStateChanged',
+      toolId: ${JSON.stringify(toolId)},
+      canGoBack,
+      canGoForward,
+      historyLength: navigationState.historyLength,
+      currentIndex: navigationState.currentIndex
+    }, '*');
+  };
+
+  // Wrap history.pushState to track navigation
+  const originalPushState = history.pushState.bind(history);
+  history.pushState = function(state, title, url) {
+    originalPushState(state, title, url);
+    // New navigation: increment index and truncate forward history
+    navigationState.currentIndex++;
+    navigationState.historyLength = navigationState.currentIndex + 1;
+    notifyNavigationState();
+  };
+
+  // Wrap history.replaceState (doesn't change index/length, but still notify for consistency)
+  const originalReplaceState = history.replaceState.bind(history);
+  history.replaceState = function(state, title, url) {
+    originalReplaceState(state, title, url);
+    notifyNavigationState();
+  };
+
+  // Track popstate (browser/programmatic back/forward within iframe)
+  // We detect direction by comparing history.length changes
+  let lastHistoryLength = history.length;
+  window.addEventListener('popstate', () => {
+    const currentLength = history.length;
+    // popstate doesn't tell us direction, but we can infer from our tracked state
+    // When going back, currentIndex decreases; when going forward, it increases
+    // Since we can't know for sure, we estimate based on history.state or just notify
+    // For accurate tracking, we use a heuristic: if history.length changed, reset tracking
+    if (currentLength !== lastHistoryLength) {
+      // History was modified externally, reset to safe state
+      navigationState.historyLength = currentLength;
+      navigationState.currentIndex = Math.min(navigationState.currentIndex, currentLength - 1);
+      lastHistoryLength = currentLength;
+    }
+    // Notify parent - the buttons will update based on current state
+    // Note: For back navigation, currentIndex should decrease
+    // We'll receive the correct state from the next pushState or user can track via state object
+    notifyNavigationState();
+  });
+
   const openaiAPI = {
     toolInput: ${serializeForInlineScript(toolInput)},
     toolOutput: ${serializeForInlineScript(toolOutput)},
@@ -411,6 +466,21 @@ function generateApiScript(opts: ApiScriptOptions): string {
     /** Inspector-specific: Explicitly report content height. Widgets can also use openai:resize event. */
     notifyIntrinsicHeight(height) {
       postHeight(height);
+    },
+
+    /** Host-backed navigation: programmatically navigate within the widget's history */
+    notifyNavigation(direction) {
+      if (direction === 'back') {
+        if (navigationState.currentIndex > 0) {
+          navigationState.currentIndex--;
+          history.back();
+        }
+      } else if (direction === 'forward') {
+        if (navigationState.currentIndex < navigationState.historyLength - 1) {
+          navigationState.currentIndex++;
+          history.forward();
+        }
+      }
     }
   };
 
@@ -461,6 +531,22 @@ function generateApiScript(opts: ApiScriptOptions): string {
         break;
       case 'openai:requestResize':
         measureAndNotifyHeight();
+        break;
+      case 'openai:navigate':
+        // Host-backed navigation: respond to navigation commands from parent
+        if (event.data.toolId === ${JSON.stringify(toolId)}) {
+          if (event.data.direction === 'back') {
+            if (navigationState.currentIndex > 0) {
+              navigationState.currentIndex--;
+              history.back();
+            }
+          } else if (event.data.direction === 'forward') {
+            if (navigationState.currentIndex < navigationState.historyLength - 1) {
+              navigationState.currentIndex++;
+              history.forward();
+            }
+          }
+        }
         break;
     }
   });
