@@ -534,9 +534,6 @@ export function PlaygroundMain({
                   <Monitor className="h-3.5 w-3.5" />
                 </ToggleGroupItem>
               </ToggleGroup>
-              <span className="text-[10px] font-medium text-muted-foreground/60 px-1.5 py-0.5 bg-muted/30 rounded">
-                SEP-1865
-              </span>
             </>
           )}
         </div>
