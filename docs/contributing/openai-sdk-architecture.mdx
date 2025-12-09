@@ -394,10 +394,10 @@ const openaiAPI = {
   maxHeight: 600,
   theme: ${JSON.stringify(theme ?? "dark")},
   locale: 'en-US',
-  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
+  safeArea: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },  // Device safe area insets
   userAgent: {
-    device: { type: 'desktop' },
-    capabilities: { hover: true, touch: false }
+    device: { type: 'desktop' },  // 'mobile' | 'tablet' | 'desktop'
+    capabilities: { hover: true, touch: false }  // Device input capabilities
   },
   view: {
     mode: ${JSON.stringify(viewMode)},  // 'inline' or 'modal'
@@ -511,6 +511,28 @@ const openaiAPI = {
 window.openai = openaiAPI;
 window.webplus = openaiAPI; // Compatibility alias
 ```
+
+**Device Globals:**
+
+The `window.openai` API provides device context to widgets through several properties:
+
+- **`userAgent.device.type`** - Device type: `'mobile'`, `'tablet'`, or `'desktop'`. In the UI Playground, this is controlled by the device type selector. Outside the playground, it's automatically detected from the browser window size.
+
+- **`userAgent.capabilities`** - Input capabilities:
+  - `hover` (boolean) - Whether the device supports hover interactions
+  - `touch` (boolean) - Whether the device supports touch input
+  
+  In the UI Playground, these are controlled by the hover and touch toggle buttons. Outside the playground, they default to `{ hover: true, touch: false }`.
+
+- **`safeArea.insets`** - Safe area insets in pixels for device notches, rounded corners, and gesture areas:
+  - `top` (number) - Top inset in pixels
+  - `bottom` (number) - Bottom inset in pixels
+  - `left` (number) - Left inset in pixels
+  - `right` (number) - Right inset in pixels
+  
+  In the UI Playground, these are configured through the safe area editor with presets for common devices (iPhone notch, Dynamic Island, Android gesture navigation). Outside the playground, all insets default to 0.
+
+Widgets can use these values to adapt their layout and interactions for different device contexts. For example, a widget might disable hover-based tooltips on touch devices or adjust padding to account for safe area insets.
 
 **Security Notes:**
 

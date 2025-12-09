@@ -195,7 +195,38 @@ OpenAI Apps can request different display modes to optimize their presentation:
 - **Picture-in-Picture** - Widget floats at the top of the screen, staying visible while you scroll through the chat
 - **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
 
-Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-right corner of the widget.
+Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-left corner of the widget.
+
+## UI Playground device settings
+
+The UI Playground provides controls to simulate different device environments for testing ChatGPT Apps and MCP Apps. These settings affect how widgets receive device context through the `window.openai` API.
+
+### Device type
+
+Select between mobile, tablet, or desktop device types. This affects the `window.openai.userAgent.device.type` value that widgets receive. The device type selector is located in the playground toolbar.
+
+### Device capabilities
+
+Toggle hover and touch capabilities to simulate different input methods:
+
+- **Hover** - Indicates whether the device supports hover interactions (typically enabled for desktop, disabled for mobile)
+- **Touch** - Indicates whether the device supports touch input (typically enabled for mobile/tablet, disabled for desktop)
+
+These settings are reflected in `window.openai.userAgent.capabilities.hover` and `window.openai.userAgent.capabilities.touch`.
+
+### Safe area insets
+
+Configure safe area insets to simulate device notches, rounded corners, and gesture areas. Click the safe area button in the toolbar to open the editor, which provides:
+
+- **Visual preview** - Shows how insets affect the content area
+- **Preset configurations** - Quick access to common device profiles:
+  - **None** - No insets (0px on all sides)
+  - **Notch** - iPhone with notch (44px top, 34px bottom)
+  - **Island** - iPhone with Dynamic Island (59px top, 34px bottom)
+  - **Android** - Android gesture navigation (24px top, 16px bottom)
+- **Custom values** - Manually adjust top, bottom, left, and right insets in pixels
+
+Widgets receive these values through `window.openai.safeArea.insets` and can use them to adjust their layout accordingly.
 
 #### Fullscreen navigation
 
