@@ -688,13 +688,17 @@ const metadata = mcpClientManager.getAllToolsMetadata("server1");
 // Returns: { tool1: { _meta: {...} }, tool2: { _meta: {...} } }
 ```
 
-### Device Globals for ChatGPT Apps
+### Device Globals for ChatGPT Apps and MCP Apps
 
-As of PR #1026, the playground provides device context to ChatGPT Apps and MCP Apps through configurable device globals. These settings are only applied when the UI Playground is active; outside the playground, defaults are used.
+As of PR #1026 and #1038, the playground provides device context to ChatGPT Apps and MCP Apps through configurable device globals. These settings are only applied when the UI Playground is active; outside the playground, defaults are used.
 
 **Device Settings:**
 
 - **Device Type** - `'mobile'`, `'tablet'`, or `'desktop'`. Controlled by the device type selector in the playground toolbar. Outside the playground, automatically detected from window size via `getDeviceType()`.
+
+- **Locale** - BCP 47 locale code (e.g., `'en-US'`, `'ja-JP'`). Controlled by the locale selector in the playground toolbar. Outside the playground, defaults to `navigator.language`.
+
+- **Timezone** (MCP Apps only) - IANA timezone identifier (e.g., `'America/New_York'`, `'Asia/Tokyo'`). Controlled by the timezone selector in the playground toolbar. Outside the playground, defaults to `Intl.DateTimeFormat().resolvedOptions().timeZone`.
 
 - **Device Capabilities** - Input method support:
   - `hover` (boolean) - Whether hover interactions are supported
@@ -707,12 +711,23 @@ As of PR #1026, the playground provides device context to ChatGPT Apps and MCP A
 
   Configured through the safe area editor with presets for common devices (iPhone notch, Dynamic Island, Android gesture navigation). Outside the playground, all insets default to 0.
 
+**Protocol Detection:**
+
+The playground automatically detects which app protocol is in use based on tool metadata:
+
+- **ChatGPT Apps** - Tools with `openai/outputTemplate` metadata
+- **MCP Apps** - Tools with `ui/resourceUri` metadata
+- **Mixed/None** - Shows ChatGPT Apps controls by default
+
+The toolbar adapts to show protocol-specific controls (e.g., timezone selector only appears for MCP Apps).
+
 **Implementation:**
 
-The playground store (`ui-playground-store.ts`) maintains these settings and provides them to the ChatGPT app renderer. When widgets are initialized, these values are passed through the widget data store and injected into the `window.openai` API:
+The playground store (`ui-playground-store.ts`) maintains these settings and provides them to the appropriate renderer:
+
+**ChatGPT Apps** - Values passed via `window.openai` API:
 
 ```typescript
-// Passed to widget via window.openai
 {
   userAgent: {
     device: { type: deviceType },
@@ -720,11 +735,29 @@ The playground store (`ui-playground-store.ts`) maintains these settings and pro
   },
   safeArea: {
     insets: { top, bottom, left, right }
-  }
+  },
+  locale: "en-US"
 }
 ```
 
-Widgets can use these values to adapt their layout and interactions for different device contexts. For example, disabling hover-based tooltips on touch devices or adjusting padding for safe area insets.
+**MCP Apps** - Values passed via `ui/initialize` host context:
+
+```typescript
+{
+  theme: "dark",
+  displayMode: "inline",
+  availableDisplayModes: ["inline", "pip", "fullscreen"],
+  viewport: { width: 430, height: 932, maxHeight: 932 },
+  locale: "en-US",
+  timeZone: "America/New_York",
+  platform: "mobile", // Derived from device type
+  userAgent: navigator.userAgent,
+  deviceCapabilities: { hover: false, touch: true },
+  safeAreaInsets: { top: 44, right: 0, bottom: 34, left: 0 }
+}
+```
+
+Widgets can use these values to adapt their layout and interactions for different device contexts. For example, disabling hover-based tooltips on touch devices, adjusting padding for safe area insets, or formatting dates/times according to the user's timezone.
 
 ### Server Instructions Integration
 
