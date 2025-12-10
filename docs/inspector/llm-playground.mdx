@@ -239,11 +239,40 @@ This helps you identify which external resources your widget needs and configure
 
 ## UI Playground device settings
 
-The UI Playground provides controls to simulate different device environments for testing ChatGPT Apps and MCP Apps. These settings affect how widgets receive device context through the `window.openai` API.
+The UI Playground provides controls to simulate different device environments for testing ChatGPT Apps and MCP Apps. These settings affect how widgets receive device context.
+
+### Protocol-aware controls
+
+The playground automatically detects which app protocol is in use and shows appropriate controls:
+
+- **ChatGPT Apps** - Tools with `openai/outputTemplate` metadata
+- **MCP Apps** - Tools with `ui/resourceUri` metadata
+
+Some controls (like timezone) are specific to MCP Apps and only appear when an MCP Apps widget is active.
 
 ### Device type
 
-Select between mobile, tablet, or desktop device types. This affects the `window.openai.userAgent.device.type` value that widgets receive. The device type selector is located in the playground toolbar.
+Select between mobile, tablet, or desktop device types. This affects the device context that widgets receive:
+
+- **ChatGPT Apps**: `window.openai.userAgent.device.type`
+- **MCP Apps**: `hostContext.platform` (derived as "mobile", "web", or "desktop")
+
+The device type selector is located in the playground toolbar.
+
+### Locale
+
+Choose from common BCP 47 locales (e.g., en-US, ja-JP, es-ES) to test internationalization. Available for both ChatGPT Apps and MCP Apps:
+
+- **ChatGPT Apps**: `window.openai.locale`
+- **MCP Apps**: `hostContext.locale`
+
+### Timezone (MCP Apps only)
+
+Select an IANA timezone identifier (e.g., America/New_York, Asia/Tokyo) to test timezone-aware widgets. This control only appears when testing MCP Apps:
+
+- **MCP Apps**: `hostContext.timeZone`
+
+The timezone selector includes common zones with UTC offset information for easy reference.
 
 ### Device capabilities
 
@@ -252,7 +281,10 @@ Toggle hover and touch capabilities to simulate different input methods:
 - **Hover** - Indicates whether the device supports hover interactions (typically enabled for desktop, disabled for mobile)
 - **Touch** - Indicates whether the device supports touch input (typically enabled for mobile/tablet, disabled for desktop)
 
-These settings are reflected in `window.openai.userAgent.capabilities.hover` and `window.openai.userAgent.capabilities.touch`.
+These settings are reflected in:
+
+- **ChatGPT Apps**: `window.openai.userAgent.capabilities.hover` and `window.openai.userAgent.capabilities.touch`
+- **MCP Apps**: `hostContext.deviceCapabilities.hover` and `hostContext.deviceCapabilities.touch`
 
 ### Safe area insets
 
@@ -266,7 +298,10 @@ Configure safe area insets to simulate device notches, rounded corners, and gest
   - **Android** - Android gesture navigation (24px top, 16px bottom)
 - **Custom values** - Manually adjust top, bottom, left, and right insets in pixels
 
-Widgets receive these values through `window.openai.safeArea.insets` and can use them to adjust their layout accordingly.
+Widgets receive these values through:
+
+- **ChatGPT Apps**: `window.openai.safeArea.insets`
+- **MCP Apps**: `hostContext.safeAreaInsets`
 
 #### Fullscreen navigation
 
