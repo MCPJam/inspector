@@ -1822,9 +1822,11 @@ server.connect(transport);
    - Confirm MCP server returns valid HTML for `ui://` resource
 
 2. **`window.openai` is undefined**
-   - Verify script injection in Stage 2 content endpoint
-   - Check browser console for CSP violations
+   - Verify bundled runtime script is injected in widget HTML
+   - Check that `openai-runtime-config` JSON element exists
+   - Check browser console for CSP violations or script errors
    - Ensure `<head>` tag exists in HTML for injection
+   - Verify `chatgpt.bundled.ts` is up to date (run `npm run bundle:chatgpt`)
 
 3. **Widget data not found (404)**
    - Check that widget data was successfully stored via POST `/api/mcp/openai/widget/store`
