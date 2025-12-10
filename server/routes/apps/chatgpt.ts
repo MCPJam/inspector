@@ -1020,7 +1020,7 @@ chatgpt.get("/widget/:toolId", async (c) => {
 (async function() {
   const searchParams = window.location.search;
   history.replaceState(null, '', '/');
-  const response = await fetch('/api/mcp/openai/widget-content/${toolId}' + searchParams);
+  const response = await fetch('/api/apps/chatgpt/widget-content/${toolId}' + searchParams);
   const html = await response.text();
   document.open(); document.write(html); document.close();
 })();
