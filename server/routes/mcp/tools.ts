@@ -69,7 +69,7 @@ type ExecutionContext = {
   waiter?: (payload: ElicitationPayload) => void;
 };
 
-let activeExecution: ExecutionContext | null = null;
+const activeExecutions = new Map<string, ExecutionContext>();
 
 const pendingResponses = new Map<
   string,
@@ -112,12 +112,9 @@ function enqueueRequest(
   context.queue.push(payload);
 }
 
-function resetExecution(context: ExecutionContext | null, clear: () => void) {
-  if (!context) return;
+function resetExecution(context: ExecutionContext, clear: () => void) {
   clear();
-  if (activeExecution === context) {
-    activeExecution = null;
-  }
+  activeExecutions.delete(context.id);
   if (context.queue.length > 0) {
     context.queue.length = 0;
   }
@@ -210,10 +207,6 @@ tools.post("/list", async (c) => {
 });
 
 tools.post("/execute", async (c) => {
-  if (activeExecution) {
-    return c.json({ error: "Another execution is already in progress" }, 409);
-  }
-
   const {
     serverId,
     toolName,
@@ -247,7 +240,7 @@ tools.post("/execute", async (c) => {
     queue: [],
   };
 
-  activeExecution = context;
+  activeExecutions.set(executionId, context);
 
   manager.setElicitationHandler(serverId, async (params) => {
     const payload: ElicitationPayload = {
@@ -277,7 +270,10 @@ tools.post("/execute", async (c) => {
 
   try {
     const next = await Promise.race([
-      context.execPromise.then((result) => ({ kind: "done" as const, result })),
+      context.execPromise.then((result: ListToolsResult) => ({
+        kind: "done" as const,
+        result,
+      })),
       takeNextRequest(context).then((payload) => ({
         kind: "elicitation" as const,
         payload,
@@ -306,15 +302,20 @@ tools.post("/execute", async (c) => {
 });
 
 tools.post("/respond", async (c) => {
-  const context = activeExecution;
-  if (!context) {
-    return c.json({ error: "No active execution" }, 404);
-  }
-
-  const { requestId, response } = (await c.req.json()) as {
+  const { executionId, requestId, response } = (await c.req.json()) as {
+    executionId?: string;
     requestId?: string;
     response?: ElicitResult;
   };
+
+  if (!executionId) {
+    return c.json({ error: "executionId is required" }, 400);
+  }
+
+  const context = activeExecutions.get(executionId);
+  if (!context) {
+    return c.json({ error: "No active execution for executionId" }, 404);
+  }
 
   if (!requestId) {
     return c.json({ error: "requestId is required" }, 400);
@@ -329,7 +330,10 @@ tools.post("/respond", async (c) => {
 
   try {
     const next = await Promise.race([
-      context.execPromise.then((result) => ({ kind: "done" as const, result })),
+      context.execPromise.then((result: ListToolsResult) => ({
+        kind: "done" as const,
+        result,
+      })),
       takeNextRequest(context).then((payload) => ({
         kind: "elicitation" as const,
         payload,
