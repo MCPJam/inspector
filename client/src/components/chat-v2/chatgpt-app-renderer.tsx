@@ -373,7 +373,7 @@ function useWidgetFetch(
             return;
           }
 
-            setPrefersBorder(data.prefersBorder);
+          setPrefersBorder(data.prefersBorder ?? true);
         }
 
         // Set the widget URL with CSP mode query param
