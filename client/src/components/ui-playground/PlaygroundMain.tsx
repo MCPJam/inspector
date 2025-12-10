@@ -23,6 +23,7 @@ import {
   Sun,
   Moon,
   Globe,
+  Clock,
   Shield,
   MousePointer2,
   Hand,
@@ -93,6 +94,29 @@ const LOCALE_OPTIONS = [
   { code: "nl-NL", label: "Nederlands" },
 ];
 
+/** Common IANA timezones for testing (per SEP-1865 MCP Apps spec) */
+const TIMEZONE_OPTIONS = [
+  { zone: "America/New_York", label: "New York", offset: "UTC-5/-4" },
+  { zone: "America/Chicago", label: "Chicago", offset: "UTC-6/-5" },
+  { zone: "America/Denver", label: "Denver", offset: "UTC-7/-6" },
+  { zone: "America/Los_Angeles", label: "Los Angeles", offset: "UTC-8/-7" },
+  { zone: "America/Sao_Paulo", label: "São Paulo", offset: "UTC-3" },
+  { zone: "America/Mexico_City", label: "Mexico City", offset: "UTC-6/-5" },
+  { zone: "Europe/London", label: "London", offset: "UTC+0/+1" },
+  { zone: "Europe/Paris", label: "Paris", offset: "UTC+1/+2" },
+  { zone: "Europe/Berlin", label: "Berlin", offset: "UTC+1/+2" },
+  { zone: "Europe/Moscow", label: "Moscow", offset: "UTC+3" },
+  { zone: "Asia/Dubai", label: "Dubai", offset: "UTC+4" },
+  { zone: "Asia/Kolkata", label: "Mumbai", offset: "UTC+5:30" },
+  { zone: "Asia/Singapore", label: "Singapore", offset: "UTC+8" },
+  { zone: "Asia/Shanghai", label: "Shanghai", offset: "UTC+8" },
+  { zone: "Asia/Tokyo", label: "Tokyo", offset: "UTC+9" },
+  { zone: "Asia/Seoul", label: "Seoul", offset: "UTC+9" },
+  { zone: "Australia/Sydney", label: "Sydney", offset: "UTC+10/+11" },
+  { zone: "Pacific/Auckland", label: "Auckland", offset: "UTC+12/+13" },
+  { zone: "UTC", label: "UTC", offset: "UTC+0" },
+];
+
 /** CSP mode options for widget sandbox */
 const CSP_MODE_OPTIONS: {
   mode: CspMode;
@@ -134,6 +158,9 @@ interface PlaygroundMainProps {
   // Locale (BCP 47)
   locale?: string;
   onLocaleChange?: (locale: string) => void;
+  // Timezone (IANA) per SEP-1865
+  timeZone?: string;
+  onTimeZoneChange?: (timeZone: string) => void;
 }
 
 function ScrollToBottomButton() {
@@ -194,6 +221,8 @@ export function PlaygroundMain({
   onDisplayModeChange,
   locale = "en-US",
   onLocaleChange,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  onTimeZoneChange,
 }: PlaygroundMainProps) {
   const posthog = usePostHog();
   const [input, setInput] = useState("");
@@ -730,6 +759,40 @@ export function PlaygroundMain({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Locale</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Timezone selector (SEP-1865) */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div>
+                    <Select value={timeZone} onValueChange={onTimeZoneChange}>
+                      <SelectTrigger
+                        size="sm"
+                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                      >
+                        <Clock className="h-3.5 w-3.5" />
+                        <SelectValue>
+                          {TIMEZONE_OPTIONS.find((o) => o.zone === timeZone)?.label || timeZone}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMEZONE_OPTIONS.map((option) => (
+                          <SelectItem key={option.zone} value={option.zone}>
+                            <span className="flex items-center gap-2">
+                              <span>{option.label}</span>
+                              <span className="text-muted-foreground text-[10px]">
+                                {option.offset}
+                              </span>
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">Timezone</p>
                 </TooltipContent>
               </Tooltip>
 

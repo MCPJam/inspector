@@ -9,7 +9,7 @@
  * Uses SandboxedIframe for DRY double-iframe setup.
  */
 
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useUIPlaygroundStore, type CspMode } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
@@ -73,6 +73,7 @@ export function MCPAppsRenderer({
   toolInput,
   toolOutput,
   resourceUri,
+  toolMetadata,
   onSendFollowUp,
   onCallTool,
   pipWidgetId,
@@ -96,7 +97,32 @@ export function MCPAppsRenderer({
     ? playgroundTimeZone
     : Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
-  const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
+  // Get displayMode from playground store when active (SEP-1865)
+  const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
+
+  // Get device capabilities from playground store (SEP-1865)
+  const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
+  const deviceCapabilities = useMemo(
+    () =>
+      isPlaygroundActive
+        ? playgroundCapabilities
+        : { hover: true, touch: false }, // Desktop defaults
+    [isPlaygroundActive, playgroundCapabilities],
+  );
+
+  // Get safe area insets from playground store (SEP-1865)
+  const playgroundSafeAreaInsets = useUIPlaygroundStore((s) => s.safeAreaInsets);
+  const safeAreaInsets = useMemo(
+    () =>
+      isPlaygroundActive
+        ? playgroundSafeAreaInsets
+        : { top: 0, right: 0, bottom: 0, left: 0 },
+    [isPlaygroundActive, playgroundSafeAreaInsets],
+  );
+
+  const [displayMode, setDisplayMode] = useState<DisplayMode>(
+    isPlaygroundActive ? playgroundDisplayMode : "inline"
+  );
   const [contentHeight, setContentHeight] = useState<number>(400);
   const [maxHeight] = useState<number>(800);
   const [isReady, setIsReady] = useState(false);
@@ -204,6 +230,13 @@ export function MCPAppsRenderer({
     }
   }, [cspMode, loadedCspMode, toolCallId, clearCspViolations]);
 
+  // Sync displayMode from playground store when it changes (SEP-1865)
+  useEffect(() => {
+    if (isPlaygroundActive) {
+      setDisplayMode(playgroundDisplayMode);
+    }
+  }, [isPlaygroundActive, playgroundDisplayMode]);
+
   // Initialize widget debug info
   useEffect(() => {
     setWidgetDebugInfo(toolCallId, {
@@ -216,6 +249,8 @@ export function MCPAppsRenderer({
         maxHeight,
         locale,
         timeZone,
+        deviceCapabilities,
+        safeAreaInsets,
       },
     });
   }, [
@@ -227,6 +262,8 @@ export function MCPAppsRenderer({
     maxHeight,
     locale,
     timeZone,
+    deviceCapabilities,
+    safeAreaInsets,
   ]);
 
   // Update globals in debug store when they change
@@ -237,8 +274,20 @@ export function MCPAppsRenderer({
       maxHeight,
       locale,
       timeZone,
+      deviceCapabilities,
+      safeAreaInsets,
     });
-  }, [toolCallId, themeMode, displayMode, maxHeight, locale, timeZone, setWidgetGlobals]);
+  }, [
+    toolCallId,
+    themeMode,
+    displayMode,
+    maxHeight,
+    locale,
+    timeZone,
+    deviceCapabilities,
+    safeAreaInsets,
+    setWidgetGlobals,
+  ]);
 
   // JSON-RPC helpers
   const postMessage = useCallback(
@@ -369,6 +418,17 @@ export function MCPAppsRenderer({
                 locale,
                 timeZone,
                 platform: "web",
+                userAgent: navigator.userAgent,
+                deviceCapabilities,
+                safeAreaInsets,
+                toolInfo: {
+                  id: toolCallId,
+                  tool: {
+                    name: toolName,
+                    inputSchema: (toolMetadata?.inputSchema as object) ?? { type: "object" },
+                    ...(toolMetadata?.description && { description: toolMetadata.description }),
+                  },
+                },
               },
             });
             setIsReady(true);
@@ -521,13 +581,23 @@ export function MCPAppsRenderer({
     locale: string;
     timeZone: string;
     maxHeight: number;
+    deviceCapabilities: { touch?: boolean; hover?: boolean };
+    safeAreaInsets: { top: number; right: number; bottom: number; left: number };
   } | null>(null);
 
   // Send host-context-changed notifications when any context field changes
   useEffect(() => {
     if (!isReady) return;
 
-    const currentContext = { theme: themeMode, displayMode, locale, timeZone, maxHeight };
+    const currentContext = {
+      theme: themeMode,
+      displayMode,
+      locale,
+      timeZone,
+      maxHeight,
+      deviceCapabilities,
+      safeAreaInsets,
+    };
 
     // Skip initial mount - context was already sent in initialize response
     if (prevHostContextRef.current === null) {
@@ -552,13 +622,28 @@ export function MCPAppsRenderer({
     if (prevHostContextRef.current.maxHeight !== maxHeight) {
       changedFields.viewport = { maxHeight };
     }
+    // Compare deviceCapabilities (simple object with booleans)
+    const prevCaps = prevHostContextRef.current.deviceCapabilities;
+    if (prevCaps.touch !== deviceCapabilities.touch || prevCaps.hover !== deviceCapabilities.hover) {
+      changedFields.deviceCapabilities = deviceCapabilities;
+    }
+    // Compare safeAreaInsets (simple object with numbers)
+    const prevInsets = prevHostContextRef.current.safeAreaInsets;
+    if (
+      prevInsets.top !== safeAreaInsets.top ||
+      prevInsets.right !== safeAreaInsets.right ||
+      prevInsets.bottom !== safeAreaInsets.bottom ||
+      prevInsets.left !== safeAreaInsets.left
+    ) {
+      changedFields.safeAreaInsets = safeAreaInsets;
+    }
 
     // Only send notification if something changed
     if (Object.keys(changedFields).length > 0) {
       prevHostContextRef.current = currentContext;
       sendNotification("ui/notifications/host-context-changed", changedFields);
     }
-  }, [themeMode, displayMode, locale, timeZone, maxHeight, isReady, sendNotification]);
+  }, [themeMode, displayMode, locale, timeZone, maxHeight, deviceCapabilities, safeAreaInsets, isReady, sendNotification]);
 
   // Loading states
   if (toolState !== "output-available") {
