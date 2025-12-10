@@ -699,12 +699,12 @@ As of PR #1026, the playground provides device context to ChatGPT Apps and MCP A
 - **Device Capabilities** - Input method support:
   - `hover` (boolean) - Whether hover interactions are supported
   - `touch` (boolean) - Whether touch input is supported
-  
+
   Controlled by hover and touch toggle buttons in the playground toolbar. Outside the playground, defaults to `{ hover: true, touch: false }`.
 
 - **Safe Area Insets** - Device notches, rounded corners, and gesture areas in pixels:
   - `top`, `bottom`, `left`, `right` (numbers)
-  
+
   Configured through the safe area editor with presets for common devices (iPhone notch, Dynamic Island, Android gesture navigation). Outside the playground, all insets default to 0.
 
 **Implementation:**
@@ -1269,6 +1269,7 @@ Located in `client/src/components/ui-playground/PlaygroundMain.tsx`, the playgro
 **Device Selector** - Toggle between mobile (430×932), tablet (820×1180), and desktop (1280×800) viewports to test responsive layouts.
 
 **Locale Selector** - Choose from common BCP 47 locales for internationalization testing:
+
 - English: en-US, en-GB
 - European: es-ES, es-MX, fr-FR, de-DE, it-IT, pt-BR
 - Asian: ja-JP, zh-CN, zh-TW, ko-KR, hi-IN
@@ -1285,11 +1286,13 @@ As of PR #1022, the debug interface uses icon buttons instead of tabs for a more
 Located in `client/src/components/chat-v2/thread.tsx:416-568`:
 
 **Debug Controls:**
+
 - **Data** (database icon) - View tool input, output, and error details
 - **Widget State** (box icon) - Inspect current widget state with last updated timestamp
 - **Globals** (globe icon) - View global values (theme, displayMode, locale, maxHeight)
 
 **Display Mode Controls:**
+
 - **Inline** (layout icon) - Default message flow rendering
 - **Picture-in-Picture** (picture-in-picture icon) - Floating overlay at top of screen
 - **Fullscreen** (maximize icon) - Full viewport expansion

@@ -45,7 +45,8 @@
           "contributing/evals-architecture",
           "contributing/mcp-capabilities-architecture",
           "contributing/oauth-architecture",
-          "contributing/openai-sdk-architecture"
+          "contributing/openai-sdk-architecture",
+          "contributing/mcp-apps-architecture"
         ]
       },
       {

@@ -66,7 +66,7 @@ async function generateMacIcon() {
         bottom: padding,
         left: padding,
         right: padding,
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
       })
       .png()
       .toFile(join(iconsetDir, name));
@@ -78,7 +78,7 @@ async function generateMacIcon() {
   // Cleanup
   try {
     await fs.rm(dirname(iconsetDir), { recursive: true, force: true });
-  } catch { }
+  } catch {}
 
   console.log(`Generated ${outIcns}`);
 }
