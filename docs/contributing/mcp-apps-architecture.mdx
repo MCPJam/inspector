@@ -186,7 +186,7 @@ The injected script provides the MCP Apps API to widget code:
 window.mcpApp = {
   toolInput: { ... },   // Tool input arguments
   toolResult: { ... },  // Tool execution result
-  hostContext: { ... }, // Host context (theme, locale, etc.)
+  hostContext: { ... }, // Host context (theme, locale, timezone, etc.)
 
   // Call another MCP tool
   async callTool(name, args = {}) { ... },
@@ -205,13 +205,54 @@ window.mcpApp = {
 };
 ```
 
+### Host Context
+
+The `hostContext` object provides information about the host environment (as of PR #1038):
+
+```typescript
+{
+  theme: "light" | "dark",
+  displayMode: "inline" | "pip" | "fullscreen",
+  availableDisplayModes: ["inline", "pip", "fullscreen"],
+  viewport: {
+    width: number,      // Current viewport width in pixels
+    height: number,     // Current viewport height in pixels
+    maxHeight: number   // Maximum available height
+  },
+  locale: string,       // BCP 47 locale (e.g., "en-US", "ja-JP")
+  timeZone: string,     // IANA timezone (e.g., "America/New_York")
+  platform: "web" | "desktop" | "mobile",
+  userAgent: string,    // Browser user agent string
+  deviceCapabilities: {
+    hover: boolean,     // Whether hover interactions are supported
+    touch: boolean      // Whether touch input is supported
+  },
+  safeAreaInsets: {
+    top: number,        // Safe area inset in pixels
+    right: number,
+    bottom: number,
+    left: number
+  },
+  toolInfo: {
+    id: string,         // Tool call ID
+    tool: {
+      name: string,
+      inputSchema: object,
+      description?: string
+    }
+  }
+}
+```
+
+Widgets receive the full host context during initialization via the `ui/initialize` response. When context values change (e.g., theme toggle, display mode change), the host sends a `ui/notifications/host-context-changed` notification with only the changed fields.
+
 ### Events
 
 Widgets can listen for these events:
 
 - `mcp:tool-input` - Tool input received
 - `mcp:tool-result` - Tool result received
-- `mcp:context-change` - Host context changed (theme, etc.)
+- `mcp:context-change` - Host context changed (theme, display mode, locale, timezone, etc.)
 - `mcp:tool-cancelled` - Tool was cancelled
 - `mcp:teardown` - Widget is about to be torn down
 
