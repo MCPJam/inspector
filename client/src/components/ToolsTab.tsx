@@ -395,6 +395,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           ? { action: "accept", content }
           : { action };
       const response = await respondToElicitationApi(
+        activeElicitation.executionId,
         activeElicitation.requestId,
         payload,
       );
