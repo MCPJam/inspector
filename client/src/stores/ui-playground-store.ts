@@ -10,17 +10,23 @@ import { create } from "zustand";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { FormField } from "@/lib/tool-form";
 
-export type DeviceType = "mobile" | "tablet" | "desktop";
+export type DeviceType = "mobile" | "tablet" | "desktop" | "custom";
 
 /** Device viewport configurations - shared across playground and MCP apps renderer */
 export const DEVICE_VIEWPORT_CONFIGS: Record<
-  DeviceType,
+  Exclude<DeviceType, "custom">,
   { width: number; height: number }
 > = {
   mobile: { width: 430, height: 932 },
   tablet: { width: 820, height: 1180 },
   desktop: { width: 1280, height: 800 },
 };
+
+/** Custom viewport dimensions */
+export interface CustomViewport {
+  width: number;
+  height: number;
+}
 export type DisplayMode = "inline" | "pip" | "fullscreen";
 export type CspMode = "permissive" | "widget-declared";
 export type AppProtocol = "openai-apps" | "mcp-apps" | null;
@@ -127,6 +133,9 @@ interface UIPlaygroundState {
   safeAreaPreset: SafeAreaPreset;
   safeAreaInsets: SafeAreaInsets;
 
+  // Custom viewport dimensions (for custom device type)
+  customViewport: CustomViewport;
+
   // Actions
   setTools: (tools: Record<string, Tool>) => void;
   setSelectedTool: (tool: string | null) => void;
@@ -158,6 +167,7 @@ interface UIPlaygroundState {
   setCapabilities: (capabilities: Partial<DeviceCapabilities>) => void;
   setSafeAreaPreset: (preset: SafeAreaPreset) => void;
   setSafeAreaInsets: (insets: Partial<SafeAreaInsets>) => void;
+  setCustomViewport: (viewport: Partial<CustomViewport>) => void;
   reset: () => void;
 }
 
@@ -187,6 +197,7 @@ const getDefaultCapabilities = (
       return { hover: false, touch: true };
     case "tablet":
       return { hover: false, touch: true };
+    case "custom":
     case "desktop":
     default:
       return { hover: true, touch: false };
@@ -217,6 +228,7 @@ const initialState = {
   capabilities: getDefaultCapabilities("desktop"),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
+  customViewport: { width: 800, height: 600 },
 };
 
 export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
@@ -343,6 +355,14 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
     set((state) => ({
       safeAreaPreset: "custom" as SafeAreaPreset,
       safeAreaInsets: { ...state.safeAreaInsets, ...insets },
+    })),
+
+  setCustomViewport: (viewport) =>
+    set((state) => ({
+      customViewport: { ...state.customViewport, ...viewport },
+      // Automatically switch to custom device type when setting custom viewport
+      deviceType: "custom" as DeviceType,
+      globals: { ...state.globals, deviceType: "custom" as DeviceType },
     })),
 
   reset: () =>
