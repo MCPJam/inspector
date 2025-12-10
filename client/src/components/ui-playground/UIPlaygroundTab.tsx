@@ -57,6 +57,7 @@ export function UIPlaygroundTab({
     displayMode,
     globals,
     isSidebarVisible,
+    selectedProtocol,
     setTools,
     setSelectedTool,
     setFormFields,
@@ -71,6 +72,7 @@ export function UIPlaygroundTab({
     setDisplayMode,
     updateGlobal,
     toggleSidebar,
+    setSelectedProtocol,
     reset,
   } = useUIPlaygroundStore();
 
@@ -83,6 +85,14 @@ export function UIPlaygroundTab({
   const handleLocaleChange = useCallback(
     (locale: string) => {
       updateGlobal("locale", locale);
+    },
+    [updateGlobal],
+  );
+
+  // Timezone change handler (SEP-1865)
+  const handleTimeZoneChange = useCallback(
+    (timeZone: string) => {
+      updateGlobal("timeZone", timeZone);
     },
     [updateGlobal],
   );
@@ -195,6 +205,46 @@ export function UIPlaygroundTab({
     }
   }, [selectedTool, tools, setFormFields]);
 
+  // Detect app protocol - from selected tool OR from server's available tools
+  useEffect(() => {
+    // If a specific tool is selected, detect its protocol
+    if (selectedTool) {
+      const meta = toolsMetadata[selectedTool];
+      if (meta?.["openai/outputTemplate"] != null) {
+        setSelectedProtocol("openai-apps");
+      } else if (meta?.["ui/resourceUri"] != null) {
+        setSelectedProtocol("mcp-apps");
+      } else {
+        setSelectedProtocol(null);
+      }
+      return;
+    }
+
+    // No tool selected - detect predominant protocol from all tools
+    const toolMetaEntries = Object.values(toolsMetadata);
+    if (toolMetaEntries.length === 0) {
+      setSelectedProtocol(null);
+      return;
+    }
+
+    const hasOpenAI = toolMetaEntries.some(
+      (meta) => meta?.["openai/outputTemplate"] != null,
+    );
+    const hasMCPApps = toolMetaEntries.some(
+      (meta) => meta?.["ui/resourceUri"] != null,
+    );
+
+    // If server only has one protocol type, use that
+    if (hasMCPApps && !hasOpenAI) {
+      setSelectedProtocol("mcp-apps");
+    } else if (hasOpenAI && !hasMCPApps) {
+      setSelectedProtocol("openai-apps");
+    } else {
+      // Mixed or no app tools - default to null (shows ChatGPT controls)
+      setSelectedProtocol(null);
+    }
+  }, [selectedTool, toolsMetadata, setSelectedProtocol]);
+
   // Get invoking message from tool metadata
   const invokingMessage = useMemo(() => {
     if (!selectedTool) return null;
@@ -288,6 +338,8 @@ export function UIPlaygroundTab({
             onDisplayModeChange={setDisplayMode}
             locale={globals.locale}
             onLocaleChange={handleLocaleChange}
+            timeZone={globals.timeZone}
+            onTimeZoneChange={handleTimeZoneChange}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

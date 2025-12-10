@@ -11,8 +11,16 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { FormField } from "@/lib/tool-form";
 
 export type DeviceType = "mobile" | "tablet" | "desktop";
+
+/** Device viewport configurations - shared across playground and MCP apps renderer */
+export const DEVICE_VIEWPORT_CONFIGS: Record<DeviceType, { width: number; height: number }> = {
+  mobile: { width: 430, height: 932 },
+  tablet: { width: 820, height: 1180 },
+  desktop: { width: 1280, height: 800 },
+};
 export type DisplayMode = "inline" | "pip" | "fullscreen";
 export type CspMode = "permissive" | "widget-declared";
+export type AppProtocol = "openai-apps" | "mcp-apps" | null;
 
 export interface DeviceCapabilities {
   hover: boolean;
@@ -54,6 +62,7 @@ export interface UserLocation {
 export interface PlaygroundGlobals {
   theme: "light" | "dark";
   locale: string;
+  timeZone: string; // IANA timezone (e.g., "America/New_York") per SEP-1865
   deviceType: DeviceType;
   displayMode: DisplayMode;
   userLocation: UserLocation | null;
@@ -99,8 +108,14 @@ interface UIPlaygroundState {
   // Panel visibility
   isSidebarVisible: boolean;
 
-  // CSP enforcement mode for widget sandbox
+  // CSP enforcement mode for widget sandbox (ChatGPT Apps)
   cspMode: CspMode;
+
+  // CSP enforcement mode for MCP Apps (SEP-1865)
+  mcpAppsCspMode: CspMode;
+
+  // Currently selected app protocol (detected from tool metadata)
+  selectedProtocol: AppProtocol;
 
   // Device capabilities (hover/touch support)
   capabilities: DeviceCapabilities;
@@ -135,6 +150,8 @@ interface UIPlaygroundState {
   setSidebarVisible: (visible: boolean) => void;
   setPlaygroundActive: (active: boolean) => void;
   setCspMode: (mode: CspMode) => void;
+  setMcpAppsCspMode: (mode: CspMode) => void;
+  setSelectedProtocol: (protocol: AppProtocol) => void;
   setCapabilities: (capabilities: Partial<DeviceCapabilities>) => void;
   setSafeAreaPreset: (preset: SafeAreaPreset) => void;
   setSafeAreaInsets: (insets: Partial<SafeAreaInsets>) => void;
@@ -144,6 +161,7 @@ interface UIPlaygroundState {
 const getInitialGlobals = (): PlaygroundGlobals => ({
   theme: "dark",
   locale: navigator.language || "en-US",
+  timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   deviceType: "desktop",
   displayMode: "inline",
   userLocation: null,
@@ -191,6 +209,8 @@ const initialState = {
   followUpMessages: [] as FollowUpMessage[],
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
+  mcpAppsCspMode: "permissive" as CspMode,
+  selectedProtocol: null as AppProtocol,
   capabilities: getDefaultCapabilities("desktop"),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
@@ -210,6 +230,7 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
       widgetUrl: null,
       widgetState: null,
       isWidgetTool: false,
+      selectedProtocol: null, // Reset protocol on tool change, will be set by UIPlaygroundTab
     }),
 
   setFormFields: (formFields) => set({ formFields }),
@@ -296,6 +317,10 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
   setPlaygroundActive: (active) => set({ isPlaygroundActive: active }),
 
   setCspMode: (mode) => set({ cspMode: mode }),
+
+  setMcpAppsCspMode: (mode) => set({ mcpAppsCspMode: mode }),
+
+  setSelectedProtocol: (protocol) => set({ selectedProtocol: protocol }),
 
   setCapabilities: (newCapabilities) =>
     set((state) => ({

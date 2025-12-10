@@ -40,6 +40,8 @@ interface SandboxedIframeProps {
   sandbox?: string;
   /** CSP metadata from resource _meta.ui.csp (SEP-1865) */
   csp?: UIResourceCSP;
+  /** Skip CSP injection entirely (for permissive/testing mode) */
+  permissive?: boolean;
   /** Callback when sandbox proxy is ready */
   onProxyReady?: () => void;
   /** Callback for messages from guest UI (excluding sandbox-internal messages) */
@@ -68,6 +70,7 @@ export const SandboxedIframe = forwardRef<
     html,
     sandbox = "allow-scripts allow-same-origin allow-forms allow-popups",
     csp,
+    permissive,
     onProxyReady,
     onMessage,
     className,
@@ -126,6 +129,12 @@ export const SandboxedIframe = forwardRef<
       }
       if (event.source !== outerRef.current?.contentWindow) return;
 
+      // CSP violation messages (not JSON-RPC) - forward directly
+      if (event.data?.type === "mcp-apps:csp-violation") {
+        onMessage(event);
+        return;
+      }
+
       const { jsonrpc, method } =
         (event.data as { jsonrpc?: string; method?: string }) || {};
       if (jsonrpc !== "2.0") return;
@@ -158,11 +167,11 @@ export const SandboxedIframe = forwardRef<
       {
         jsonrpc: "2.0",
         method: "ui/notifications/sandbox-resource-ready",
-        params: { html, sandbox, csp },
+        params: { html, sandbox, csp, permissive },
       },
       sandboxProxyOrigin,
     );
-  }, [proxyReady, html, sandbox, csp, sandboxProxyOrigin]);
+  }, [proxyReady, html, sandbox, csp, permissive, sandboxProxyOrigin]);
 
   return (
     <iframe

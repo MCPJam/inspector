@@ -11,6 +11,11 @@ import "../../types/hono";
 
 const apps = new Hono();
 
+/**
+ * CSP mode types - matches client-side CspMode type
+ */
+type CspMode = "permissive" | "widget-declared";
+
 // Widget data store - SAME PATTERN as openai.ts
 interface WidgetData {
   serverId: string;
@@ -21,6 +26,7 @@ interface WidgetData {
   toolName: string;
   theme?: "light" | "dark";
   protocol: "mcp-apps";
+  cspMode: CspMode; // CSP enforcement mode
   timestamp: number;
 }
 
@@ -53,6 +59,7 @@ apps.post("/widget/store", async (c) => {
       toolName,
       theme,
       protocol,
+      cspMode,
     } = body;
 
     if (!serverId || !resourceUri || !toolId || !toolName) {
@@ -68,6 +75,7 @@ apps.post("/widget/store", async (c) => {
       toolName,
       theme: theme ?? "dark",
       protocol: protocol ?? "mcp-apps",
+      cspMode: cspMode ?? "permissive", // Default to permissive mode
       timestamp: Date.now(),
     });
 
@@ -106,7 +114,13 @@ apps.get("/widget-content/:toolId", async (c) => {
       return c.json({ error: "Widget data not found or expired" }, 404);
     }
 
-    const { serverId, resourceUri } = widgetData;
+    // Read CSP mode from query param (allows override for testing)
+    const cspModeParam = c.req.query("csp_mode") as CspMode | undefined;
+
+    const { serverId, resourceUri, cspMode: storedCspMode } = widgetData;
+
+    // Use query param override if provided, otherwise use stored mode
+    const effectiveCspMode = cspModeParam ?? storedCspMode ?? "permissive";
     const mcpClientManager = c.mcpClientManager;
 
     // REUSE existing mcpClientManager.readResource (same as resources.ts)
@@ -137,23 +151,27 @@ apps.get("/widget-content/:toolId", async (c) => {
     const prefersBorder = uiMeta?.prefersBorder;
 
     // Log CSP configuration for security review (SEP-1865)
-    if (csp) {
-      console.log("[MCP Apps] CSP configuration for %s:", resourceUri, {
-        connectDomains: csp.connectDomains || [],
-        resourceDomains: csp.resourceDomains || [],
-      });
-    } else {
-      console.log(
-        "[MCP Apps] No CSP declared for %s - using restrictive defaults",
-        resourceUri,
-      );
-    }
+    console.log("[MCP Apps] CSP configuration for %s:", resourceUri, {
+      effectiveCspMode,
+      widgetDeclaredCsp: csp
+        ? {
+            connectDomains: csp.connectDomains || [],
+            resourceDomains: csp.resourceDomains || [],
+          }
+        : null,
+    });
+
+    // When in permissive mode, skip CSP entirely (for testing/debugging)
+    // When in widget-declared mode, use the widget's CSP metadata (or restrictive defaults)
+    const isPermissive = effectiveCspMode === "permissive";
 
     // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
       html,
-      csp,
+      csp: isPermissive ? undefined : csp,
+      permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
+      cspMode: effectiveCspMode,
       prefersBorder,
     });
   } catch (error) {
