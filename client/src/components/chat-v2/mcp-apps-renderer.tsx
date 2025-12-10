@@ -611,7 +611,9 @@ export function MCPAppsRenderer({
             }
             break;
 
+          case "ui/notifications/size-changed": // SEP-1865 spec
           case "ui/notifications/size-change": {
+            // Support both for backwards compatibility
             const sizeParams = params as { height?: number };
             if (typeof sizeParams.height === "number") {
               setContentHeight(Math.min(sizeParams.height, maxHeight));
