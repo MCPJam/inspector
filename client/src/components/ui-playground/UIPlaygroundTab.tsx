@@ -89,6 +89,14 @@ export function UIPlaygroundTab({
     [updateGlobal],
   );
 
+  // Timezone change handler (SEP-1865)
+  const handleTimeZoneChange = useCallback(
+    (timeZone: string) => {
+      updateGlobal("timeZone", timeZone);
+    },
+    [updateGlobal],
+  );
+
   // Log when App Builder tab is viewed
   useEffect(() => {
     posthog.capture("app_builder_tab_viewed", {
@@ -330,6 +338,8 @@ export function UIPlaygroundTab({
             onDisplayModeChange={setDisplayMode}
             locale={globals.locale}
             onLocaleChange={handleLocaleChange}
+            timeZone={globals.timeZone}
+            onTimeZoneChange={handleTimeZoneChange}
           />
         </ResizablePanel>
       </ResizablePanelGroup>
