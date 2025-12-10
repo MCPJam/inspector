@@ -312,20 +312,63 @@ Serves the sandbox proxy HTML that creates the double-iframe architecture.
 
 ### Content Security Policy
 
-The sandbox proxy uses a permissive CSP to allow widget content:
+As of PR #1038, MCP Apps supports two CSP enforcement modes:
+
+**Permissive Mode** (default) - Allows all HTTPS resources for development and testing:
+
+```html
+<meta
+  http-equiv="Content-Security-Policy"
+  content="
+  default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem: about:;
+  script-src * 'unsafe-inline' 'unsafe-eval' data: blob:;
+  style-src * 'unsafe-inline' data: blob:;
+  img-src * data: blob: https: http:;
+  media-src * data: blob: https: http:;
+  connect-src * data: blob: https: http: ws: wss: about:;
+  ...
+"
+/>
+```
+
+**Widget-Declared Mode** - Enforces CSP based on widget metadata (SEP-1865):
 
 ```html
 <meta
   http-equiv="Content-Security-Policy"
   content="
   default-src 'self';
-  script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com ...;
-  style-src * blob: data: 'unsafe-inline';
-  connect-src *;
+  script-src 'self' 'unsafe-inline';
+  style-src 'unsafe-inline' https://example.com;
+  img-src data: https://example.com;
+  media-src data: https://example.com;
+  connect-src https://api.example.com;
   ...
 "
 />
 ```
+
+The CSP mode is controlled via the playground toolbar (shield icon) and passed to the backend when fetching widget content. CSP violations are captured and reported to the host for debugging.
+
+**CSP Violation Reporting:**
+
+When a widget violates CSP rules, the sandbox proxy captures the `securitypolicyviolation` event and forwards it to the host:
+
+```javascript
+document.addEventListener('securitypolicyviolation', function(e) {
+  window.parent.postMessage({
+    type: 'mcp-apps:csp-violation',
+    directive: e.violatedDirective,
+    blockedUri: e.blockedURI,
+    sourceFile: e.sourceFile,
+    lineNumber: e.lineNumber,
+    effectiveDirective: e.effectiveDirective,
+    timestamp: Date.now()
+  }, '*');
+});
+```
+
+Violations are displayed in the CSP debug panel with suggested fixes for the widget's metadata.
 
 ### Iframe sandbox attributes
 
@@ -338,7 +381,7 @@ The sandbox proxy uses a permissive CSP to allow widget content:
 - Double-iframe provides origin isolation
 - `allow-same-origin` required for localStorage access
 - Widgets should be treated as semi-trusted code
-- CSP headers restrict network access
+- CSP enforcement helps restrict network access in production
 
 ## Related files
 
