@@ -332,6 +332,20 @@ export function PlaygroundMain({
     (msg) => msg.role === "user" || msg.role === "assistant",
   );
 
+  // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        if (!isThreadEmpty) {
+          setShowClearConfirm(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isThreadEmpty]);
+
   // Handle deterministic execution injection
   useEffect(() => {
     if (!pendingExecution) return;
@@ -961,7 +975,12 @@ export function PlaygroundMain({
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Clear chat</TooltipContent>
+              <TooltipContent>
+                <p>Clear chat</p>
+                <p className="text-xs text-muted-foreground">
+                  {navigator.platform.includes("Mac") ? "⌘⇧K" : "Ctrl+Shift+K"}
+                </p>
+              </TooltipContent>
             </Tooltip>
           </div>
         )}
