@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 
 // Import routes
 import mcpRoutes from "./routes/mcp/index.js";
+import appsRoutes from "./routes/apps/index.js";
 import { MCPClientManager } from "@/sdk";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { CORS_ORIGINS } from "./config.js";
@@ -97,6 +98,7 @@ export function createHonoApp() {
   );
 
   // API Routes
+  app.route("/api/apps", appsRoutes);
   app.route("/api/mcp", mcpRoutes);
 
   // Health check

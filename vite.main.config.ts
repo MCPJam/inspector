@@ -10,7 +10,7 @@ function copySandboxProxy(): Plugin {
       dest: "sandbox-proxy.html",
     },
     {
-      src: "server/routes/mcp/chatgpt-sandbox-proxy.html",
+      src: "server/routes/apps/chatgpt-sandbox-proxy.html",
       dest: "chatgpt-sandbox-proxy.html",
     },
   ];
