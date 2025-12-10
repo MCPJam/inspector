@@ -505,7 +505,7 @@ graph LR
 
 #### API Implementation
 
-Located in `server/routes/mcp/chatgpt.ts:213-376`:
+The `window.openai` API bridge is implemented in `server/routes/apps/widget-runtime.ts` and bundled into `server/routes/apps/chatgpt.bundled.ts`. The runtime script reads configuration from a JSON element and bootstraps the API:
 
 **Core API Methods:**
 
