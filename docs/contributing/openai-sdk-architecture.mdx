@@ -2008,16 +2008,24 @@ Remember that messages flow through the triple-iframe chain:
 
 ## Related Files
 
+### Frontend Components
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
 - `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - Main renderer component with triple-iframe architecture
 - `client/src/components/ui/chatgpt-sandboxed-iframe.tsx` - Triple-iframe implementation with cross-origin isolation
 - `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
 - `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
-- `server/routes/mcp/chatgpt.ts` - Widget storage, serving, and OpenAI bridge injection
-- `server/routes/mcp/chatgpt-sandbox-proxy.html` - Middle iframe proxy for cross-origin message relay
-- `server/routes/mcp/index.ts` - Mounts ChatGPT routes at `/chatgpt`
 - `client/src/components/chat-v2/csp-debug-panel.tsx` - CSP debug panel UI
 - `client/src/components/ui-playground/PlaygroundMain.tsx` - UI Playground with CSP mode selector
+
+### Backend Routes & Runtime
+- `server/routes/apps/chatgpt.ts` - Widget storage, serving, and content injection (moved from `/mcp/openai` to `/apps/chatgpt` in PR #1044)
+- `server/routes/apps/widget-runtime.ts` - **TypeScript source for `window.openai` API bridge** (new in PR #1044)
+- `server/routes/apps/chatgpt.bundled.ts` - **Auto-generated bundled runtime script** (new in PR #1044, must be committed)
+- `server/routes/apps/chatgpt-sandbox-proxy.html` - Middle iframe proxy for cross-origin message relay
+- `server/routes/apps/index.ts` - Mounts apps routes at `/api/apps`
+- `scripts/bundle-openai-script.js` - **Bundling script for widget runtime** (new in PR #1044)
+
+### State Management & APIs
 - `client/src/stores/ui-playground-store.ts` - CSP mode state management
 - `client/src/stores/widget-debug-store.ts` - CSP violation tracking
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
