@@ -46,6 +46,7 @@ function logBox(content: string, title?: string) {
 
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
+import appsRoutes from "./routes/apps/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { SERVER_PORT, SERVER_HOSTNAME, CORS_ORIGINS } from "./config";
@@ -188,6 +189,7 @@ app.use(
 );
 
 // API Routes
+app.route("/api/apps", appsRoutes);
 app.route("/api/mcp", mcpRoutes);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.

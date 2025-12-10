@@ -64,7 +64,7 @@ export default defineConfig({
     const assets = [
       { src: "routes/mcp/sandbox-proxy.html", dest: "sandbox-proxy.html" },
       {
-        src: "routes/mcp/chatgpt-sandbox-proxy.html",
+        src: "routes/apps/chatgpt-sandbox-proxy.html",
         dest: "chatgpt-sandbox-proxy.html",
       },
     ];
