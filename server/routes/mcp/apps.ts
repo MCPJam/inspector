@@ -161,22 +161,16 @@ apps.get("/widget-content/:toolId", async (c) => {
         : null,
     });
 
-    // When in permissive mode, ignore widget-declared CSP and allow all HTTPS
+    // When in permissive mode, skip CSP entirely (for testing/debugging)
     // When in widget-declared mode, use the widget's CSP metadata (or restrictive defaults)
-    const effectiveCsp =
-      effectiveCspMode === "permissive"
-        ? {
-            // Permissive: allow all HTTPS sources
-            connectDomains: ["https:"],
-            resourceDomains: ["https:"],
-          }
-        : csp; // Widget-declared or restrictive defaults (handled by SandboxedIframe)
+    const isPermissive = effectiveCspMode === "permissive";
 
     // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     return c.json({
       html,
-      csp: effectiveCsp,
+      csp: isPermissive ? undefined : csp,
+      permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
       cspMode: effectiveCspMode,
       prefersBorder,
     });

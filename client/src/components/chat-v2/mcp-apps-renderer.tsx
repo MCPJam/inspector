@@ -86,6 +86,16 @@ export function MCPAppsRenderer({
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive ? playgroundCspMode : "permissive";
 
+  // Get locale and timeZone from playground store when active, fallback to browser defaults
+  const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
+  const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
+  const locale = isPlaygroundActive
+    ? playgroundLocale
+    : navigator.language || "en-US";
+  const timeZone = isPlaygroundActive
+    ? playgroundTimeZone
+    : Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
   const [displayMode, setDisplayMode] = useState<DisplayMode>("inline");
   const [contentHeight, setContentHeight] = useState<number>(400);
   const [maxHeight] = useState<number>(800);
@@ -95,6 +105,8 @@ export function MCPAppsRenderer({
   const [widgetCsp, setWidgetCsp] = useState<UIResourceCSP | undefined>(
     undefined,
   );
+  const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
+  const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
 
   const pendingRequests = useRef<
     Map<
@@ -106,10 +118,11 @@ export function MCPAppsRenderer({
     >
   >(new Map());
 
-  // Fetch widget HTML when tool output is available
+  // Fetch widget HTML when tool output is available or CSP mode changes
   useEffect(() => {
     if (toolState !== "output-available") return;
-    if (widgetHtml) return;
+    // Re-fetch if CSP mode changed (widget needs to reload with new CSP policy)
+    if (widgetHtml && loadedCspMode === cspMode) return;
 
     const fetchWidgetHtml = async () => {
       try {
@@ -148,9 +161,11 @@ export function MCPAppsRenderer({
           );
         }
 
-        const { html, csp } = await contentResponse.json();
+        const { html, csp, permissive } = await contentResponse.json();
         setWidgetHtml(html);
         setWidgetCsp(csp);
+        setWidgetPermissive(permissive ?? false);
+        setLoadedCspMode(cspMode);
       } catch (err) {
         setLoadError(
           err instanceof Error ? err.message : "Failed to prepare widget",
@@ -163,6 +178,7 @@ export function MCPAppsRenderer({
     toolState,
     toolCallId,
     widgetHtml,
+    loadedCspMode,
     serverId,
     resourceUri,
     toolInput,
@@ -178,6 +194,15 @@ export function MCPAppsRenderer({
   // Widget debug store
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+  const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
+  const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
+
+  // Clear CSP violations when CSP mode changes (stale data from previous mode)
+  useEffect(() => {
+    if (loadedCspMode !== null && loadedCspMode !== cspMode) {
+      clearCspViolations(toolCallId);
+    }
+  }, [cspMode, loadedCspMode, toolCallId, clearCspViolations]);
 
   // Initialize widget debug info
   useEffect(() => {
@@ -189,7 +214,8 @@ export function MCPAppsRenderer({
         theme: themeMode,
         displayMode,
         maxHeight,
-        locale: navigator.language,
+        locale,
+        timeZone,
       },
     });
   }, [
@@ -199,6 +225,8 @@ export function MCPAppsRenderer({
     themeMode,
     displayMode,
     maxHeight,
+    locale,
+    timeZone,
   ]);
 
   // Update globals in debug store when they change
@@ -207,8 +235,10 @@ export function MCPAppsRenderer({
       theme: themeMode,
       displayMode,
       maxHeight,
+      locale,
+      timeZone,
     });
-  }, [toolCallId, themeMode, displayMode, maxHeight, setWidgetGlobals]);
+  }, [toolCallId, themeMode, displayMode, maxHeight, locale, timeZone, setWidgetGlobals]);
 
   // JSON-RPC helpers
   const postMessage = useCallback(
@@ -252,6 +282,47 @@ export function MCPAppsRenderer({
   // Handle messages from guest UI (via SandboxedIframe)
   const handleMessage = useCallback(
     async (event: MessageEvent) => {
+      // Handle CSP violation messages (not JSON-RPC)
+      if (event.data?.type === "mcp-apps:csp-violation") {
+        const {
+          directive,
+          blockedUri,
+          sourceFile,
+          lineNumber,
+          columnNumber,
+          effectiveDirective,
+          timestamp,
+        } = event.data;
+
+        // Log incoming CSP violation
+        addUiLog({
+          widgetId: toolCallId,
+          serverId,
+          direction: "ui-to-host",
+          protocol: "mcp-apps",
+          method: "csp-violation",
+          message: event.data,
+        });
+
+        // Add violation to widget debug store for display in CSP panel
+        addCspViolation(toolCallId, {
+          directive,
+          effectiveDirective,
+          blockedUri,
+          sourceFile,
+          lineNumber,
+          columnNumber,
+          timestamp: timestamp || Date.now(),
+        });
+
+        // Also log to console for developers
+        console.warn(
+          `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
+          sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
+        );
+        return;
+      }
+
       const { jsonrpc, id, method, params, result, error } =
         event.data as JSONRPCMessage;
 
@@ -295,7 +366,8 @@ export function MCPAppsRenderer({
                 theme: themeMode,
                 displayMode,
                 viewport: { width: 400, height: contentHeight, maxHeight },
-                locale: navigator.language,
+                locale,
+                timeZone,
                 platform: "web",
               },
             });
@@ -426,6 +498,8 @@ export function MCPAppsRenderer({
       displayMode,
       contentHeight,
       maxHeight,
+      locale,
+      timeZone,
       onCallTool,
       onSendFollowUp,
       serverId,
@@ -436,31 +510,55 @@ export function MCPAppsRenderer({
       sendResponse,
       sendNotification,
       addUiLog,
+      addCspViolation,
     ],
   );
 
-  // Track previous theme to avoid sending redundant notifications on mount
-  // (theme is already included in McpUiInitializeResult.hostContext)
-  const prevThemeRef = useRef<string | null>(null);
+  // Track previous host context to send only changed fields (per SEP-1865)
+  const prevHostContextRef = useRef<{
+    theme: string;
+    displayMode: DisplayMode;
+    locale: string;
+    timeZone: string;
+    maxHeight: number;
+  } | null>(null);
 
-  // Send theme updates only when theme actually changes (not on initial mount)
+  // Send host-context-changed notifications when any context field changes
   useEffect(() => {
     if (!isReady) return;
 
-    // Skip initial mount - theme was already sent in initialize response
-    if (prevThemeRef.current === null) {
-      prevThemeRef.current = themeMode;
+    const currentContext = { theme: themeMode, displayMode, locale, timeZone, maxHeight };
+
+    // Skip initial mount - context was already sent in initialize response
+    if (prevHostContextRef.current === null) {
+      prevHostContextRef.current = currentContext;
       return;
     }
 
-    // Only send notification if theme actually changed
-    if (prevThemeRef.current !== themeMode) {
-      prevThemeRef.current = themeMode;
-      sendNotification("ui/notifications/host-context-changed", {
-        theme: themeMode,
-      });
+    // Build partial update with only changed fields (per SEP-1865 spec)
+    const changedFields: Record<string, unknown> = {};
+    if (prevHostContextRef.current.theme !== themeMode) {
+      changedFields.theme = themeMode;
     }
-  }, [themeMode, isReady, sendNotification]);
+    if (prevHostContextRef.current.displayMode !== displayMode) {
+      changedFields.displayMode = displayMode;
+    }
+    if (prevHostContextRef.current.locale !== locale) {
+      changedFields.locale = locale;
+    }
+    if (prevHostContextRef.current.timeZone !== timeZone) {
+      changedFields.timeZone = timeZone;
+    }
+    if (prevHostContextRef.current.maxHeight !== maxHeight) {
+      changedFields.viewport = { maxHeight };
+    }
+
+    // Only send notification if something changed
+    if (Object.keys(changedFields).length > 0) {
+      prevHostContextRef.current = currentContext;
+      sendNotification("ui/notifications/host-context-changed", changedFields);
+    }
+  }, [themeMode, displayMode, locale, timeZone, maxHeight, isReady, sendNotification]);
 
   // Loading states
   if (toolState !== "output-available") {
@@ -525,6 +623,7 @@ export function MCPAppsRenderer({
         html={widgetHtml}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
         csp={widgetCsp}
+        permissive={widgetPermissive}
         onMessage={handleMessage}
         title={`MCP App: ${toolName}`}
         className="w-full border border-border/40 rounded-md bg-background transition-[height] duration-200 ease-out overflow-auto"

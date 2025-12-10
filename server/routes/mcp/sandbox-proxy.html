@@ -5,7 +5,7 @@
     <!-- Permissive CSP so nested content is not constrained by host CSP -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src * data: blob: 'unsafe-inline'; media-src * blob: data:; font-src * blob: data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com http://localhost:* https://localhost:*; style-src * blob: data: 'unsafe-inline'; connect-src *; frame-src * blob: data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; base-uri 'self';"
+      content="default-src 'self'; img-src * data: blob: 'unsafe-inline'; media-src * blob: data:; font-src * blob: data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com http://localhost:* https://localhost:*; style-src * blob: data: 'unsafe-inline'; connect-src * data: blob: about:; frame-src * blob: data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; base-uri 'self';"
     />
     <title>MCP Apps Sandbox Proxy</title>
     <style>
@@ -77,6 +77,7 @@
             "style-src 'unsafe-inline'",
             "img-src data:",
             "font-src data:",
+            "media-src data:",
             "connect-src 'none'",
             "frame-src 'none'",
             "object-src 'none'",
@@ -110,6 +111,7 @@
           "style-src 'unsafe-inline' " + resourceSrc,
           "img-src " + resourceSrc,
           "font-src " + resourceSrc,
+          "media-src " + resourceSrc,
           "connect-src " + connectSrc,
           "frame-src 'none'",
           "object-src 'none'",
@@ -118,34 +120,62 @@
       }
 
       /**
-       * Inject CSP meta tag into HTML
+       * Build CSP violation listener script
+       * Forwards securitypolicyviolation events to the host via postMessage
+       * @returns {string} Script tag with violation listener
+       */
+      function buildViolationListenerScript() {
+        return `<script>
+document.addEventListener('securitypolicyviolation', function(e) {
+  var violation = {
+    type: 'mcp-apps:csp-violation',
+    directive: e.violatedDirective,
+    blockedUri: e.blockedURI,
+    sourceFile: e.sourceFile || null,
+    lineNumber: e.lineNumber || null,
+    columnNumber: e.columnNumber || null,
+    effectiveDirective: e.effectiveDirective,
+    originalPolicy: e.originalPolicy,
+    disposition: e.disposition,
+    timestamp: Date.now()
+  };
+  console.warn('[MCP Apps CSP Violation]', violation.directive, ':', violation.blockedUri);
+  window.parent.postMessage(violation, '*');
+});
+<\/script>`;
+      }
+
+      /**
+       * Inject CSP meta tag and violation listener into HTML
        * @param {string} html - Original HTML content
        * @param {string} cspValue - CSP policy string
-       * @returns {string} HTML with CSP meta tag injected
+       * @returns {string} HTML with CSP meta tag and violation listener injected
        */
       function injectCSP(html, cspValue) {
         const cspMeta =
           '<meta http-equiv="Content-Security-Policy" content="' +
           cspValue +
           '">';
+        const violationListener = buildViolationListenerScript();
+        const injection = cspMeta + violationListener;
 
         if (html.includes("<head>")) {
-          return html.replace("<head>", "<head>" + cspMeta);
+          return html.replace("<head>", "<head>" + injection);
         } else if (html.includes("<HEAD>")) {
-          return html.replace("<HEAD>", "<HEAD>" + cspMeta);
+          return html.replace("<HEAD>", "<HEAD>" + injection);
         } else if (html.includes("<html>")) {
-          return html.replace("<html>", "<html><head>" + cspMeta + "</head>");
+          return html.replace("<html>", "<html><head>" + injection + "</head>");
         } else if (html.includes("<HTML>")) {
-          return html.replace("<HTML>", "<HTML><head>" + cspMeta + "</head>");
+          return html.replace("<HTML>", "<HTML><head>" + injection + "</head>");
         } else if (html.includes("<!DOCTYPE") || html.includes("<!doctype")) {
           // Insert after doctype
           return html.replace(
             /(<!DOCTYPE[^>]*>|<!doctype[^>]*>)/i,
-            "$1<head>" + cspMeta + "</head>",
+            "$1<head>" + injection + "</head>",
           );
         } else {
-          // Prepend CSP meta tag
-          return cspMeta + html;
+          // Prepend CSP meta tag and listener
+          return injection + html;
         }
       }
 
@@ -168,17 +198,37 @@
             event.data.method === "ui/notifications/sandbox-resource-ready"
           ) {
             // Load HTML into inner iframe with CSP enforcement
-            const { html, sandbox, csp } = event.data.params || {};
+            const { html, sandbox, csp, permissive } = event.data.params || {};
 
             if (typeof sandbox === "string") {
               inner.setAttribute("sandbox", sandbox);
             }
 
             if (typeof html === "string") {
-              // Build CSP and inject into HTML (SEP-1865)
-              const cspValue = buildCSP(csp);
-              const processedHtml = injectCSP(html, cspValue);
-              inner.srcdoc = processedHtml;
+              if (permissive) {
+                // Permissive mode: inject maximally permissive CSP
+                // Must explicitly allow everything since srcdoc inherits parent CSP
+                const permissiveCsp = [
+                  "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem: about:",
+                  "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:",
+                  "style-src * 'unsafe-inline' data: blob:",
+                  "img-src * data: blob: https: http:",
+                  "media-src * data: blob: https: http:",
+                  "font-src * data: blob: https: http:",
+                  "connect-src * data: blob: https: http: ws: wss: about:",
+                  "frame-src * data: blob: https: http: about:",
+                  "object-src * data: blob:",
+                  "base-uri *",
+                  "form-action *",
+                ].join("; ");
+                const processedHtml = injectCSP(html, permissiveCsp);
+                inner.srcdoc = processedHtml;
+              } else {
+                // Build CSP and inject into HTML (SEP-1865)
+                const cspValue = buildCSP(csp);
+                const processedHtml = injectCSP(html, cspValue);
+                inner.srcdoc = processedHtml;
+              }
             }
           } else {
             // Forward other messages to inner iframe (guest UI)
