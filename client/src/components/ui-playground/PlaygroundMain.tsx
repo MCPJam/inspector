@@ -444,8 +444,12 @@ export function PlaygroundMain({
   const errorMessage = formatErrorMessage(error);
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  // Compact mode for smaller devices
-  const isCompact = deviceType === "mobile" || deviceType === "tablet";
+  // Compact mode for smaller devices or narrow custom viewports
+  const isCompact = useMemo(() => {
+    if (deviceType === "mobile" || deviceType === "tablet") return true;
+    if (deviceType === "custom" && customViewport.width < 500) return true;
+    return false;
+  }, [deviceType, customViewport.width]);
 
   // Shared chat input props
   const sharedChatInputProps = {
