@@ -91,13 +91,14 @@ export async function callTool(
 }
 
 export async function respondToElicitationApi(
+  executionId: string,
   requestId: string,
   response: ElicitResult,
 ): Promise<ToolExecutionResponse> {
   const res = await fetch("/api/mcp/tools/respond", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ requestId, response }),
+    body: JSON.stringify({ executionId, requestId, response }),
   });
   let body: any = null;
   try {
