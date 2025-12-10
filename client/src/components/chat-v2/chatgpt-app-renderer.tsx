@@ -285,6 +285,7 @@ function useWidgetFetch(
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
   const [prevCspMode, setPrevCspMode] = useState(cspMode);
+  const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
 
   // Reset widget URL when CSP mode changes to trigger reload
   useEffect(() => {
@@ -371,6 +372,8 @@ function useWidgetFetch(
             setIsStoringWidget(false);
             return;
           }
+
+          setPrefersBorder(data.prefersBorder ?? true);
         }
 
         // Set the widget URL with CSP mode query param
@@ -411,7 +414,7 @@ function useWidgetFetch(
     onCspConfigReceived,
   ]);
 
-  return { widgetUrl, widgetClosed, isStoringWidget, storeError, setWidgetUrl };
+  return { widgetUrl, widgetClosed, isStoringWidget, storeError, setWidgetUrl, prefersBorder };
 }
 
 // ============================================================================
@@ -546,7 +549,7 @@ export function ChatGPTAppRenderer({
     displayMode === "pip" &&
     (isControlled || pipWidgetId === resolvedToolCallId);
   const allowAutoResize = !isFullscreen && !isPip;
-  const { widgetUrl, widgetClosed, isStoringWidget, storeError } =
+  const { widgetUrl, widgetClosed, isStoringWidget, storeError, prefersBorder } =
     useWidgetFetch(
       toolState,
       resolvedToolCallId,
@@ -1239,8 +1242,10 @@ export function ChatGPTAppRenderer({
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className={`w-full border border-border/40 bg-background overflow-hidden ${
-          isFullscreen ? "flex-1 border-0 rounded-none" : "rounded-md"
+        className={`w-full bg-background overflow-hidden ${
+          isFullscreen
+            ? "flex-1 border-0 rounded-none"
+            : `rounded-md ${prefersBorder ? 'border border-border/40' : ''}`
         }`}
         style={{
           height: iframeHeight,
