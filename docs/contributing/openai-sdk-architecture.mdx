@@ -402,13 +402,42 @@ The `/widget-content/:toolId` endpoint performs the following:
 1. Retrieve widget data from store (includes host-controlled globals)
 2. Read HTML from MCP server via `readResource(uri)`
 3. Parse view mode and params from query string (`view_mode`, `view_params`)
-4. Inject `window.openai` API script with:
+4. Inject `window.openai` API runtime script with:
    - Host-controlled locale (BCP 47 format, e.g., 'en-US')
    - Host-controlled deviceType ('mobile', 'tablet', 'desktop')
    - Host-controlled userLocation (coarse IP-based geolocation)
    - Host-controlled maxHeight constraint (ChatGPT uses ~500px for inline)
 5. Add security headers (CSP, X-Frame-Options)
 6. Set cache control headers (no-cache for fresh content)
+
+**Runtime Script Architecture (PR #1044):**
+
+As of PR #1044, the `window.openai` API bridge is implemented as a separate TypeScript file that gets bundled and injected into widget HTML. This provides better type safety and maintainability compared to the previous inline script approach.
+
+The runtime script is located in `server/routes/apps/widget-runtime.ts` and is bundled into `server/routes/apps/chatgpt.bundled.ts` using esbuild. When making changes to the widget runtime:
+
+1. Edit `server/routes/apps/widget-runtime.ts`
+2. Run `npm run bundle:chatgpt` to regenerate the bundled script
+3. Commit both files to source control
+
+The bundled script is then injected into widget HTML via a JSON configuration element:
+
+```html
+<script type="application/json" id="openai-runtime-config">
+{
+  "toolId": "...",
+  "toolName": "...",
+  "toolInput": {...},
+  "toolOutput": {...},
+  "theme": "dark",
+  "locale": "en-US",
+  ...
+}
+</script>
+<script>/* Bundled runtime script */</script>
+```
+
+This architecture separates configuration data from runtime code, making it easier to maintain type safety and test the widget bridge independently.
 
 **Host-Controlled Globals (New in PR #1001):**
 
@@ -476,7 +505,7 @@ graph LR
 
 #### API Implementation
 
-Located in `server/routes/mcp/chatgpt.ts:213-376`:
+The `window.openai` API bridge is implemented in `server/routes/apps/widget-runtime.ts` and bundled into `server/routes/apps/chatgpt.bundled.ts`. The runtime script reads configuration from a JSON element and bootstraps the API:
 
 **Core API Methods:**
 
@@ -1793,9 +1822,11 @@ server.connect(transport);
    - Confirm MCP server returns valid HTML for `ui://` resource
 
 2. **`window.openai` is undefined**
-   - Verify script injection in Stage 2 content endpoint
-   - Check browser console for CSP violations
+   - Verify bundled runtime script is injected in widget HTML
+   - Check that `openai-runtime-config` JSON element exists
+   - Check browser console for CSP violations or script errors
    - Ensure `<head>` tag exists in HTML for injection
+   - Verify `chatgpt.bundled.ts` is up to date (run `npm run bundle:chatgpt`)
 
 3. **Widget data not found (404)**
    - Check that widget data was successfully stored via POST `/api/mcp/openai/widget/store`
@@ -1876,26 +1907,39 @@ document.addEventListener("securitypolicyviolation", (e) => {
 
 **Adding New OpenAI API Methods:**
 
-1. Update server-side injection script (`server/routes/mcp/chatgpt.ts:213-376`)
-2. Add postMessage handler in parent (`client/src/components/chat-v2/chatgpt-app-renderer.tsx`)
-3. Update TypeScript types if needed
+1. Update the widget runtime script (`server/routes/apps/widget-runtime.ts`)
+2. Run `npm run bundle:chatgpt` to regenerate the bundled script
+3. Add postMessage handler in parent (`client/src/components/chat-v2/chatgpt-app-renderer.tsx`)
+4. Update TypeScript types if needed
+5. Commit both the source and bundled files
 
 **Example: Adding a custom method:**
 
 ```typescript
-// 1. Server-side API injection (server/routes/mcp/chatgpt.ts)
-openaiAPI.customMethod = async function(options) {
-  window.parent.postMessage({
-    type: 'openai:customMethod',
-    data: options
-  }, '*');
+// 1. Widget runtime (server/routes/apps/widget-runtime.ts)
+const openaiAPI: OpenAIAPI = {
+  // ... existing methods ...
+  
+  customMethod(options: any) {
+    window.parent.postMessage({
+      type: 'openai:customMethod',
+      data: options
+    }, '*');
+  }
 };
 
-// 2. Parent-side handler (client/src/components/chat-v2/chatgpt-app-renderer.tsx)
+// 2. Run bundling command
+// $ npm run bundle:chatgpt
+
+// 3. Parent-side handler (client/src/components/chat-v2/chatgpt-app-renderer.tsx)
 case \"openai:customMethod\":
   handleCustomMethod(event.data.data);
   break;
 ```
+
+<Warning>
+  Always run `npm run bundle:chatgpt` after editing `widget-runtime.ts`. The bundled file must be committed to source control for production builds.
+</Warning>
 
 **Note on Message Flow:**
 
@@ -1966,16 +2010,24 @@ Remember that messages flow through the triple-iframe chain:
 
 ## Related Files
 
+### Frontend Components
 - `client/src/components/tools/ResultsPanel.tsx` - Detects OpenAI components
 - `client/src/components/chat-v2/chatgpt-app-renderer.tsx` - Main renderer component with triple-iframe architecture
 - `client/src/components/ui/chatgpt-sandboxed-iframe.tsx` - Triple-iframe implementation with cross-origin isolation
 - `client/src/components/chat-v2/thread.tsx` - Manages PiP state across all widgets in the thread
 - `client/src/components/ChatTabV2.tsx` - Chat integration with transform isolation for z-index stacking
-- `server/routes/mcp/chatgpt.ts` - Widget storage, serving, and OpenAI bridge injection
-- `server/routes/mcp/chatgpt-sandbox-proxy.html` - Middle iframe proxy for cross-origin message relay
-- `server/routes/mcp/index.ts` - Mounts ChatGPT routes at `/chatgpt`
 - `client/src/components/chat-v2/csp-debug-panel.tsx` - CSP debug panel UI
 - `client/src/components/ui-playground/PlaygroundMain.tsx` - UI Playground with CSP mode selector
+
+### Backend Routes & Runtime
+- `server/routes/apps/chatgpt.ts` - Widget storage, serving, and content injection (moved from `/mcp/openai` to `/apps/chatgpt` in PR #1044)
+- `server/routes/apps/widget-runtime.ts` - **TypeScript source for `window.openai` API bridge** (new in PR #1044)
+- `server/routes/apps/chatgpt.bundled.ts` - **Auto-generated bundled runtime script** (new in PR #1044, must be committed)
+- `server/routes/apps/chatgpt-sandbox-proxy.html` - Middle iframe proxy for cross-origin message relay
+- `server/routes/apps/index.ts` - Mounts apps routes at `/api/apps`
+- `scripts/bundle-openai-script.js` - **Bundling script for widget runtime** (new in PR #1044)
+
+### State Management & APIs
 - `client/src/stores/ui-playground-store.ts` - CSP mode state management
 - `client/src/stores/widget-debug-store.ts` - CSP violation tracking
 - `client/src/lib/mcp-tools-api.ts` - Tool execution API
