@@ -66,19 +66,15 @@ type ExecutionContext = {
   toolName: string;
   execPromise: Promise<ListToolsResult>;
   queue: ElicitationPayload[];
-  waitingForElicitation?: boolean;
   waiter?: (payload: ElicitationPayload) => void;
 };
 
-const executionsById = new Map<string, ExecutionContext>();
-const executionsByServer = new Map<string, Set<string>>();
-const serversWithHandlers = new Set<string>();
+let activeExecution: ExecutionContext | null = null;
 
 const pendingResponses = new Map<
   string,
   {
     serverId: string;
-    executionId: string;
     resolve: (value: ElicitResult) => void;
     reject: (error: unknown) => void;
   }
@@ -99,7 +95,6 @@ function takeNextRequest(
     return Promise.resolve(context.queue.shift()!);
   }
   return new Promise((resolve) => {
-    context.waitingForElicitation = true;
     context.waiter = resolve;
   });
 }
@@ -111,114 +106,27 @@ function enqueueRequest(
   if (context.waiter) {
     const resolve = context.waiter;
     context.waiter = undefined;
-    context.waitingForElicitation = false;
     resolve(payload);
     return;
   }
   context.queue.push(payload);
 }
 
-function getServerExecutions(serverId: string): Set<string> {
-  let executions = executionsByServer.get(serverId);
-  if (!executions) {
-    executions = new Set<string>();
-    executionsByServer.set(serverId, executions);
-  }
-  return executions;
-}
-
-function getNextExecutionForServer(serverId: string): ExecutionContext | null {
-  const executions = executionsByServer.get(serverId);
-  if (!executions) return null;
-
-  // Prefer executions that are actively waiting for elicitation
-  for (const id of executions) {
-    const ctx = executionsById.get(id);
-    if (ctx?.waitingForElicitation) return ctx;
-  }
-
-  // Fallback to the first active execution
-  for (const id of executions) {
-    const ctx = executionsById.get(id);
-    if (ctx) return ctx;
-  }
-
-  return null;
-}
-
-function resetExecution(
-  context: ExecutionContext | null,
-  clear: () => void,
-) {
+function resetExecution(context: ExecutionContext | null, clear: () => void) {
   if (!context) return;
-
-  executionsById.delete(context.id);
-
-  const perServer = executionsByServer.get(context.serverId);
-  if (perServer) {
-    perServer.delete(context.id);
-    if (perServer.size === 0) {
-      executionsByServer.delete(context.serverId);
-      serversWithHandlers.delete(context.serverId);
-      clear();
-    }
+  clear();
+  if (activeExecution === context) {
+    activeExecution = null;
   }
-
   if (context.queue.length > 0) {
     context.queue.length = 0;
   }
   context.waiter = undefined;
-  context.waitingForElicitation = false;
-
   for (const [requestId, pending] of Array.from(pendingResponses.entries())) {
-    if (pending.executionId !== context.id) continue;
+    if (pending.serverId !== context.serverId) continue;
     pendingResponses.delete(requestId);
     pending.reject(new Error("Execution finished"));
   }
-}
-
-function ensureServerHandler(manager: any, serverId: string) {
-  if (serversWithHandlers.has(serverId)) return;
-
-  manager.setElicitationHandler(serverId, async (params: ElicitRequest["params"]) => {
-    const context = getNextExecutionForServer(serverId);
-    if (!context) {
-      throw new Error(`No active execution for server '${serverId}'.`);
-    }
-
-    const payload: ElicitationPayload = {
-      executionId: context.id,
-      requestId: makeRequestId(),
-      request: params,
-      issuedAt: new Date().toISOString(),
-      serverId,
-    };
-
-    enqueueRequest(context, payload);
-
-    return new Promise<ElicitResult>((resolve, reject) => {
-      pendingResponses.set(payload.requestId, {
-        serverId,
-        executionId: context.id,
-        resolve: (value) => {
-          pendingResponses.delete(payload.requestId);
-          resolve(value);
-        },
-        reject: (err) => {
-          pendingResponses.delete(payload.requestId);
-          reject(err);
-        },
-      });
-    });
-  });
-
-  serversWithHandlers.add(serverId);
-}
-
-function registerExecution(context: ExecutionContext, manager: any) {
-  executionsById.set(context.id, context);
-  getServerExecutions(context.serverId).add(context.id);
-  ensureServerHandler(manager, context.serverId);
 }
 
 function serializeMcpError(error: unknown) {
@@ -302,6 +210,10 @@ tools.post("/list", async (c) => {
 });
 
 tools.post("/execute", async (c) => {
+  if (activeExecution) {
+    return c.json({ error: "Another execution is already in progress" }, 409);
+  }
+
   const {
     serverId,
     toolName,
@@ -335,7 +247,33 @@ tools.post("/execute", async (c) => {
     queue: [],
   };
 
-  registerExecution(context, manager);
+  activeExecution = context;
+
+  manager.setElicitationHandler(serverId, async (params) => {
+    const payload: ElicitationPayload = {
+      executionId,
+      requestId: makeRequestId(),
+      request: params,
+      issuedAt: new Date().toISOString(),
+      serverId,
+    };
+
+    enqueueRequest(context, payload);
+
+    return new Promise<ElicitResult>((resolve, reject) => {
+      pendingResponses.set(payload.requestId, {
+        serverId,
+        resolve: (value) => {
+          pendingResponses.delete(payload.requestId);
+          resolve(value);
+        },
+        reject: (err) => {
+          pendingResponses.delete(payload.requestId);
+          reject(err);
+        },
+      });
+    });
+  });
 
   try {
     const next = await Promise.race([
@@ -368,6 +306,11 @@ tools.post("/execute", async (c) => {
 });
 
 tools.post("/respond", async (c) => {
+  const context = activeExecution;
+  if (!context) {
+    return c.json({ error: "No active execution" }, 404);
+  }
+
   const { requestId, response } = (await c.req.json()) as {
     requestId?: string;
     response?: ElicitResult;
@@ -380,12 +323,6 @@ tools.post("/respond", async (c) => {
   const pending = pendingResponses.get(requestId);
   if (!pending) {
     return c.json({ error: "No pending elicitation for requestId" }, 404);
-  }
-
-  const context = executionsById.get(pending.executionId);
-  if (!context) {
-    pendingResponses.delete(requestId);
-    return c.json({ error: "Execution is no longer active" }, 404);
   }
 
   pending.resolve(response as ElicitResult);
