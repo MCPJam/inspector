@@ -272,7 +272,8 @@ sequenceDiagram
     │   ├── POST /:id/disconnect - Disconnect from server
     │   ├── /tools
     │   │   ├── GET / - List tools
-    │   │   └── POST /:name/call - Call tool
+    │   │   ├── POST /execute - Execute tool (concurrent)
+    │   │   └── POST /respond - Respond to elicitation
     │   ├── /resources
     │   │   ├── GET / - List resources
     │   │   └── GET /:uri - Read resource
@@ -299,6 +300,19 @@ sequenceDiagram
     | `/openai` | `server/routes/mcp/chatgpt.ts` | - |
   </Tab>
 </Tabs>
+
+### Concurrent Tool Execution
+
+The tools API supports concurrent execution of multiple tools simultaneously. Each tool execution is tracked by a unique `executionId`, allowing multiple tools to run in parallel without blocking each other.
+
+**Architecture:**
+
+- `activeExecutions` Map stores execution contexts keyed by `executionId`
+- Each execution maintains its own queue for elicitation requests
+- The `/respond` endpoint requires both `executionId` and `requestId` to route responses correctly
+- Execution contexts are automatically cleaned up when complete
+
+**Key Implementation:** `server/routes/mcp/tools.ts`
 
 ## Electron Integration
 
