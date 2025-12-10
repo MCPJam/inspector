@@ -589,26 +589,21 @@ function ToolPart({
               {/* Display mode dropdown */}
               {showDisplayModeControls && (
                 <DropdownMenu open={displayModeOpen} onOpenChange={setDisplayModeOpen}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={(e) => e.stopPropagation()}
-                          onMouseEnter={() => setDisplayModeOpen(true)}
-                          className="p-1 rounded transition-colors cursor-pointer text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                        >
-                          {(() => {
-                            const CurrentIcon =
-                              displayModeOptions.find((o) => o.mode === displayMode)
-                                ?.icon ?? LayoutDashboard;
-                            return <CurrentIcon className="h-3.5 w-3.5" />;
-                          })()}
-                        </button>
-                      </DropdownMenuTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent>Display Mode</TooltipContent>
-                  </Tooltip>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseEnter={() => setDisplayModeOpen(true)}
+                      className="p-1 rounded transition-colors cursor-pointer text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                    >
+                      {(() => {
+                        const CurrentIcon =
+                          displayModeOptions.find((o) => o.mode === displayMode)
+                            ?.icon ?? LayoutDashboard;
+                        return <CurrentIcon className="h-3.5 w-3.5" />;
+                      })()}
+                    </button>
+                  </DropdownMenuTrigger>
                   <DropdownMenuContent
                     align="end"
                     onClick={(e) => e.stopPropagation()}
