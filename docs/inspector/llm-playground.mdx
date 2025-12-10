@@ -212,10 +212,15 @@ These settings are automatically passed to widgets via the `window.openai` API, 
 When viewing tool results with custom UI components, you can access debugging information using the icon buttons in the tool header:
 
 - **Data** (database icon) - View tool input, output, and error details
-- **Widget State** (box icon) - Inspect the current widget state and see when it was last updated
-- **Globals** (globe icon) - View global values passed to the widget (theme, display mode, locale, etc.)
+- **Widget State** (box icon) - Inspect the current widget state and see when it was last updated (ChatGPT Apps only)
+- **CSP** (shield icon) - View CSP violations and suggested fixes for both ChatGPT Apps and MCP Apps
 
 Click any icon to toggle the corresponding debug panel. Click again to close it.
+
+<Note>
+  The Widget State tab only appears for ChatGPT Apps (OpenAI SDK). MCP Apps
+  (SEP-1865) do not support persistent widget state.
+</Note>
 
 ### Content Security Policy (CSP)
 
