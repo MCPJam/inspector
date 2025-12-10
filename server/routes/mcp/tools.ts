@@ -207,7 +207,6 @@ tools.post("/list", async (c) => {
 });
 
 tools.post("/execute", async (c) => {
-
   const {
     serverId,
     toolName,
@@ -271,7 +270,10 @@ tools.post("/execute", async (c) => {
 
   try {
     const next = await Promise.race([
-      context.execPromise.then((result: ListToolsResult) => ({ kind: "done" as const, result })),
+      context.execPromise.then((result: ListToolsResult) => ({
+        kind: "done" as const,
+        result,
+      })),
       takeNextRequest(context).then((payload) => ({
         kind: "elicitation" as const,
         payload,
@@ -328,7 +330,10 @@ tools.post("/respond", async (c) => {
 
   try {
     const next = await Promise.race([
-      context.execPromise.then((result: ListToolsResult) => ({ kind: "done" as const, result })),
+      context.execPromise.then((result: ListToolsResult) => ({
+        kind: "done" as const,
+        result,
+      })),
       takeNextRequest(context).then((payload) => ({
         kind: "elicitation" as const,
         payload,
