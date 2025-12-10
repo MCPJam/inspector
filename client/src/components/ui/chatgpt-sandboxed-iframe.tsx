@@ -90,7 +90,7 @@ export const ChatGPTSandboxedIframe = forwardRef<
     const version = import.meta.env.PROD
       ? import.meta.env.VITE_BUILD_HASH || "v1"
       : Date.now();
-    const url = `${protocol}//${sandboxHost}${portSuffix}/api/mcp/openai/sandbox-proxy?v=${version}`;
+    const url = `${protocol}//${sandboxHost}${portSuffix}/api/apps/chatgpt/sandbox-proxy?v=${version}`;
     const origin = `${protocol}//${sandboxHost}${portSuffix}`;
 
     return [url, origin];

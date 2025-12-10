@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { API_RUNTIME_SCRIPT } from "./chatgpt.bundled";
 import "../../types/hono";
 
 const chatgpt = new Hono();
@@ -123,7 +124,7 @@ function extractBaseUrl(html: string): string {
   return "";
 }
 
-interface ApiScriptOptions {
+interface RuntimeConfig {
   toolId: string;
   toolName: string;
   toolInput: Record<string, any>;
@@ -139,459 +140,6 @@ interface ApiScriptOptions {
   viewMode?: string;
   viewParams?: Record<string, any>;
   useMapPendingCalls?: boolean;
-}
-
-/**
- * Generate the OpenAI Apps SDK bridge script - SINGLE SOURCE OF TRUTH
- *
- * This implements the official OpenAI Apps SDK window.openai API with the following:
- *
- * === OFFICIAL SDK PROPERTIES (per https://developers.openai.com/apps-sdk/) ===
- * - toolOutput: object - Initial structuredContent from tool result
- * - toolInput: object - Original tool input arguments
- * - toolResponseMetadata: object - Response metadata from _meta (widget-only)
- * - widgetState: unknown - Current widget-scoped state snapshot
- * - displayMode: 'inline' | 'pip' | 'fullscreen' - Current display mode
- * - maxHeight: number | null - Maximum allowed height
- * - safeArea: { insets: { top, right, bottom, left } } - Layout safe area
- * - theme: 'light' | 'dark' - Current theme
- * - locale: string - BCP 47 locale (e.g., 'en-US')
- * - userAgent: { device: { type }, capabilities: { hover, touch } }
- *
- * === OFFICIAL SDK METHODS ===
- * - setWidgetState(state) - Persist widget state (sync call, async persistence)
- * - callTool(name, args) - Invoke MCP tool, returns Promise
- * - sendFollowUpMessage({ prompt }) - Insert message into chat
- * - requestDisplayMode({ mode }) - Request display mode change
- * - requestClose() - Programmatically close widget
- * - openExternal({ href }) - Open external URL in new tab
- *
- * === INSPECTOR-SPECIFIC EXTENSIONS (not in official SDK) ===
- * - requestModal({ title, params, anchor }) - Open widget in modal dialog
- * - notifyIntrinsicHeight(height) - Explicitly report content height
- * - sendFollowupTurn(message) - Alias for sendFollowUpMessage (deprecated)
- * - view: { mode, params } - Modal view parameters (Inspector extension)
- * - window.webplus - Alias for window.openai (Inspector compatibility)
- */
-function generateApiScript(opts: ApiScriptOptions): string {
-  const {
-    toolId,
-    toolName,
-    toolInput,
-    toolOutput,
-    toolResponseMetadata,
-    theme,
-    locale,
-    deviceType,
-    userLocation,
-    maxHeight,
-    capabilities,
-    safeAreaInsets,
-    viewMode = "inline",
-    viewParams = {},
-    useMapPendingCalls = true,
-  } = opts;
-
-  const widgetStateKey = `openai-widget-state:${toolName}:${toolId}`;
-
-  // Note: widgetAccessibleTools check removed for ChatGPT parity - ChatGPT doesn't enforce client-side
-  const callToolImpl = useMapPendingCalls
-    ? `callTool(toolName, args = {}) {
-        const callId = ++this._callId;
-        return new Promise((resolve, reject) => {
-          this._pendingCalls.set(callId, { resolve, reject });
-          window.parent.postMessage({ type: 'openai:callTool', toolName, args, callId, toolId: ${JSON.stringify(toolId)},
-            // Client-supplied _meta per SDK spec
-            _meta: Object.assign({
-              'openai/locale': hostLocale,
-              'openai/userAgent': navigator.userAgent,
-              'openai/subject': getSubjectId()
-            }, hostUserLocation ? { 'openai/userLocation': hostUserLocation } : {})
-          }, '*');
-          setTimeout(() => { if (this._pendingCalls.has(callId)) { this._pendingCalls.delete(callId); reject(new Error('Tool call timeout')); } }, 30000);
-        });
-      },`
-    : `async callTool(toolName, args = {}) {
-        const callId = ++this._callId;
-        return new Promise((resolve, reject) => {
-          const handler = (event) => {
-            if (event.data.type === 'openai:callTool:response' && event.data.callId === callId) {
-              window.removeEventListener('message', handler);
-              event.data.error ? reject(new Error(event.data.error)) : resolve(event.data.result);
-            }
-          };
-          window.addEventListener('message', handler);
-          window.parent.postMessage({ type: 'openai:callTool', callId, toolName, args, toolId: ${JSON.stringify(toolId)},
-            // Client-supplied _meta per SDK spec
-            _meta: Object.assign({
-              'openai/locale': hostLocale,
-              'openai/userAgent': navigator.userAgent,
-              'openai/subject': getSubjectId()
-            }, hostUserLocation ? { 'openai/userLocation': hostUserLocation } : {})
-          }, '*');
-          setTimeout(() => { window.removeEventListener('message', handler); reject(new Error('Tool call timeout')); }, 30000);
-        });
-      },`;
-
-  const callToolResponseHandler = useMapPendingCalls
-    ? `case 'openai:callTool:response': {
-          const pending = window.openai._pendingCalls.get(callId);
-          if (pending) { window.openai._pendingCalls.delete(callId); error ? pending.reject(new Error(error)) : pending.resolve(result); }
-          break;
-        }`
-    : "";
-
-  // Host-controlled capabilities (with fallback to widget detection if not provided)
-  const hostCapabilities = capabilities ?? null;
-  const hostSafeAreaInsets = safeAreaInsets ?? {
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
-  };
-
-  return `<script>
-(function() {
-  'use strict';
-  // Host-controlled values per SDK spec (passed from Inspector, not computed in widget)
-  const hostLocale = ${JSON.stringify(locale)};
-  const hostDeviceType = ${JSON.stringify(deviceType)};
-  const hostUserLocation = ${JSON.stringify(userLocation ?? null)}; // { country, region, city } or null
-  const hostCapabilities = ${JSON.stringify(hostCapabilities)}; // Host-controlled capabilities or null
-  const hostSafeAreaInsets = ${JSON.stringify(hostSafeAreaInsets)}; // Host-controlled safe area insets
-
-  // Set document lang attribute per SDK spec: "Host mirrors locale to document.documentElement.lang"
-  try { document.documentElement.lang = hostLocale; } catch (e) {}
-
-  // Capability detection (fallback if host doesn't provide capabilities)
-  const detectedTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-  const detectedHover = window.matchMedia('(hover: hover)').matches;
-  const hasTouch = hostCapabilities ? hostCapabilities.touch : detectedTouch;
-  const hasHover = hostCapabilities ? hostCapabilities.hover : detectedHover;
-
-  const getSubjectId = () => {
-    let subjectId = sessionStorage.getItem('openai_subject_id');
-    if (!subjectId) { subjectId = 'anon_' + Math.random().toString(36).substring(2, 15); sessionStorage.setItem('openai_subject_id', subjectId); }
-    return subjectId;
-  };
-
-  // Auto-resize support: mirror the Apps SDK measurement logic but emit openai:resize
-  const postHeight = (() => {
-    let lastHeight = 0;
-    return (height) => {
-      const numericHeight = Number(height);
-      if (!Number.isFinite(numericHeight) || numericHeight <= 0) return;
-      const roundedHeight = Math.round(numericHeight);
-      if (roundedHeight === lastHeight) return;
-      lastHeight = roundedHeight;
-      window.parent.postMessage({ type: 'openai:resize', height: roundedHeight }, '*');
-    };
-  })();
-
-  const measureAndNotifyHeight = () => {
-    try {
-      let contentHeight = 0;
-
-      if (document.body) {
-        const children = document.body.children;
-        for (let i = 0; i < children.length; i++) {
-          const child = children[i];
-          if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE') continue;
-          const rect = child.getBoundingClientRect();
-          const bottom = rect.top + rect.height + window.scrollY;
-          contentHeight = Math.max(contentHeight, bottom);
-        }
-
-        const bodyStyle = window.getComputedStyle(document.body);
-        contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
-        contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
-      }
-
-      // Fallback to scroll-based measurement when no children found
-      if (contentHeight <= 0) {
-        const docEl = document.documentElement;
-        contentHeight = Math.max(
-          docEl ? docEl.scrollHeight : 0,
-          document.body ? document.body.scrollHeight : 0,
-        );
-      }
-
-      postHeight(Math.ceil(contentHeight));
-    } catch (err) {
-      console.error('[OpenAI Widget] Failed to measure height:', err);
-    }
-  };
-
-  const setupAutoResize = () => {
-    let scheduled = false;
-
-    const scheduleMeasure = () => {
-      if (scheduled) return;
-      scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        measureAndNotifyHeight();
-      });
-    };
-
-    scheduleMeasure();
-
-    if (typeof ResizeObserver !== 'undefined') {
-      const resizeObserver = new ResizeObserver(scheduleMeasure);
-      resizeObserver.observe(document.documentElement);
-      if (document.body) resizeObserver.observe(document.body);
-    } else {
-      window.addEventListener('resize', scheduleMeasure);
-    }
-
-    window.addEventListener('load', () => {
-      requestAnimationFrame(measureAndNotifyHeight);
-    });
-  };
-
-  // Host-backed navigation: track iframe history and notify parent
-  // This allows the host to mirror navigation state in UI (e.g., fullscreen header back/forward buttons)
-  const navigationState = { currentIndex: 0, historyLength: 1 };
-  let lastHistoryLength = history.length;
-
-  const withNavigationIndex = (state, index) => {
-    return state && typeof state === 'object' ? { ...state, __navIndex: index } : { __navIndex: index };
-  };
-  
-  const notifyNavigationState = () => {
-    const canGoBack = navigationState.currentIndex > 0;
-    const canGoForward = navigationState.currentIndex < navigationState.historyLength - 1;
-    window.parent.postMessage({
-      type: 'openai:navigationStateChanged',
-      toolId: ${JSON.stringify(toolId)},
-      canGoBack,
-      canGoForward,
-      historyLength: navigationState.historyLength,
-      currentIndex: navigationState.currentIndex
-    }, '*');
-  };
-
-  // Wrap history.pushState to track navigation
-  const originalPushState = history.pushState.bind(history);
-  history.pushState = function(state, title, url) {
-    const nextIndex = navigationState.currentIndex + 1;
-    const stateWithIndex = withNavigationIndex(state, nextIndex);
-    originalPushState(stateWithIndex, title, url);
-    // New navigation: increment index and truncate forward history
-    navigationState.currentIndex = nextIndex;
-    navigationState.historyLength = history.length;
-    lastHistoryLength = history.length;
-    notifyNavigationState();
-  };
-
-  // Wrap history.replaceState (doesn't change index/length, but still notify for consistency)
-  const originalReplaceState = history.replaceState.bind(history);
-  history.replaceState = function(state, title, url) {
-    const stateWithIndex = withNavigationIndex(state, navigationState.currentIndex);
-    originalReplaceState(stateWithIndex, title, url);
-    navigationState.historyLength = history.length;
-    lastHistoryLength = history.length;
-    notifyNavigationState();
-  };
-
-  // Track popstate (browser/programmatic back/forward within iframe)
-  // Use explicit __navIndex stored in history.state to restore position
-  window.addEventListener('popstate', (event) => {
-    const stateIndex = event.state?.__navIndex ?? navigationState.currentIndex;
-    navigationState.currentIndex = stateIndex;
-    navigationState.historyLength = history.length;
-    lastHistoryLength = history.length;
-    notifyNavigationState();
-  });
-
-  const openaiAPI = {
-    toolInput: ${serializeForInlineScript(toolInput)},
-    toolOutput: ${serializeForInlineScript(toolOutput)},
-    toolResponseMetadata: ${serializeForInlineScript(toolResponseMetadata)},
-    displayMode: 'inline',
-    theme: ${JSON.stringify(theme)},
-    locale: hostLocale, // Host-controlled per SDK spec
-    maxHeight: ${maxHeight != null ? maxHeight : "null"},
-    safeArea: { insets: hostSafeAreaInsets },
-    userAgent: { device: { type: hostDeviceType }, capabilities: { hover: hasHover, touch: hasTouch } },
-    view: { mode: ${JSON.stringify(viewMode)}, params: ${serializeForInlineScript(viewParams)} },
-    widgetState: null,
-    ${useMapPendingCalls ? "_pendingCalls: new Map()," : ""}
-    _callId: 0,
-
-    setWidgetState(state) {
-      this.widgetState = state;
-      try { localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(state)); } catch (err) {}
-      window.parent.postMessage({ type: 'openai:setWidgetState', toolId: ${JSON.stringify(toolId)}, state }, '*');
-    },
-
-    ${callToolImpl}
-
-    sendFollowUpMessage(opts) {
-      const prompt = typeof opts === 'string' ? opts : (opts?.prompt || '');
-      window.parent.postMessage({ type: 'openai:sendFollowup', message: prompt, toolId: ${JSON.stringify(toolId)} }, '*');
-    },
-    /** @deprecated Use sendFollowUpMessage instead. Inspector-only alias. */
-    sendFollowupTurn(message) { return this.sendFollowUpMessage(typeof message === 'string' ? message : (message?.prompt || '')); },
-
-    requestDisplayMode(options = {}) {
-      const mode = options.mode || 'inline';
-      this.displayMode = mode;
-      window.parent.postMessage({ type: 'openai:requestDisplayMode', mode, maxHeight: options.maxHeight, toolId: ${JSON.stringify(toolId)} }, '*');
-      return { mode };
-    },
-
-    requestClose() { window.parent.postMessage({ type: 'openai:requestClose', toolId: ${JSON.stringify(toolId)} }, '*'); },
-
-    openExternal(options) {
-      // Official SDK signature: openExternal({ href: string })
-      // Inspector also accepts string for convenience, but logs deprecation warning
-      let href;
-      if (typeof options === 'string') {
-        console.warn('[OpenAI SDK] openExternal(string) is deprecated. Use openExternal({ href: string }) instead.');
-        href = options;
-      } else {
-        href = options?.href;
-      }
-      if (!href) throw new Error('href is required for openExternal. Usage: openExternal({ href: "https://..." })');
-      window.parent.postMessage({ type: 'openai:openExternal', href }, '*');
-      window.open(href, '_blank', 'noopener,noreferrer');
-    },
-
-    /** Inspector-specific: Open widget content in a modal dialog. Not in official SDK. */
-    requestModal(options) {
-      window.parent.postMessage({ type: 'openai:requestModal', title: options.title, params: options.params, anchor: options.anchor }, '*');
-    },
-
-    /** Inspector-specific: Explicitly report content height. Widgets can also use openai:resize event. */
-    notifyIntrinsicHeight(height) {
-      postHeight(height);
-    },
-
-    /** Host-backed navigation: programmatically navigate within the widget's history */
-    notifyNavigation(direction) {
-      if (direction === 'back') {
-        if (navigationState.currentIndex > 0) {
-          navigationState.currentIndex--;
-          history.back();
-        }
-      } else if (direction === 'forward') {
-        if (navigationState.currentIndex < navigationState.historyLength - 1) {
-          navigationState.currentIndex++;
-          history.forward();
-        }
-      }
-    }
-  };
-
-  Object.defineProperty(window, 'openai', { value: openaiAPI, writable: false, configurable: false, enumerable: true });
-  // Inspector-specific: window.webplus is an alias for legacy compatibility
-  Object.defineProperty(window, 'webplus', { value: openaiAPI, writable: false, configurable: false, enumerable: true });
-
-  setTimeout(() => {
-    try {
-      window.dispatchEvent(new CustomEvent('openai:set_globals', {
-        detail: { globals: { displayMode: openaiAPI.displayMode, maxHeight: openaiAPI.maxHeight, theme: openaiAPI.theme, locale: openaiAPI.locale, safeArea: openaiAPI.safeArea, userAgent: openaiAPI.userAgent } }
-      }));
-    } catch (err) { console.error('[OpenAI Widget] Failed to dispatch globals event:', err); }
-  }, 0);
-
-  setTimeout(() => {
-    try {
-      const stored = localStorage.getItem(${JSON.stringify(widgetStateKey)});
-      if (stored && window.openai) window.openai.widgetState = JSON.parse(stored);
-    } catch (err) { console.error('[OpenAI Widget] Failed to restore widget state:', err); }
-  }, 0);
-
-  window.addEventListener('message', (event) => {
-    const { type, callId, result, error, globals } = event.data || {};
-    switch (type) {
-      ${callToolResponseHandler}
-      case 'openai:set_globals':
-        if (globals) {
-          if (globals.displayMode !== undefined) window.openai.displayMode = globals.displayMode;
-          if (globals.maxHeight !== undefined) window.openai.maxHeight = globals.maxHeight;
-          if (globals.theme !== undefined) window.openai.theme = globals.theme;
-          if (globals.locale !== undefined) window.openai.locale = globals.locale;
-          if (globals.safeArea !== undefined) window.openai.safeArea = globals.safeArea;
-          if (globals.userAgent !== undefined) window.openai.userAgent = globals.userAgent;
-          if (globals.view !== undefined) window.openai.view = globals.view;
-        }
-        try { window.dispatchEvent(new CustomEvent('openai:set_globals', { detail: { globals } })); } catch (err) {}
-        break;
-      case 'openai:pushWidgetState':
-        if (event.data.toolId === ${JSON.stringify(toolId)}) {
-          try {
-            const nextState = event.data.state ?? null;
-            window.openai.widgetState = nextState;
-            try { localStorage.setItem(${JSON.stringify(widgetStateKey)}, JSON.stringify(nextState)); } catch (err) {}
-            window.dispatchEvent(new CustomEvent('openai:widget_state', { detail: { state: nextState } }));
-          } catch (err) { console.error('[OpenAI Widget] Failed to apply pushed widget state:', err); }
-        }
-        break;
-      case 'openai:requestResize':
-        measureAndNotifyHeight();
-        break;
-      case 'openai:navigate':
-        // Host-backed navigation: respond to navigation commands from parent
-        if (event.data.toolId === ${JSON.stringify(toolId)}) {
-          if (event.data.direction === 'back') {
-            if (navigationState.currentIndex > 0) {
-              navigationState.currentIndex--;
-              history.back();
-            }
-          } else if (event.data.direction === 'forward') {
-            if (navigationState.currentIndex < navigationState.historyLength - 1) {
-              navigationState.currentIndex++;
-              history.forward();
-            }
-          }
-        }
-        break;
-    }
-  });
-
-  window.addEventListener('openai:resize', (event) => {
-    try {
-      const detail = event && typeof event === 'object' && 'detail' in event ? (event.detail || {}) : {};
-      const height = typeof detail?.height === 'number'
-        ? detail.height
-        : typeof detail?.size?.height === 'number'
-          ? detail.size.height
-          : null;
-      if (height != null) {
-        postHeight(height);
-      } else {
-        measureAndNotifyHeight();
-      }
-    } catch (err) { console.error('[OpenAI Widget] Failed to process resize event:', err); }
-  });
-
-  // Auto-resize using ResizeObserver + rAF, mirroring Apps SDK behavior
-  setupAutoResize();
-
-  // CSP Violation Reporting
-  // Captures violations and forwards to parent for logging
-  document.addEventListener('securitypolicyviolation', (e) => {
-    const violation = {
-      type: 'openai:csp-violation',
-      toolId: ${JSON.stringify(toolId)},
-      directive: e.violatedDirective,
-      blockedUri: e.blockedURI,
-      sourceFile: e.sourceFile || null,
-      lineNumber: e.lineNumber || null,
-      columnNumber: e.columnNumber || null,
-      originalPolicy: e.originalPolicy,
-      effectiveDirective: e.effectiveDirective,
-      disposition: e.disposition,
-      timestamp: Date.now(),
-    };
-
-    console.warn('[OpenAI Widget CSP Violation]', violation.directive, ':', violation.blockedUri);
-    window.parent.postMessage(violation, '*');
-  });
-})();
-</script>`;
 }
 
 function generateUrlPolyfillScript(baseUrl: string): string {
@@ -621,19 +169,27 @@ html, body {
 }
 </style>`;
 
-function injectScripts(
-  html: string,
-  urlPolyfill: string,
-  baseTag: string,
-  apiScript: string,
-): string {
+const CONFIG_SCRIPT_ID = "openai-runtime-config";
+
+function buildConfigScript(config: RuntimeConfig): string {
+  return `<script type="application/json" id="${CONFIG_SCRIPT_ID}">${serializeForInlineScript(config)}</script>`;
+}
+
+function buildRuntimeHeadContent(options: {
+  runtimeConfig: RuntimeConfig;
+  urlPolyfill?: string;
+  baseTag?: string;
+}): string {
+  const configScript = buildConfigScript(options.runtimeConfig);
+  const runtimeScript = `<script>${API_RUNTIME_SCRIPT}</script>`;
+  return `${WIDGET_BASE_CSS}${options.urlPolyfill ?? ""}${options.baseTag ?? ""}${configScript}${runtimeScript}`;
+}
+
+function injectScripts(html: string, headContent: string): string {
   if (/<html[^>]*>/i.test(html) && /<head[^>]*>/i.test(html)) {
-    return html.replace(
-      /<head[^>]*>/i,
-      `$&${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}${apiScript}`,
-    );
+    return html.replace(/<head[^>]*>/i, `$&${headContent}`);
   }
-  return `<!DOCTYPE html><html><head>${WIDGET_BASE_CSS}${urlPolyfill}${baseTag}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">${apiScript}</head><body>${html}</body></html>`;
+  return `<!DOCTYPE html><html><head>${headContent}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body>${html}</body></html>`;
 }
 
 // ============================================================================
@@ -956,7 +512,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
     const cspConfig = buildCspHeader(cspMode ?? "permissive", widgetCspRaw);
 
     const baseUrl = extractBaseUrl(htmlContent);
-    const apiScript = generateApiScript({
+    const runtimeConfig: RuntimeConfig = {
       toolId,
       toolName,
       toolInput,
@@ -969,13 +525,17 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       maxHeight: maxHeight ?? null,
       capabilities: capabilities ?? undefined,
       safeAreaInsets: safeAreaInsets ?? undefined,
+      viewMode: "inline",
+      viewParams: {},
       useMapPendingCalls: true,
-    });
+    };
     const modifiedHtml = injectScripts(
       htmlContent,
-      generateUrlPolyfillScript(baseUrl),
-      baseUrl ? `<base href="${baseUrl}">` : "",
-      apiScript,
+      buildRuntimeHeadContent({
+        runtimeConfig,
+        urlPolyfill: generateUrlPolyfillScript(baseUrl),
+        baseTag: baseUrl ? `<base href="${baseUrl}">` : "",
+      }),
     );
 
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -1020,7 +580,7 @@ chatgpt.get("/widget/:toolId", async (c) => {
 (async function() {
   const searchParams = window.location.search;
   history.replaceState(null, '', '/');
-  const response = await fetch('/api/mcp/openai/widget-content/${toolId}' + searchParams);
+  const response = await fetch('/api/apps/chatgpt/widget-content/${toolId}' + searchParams);
   const html = await response.text();
   document.open(); document.write(html); document.close();
 })();
@@ -1099,7 +659,7 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
     // Build CSP based on effective mode
     const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw);
 
-    const apiScript = generateApiScript({
+    const runtimeConfig: RuntimeConfig = {
       toolId,
       toolName,
       toolInput,
@@ -1115,12 +675,13 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       viewMode,
       viewParams,
       useMapPendingCalls: false,
-    });
+    };
     const modifiedHtml = injectScripts(
       htmlContent,
-      "",
-      '<base href="/">',
-      apiScript,
+      buildRuntimeHeadContent({
+        runtimeConfig,
+        baseTag: '<base href="/">',
+      }),
     );
 
     // Apply the built CSP header

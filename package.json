@@ -34,6 +34,7 @@
     "dev:client": "vite --config client/vite.config.ts",
     "dev:client:clean": "rm -rf node_modules/.vite && FORCE_OPTIMIZE=true vite --config client/vite.config.ts",
     "build": "npm run clean && npm run build:sdk && npm run build:client && npm run build:server",
+    "bundle:chatgpt": "node scripts/bundle-openai-script.js",
     "clean": "rm -rf dist out .vite client/dist",
     "clean:all": "rm -rf dist out .vite client/dist node_modules sdk/node_modules",
     "deps:ci": "npm ci --legacy-peer-deps --cache .npm-cache && npm --prefix sdk ci --legacy-peer-deps --cache .npm-cache",

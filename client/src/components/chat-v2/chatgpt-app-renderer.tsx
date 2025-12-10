@@ -322,7 +322,7 @@ function useWidgetFetch(
         // Host-controlled values per SDK spec
         const userLocation = await getUserLocation(); // Coarse IP-based location
 
-        const storeResponse = await fetch("/api/mcp/openai/widget/store", {
+        const storeResponse = await fetch("/api/apps/chatgpt/widget/store", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -350,7 +350,7 @@ function useWidgetFetch(
 
         // Check if widget should close and get CSP config
         const htmlResponse = await fetch(
-          `/api/mcp/openai/widget-html/${resolvedToolCallId}`,
+          `/api/apps/chatgpt/widget-html/${resolvedToolCallId}`,
         );
         if (htmlResponse.ok) {
           const data = await htmlResponse.json();
@@ -376,7 +376,7 @@ function useWidgetFetch(
         // Set the widget URL with CSP mode query param
         // Use /widget-content directly so CSP headers are applied by the browser
         setWidgetUrl(
-          `/api/mcp/openai/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`,
+          `/api/apps/chatgpt/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`,
         );
       } catch (err) {
         if (isCancelled) return;
