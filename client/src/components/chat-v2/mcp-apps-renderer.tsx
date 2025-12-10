@@ -11,7 +11,7 @@
 
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useUIPlaygroundStore, type CspMode } from "@/stores/ui-playground-store";
+import { useUIPlaygroundStore, DEVICE_VIEWPORT_CONFIGS, type CspMode, type DeviceType } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
 import {
   SandboxedIframe,
@@ -54,6 +54,12 @@ interface MCPAppsRendererProps {
   pipWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
+  /** Controlled display mode - when provided, component uses this instead of internal state */
+  displayMode?: DisplayMode;
+  /** Callback when display mode changes - required when displayMode is controlled */
+  onDisplayModeChange?: (mode: DisplayMode) => void;
+  onRequestFullscreen?: (toolCallId: string) => void;
+  onExitFullscreen?: (toolCallId: string) => void;
 }
 
 interface JSONRPCMessage {
@@ -77,7 +83,12 @@ export function MCPAppsRenderer({
   onSendFollowUp,
   onCallTool,
   pipWidgetId,
+  onRequestPip,
   onExitPip,
+  displayMode: displayModeProp,
+  onDisplayModeChange,
+  onRequestFullscreen,
+  onExitFullscreen,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -120,11 +131,70 @@ export function MCPAppsRenderer({
     [isPlaygroundActive, playgroundSafeAreaInsets],
   );
 
-  const [displayMode, setDisplayMode] = useState<DisplayMode>(
+  // Get device type from playground store for platform/viewport derivation (SEP-1865)
+  const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+
+  // Derive platform from device type per SEP-1865 (web | desktop | mobile)
+  const platform = useMemo((): "web" | "desktop" | "mobile" => {
+    if (!isPlaygroundActive) return "web";
+    switch (playgroundDeviceType) {
+      case "mobile":
+      case "tablet":
+        return "mobile";
+      case "desktop":
+      default:
+        return "web";
+    }
+  }, [isPlaygroundActive, playgroundDeviceType]);
+
+  // Derive viewport dimensions from device type (using shared config)
+  const viewportWidth = useMemo(() => {
+    if (!isPlaygroundActive) return 400;
+    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType]?.width ?? 400;
+  }, [isPlaygroundActive, playgroundDeviceType]);
+
+  const viewportHeight = useMemo(() => {
+    if (!isPlaygroundActive) return 400;
+    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType]?.height ?? 400;
+  }, [isPlaygroundActive, playgroundDeviceType]);
+
+  // Display mode: controlled (via props) or uncontrolled (internal state)
+  const isControlled = displayModeProp !== undefined;
+  const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>(
     isPlaygroundActive ? playgroundDisplayMode : "inline"
   );
+  const displayMode = isControlled ? displayModeProp : internalDisplayMode;
+  const setDisplayMode = useCallback(
+    (mode: DisplayMode) => {
+      if (isControlled) {
+        onDisplayModeChange?.(mode);
+      } else {
+        setInternalDisplayMode(mode);
+      }
+
+      // Notify parent about fullscreen state changes regardless of controlled mode
+      if (mode === "fullscreen") {
+        onRequestFullscreen?.(toolCallId);
+      } else if (displayMode === "fullscreen") {
+        onExitFullscreen?.(toolCallId);
+      }
+    },
+    [
+      isControlled,
+      onDisplayModeChange,
+      toolCallId,
+      onRequestFullscreen,
+      onExitFullscreen,
+      displayMode,
+    ],
+  );
   const [contentHeight, setContentHeight] = useState<number>(400);
-  const [maxHeight] = useState<number>(800);
+
+  // maxHeight should match the device's viewport height (max available space)
+  const maxHeight = useMemo(() => {
+    if (!isPlaygroundActive) return 800;
+    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType]?.height ?? 800;
+  }, [isPlaygroundActive, playgroundDeviceType]);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
@@ -231,11 +301,12 @@ export function MCPAppsRenderer({
   }, [cspMode, loadedCspMode, toolCallId, clearCspViolations]);
 
   // Sync displayMode from playground store when it changes (SEP-1865)
+  // Only sync when not in controlled mode (parent controls displayMode via props)
   useEffect(() => {
-    if (isPlaygroundActive) {
-      setDisplayMode(playgroundDisplayMode);
+    if (isPlaygroundActive && !isControlled) {
+      setInternalDisplayMode(playgroundDisplayMode);
     }
-  }, [isPlaygroundActive, playgroundDisplayMode]);
+  }, [isPlaygroundActive, playgroundDisplayMode, isControlled]);
 
   // Initialize widget debug info
   useEffect(() => {
@@ -414,10 +485,11 @@ export function MCPAppsRenderer({
               hostContext: {
                 theme: themeMode,
                 displayMode,
-                viewport: { width: 400, height: contentHeight, maxHeight },
+                availableDisplayModes: ["inline", "pip", "fullscreen"],
+                viewport: { width: viewportWidth, height: viewportHeight, maxHeight },
                 locale,
                 timeZone,
-                platform: "web",
+                platform,
                 userAgent: navigator.userAgent,
                 deviceCapabilities,
                 safeAreaInsets,
@@ -560,6 +632,8 @@ export function MCPAppsRenderer({
       maxHeight,
       locale,
       timeZone,
+      platform,
+      viewportWidth,
       deviceCapabilities,
       safeAreaInsets,
       toolName,
@@ -584,6 +658,9 @@ export function MCPAppsRenderer({
     displayMode: DisplayMode;
     locale: string;
     timeZone: string;
+    platform: "web" | "desktop" | "mobile";
+    viewportWidth: number;
+    viewportHeight: number;
     maxHeight: number;
     deviceCapabilities: { touch?: boolean; hover?: boolean };
     safeAreaInsets: { top: number; right: number; bottom: number; left: number };
@@ -598,6 +675,9 @@ export function MCPAppsRenderer({
       displayMode,
       locale,
       timeZone,
+      platform,
+      viewportWidth,
+      viewportHeight,
       maxHeight,
       deviceCapabilities,
       safeAreaInsets,
@@ -623,8 +703,16 @@ export function MCPAppsRenderer({
     if (prevHostContextRef.current.timeZone !== timeZone) {
       changedFields.timeZone = timeZone;
     }
-    if (prevHostContextRef.current.maxHeight !== maxHeight) {
-      changedFields.viewport = { maxHeight };
+    if (prevHostContextRef.current.platform !== platform) {
+      changedFields.platform = platform;
+    }
+    // Send full viewport object when any viewport property changes
+    if (
+      prevHostContextRef.current.viewportWidth !== viewportWidth ||
+      prevHostContextRef.current.viewportHeight !== viewportHeight ||
+      prevHostContextRef.current.maxHeight !== maxHeight
+    ) {
+      changedFields.viewport = { width: viewportWidth, height: viewportHeight, maxHeight };
     }
     // Compare deviceCapabilities (simple object with booleans)
     const prevCaps = prevHostContextRef.current.deviceCapabilities;
@@ -647,7 +735,7 @@ export function MCPAppsRenderer({
       prevHostContextRef.current = currentContext;
       sendNotification("ui/notifications/host-context-changed", changedFields);
     }
-  }, [themeMode, displayMode, locale, timeZone, maxHeight, deviceCapabilities, safeAreaInsets, isReady, sendNotification]);
+  }, [themeMode, displayMode, locale, timeZone, platform, viewportWidth, viewportHeight, maxHeight, deviceCapabilities, safeAreaInsets, isReady, sendNotification]);
 
   // Loading states
   if (toolState !== "output-available") {
@@ -674,7 +762,9 @@ export function MCPAppsRenderer({
     );
   }
 
-  const isPip = displayMode === "pip" && pipWidgetId === toolCallId;
+  const isPip =
+    displayMode === "pip" &&
+    (isControlled || pipWidgetId === toolCallId);
   const isFullscreen = displayMode === "fullscreen";
   // Apply maxHeight constraint, but no minimum - let widget control its size
   const appliedHeight = Math.min(contentHeight, maxHeight);
@@ -697,7 +787,10 @@ export function MCPAppsRenderer({
         <button
           onClick={() => {
             setDisplayMode("inline");
-            onExitPip?.(toolCallId);
+            if (isPip) {
+              onExitPip?.(toolCallId);
+            }
+            // onExitFullscreen is called within setDisplayMode when leaving fullscreen
           }}
           className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           aria-label="Close"

@@ -11,6 +11,13 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { FormField } from "@/lib/tool-form";
 
 export type DeviceType = "mobile" | "tablet" | "desktop";
+
+/** Device viewport configurations - shared across playground and MCP apps renderer */
+export const DEVICE_VIEWPORT_CONFIGS: Record<DeviceType, { width: number; height: number }> = {
+  mobile: { width: 430, height: 932 },
+  tablet: { width: 820, height: 1180 },
+  desktop: { width: 1280, height: 800 },
+};
 export type DisplayMode = "inline" | "pip" | "fullscreen";
 export type CspMode = "permissive" | "widget-declared";
 export type AppProtocol = "openai-apps" | "mcp-apps" | null;
