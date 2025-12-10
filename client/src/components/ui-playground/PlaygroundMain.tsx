@@ -668,7 +668,7 @@ export function PlaygroundMain({
                                 width: Math.max(100, Math.min(2560, val)),
                               });
                             }}
-                            className="h-7 text-xs"
+                            className="h-7 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                         </div>
                         <div className="space-y-1">
@@ -691,7 +691,7 @@ export function PlaygroundMain({
                                 height: Math.max(100, Math.min(2560, val)),
                               });
                             }}
-                            className="h-7 text-xs"
+                            className="h-7 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                         </div>
                       </div>
@@ -930,7 +930,7 @@ export function PlaygroundMain({
                                 width: Math.max(100, Math.min(2560, val)),
                               });
                             }}
-                            className="h-7 text-xs"
+                            className="h-7 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                         </div>
                         <div className="space-y-1">
@@ -953,7 +953,7 @@ export function PlaygroundMain({
                                 height: Math.max(100, Math.min(2560, val)),
                               });
                             }}
-                            className="h-7 text-xs"
+                            className="h-7 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                         </div>
                       </div>
