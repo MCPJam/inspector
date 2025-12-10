@@ -70,9 +70,17 @@ const DEVICE_CONFIGS: Record<
   DeviceType,
   { width: number; height: number; label: string; icon: typeof Smartphone }
 > = {
-  mobile: { ...DEVICE_VIEWPORT_CONFIGS.mobile, label: "Phone", icon: Smartphone },
+  mobile: {
+    ...DEVICE_VIEWPORT_CONFIGS.mobile,
+    label: "Phone",
+    icon: Smartphone,
+  },
   tablet: { ...DEVICE_VIEWPORT_CONFIGS.tablet, label: "Tablet", icon: Tablet },
-  desktop: { ...DEVICE_VIEWPORT_CONFIGS.desktop, label: "Desktop", icon: Monitor },
+  desktop: {
+    ...DEVICE_VIEWPORT_CONFIGS.desktop,
+    label: "Desktop",
+    icon: Monitor,
+  },
 };
 
 /** Common BCP 47 locales for testing (per OpenAI Apps SDK spec) */
@@ -304,8 +312,10 @@ export function PlaygroundMain({
   const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
 
   // Protocol-aware CSP mode: use the correct store based on detected protocol
-  const activeCspMode = selectedProtocol === "mcp-apps" ? mcpAppsCspMode : cspMode;
-  const setActiveCspMode = selectedProtocol === "mcp-apps" ? setMcpAppsCspMode : setCspMode;
+  const activeCspMode =
+    selectedProtocol === "mcp-apps" ? mcpAppsCspMode : cspMode;
+  const setActiveCspMode =
+    selectedProtocol === "mcp-apps" ? setMcpAppsCspMode : setCspMode;
 
   // Device capabilities from store
   const capabilities = useUIPlaygroundStore((s) => s.capabilities);
@@ -525,7 +535,9 @@ export function PlaygroundMain({
                   <div>
                     <Select
                       value={deviceType}
-                      onValueChange={(v) => onDeviceTypeChange?.(v as DeviceType)}
+                      onValueChange={(v) =>
+                        onDeviceTypeChange?.(v as DeviceType)
+                      }
                     >
                       <SelectTrigger
                         size="sm"
@@ -535,22 +547,25 @@ export function PlaygroundMain({
                         <SelectValue>{deviceConfig.label}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {(Object.entries(DEVICE_CONFIGS) as [DeviceType, typeof deviceConfig][]).map(
-                          ([type, config]) => {
-                            const Icon = config.icon;
-                            return (
-                              <SelectItem key={type} value={type}>
-                                <span className="flex items-center gap-2">
-                                  <Icon className="h-3.5 w-3.5" />
-                                  <span>{config.label}</span>
-                                  <span className="text-muted-foreground text-[10px]">
-                                    ({config.width}×{config.height})
-                                  </span>
+                        {(
+                          Object.entries(DEVICE_CONFIGS) as [
+                            DeviceType,
+                            typeof deviceConfig,
+                          ][]
+                        ).map(([type, config]) => {
+                          const Icon = config.icon;
+                          return (
+                            <SelectItem key={type} value={type}>
+                              <span className="flex items-center gap-2">
+                                <Icon className="h-3.5 w-3.5" />
+                                <span>{config.label}</span>
+                                <span className="text-muted-foreground text-[10px]">
+                                  ({config.width}×{config.height})
                                 </span>
-                              </SelectItem>
-                            );
-                          }
-                        )}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
                   </div>
@@ -606,14 +621,20 @@ export function PlaygroundMain({
                       >
                         <Shield className="h-3.5 w-3.5" />
                         <SelectValue>
-                          {CSP_MODE_OPTIONS.find((o) => o.mode === activeCspMode)?.label}
+                          {
+                            CSP_MODE_OPTIONS.find(
+                              (o) => o.mode === activeCspMode,
+                            )?.label
+                          }
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {CSP_MODE_OPTIONS.map((option) => (
                           <SelectItem key={option.mode} value={option.mode}>
                             <span className="flex items-center gap-2">
-                              <span className="font-medium">{option.label}</span>
+                              <span className="font-medium">
+                                {option.label}
+                              </span>
                               <span className="text-muted-foreground text-[10px]">
                                 {option.description}
                               </span>
@@ -696,7 +717,9 @@ export function PlaygroundMain({
                   <div>
                     <Select
                       value={deviceType}
-                      onValueChange={(v) => onDeviceTypeChange?.(v as DeviceType)}
+                      onValueChange={(v) =>
+                        onDeviceTypeChange?.(v as DeviceType)
+                      }
                     >
                       <SelectTrigger
                         size="sm"
@@ -706,22 +729,25 @@ export function PlaygroundMain({
                         <SelectValue>{deviceConfig.label}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {(Object.entries(DEVICE_CONFIGS) as [DeviceType, typeof deviceConfig][]).map(
-                          ([type, config]) => {
-                            const Icon = config.icon;
-                            return (
-                              <SelectItem key={type} value={type}>
-                                <span className="flex items-center gap-2">
-                                  <Icon className="h-3.5 w-3.5" />
-                                  <span>{config.label}</span>
-                                  <span className="text-muted-foreground text-[10px]">
-                                    ({config.width}×{config.height})
-                                  </span>
+                        {(
+                          Object.entries(DEVICE_CONFIGS) as [
+                            DeviceType,
+                            typeof deviceConfig,
+                          ][]
+                        ).map(([type, config]) => {
+                          const Icon = config.icon;
+                          return (
+                            <SelectItem key={type} value={type}>
+                              <span className="flex items-center gap-2">
+                                <Icon className="h-3.5 w-3.5" />
+                                <span>{config.label}</span>
+                                <span className="text-muted-foreground text-[10px]">
+                                  ({config.width}×{config.height})
                                 </span>
-                              </SelectItem>
-                            );
-                          }
-                        )}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
                   </div>
@@ -774,7 +800,8 @@ export function PlaygroundMain({
                       >
                         <Clock className="h-3.5 w-3.5" />
                         <SelectValue>
-                          {TIMEZONE_OPTIONS.find((o) => o.zone === timeZone)?.label || timeZone}
+                          {TIMEZONE_OPTIONS.find((o) => o.zone === timeZone)
+                            ?.label || timeZone}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
@@ -811,14 +838,20 @@ export function PlaygroundMain({
                       >
                         <Shield className="h-3.5 w-3.5" />
                         <SelectValue>
-                          {CSP_MODE_OPTIONS.find((o) => o.mode === mcpAppsCspMode)?.label}
+                          {
+                            CSP_MODE_OPTIONS.find(
+                              (o) => o.mode === mcpAppsCspMode,
+                            )?.label
+                          }
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {CSP_MODE_OPTIONS.map((option) => (
                           <SelectItem key={option.mode} value={option.mode}>
                             <span className="flex items-center gap-2">
-                              <span className="font-medium">{option.label}</span>
+                              <span className="font-medium">
+                                {option.label}
+                              </span>
                               <span className="text-muted-foreground text-[10px]">
                                 {option.description}
                               </span>

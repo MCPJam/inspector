@@ -520,9 +520,7 @@ function ToolPart({
       icon: typeof Database;
       label: string;
       badge?: number;
-    }[] = [
-      { tab: "data", icon: Database, label: "Data" },
-    ];
+    }[] = [{ tab: "data", icon: Database, label: "Data" }];
 
     // Only show Widget State for ChatGPT Apps (OpenAI SDK)
     // MCP Apps (SEP-1865) don't support persistent widget state

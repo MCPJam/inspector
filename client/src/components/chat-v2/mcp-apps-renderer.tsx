@@ -11,7 +11,12 @@
 
 import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useUIPlaygroundStore, DEVICE_VIEWPORT_CONFIGS, type CspMode, type DeviceType } from "@/stores/ui-playground-store";
+import {
+  useUIPlaygroundStore,
+  DEVICE_VIEWPORT_CONFIGS,
+  type CspMode,
+  type DeviceType,
+} from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
 import {
   SandboxedIframe,
@@ -96,7 +101,9 @@ export function MCPAppsRenderer({
   // Get CSP mode from playground store when in playground, otherwise use permissive
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
-  const cspMode: CspMode = isPlaygroundActive ? playgroundCspMode : "permissive";
+  const cspMode: CspMode = isPlaygroundActive
+    ? playgroundCspMode
+    : "permissive";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -122,7 +129,9 @@ export function MCPAppsRenderer({
   );
 
   // Get safe area insets from playground store (SEP-1865)
-  const playgroundSafeAreaInsets = useUIPlaygroundStore((s) => s.safeAreaInsets);
+  const playgroundSafeAreaInsets = useUIPlaygroundStore(
+    (s) => s.safeAreaInsets,
+  );
   const safeAreaInsets = useMemo(
     () =>
       isPlaygroundActive
@@ -161,7 +170,7 @@ export function MCPAppsRenderer({
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
   const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>(
-    isPlaygroundActive ? playgroundDisplayMode : "inline"
+    isPlaygroundActive ? playgroundDisplayMode : "inline",
   );
   const displayMode = isControlled ? displayModeProp : internalDisplayMode;
   const setDisplayMode = useCallback(
@@ -486,7 +495,11 @@ export function MCPAppsRenderer({
                 theme: themeMode,
                 displayMode,
                 availableDisplayModes: ["inline", "pip", "fullscreen"],
-                viewport: { width: viewportWidth, height: viewportHeight, maxHeight },
+                viewport: {
+                  width: viewportWidth,
+                  height: viewportHeight,
+                  maxHeight,
+                },
                 locale,
                 timeZone,
                 platform,
@@ -497,8 +510,12 @@ export function MCPAppsRenderer({
                   id: toolCallId,
                   tool: {
                     name: toolName,
-                    inputSchema: (toolMetadata?.inputSchema as object) ?? { type: "object" },
-                    ...(toolMetadata?.description && { description: toolMetadata.description }),
+                    inputSchema: (toolMetadata?.inputSchema as object) ?? {
+                      type: "object",
+                    },
+                    ...(toolMetadata?.description && {
+                      description: toolMetadata.description,
+                    }),
                   },
                 },
               },
@@ -665,7 +682,12 @@ export function MCPAppsRenderer({
     viewportHeight: number;
     maxHeight: number;
     deviceCapabilities: { touch?: boolean; hover?: boolean };
-    safeAreaInsets: { top: number; right: number; bottom: number; left: number };
+    safeAreaInsets: {
+      top: number;
+      right: number;
+      bottom: number;
+      left: number;
+    };
   } | null>(null);
 
   // Send host-context-changed notifications when any context field changes
@@ -714,11 +736,18 @@ export function MCPAppsRenderer({
       prevHostContextRef.current.viewportHeight !== viewportHeight ||
       prevHostContextRef.current.maxHeight !== maxHeight
     ) {
-      changedFields.viewport = { width: viewportWidth, height: viewportHeight, maxHeight };
+      changedFields.viewport = {
+        width: viewportWidth,
+        height: viewportHeight,
+        maxHeight,
+      };
     }
     // Compare deviceCapabilities (simple object with booleans)
     const prevCaps = prevHostContextRef.current.deviceCapabilities;
-    if (prevCaps.touch !== deviceCapabilities.touch || prevCaps.hover !== deviceCapabilities.hover) {
+    if (
+      prevCaps.touch !== deviceCapabilities.touch ||
+      prevCaps.hover !== deviceCapabilities.hover
+    ) {
       changedFields.deviceCapabilities = deviceCapabilities;
     }
     // Compare safeAreaInsets (simple object with numbers)
@@ -737,7 +766,20 @@ export function MCPAppsRenderer({
       prevHostContextRef.current = currentContext;
       sendNotification("ui/notifications/host-context-changed", changedFields);
     }
-  }, [themeMode, displayMode, locale, timeZone, platform, viewportWidth, viewportHeight, maxHeight, deviceCapabilities, safeAreaInsets, isReady, sendNotification]);
+  }, [
+    themeMode,
+    displayMode,
+    locale,
+    timeZone,
+    platform,
+    viewportWidth,
+    viewportHeight,
+    maxHeight,
+    deviceCapabilities,
+    safeAreaInsets,
+    isReady,
+    sendNotification,
+  ]);
 
   // Loading states
   if (toolState !== "output-available") {
@@ -765,8 +807,7 @@ export function MCPAppsRenderer({
   }
 
   const isPip =
-    displayMode === "pip" &&
-    (isControlled || pipWidgetId === toolCallId);
+    displayMode === "pip" && (isControlled || pipWidgetId === toolCallId);
   const isFullscreen = displayMode === "fullscreen";
   // Apply maxHeight constraint, but no minimum - let widget control its size
   const appliedHeight = Math.min(contentHeight, maxHeight);
