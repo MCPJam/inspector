@@ -1905,26 +1905,39 @@ document.addEventListener("securitypolicyviolation", (e) => {
 
 **Adding New OpenAI API Methods:**
 
-1. Update server-side injection script (`server/routes/mcp/chatgpt.ts:213-376`)
-2. Add postMessage handler in parent (`client/src/components/chat-v2/chatgpt-app-renderer.tsx`)
-3. Update TypeScript types if needed
+1. Update the widget runtime script (`server/routes/apps/widget-runtime.ts`)
+2. Run `npm run bundle:chatgpt` to regenerate the bundled script
+3. Add postMessage handler in parent (`client/src/components/chat-v2/chatgpt-app-renderer.tsx`)
+4. Update TypeScript types if needed
+5. Commit both the source and bundled files
 
 **Example: Adding a custom method:**
 
 ```typescript
-// 1. Server-side API injection (server/routes/mcp/chatgpt.ts)
-openaiAPI.customMethod = async function(options) {
-  window.parent.postMessage({
-    type: 'openai:customMethod',
-    data: options
-  }, '*');
+// 1. Widget runtime (server/routes/apps/widget-runtime.ts)
+const openaiAPI: OpenAIAPI = {
+  // ... existing methods ...
+  
+  customMethod(options: any) {
+    window.parent.postMessage({
+      type: 'openai:customMethod',
+      data: options
+    }, '*');
+  }
 };
 
-// 2. Parent-side handler (client/src/components/chat-v2/chatgpt-app-renderer.tsx)
+// 2. Run bundling command
+// $ npm run bundle:chatgpt
+
+// 3. Parent-side handler (client/src/components/chat-v2/chatgpt-app-renderer.tsx)
 case \"openai:customMethod\":
   handleCustomMethod(event.data.data);
   break;
 ```
+
+<Warning>
+  Always run `npm run bundle:chatgpt` after editing `widget-runtime.ts`. The bundled file must be committed to source control for production builds.
+</Warning>
 
 **Note on Message Flow:**
 
