@@ -2,10 +2,14 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <!-- Permissive CSP so nested content is not constrained by host CSP -->
+    <!-- Permissive CSP so nested srcdoc content is not constrained by host CSP.
+         The actual security enforcement is done by the dynamically-generated CSP
+         injected into the inner srcdoc iframe based on widget declarations (SEP-1865).
+         This outer CSP must allow external scripts since srcdoc network requests
+         are subject to the parent document's CSP. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src * data: blob: 'unsafe-inline'; media-src * blob: data:; font-src * blob: data:; script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com http://localhost:* https://localhost:*; style-src * blob: data: 'unsafe-inline'; connect-src * data: blob: about:; frame-src * blob: data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; base-uri 'self';"
+      content="default-src 'self'; img-src * data: blob: 'unsafe-inline'; media-src * blob: data:; font-src * blob: data:; script-src * 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob: data:; style-src * blob: data: 'unsafe-inline'; connect-src * data: blob: about:; frame-src * blob: data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; base-uri 'self';"
     />
     <title>MCP Apps Sandbox Proxy</title>
     <style>
