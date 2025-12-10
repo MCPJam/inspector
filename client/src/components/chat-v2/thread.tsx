@@ -11,7 +11,7 @@ import {
   remoteTextDefinition,
 } from "@mcp-ui/client";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   ChevronDown,
   MessageCircle,
@@ -291,7 +291,7 @@ function PartSwitch({
     if (uiResource) {
       return (
         <>
-          <ToolPart part={toolPart} />
+          <ToolPart part={toolPart} uiType={uiType} />
           <MCPUIResourcePart
             resource={uiResource.resource}
             onSendFollowUp={onSendFollowUp}
@@ -304,7 +304,7 @@ function PartSwitch({
       if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
         return (
           <>
-            <ToolPart part={toolPart} />
+            <ToolPart part={toolPart} uiType={uiType} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
               Failed to load server id or resource uri for MCP App.
             </div>
@@ -314,7 +314,16 @@ function PartSwitch({
 
       return (
         <>
-          <ToolPart part={toolPart} />
+          <ToolPart
+            part={toolPart}
+            uiType={uiType}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
+          />
           <MCPAppsRenderer
             serverId={serverId}
             toolCallId={toolInfo.toolCallId}
@@ -332,6 +341,10 @@ function PartSwitch({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
           />
         </>
       );
@@ -341,7 +354,7 @@ function PartSwitch({
       if (toolInfo.toolState !== "output-available") {
         return (
           <>
-            <ToolPart part={toolPart} />
+            <ToolPart part={toolPart} uiType={uiType} />
             <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
               Waiting for tool to finish executing...
             </div>
@@ -352,7 +365,7 @@ function PartSwitch({
       if (!serverId) {
         return (
           <>
-            <ToolPart part={toolPart} />
+            <ToolPart part={toolPart} uiType={uiType} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
               Failed to load tool server id.
             </div>
@@ -364,6 +377,7 @@ function PartSwitch({
         <>
           <ToolPart
             part={toolPart}
+            uiType={uiType}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
             onRequestFullscreen={onRequestFullscreen}
@@ -396,7 +410,7 @@ function PartSwitch({
       );
     }
 
-    return <ToolPart part={toolPart} />;
+    return <ToolPart part={toolPart} uiType={uiType} />;
   }
 
   if (isDataPart(part)) {
@@ -436,6 +450,7 @@ function TextPart({ text, role }: { text: string; role: UIMessage["role"] }) {
 
 function ToolPart({
   part,
+  uiType,
   displayMode,
   onDisplayModeChange,
   onRequestFullscreen,
@@ -444,6 +459,7 @@ function ToolPart({
   onExitPip,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
+  uiType?: UIType | null;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
@@ -496,21 +512,33 @@ function ToolPart({
     { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
   ];
 
-  const debugOptions: {
-    tab: "data" | "state" | "csp";
-    icon: typeof Database;
-    label: string;
-    badge?: number;
-  }[] = [
-    { tab: "data", icon: Database, label: "Data" },
-    { tab: "state", icon: Box, label: "Widget State" },
-    {
+  // Debug options - filter based on protocol
+  // Widget State is only available for ChatGPT Apps (OpenAI SDK), not for MCP Apps
+  const debugOptions = useMemo(() => {
+    const options: {
+      tab: "data" | "state" | "csp";
+      icon: typeof Database;
+      label: string;
+      badge?: number;
+    }[] = [
+      { tab: "data", icon: Database, label: "Data" },
+    ];
+
+    // Only show Widget State for ChatGPT Apps (OpenAI SDK)
+    // MCP Apps (SEP-1865) don't support persistent widget state
+    if (uiType === UIType.OPENAI_SDK) {
+      options.push({ tab: "state", icon: Box, label: "Widget State" });
+    }
+
+    options.push({
       tab: "csp",
       icon: Shield,
       label: "CSP",
       badge: widgetDebugInfo?.csp?.violations?.length,
-    },
-  ];
+    });
+
+    return options;
+  }, [uiType, widgetDebugInfo?.csp?.violations?.length]);
 
   const handleDebugClick = (tab: "data" | "state" | "csp") => {
     if (activeDebugTab === tab) {

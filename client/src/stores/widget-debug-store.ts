@@ -103,6 +103,9 @@ interface WidgetDebugStore {
 
   // Add a CSP violation for a widget
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;
+
+  // Clear CSP violations for a widget (e.g., when CSP mode changes)
+  clearCspViolations: (toolCallId: string) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -125,6 +128,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
             theme: "dark",
             displayMode: "inline",
           },
+        csp: existing?.csp, // Preserve CSP violations across updates
         updatedAt: Date.now(),
       });
       return { widgets };
@@ -213,6 +217,24 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: {
           ...currentCsp,
           violations: [...currentCsp.violations, violation],
+        },
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  clearCspViolations: (toolCallId) => {
+    set((state) => {
+      const existing = state.widgets.get(toolCallId);
+      if (!existing?.csp) return state;
+
+      const widgets = new Map(state.widgets);
+      widgets.set(toolCallId, {
+        ...existing,
+        csp: {
+          ...existing.csp,
+          violations: [],
         },
         updatedAt: Date.now(),
       });
