@@ -402,13 +402,42 @@ The `/widget-content/:toolId` endpoint performs the following:
 1. Retrieve widget data from store (includes host-controlled globals)
 2. Read HTML from MCP server via `readResource(uri)`
 3. Parse view mode and params from query string (`view_mode`, `view_params`)
-4. Inject `window.openai` API script with:
+4. Inject `window.openai` API runtime script with:
    - Host-controlled locale (BCP 47 format, e.g., 'en-US')
    - Host-controlled deviceType ('mobile', 'tablet', 'desktop')
    - Host-controlled userLocation (coarse IP-based geolocation)
    - Host-controlled maxHeight constraint (ChatGPT uses ~500px for inline)
 5. Add security headers (CSP, X-Frame-Options)
 6. Set cache control headers (no-cache for fresh content)
+
+**Runtime Script Architecture (PR #1044):**
+
+As of PR #1044, the `window.openai` API bridge is implemented as a separate TypeScript file that gets bundled and injected into widget HTML. This provides better type safety and maintainability compared to the previous inline script approach.
+
+The runtime script is located in `server/routes/apps/widget-runtime.ts` and is bundled into `server/routes/apps/chatgpt.bundled.ts` using esbuild. When making changes to the widget runtime:
+
+1. Edit `server/routes/apps/widget-runtime.ts`
+2. Run `npm run bundle:chatgpt` to regenerate the bundled script
+3. Commit both files to source control
+
+The bundled script is then injected into widget HTML via a JSON configuration element:
+
+```html
+<script type="application/json" id="openai-runtime-config">
+{
+  "toolId": "...",
+  "toolName": "...",
+  "toolInput": {...},
+  "toolOutput": {...},
+  "theme": "dark",
+  "locale": "en-US",
+  ...
+}
+</script>
+<script>/* Bundled runtime script */</script>
+```
+
+This architecture separates configuration data from runtime code, making it easier to maintain type safety and test the widget bridge independently.
 
 **Host-Controlled Globals (New in PR #1001):**
 
