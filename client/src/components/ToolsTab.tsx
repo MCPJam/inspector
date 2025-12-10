@@ -348,7 +348,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.error("Tool execution network error", {
         toolName: selectedTool,
         error: message,
-
       });
       setError(message);
     } finally {
@@ -630,4 +629,3 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     </div>
   );
 }
-
