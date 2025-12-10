@@ -314,7 +314,16 @@ function PartSwitch({
 
       return (
         <>
-          <ToolPart part={toolPart} uiType={uiType} />
+          <ToolPart
+            part={toolPart}
+            uiType={uiType}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
+          />
           <MCPAppsRenderer
             serverId={serverId}
             toolCallId={toolInfo.toolCallId}
@@ -332,6 +341,10 @@ function PartSwitch({
             pipWidgetId={pipWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
           />
         </>
       );

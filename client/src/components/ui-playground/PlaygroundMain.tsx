@@ -55,6 +55,7 @@ import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
 import {
   useUIPlaygroundStore,
+  DEVICE_VIEWPORT_CONFIGS,
   type DeviceType,
   type DisplayMode,
   type CspMode,
@@ -64,14 +65,14 @@ import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
-/** Device frame configurations */
+/** Device frame configurations - extends shared viewport config with UI properties */
 const DEVICE_CONFIGS: Record<
   DeviceType,
   { width: number; height: number; label: string; icon: typeof Smartphone }
 > = {
-  mobile: { width: 430, height: 932, label: "Phone", icon: Smartphone },
-  tablet: { width: 820, height: 1180, label: "Tablet", icon: Tablet },
-  desktop: { width: 1280, height: 800, label: "Desktop", icon: Monitor },
+  mobile: { ...DEVICE_VIEWPORT_CONFIGS.mobile, label: "Phone", icon: Smartphone },
+  tablet: { ...DEVICE_VIEWPORT_CONFIGS.tablet, label: "Tablet", icon: Tablet },
+  desktop: { ...DEVICE_VIEWPORT_CONFIGS.desktop, label: "Desktop", icon: Monitor },
 };
 
 /** Common BCP 47 locales for testing (per OpenAI Apps SDK spec) */
