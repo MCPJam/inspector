@@ -22,7 +22,7 @@ import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
-import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
+import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 // Injected by Vite at build time from package.json
@@ -302,7 +302,7 @@ export function MCPAppsRenderer({
   ]);
 
   // UI logging
-  const addUiLog = useUiLogStore((s) => s.addLog);
+  const addUiLog = useTrafficLogStore((s) => s.addLog);
 
   // Widget debug store
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);

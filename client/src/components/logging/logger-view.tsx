@@ -25,10 +25,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  useUiLogStore,
+  useTrafficLogStore,
   type UiLogEvent,
   type UiProtocol,
-} from "@/stores/ui-log-store";
+} from "@/stores/traffic-log-store";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "sonner";
@@ -92,7 +92,6 @@ export function LoggerView({
   isSearchVisible = true,
 }: LoggerViewProps = {}) {
   const appState = useSharedAppState();
-  const [mcpServerItems, setMcpServerItems] = useState<RenderableRpcItem[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
@@ -103,9 +102,10 @@ export function LoggerView({
   );
   const [isUpdatingLevel, setIsUpdatingLevel] = useState(false);
 
-  // Subscribe to UI log store for MCP Apps traffic
-  const uiLogItems = useUiLogStore((s) => s.items);
-  const clearUiLogs = useUiLogStore((s) => s.clear);
+  // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
+  const uiLogItems = useTrafficLogStore((s) => s.items);
+  const mcpServerRpcItems = useTrafficLogStore((s) => s.mcpServerItems);
+  const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Convert UI log items to renderable format
   const mcpAppsItems = useMemo<RenderableRpcItem[]>(() => {
@@ -121,6 +121,20 @@ export function LoggerView({
       widgetId: item.widgetId,
     }));
   }, [uiLogItems]);
+
+  // Convert MCP server RPC items to renderable format
+  const mcpServerItems = useMemo<RenderableRpcItem[]>(() => {
+    return mcpServerRpcItems.map((item) => ({
+      id: item.id,
+      serverId: item.serverId,
+      direction: item.direction,
+      method: item.method,
+      timestamp: item.timestamp,
+      payload: item.payload,
+      source: "mcp-server" as TrafficSource,
+    }));
+  }, [mcpServerRpcItems]);
+
   const connectedServers = useMemo<
     Array<{ id: string; server: ServerWithName }>
   >(
@@ -188,8 +202,7 @@ export function LoggerView({
   };
 
   const clearMessages = () => {
-    setMcpServerItems([]);
-    clearUiLogs();
+    clearLogs();
     setExpanded(new Set());
   };
 
@@ -236,18 +249,14 @@ export function LoggerView({
                   ? "error"
                   : "unknown";
 
-          const item: RenderableRpcItem = {
-            id: `${timestamp ?? Date.now()}-${Math.random().toString(36).slice(2)}`,
+          useTrafficLogStore.getState().addMcpServerLog({
             serverId: typeof serverId === "string" ? serverId : "unknown",
             direction:
               typeof direction === "string" ? direction.toUpperCase() : "",
             method,
             timestamp: timestamp ?? new Date().toISOString(),
             payload: message,
-            source: "mcp-server",
-          };
-
-          setMcpServerItems((prev) => [item, ...prev].slice(0, 1000));
+          });
         } catch {}
       };
       es.onerror = () => {
@@ -262,7 +271,7 @@ export function LoggerView({
         es?.close();
       } catch {}
     };
-  }, []); // Only run once on mount
+  }, []);
 
   // Combine and sort all items by timestamp (newest first)
   const allItems = useMemo(() => {
