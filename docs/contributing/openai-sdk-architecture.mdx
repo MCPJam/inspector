@@ -1975,8 +1975,9 @@ Remember that messages flow through the triple-iframe chain:
    - Restrict network access via CSP
 
 4. **Content Security Policy:**
+   - Current implementation is very permissive (allows all `https:` sources)
+   - Consider implementing stricter CSP based on widget metadata for production
    - Remove `unsafe-eval` if possible (breaks some frameworks)
-   - Whitelist only trusted CDNs
    - Consider using nonces for inline scripts
 
 5. **Audit Widget Code:**
