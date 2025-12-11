@@ -22,7 +22,7 @@ import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
-import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
+import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 // Injected by Vite at build time from package.json
@@ -212,6 +212,8 @@ export function MCPAppsRenderer({
   );
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
+  // SEP-1865 mimetype validation
+  const [mimeTypeWarning, setMimeTypeWarning] = useState<string | null>(null);
 
   const pendingRequests = useRef<
     Map<
@@ -266,11 +268,17 @@ export function MCPAppsRenderer({
           );
         }
 
-        const { html, csp, permissive } = await contentResponse.json();
+        const {
+          html,
+          csp,
+          permissive,
+          mimeTypeWarning: warning,
+        } = await contentResponse.json();
         setWidgetHtml(html);
         setWidgetCsp(csp);
         setWidgetPermissive(permissive ?? false);
         setLoadedCspMode(cspMode);
+        setMimeTypeWarning(warning ?? null);
       } catch (err) {
         setLoadError(
           err instanceof Error ? err.message : "Failed to prepare widget",
@@ -294,7 +302,7 @@ export function MCPAppsRenderer({
   ]);
 
   // UI logging
-  const addUiLog = useUiLogStore((s) => s.addLog);
+  const addUiLog = useTrafficLogStore((s) => s.addLog);
 
   // Widget debug store
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
@@ -859,6 +867,11 @@ export function MCPAppsRenderer({
 
       <div className="text-[11px] text-muted-foreground/70">
         MCP App: <code>{resourceUri}</code>
+        {mimeTypeWarning && (
+          <span className="ml-2 text-amber-600 dark:text-amber-500">
+            · {mimeTypeWarning}
+          </span>
+        )}
       </div>
     </div>
   );

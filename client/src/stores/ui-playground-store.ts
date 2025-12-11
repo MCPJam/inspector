@@ -10,17 +10,23 @@ import { create } from "zustand";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { FormField } from "@/lib/tool-form";
 
-export type DeviceType = "mobile" | "tablet" | "desktop";
+export type DeviceType = "mobile" | "tablet" | "desktop" | "custom";
 
 /** Device viewport configurations - shared across playground and MCP apps renderer */
 export const DEVICE_VIEWPORT_CONFIGS: Record<
-  DeviceType,
+  Exclude<DeviceType, "custom">,
   { width: number; height: number }
 > = {
   mobile: { width: 430, height: 932 },
   tablet: { width: 820, height: 1180 },
   desktop: { width: 1280, height: 800 },
 };
+
+/** Custom viewport dimensions */
+export interface CustomViewport {
+  width: number;
+  height: number;
+}
 export type DisplayMode = "inline" | "pip" | "fullscreen";
 export type CspMode = "permissive" | "widget-declared";
 export type AppProtocol = "openai-apps" | "mcp-apps" | null;
@@ -127,6 +133,9 @@ interface UIPlaygroundState {
   safeAreaPreset: SafeAreaPreset;
   safeAreaInsets: SafeAreaInsets;
 
+  // Custom viewport dimensions (for custom device type)
+  customViewport: CustomViewport;
+
   // Actions
   setTools: (tools: Record<string, Tool>) => void;
   setSelectedTool: (tool: string | null) => void;
@@ -158,6 +167,7 @@ interface UIPlaygroundState {
   setCapabilities: (capabilities: Partial<DeviceCapabilities>) => void;
   setSafeAreaPreset: (preset: SafeAreaPreset) => void;
   setSafeAreaInsets: (insets: Partial<SafeAreaInsets>) => void;
+  setCustomViewport: (viewport: Partial<CustomViewport>) => void;
   reset: () => void;
 }
 
@@ -171,11 +181,31 @@ const getInitialGlobals = (): PlaygroundGlobals => ({
 });
 
 const STORAGE_KEY_SIDEBAR = "mcpjam-ui-playground-sidebar-visible";
+const STORAGE_KEY_CUSTOM_VIEWPORT = "mcpjam-ui-playground-custom-viewport";
+const STORAGE_KEY_DEVICE_TYPE = "mcpjam-ui-playground-device-type";
 
 const getStoredVisibility = (key: string, defaultValue: boolean): boolean => {
   if (typeof window === "undefined") return defaultValue;
   const stored = localStorage.getItem(key);
   return stored === null ? defaultValue : stored === "true";
+};
+
+const getStoredCustomViewport = (): CustomViewport => {
+  if (typeof window === "undefined") return { width: 800, height: 600 };
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_CUSTOM_VIEWPORT);
+    if (stored) return JSON.parse(stored);
+  } catch {}
+  return { width: 800, height: 600 };
+};
+
+const getStoredDeviceType = (): DeviceType => {
+  if (typeof window === "undefined") return "desktop";
+  const stored = localStorage.getItem(STORAGE_KEY_DEVICE_TYPE);
+  if (stored && ["mobile", "tablet", "desktop", "custom"].includes(stored)) {
+    return stored as DeviceType;
+  }
+  return "desktop";
 };
 
 /** Get default capabilities based on device type */
@@ -187,6 +217,7 @@ const getDefaultCapabilities = (
       return { hover: false, touch: true };
     case "tablet":
       return { hover: false, touch: true };
+    case "custom":
     case "desktop":
     default:
       return { hover: true, touch: false };
@@ -205,7 +236,7 @@ const initialState = {
   widgetUrl: null,
   widgetState: null,
   isWidgetTool: false,
-  deviceType: "desktop" as DeviceType,
+  deviceType: getStoredDeviceType(),
   displayMode: "inline" as DisplayMode,
   globals: getInitialGlobals(),
   lastToolCallId: null,
@@ -217,6 +248,7 @@ const initialState = {
   capabilities: getDefaultCapabilities("desktop"),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
+  customViewport: getStoredCustomViewport(),
 };
 
 export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
@@ -267,13 +299,15 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
 
   setIsWidgetTool: (isWidgetTool) => set({ isWidgetTool }),
 
-  setDeviceType: (deviceType) =>
-    set((state) => ({
+  setDeviceType: (deviceType) => {
+    localStorage.setItem(STORAGE_KEY_DEVICE_TYPE, deviceType);
+    return set((state) => ({
       deviceType,
       globals: { ...state.globals, deviceType },
       // Auto-update capabilities based on device type
       capabilities: getDefaultCapabilities(deviceType),
-    })),
+    }));
+  },
 
   setDisplayMode: (displayMode) =>
     set((state) => ({
@@ -345,12 +379,34 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
       safeAreaInsets: { ...state.safeAreaInsets, ...insets },
     })),
 
+  setCustomViewport: (viewport) =>
+    set((state) => {
+      const newViewport = { ...state.customViewport, ...viewport };
+      localStorage.setItem(
+        STORAGE_KEY_CUSTOM_VIEWPORT,
+        JSON.stringify(newViewport),
+      );
+      return {
+        customViewport: newViewport,
+        // Automatically switch to custom device type when setting custom viewport
+        deviceType: "custom" as DeviceType,
+        globals: { ...state.globals, deviceType: "custom" as DeviceType },
+      };
+    }),
+
   reset: () =>
-    set((state) => ({
-      ...initialState,
-      // Preserve panel visibility on reset
-      isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
-      // Preserve playground active state (controlled by PlaygroundMain mount/unmount)
-      isPlaygroundActive: state.isPlaygroundActive,
-    })),
+    set((state) => {
+      const storedDeviceType = getStoredDeviceType();
+      return {
+        ...initialState,
+        // Preserve panel visibility on reset
+        isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
+        // Preserve playground active state (controlled by PlaygroundMain mount/unmount)
+        isPlaygroundActive: state.isPlaygroundActive,
+        // Preserve device type and custom viewport from localStorage
+        deviceType: storedDeviceType,
+        customViewport: getStoredCustomViewport(),
+        capabilities: getDefaultCapabilities(storedDeviceType),
+      };
+    }),
 }));

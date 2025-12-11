@@ -27,8 +27,10 @@ import {
   Shield,
   MousePointer2,
   Hand,
+  Settings2,
 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
+import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
@@ -61,13 +63,21 @@ import {
   type CspMode,
   type AppProtocol,
 } from "@/stores/ui-playground-store";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
-const DEVICE_CONFIGS: Record<
-  DeviceType,
+const PRESET_DEVICE_CONFIGS: Record<
+  Exclude<DeviceType, "custom">,
   { width: number; height: number; label: string; icon: typeof Smartphone }
 > = {
   mobile: {
@@ -81,6 +91,12 @@ const DEVICE_CONFIGS: Record<
     label: "Desktop",
     icon: Monitor,
   },
+};
+
+/** Custom device config - dimensions come from store */
+const CUSTOM_DEVICE_BASE = {
+  label: "Custom",
+  icon: Settings2,
 };
 
 /** Common BCP 47 locales for testing (per OpenAI Apps SDK spec) */
@@ -234,6 +250,7 @@ export function PlaygroundMain({
   onTimeZoneChange,
 }: PlaygroundMainProps) {
   const posthog = usePostHog();
+  const clearLogs = useTrafficLogStore((s) => s.clear);
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
@@ -241,8 +258,21 @@ export function PlaygroundMain({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
 
-  // Device config
-  const deviceConfig = DEVICE_CONFIGS[deviceType];
+  // Custom viewport from store
+  const customViewport = useUIPlaygroundStore((s) => s.customViewport);
+  const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
+
+  // Device config - use custom dimensions from store for custom type
+  const deviceConfig = useMemo(() => {
+    if (deviceType === "custom") {
+      return {
+        ...CUSTOM_DEVICE_BASE,
+        width: customViewport.width,
+        height: customViewport.height,
+      };
+    }
+    return PRESET_DEVICE_CONFIGS[deviceType];
+  }, [deviceType, customViewport]);
   const DeviceIcon = deviceConfig.icon;
 
   // Theme handling
@@ -332,6 +362,24 @@ export function PlaygroundMain({
     (msg) => msg.role === "user" || msg.role === "assistant",
   );
 
+  // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        e.key.toLowerCase() === "k"
+      ) {
+        e.preventDefault();
+        if (!isThreadEmpty) {
+          setShowClearConfirm(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isThreadEmpty]);
+
   // Handle deterministic execution injection
   useEffect(() => {
     if (!pendingExecution) return;
@@ -367,8 +415,9 @@ export function PlaygroundMain({
   // Handle clear chat
   const handleClearChat = useCallback(() => {
     resetChat();
+    clearLogs();
     setShowClearConfirm(false);
-  }, [resetChat]);
+  }, [resetChat, clearLogs]);
 
   // Placeholder text
   let placeholder = "Ask something to render UI...";
@@ -403,8 +452,12 @@ export function PlaygroundMain({
   const errorMessage = formatErrorMessage(error);
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  // Compact mode for smaller devices
-  const isCompact = deviceType === "mobile" || deviceType === "tablet";
+  // Compact mode for smaller devices or narrow custom viewports
+  const isCompact = useMemo(() => {
+    if (deviceType === "mobile" || deviceType === "tablet") return true;
+    if (deviceType === "custom" && customViewport.width < 500) return true;
+    return false;
+  }, [deviceType, customViewport.width]);
 
   // Shared chat input props
   const sharedChatInputProps = {
@@ -450,19 +503,16 @@ export function PlaygroundMain({
   const isWidgetFullTakeover =
     isMobileFullTakeover || isTabletFullscreenTakeover;
 
-  // Thread content
+  // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
-    <>
+    <div className="flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
-        // Empty state - min-h-0 allows flex child to shrink below content size
+        // Empty state - centered welcome message
         <div className="flex-1 flex items-center justify-center overflow-y-auto overflow-x-hidden px-4 min-h-0">
-          <div className="w-full max-w-xl space-y-6 py-8 min-w-0">
-            <div className="text-center max-w-md mx-auto">
-              <h3 className="text-sm font-semibold text-foreground mb-2">
-                Test ChatGPT Apps and MCP Apps
-              </h3>
-            </div>
-            <ChatInput {...sharedChatInputProps} hasMessages={false} />
+          <div className="text-center max-w-md mx-auto">
+            <h3 className="text-sm font-semibold text-foreground mb-2">
+              Test ChatGPT Apps and MCP Apps
+            </h3>
           </div>
         </div>
       ) : (
@@ -505,18 +555,23 @@ export function PlaygroundMain({
             </StickToBottom.Content>
             <ScrollToBottomButton />
           </div>
-
-          {/* Hide chat input when widget takes over (mobile fullscreen/pip, tablet fullscreen only) */}
-          {!isWidgetFullTakeover && (
-            <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
-              <div className="p-3">
-                <ChatInput {...sharedChatInputProps} hasMessages />
-              </div>
-            </div>
-          )}
         </StickToBottom>
       )}
-    </>
+
+      {/* Single ChatInput that persists - hidden when widget takes over */}
+      {!isWidgetFullTakeover && (
+        <div
+          className={cn(
+            "flex-shrink-0",
+            isThreadEmpty
+              ? "px-4 pb-4 max-w-xl mx-auto w-full"
+              : "bg-background/80 backdrop-blur-sm border-t border-border p-3",
+          )}
+        >
+          <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
+        </div>
+      )}
+    </div>
   );
 
   // Device frame container - display mode is passed to widgets via Thread
@@ -529,51 +584,129 @@ export function PlaygroundMain({
           {/* ChatGPT Apps controls */}
           {showChatGPTControls && (
             <>
-              {/* Device type selector */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <Select
-                      value={deviceType}
-                      onValueChange={(v) =>
-                        onDeviceTypeChange?.(v as DeviceType)
-                      }
-                    >
-                      <SelectTrigger
+              {/* Device type selector with custom dimensions */}
+              <Popover>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
                         size="sm"
-                        className="h-7 w-auto min-w-[100px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                        className="h-7 px-2 text-xs gap-1.5"
                       >
                         <DeviceIcon className="h-3.5 w-3.5" />
-                        <SelectValue>{deviceConfig.label}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(
-                          Object.entries(DEVICE_CONFIGS) as [
-                            DeviceType,
-                            typeof deviceConfig,
-                          ][]
-                        ).map(([type, config]) => {
-                          const Icon = config.icon;
-                          return (
-                            <SelectItem key={type} value={type}>
-                              <span className="flex items-center gap-2">
-                                <Icon className="h-3.5 w-3.5" />
-                                <span>{config.label}</span>
-                                <span className="text-muted-foreground text-[10px]">
-                                  ({config.width}×{config.height})
-                                </span>
-                              </span>
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
+                        <span>{deviceConfig.label}</span>
+                        <span className="text-muted-foreground text-[10px]">
+                          {deviceConfig.width}×{deviceConfig.height}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Device</p>
+                  </TooltipContent>
+                </Tooltip>
+                <PopoverContent className="w-56 p-2" align="start">
+                  <div className="space-y-2">
+                    {/* Preset devices */}
+                    {(
+                      Object.entries(PRESET_DEVICE_CONFIGS) as [
+                        Exclude<DeviceType, "custom">,
+                        (typeof PRESET_DEVICE_CONFIGS)[Exclude<
+                          DeviceType,
+                          "custom"
+                        >],
+                      ][]
+                    ).map(([type, config]) => {
+                      const Icon = config.icon;
+                      const isSelected = deviceType === type;
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => onDeviceTypeChange?.(type)}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                            isSelected ? "bg-accent text-accent-foreground" : ""
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                          <span>{config.label}</span>
+                          <span className="text-muted-foreground text-[10px] ml-auto">
+                            {config.width}×{config.height}
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    {/* Custom option */}
+                    <button
+                      onClick={() => onDeviceTypeChange?.("custom")}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                        deviceType === "custom"
+                          ? "bg-accent text-accent-foreground"
+                          : ""
+                      }`}
+                    >
+                      <Settings2 className="h-3.5 w-3.5" />
+                      <span>Custom</span>
+                      <span className="text-muted-foreground text-[10px] ml-auto">
+                        {customViewport.width}×{customViewport.height}
+                      </span>
+                    </button>
+
+                    {/* Custom dimension inputs - only show when custom is selected */}
+                    {deviceType === "custom" && (
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor="custom-width"
+                            className="text-[10px] text-muted-foreground"
+                          >
+                            Width
+                          </Label>
+                          <Input
+                            id="custom-width"
+                            type="number"
+                            min={100}
+                            max={2560}
+                            defaultValue={customViewport.width}
+                            key={`w-${customViewport.width}`}
+                            onBlur={(e) => {
+                              const val = parseInt(e.target.value) || 100;
+                              setCustomViewport({
+                                width: Math.max(100, Math.min(2560, val)),
+                              });
+                            }}
+                            className="h-7 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor="custom-height"
+                            className="text-[10px] text-muted-foreground"
+                          >
+                            Height
+                          </Label>
+                          <Input
+                            id="custom-height"
+                            type="number"
+                            min={100}
+                            max={2560}
+                            defaultValue={customViewport.height}
+                            key={`h-${customViewport.height}`}
+                            onBlur={(e) => {
+                              const val = parseInt(e.target.value) || 100;
+                              setCustomViewport({
+                                height: Math.max(100, Math.min(2560, val)),
+                              });
+                            }}
+                            className="h-7 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-medium">Device</p>
-                </TooltipContent>
-              </Tooltip>
+                </PopoverContent>
+              </Popover>
 
               {/* Locale selector */}
               <Tooltip>
@@ -711,51 +844,129 @@ export function PlaygroundMain({
           {/* MCP Apps controls (SEP-1865) */}
           {showMCPAppsControls && (
             <>
-              {/* Device type selector */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <Select
-                      value={deviceType}
-                      onValueChange={(v) =>
-                        onDeviceTypeChange?.(v as DeviceType)
-                      }
-                    >
-                      <SelectTrigger
+              {/* Device type selector with custom dimensions */}
+              <Popover>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
                         size="sm"
-                        className="h-7 w-auto min-w-[100px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                        className="h-7 px-2 text-xs gap-1.5"
                       >
                         <DeviceIcon className="h-3.5 w-3.5" />
-                        <SelectValue>{deviceConfig.label}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(
-                          Object.entries(DEVICE_CONFIGS) as [
-                            DeviceType,
-                            typeof deviceConfig,
-                          ][]
-                        ).map(([type, config]) => {
-                          const Icon = config.icon;
-                          return (
-                            <SelectItem key={type} value={type}>
-                              <span className="flex items-center gap-2">
-                                <Icon className="h-3.5 w-3.5" />
-                                <span>{config.label}</span>
-                                <span className="text-muted-foreground text-[10px]">
-                                  ({config.width}×{config.height})
-                                </span>
-                              </span>
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
+                        <span>{deviceConfig.label}</span>
+                        <span className="text-muted-foreground text-[10px]">
+                          {deviceConfig.width}×{deviceConfig.height}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Device</p>
+                  </TooltipContent>
+                </Tooltip>
+                <PopoverContent className="w-56 p-2" align="start">
+                  <div className="space-y-2">
+                    {/* Preset devices */}
+                    {(
+                      Object.entries(PRESET_DEVICE_CONFIGS) as [
+                        Exclude<DeviceType, "custom">,
+                        (typeof PRESET_DEVICE_CONFIGS)[Exclude<
+                          DeviceType,
+                          "custom"
+                        >],
+                      ][]
+                    ).map(([type, config]) => {
+                      const Icon = config.icon;
+                      const isSelected = deviceType === type;
+                      return (
+                        <button
+                          key={type}
+                          onClick={() => onDeviceTypeChange?.(type)}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                            isSelected ? "bg-accent text-accent-foreground" : ""
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                          <span>{config.label}</span>
+                          <span className="text-muted-foreground text-[10px] ml-auto">
+                            {config.width}×{config.height}
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    {/* Custom option */}
+                    <button
+                      onClick={() => onDeviceTypeChange?.("custom")}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                        deviceType === "custom"
+                          ? "bg-accent text-accent-foreground"
+                          : ""
+                      }`}
+                    >
+                      <Settings2 className="h-3.5 w-3.5" />
+                      <span>Custom</span>
+                      <span className="text-muted-foreground text-[10px] ml-auto">
+                        {customViewport.width}×{customViewport.height}
+                      </span>
+                    </button>
+
+                    {/* Custom dimension inputs - only show when custom is selected */}
+                    {deviceType === "custom" && (
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor="custom-width-mcp"
+                            className="text-[10px] text-muted-foreground"
+                          >
+                            Width
+                          </Label>
+                          <Input
+                            id="custom-width-mcp"
+                            type="number"
+                            min={100}
+                            max={2560}
+                            defaultValue={customViewport.width}
+                            key={`w-mcp-${customViewport.width}`}
+                            onBlur={(e) => {
+                              const val = parseInt(e.target.value) || 100;
+                              setCustomViewport({
+                                width: Math.max(100, Math.min(2560, val)),
+                              });
+                            }}
+                            className="h-7 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label
+                            htmlFor="custom-height-mcp"
+                            className="text-[10px] text-muted-foreground"
+                          >
+                            Height
+                          </Label>
+                          <Input
+                            id="custom-height-mcp"
+                            type="number"
+                            min={100}
+                            max={2560}
+                            defaultValue={customViewport.height}
+                            key={`h-mcp-${customViewport.height}`}
+                            onBlur={(e) => {
+                              const val = parseInt(e.target.value) || 100;
+                              setCustomViewport({
+                                height: Math.max(100, Math.min(2560, val)),
+                              });
+                            }}
+                            className="h-7 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-medium">Device</p>
-                </TooltipContent>
-              </Tooltip>
+                </PopoverContent>
+              </Popover>
 
               {/* Locale selector */}
               <Tooltip>
@@ -961,7 +1172,12 @@ export function PlaygroundMain({
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Clear chat</TooltipContent>
+              <TooltipContent>
+                <p>Clear chat</p>
+                <p className="text-xs text-muted-foreground">
+                  {navigator.platform.includes("Mac") ? "⌘⇧K" : "Ctrl+Shift+K"}
+                </p>
+              </TooltipContent>
             </Tooltip>
           </div>
         )}
