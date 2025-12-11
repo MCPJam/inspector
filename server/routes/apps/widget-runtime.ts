@@ -292,7 +292,8 @@ const clampNumber = (value: unknown): number | null => {
   };
 
   window.addEventListener("popstate", (event) => {
-    const stateIndex = (event as any).state?.__navIndex ?? navigationState.currentIndex;
+    const stateIndex =
+      (event as any).state?.__navIndex ?? navigationState.currentIndex;
     navigationState.currentIndex = stateIndex;
     navigationState.historyLength = history.length;
     notifyNavigationState();
@@ -389,7 +390,9 @@ const clampNumber = (value: unknown): number | null => {
                 "openai/userAgent": navigator.userAgent,
                 "openai/subject": getSubjectId(),
               },
-              hostUserLocation ? { "openai/userLocation": hostUserLocation } : {},
+              hostUserLocation
+                ? { "openai/userLocation": hostUserLocation }
+                : {},
             ),
           },
           "*",
@@ -535,9 +538,7 @@ const clampNumber = (value: unknown): number | null => {
         const pending = window.openai._pendingCalls?.get(callId);
         if (pending) {
           window.openai._pendingCalls?.delete(callId);
-          error
-            ? pending.reject(new Error(error))
-            : pending.resolve(result);
+          error ? pending.reject(new Error(error)) : pending.resolve(result);
         }
         break;
       }
@@ -598,7 +599,10 @@ const clampNumber = (value: unknown): number | null => {
               history.back();
             }
           } else if (event.data.direction === "forward") {
-            if (navigationState.currentIndex < navigationState.historyLength - 1) {
+            if (
+              navigationState.currentIndex <
+              navigationState.historyLength - 1
+            ) {
               navigationState.currentIndex++;
               history.forward();
             }
@@ -656,4 +660,3 @@ const clampNumber = (value: unknown): number | null => {
     window.parent.postMessage(violation, "*");
   });
 })();
-

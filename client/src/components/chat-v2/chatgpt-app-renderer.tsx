@@ -414,7 +414,14 @@ function useWidgetFetch(
     onCspConfigReceived,
   ]);
 
-  return { widgetUrl, widgetClosed, isStoringWidget, storeError, setWidgetUrl, prefersBorder };
+  return {
+    widgetUrl,
+    widgetClosed,
+    isStoringWidget,
+    storeError,
+    setWidgetUrl,
+    prefersBorder,
+  };
 }
 
 // ============================================================================
@@ -549,24 +556,29 @@ export function ChatGPTAppRenderer({
     displayMode === "pip" &&
     (isControlled || pipWidgetId === resolvedToolCallId);
   const allowAutoResize = !isFullscreen && !isPip;
-  const { widgetUrl, widgetClosed, isStoringWidget, storeError, prefersBorder } =
-    useWidgetFetch(
-      toolState,
-      resolvedToolCallId,
-      outputTemplate,
-      toolName,
-      serverId,
-      resolvedToolInput,
-      resolvedToolOutput,
-      toolResponseMetadata,
-      themeMode,
-      locale,
-      cspMode,
-      deviceType,
-      capabilities,
-      safeAreaInsets,
-      handleCspConfigReceived,
-    );
+  const {
+    widgetUrl,
+    widgetClosed,
+    isStoringWidget,
+    storeError,
+    prefersBorder,
+  } = useWidgetFetch(
+    toolState,
+    resolvedToolCallId,
+    outputTemplate,
+    toolName,
+    serverId,
+    resolvedToolInput,
+    resolvedToolOutput,
+    toolResponseMetadata,
+    themeMode,
+    locale,
+    cspMode,
+    deviceType,
+    capabilities,
+    safeAreaInsets,
+    handleCspConfigReceived,
+  );
 
   const applyMeasuredHeight = useCallback(
     (height: unknown) => {
@@ -1245,7 +1257,7 @@ export function ChatGPTAppRenderer({
         className={`w-full bg-background overflow-hidden ${
           isFullscreen
             ? "flex-1 border-0 rounded-none"
-            : `rounded-md ${prefersBorder ? 'border border-border/40' : ''}`
+            : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
         }`}
         style={{
           height: iframeHeight,
