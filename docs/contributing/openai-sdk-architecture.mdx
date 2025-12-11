@@ -1421,22 +1421,26 @@ Widgets can declare required domains using the `openai/widgetCSP` metadata field
 
 #### CSP Header Generation
 
-Located in `server/routes/mcp/chatgpt.ts:571-701`:
+Located in `server/routes/apps/chatgpt.ts`:
 
 ```typescript
 function buildCspHeader(
   mode: CspMode,
-  widgetCsp?: WidgetCspMeta | null,
+  _widgetCsp?: WidgetCspMeta | null,
 ): CspConfig {
-  // Base trusted CDNs (always included for widget asset loading)
-  const baseTrustedCdns = [
-    "https://persistent.oaistatic.com",
-    "https://*.oaistatic.com",
-    "https://unpkg.com",
-    "https://cdn.jsdelivr.net",
-    "https://cdnjs.cloudflare.com",
-    "https://cdn.skypack.dev",
-    "https://cdn.tailwindcss.com",
+  // Always allow localhost/127.* for widget development + sandbox proxy HMR
+  const localhostSources = [
+    "http://localhost:*",
+    "http://127.0.0.1:*",
+    "https://localhost:*",
+    "https://127.0.0.1:*",
+  ];
+
+  // WebSocket sources for HMR, etc.
+  const wsSources = [
+    "ws://localhost:*",
+    "ws://127.0.0.1:*",
+    "wss://localhost:*",
   ];
 
   let connectDomains: string[];
@@ -1444,25 +1448,40 @@ function buildCspHeader(
 
   switch (mode) {
     case "permissive":
-      // Allow https: wildcard
-      connectDomains = ["'self'", "https:", "wss:", "ws:"];
+      // Most lenient - allow https: wildcard
+      connectDomains = [
+        "'self'",
+        "https:",
+        "wss:",
+        "ws:",
+        ...localhostSources,
+        ...wsSources,
+      ];
       resourceDomains = [
         "'self'",
         "data:",
         "blob:",
         "https:",
-        ...baseTrustedCdns,
+        ...localhostSources,
       ];
       break;
 
     case "widget-declared":
-      // Honor widget's declared CSP
-      connectDomains = ["'self'", ...(widgetCsp?.connect_domains || [])];
+      // Also permissive - allows all https: sources
+      connectDomains = [
+        "'self'",
+        "https:",
+        "wss:",
+        "ws:",
+        ...localhostSources,
+        ...wsSources,
+      ];
       resourceDomains = [
         "'self'",
         "data:",
         "blob:",
-        ...(widgetCsp?.resource_domains || baseTrustedCdns),
+        "https:",
+        ...localhostSources,
       ];
       break;
   }
@@ -1474,11 +1493,11 @@ function buildCspHeader(
     "worker-src 'self' blob:",
     "child-src 'self' blob:",
     `style-src 'self' 'unsafe-inline' ${resourceDomains.join(" ")}`,
-    `img-src ${mode === "widget-declared" ? resourceDomains.join(" ") : "'self' data: blob: https:"}`,
-    `media-src ${mode === "widget-declared" ? resourceDomains.join(" ") : "'self' data: blob: https:"}`,
+    `img-src 'self' data: blob: https: ${localhostSources.join(" ")}`,
+    `media-src 'self' data: blob: https:`,
     `font-src 'self' data: ${resourceDomains.join(" ")}`,
     `connect-src ${connectDomains.join(" ")}`,
-    "frame-ancestors 'self'",
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
   ].join("; ");
 
   return { mode, connectDomains, resourceDomains, headerString };
@@ -1486,6 +1505,8 @@ function buildCspHeader(
 ```
 
 The CSP header is applied in the `/widget-content/:toolId` endpoint based on the `csp_mode` query parameter.
+
+**Note:** As of PR #1059, both CSP modes are very permissive, allowing all `https:` sources. This simplifies widget development but reduces security isolation. Widget-declared CSP metadata is currently not enforced.
 
 #### CSP Violation Reporting
 
