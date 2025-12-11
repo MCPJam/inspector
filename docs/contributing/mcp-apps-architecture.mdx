@@ -271,19 +271,25 @@ Serves the sandbox proxy HTML that creates the double-iframe architecture.
 
 ### Content Security Policy
 
-The sandbox proxy uses a permissive CSP to allow widget content:
+The sandbox proxy uses a CSP that varies based on the widget's declared security mode:
 
-```html
-<meta
-  http-equiv="Content-Security-Policy"
-  content="
-  default-src 'self';
-  script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com ...;
-  style-src * blob: data: 'unsafe-inline';
-  connect-src *;
-  ...
-"
-/>
+**Widget-declared mode**: Restricts resources to only those declared in `resource_domains`
+```
+img-src 'self' data: blob: <resource_domains>
+media-src 'self' data: blob: <resource_domains>
+```
+
+**Permissive mode**: Allows all HTTPS sources
+```
+img-src 'self' data: blob: https:
+media-src 'self' data: blob: https:
+```
+
+Other directives remain permissive to support widget functionality:
+```
+script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com ...
+style-src * blob: data: 'unsafe-inline'
+connect-src *
 ```
 
 ### Iframe sandbox attributes
