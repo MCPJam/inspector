@@ -1342,10 +1342,10 @@ The debug UI uses local state to track which panel is active:
 
 ```typescript
 const [activeDebugTab, setActiveDebugTab] = useState<
-  "data" | "state" | "globals" | null
+  "data" | "state" | "csp" | null
 >(null);
 
-const handleDebugClick = (tab: "data" | "state" | "globals") => {
+const handleDebugClick = (tab: "data" | "state" | "csp") => {
   if (activeDebugTab === tab) {
     // Clicking active tab closes panel
     setActiveDebugTab(null);
@@ -1358,6 +1358,10 @@ const handleDebugClick = (tab: "data" | "state" | "globals") => {
 ```
 
 This provides a cleaner UX compared to the previous tabs-based approach, reducing visual clutter and improving mobile responsiveness.
+
+### Display Mode and Debug Controls
+
+As of PR #1050, the display mode controls and debug buttons are merged into a single toolbar in the thread header. The display mode selector appears as a dropdown menu (only in UI Playground), while debug buttons (Data, State, CSP) remain as icon buttons. This consolidation reduces visual clutter and provides a more compact interface, especially useful for narrow viewports.
 
 ## Related Documentation
 
