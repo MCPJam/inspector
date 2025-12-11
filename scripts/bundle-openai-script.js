@@ -1,19 +1,19 @@
-import { build } from 'esbuild';
-import { writeFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { build } from "esbuild";
+import { writeFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 try {
   const result = await build({
-    entryPoints: [join(__dirname, '../server/routes/apps/widget-runtime.ts')],
+    entryPoints: [join(__dirname, "../server/routes/apps/widget-runtime.ts")],
     bundle: true,
     write: false,
-    format: 'iife',
-    platform: 'browser',
-    target: 'es2020',
+    format: "iife",
+    platform: "browser",
+    target: "es2020",
     minify: false,
   });
 
@@ -26,10 +26,13 @@ try {
 export const API_RUNTIME_SCRIPT = ${serializedCode};
 `;
 
-  const outputTsPath = join(__dirname, '../server/routes/apps/chatgpt.bundled.ts');
+  const outputTsPath = join(
+    __dirname,
+    "../server/routes/apps/chatgpt.bundled.ts",
+  );
   writeFileSync(outputTsPath, outputContent);
-  console.log('✅ Successfully bundled API runtime script');
+  console.log("✅ Successfully bundled API runtime script");
 } catch (error) {
-  console.error('❌ Failed to bundle API runtime script:', error);
+  console.error("❌ Failed to bundle API runtime script:", error);
   process.exit(1);
 }
