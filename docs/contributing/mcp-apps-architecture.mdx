@@ -263,6 +263,21 @@ Stores widget data for later retrieval by the iframe.
 
 Fetches widget HTML from MCP resource and injects the client script.
 
+**SEP-1865 MIME type validation**: This endpoint validates that the resource has the correct MIME type (`text/html;profile=mcp-app`). If the MIME type is missing or incorrect, the endpoint returns a warning in the response:
+
+```typescript
+{
+  html: string,
+  csp: string,
+  permissive: boolean,
+  mimeType: string | undefined,
+  mimeTypeValid: boolean,
+  mimeTypeWarning: string | null
+}
+```
+
+The warning is displayed in the widget footer to help developers identify MIME type issues during development.
+
 ### GET /api/mcp/sandbox-proxy
 
 Serves the sandbox proxy HTML that creates the double-iframe architecture.
