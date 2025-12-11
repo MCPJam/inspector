@@ -157,15 +157,15 @@ window.URL.revokeObjectURL=OrigURL.revokeObjectURL;window.URL.canParse=OrigURL.c
 })();</script>`;
 }
 
-// Widget base styles: prevent scrollbars by disabling overflow.
-// The auto-resize mechanism (measureAndNotifyHeight) reports content height
-// to the host, which expands the iframe accordingly - scrollbars are unnecessary.
-// This matches ChatGPT's inline widget behavior where the container sizes to content.
+// Widget base styles: keep layout clean but allow vertical scrolling when the host
+// uses a fixed-height container (fullscreen/PiP). Inline mode still auto-resizes,
+// so scrollbars typically remain hidden while staying available when needed.
 const WIDGET_BASE_CSS = `<style>
 html, body {
   margin: 0;
   padding: 0;
-  overflow: hidden; /* Prevent scrollbars - iframe resizes to content via auto-resize */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 </style>`;
 
