@@ -78,6 +78,7 @@ function getMCPConfigFromEnv() {
               env: serverConfig.env || {},
               url: serverConfig.url, // For SSE/HTTP connections
               headers: serverConfig.headers, // Custom headers for HTTP
+              useOAuth: serverConfig.useOAuth, // Trigger OAuth flow
             };
           },
         );
