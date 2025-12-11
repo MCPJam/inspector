@@ -1266,7 +1266,7 @@ The UI Playground is a specialized testing environment for ChatGPT Apps and MCP 
 
 Located in `client/src/components/ui-playground/PlaygroundMain.tsx`, the playground header includes:
 
-**Device Selector** - Toggle between mobile (430×932), tablet (820×1180), and desktop (1280×800) viewports to test responsive layouts.
+**Device Selector** - Toggle between mobile (430×932), tablet (820×1180), desktop (1280×800), and custom viewports to test responsive layouts. Custom viewports allow you to specify exact width and height dimensions (100-2560px) which are persisted across sessions. The playground automatically switches to compact mode for narrow custom viewports (width < 500px).
 
 **Locale Selector** - Choose from common BCP 47 locales for internationalization testing:
 
