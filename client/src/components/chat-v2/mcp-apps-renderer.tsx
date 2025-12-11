@@ -197,7 +197,12 @@ export function MCPAppsRenderer({
       displayMode,
     ],
   );
-  const [contentHeight, setContentHeight] = useState<number>(400);
+  const [contentWidth, setContentWidth] = useState<number | undefined>(
+    undefined,
+  );
+  const [contentHeight, setContentHeight] = useState<number | undefined>(
+    undefined,
+  );
 
   // maxHeight should match the device's viewport height (max available space)
   const maxHeight = useMemo(() => {
@@ -639,9 +644,37 @@ export function MCPAppsRenderer({
           case "ui/notifications/size-changed": // SEP-1865 spec
           case "ui/notifications/size-change": {
             // Support both for backwards compatibility
-            const sizeParams = params as { height?: number };
-            if (typeof sizeParams.height === "number") {
-              setContentHeight(Math.min(sizeParams.height, maxHeight));
+            const sizeParams = params as { width?: number; height?: number };
+
+            // Get the iframe element for border-box compensation
+            const iframe = sandboxRef.current?.getIframeElement();
+
+            if (iframe) {
+              // Handle border-box compensation to prevent resize feedback loops
+              const style = getComputedStyle(iframe);
+              const isBorderBox = style.boxSizing === "border-box";
+
+              if (typeof sizeParams.width === "number") {
+                let width = sizeParams.width;
+                if (isBorderBox) {
+                  width +=
+                    parseFloat(style.borderLeftWidth) +
+                    parseFloat(style.borderRightWidth);
+                }
+                iframe.style.minWidth = `min(${width}px, 100%)`;
+                setContentWidth(width);
+              }
+
+              if (typeof sizeParams.height === "number") {
+                let height = sizeParams.height;
+                if (isBorderBox) {
+                  height +=
+                    parseFloat(style.borderTopWidth) +
+                    parseFloat(style.borderBottomWidth);
+                }
+                iframe.style.height = `${height}px`;
+                setContentHeight(height);
+              }
             }
             break;
           }
@@ -817,8 +850,8 @@ export function MCPAppsRenderer({
   const isPip =
     displayMode === "pip" && (isControlled || pipWidgetId === toolCallId);
   const isFullscreen = displayMode === "fullscreen";
-  // Apply maxHeight constraint, but no minimum - let widget control its size
-  const appliedHeight = Math.min(contentHeight, maxHeight);
+  // Let widget control its size
+  const appliedHeight = contentHeight;
 
   let containerClassName = "mt-3 space-y-2 relative group";
   if (isFullscreen) {
@@ -859,8 +892,13 @@ export function MCPAppsRenderer({
         permissive={widgetPermissive}
         onMessage={handleMessage}
         title={`MCP App: ${toolName}`}
-        className="w-full border border-border/40 rounded-md bg-background transition-[height] duration-200 ease-out overflow-auto"
+        className="w-full border border-border/40 rounded-md bg-background overflow-auto"
         style={{
+          minWidth: contentWidth
+            ? `min(${contentWidth}px, 100%)`
+            : isFullscreen
+              ? "100%"
+              : undefined,
           height: isFullscreen ? "100%" : `${appliedHeight}px`,
         }}
       />
