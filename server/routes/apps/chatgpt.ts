@@ -305,9 +305,15 @@ function buildCspHeader(
   // Image/media sources - respect mode for widget-declared CSP
   // In permissive mode: allow all https: sources
   // In widget-declared mode: only allow declared resource_domains
-  const imgSrc = `'self' data: blob: https: ${localhostSources.join(" ")}`;
+  const imgSrc =
+    mode === "widget-declared"
+      ? `'self' data: blob: ${(_widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      : `'self' data: blob: https: ${localhostSources.join(" ")}`;
 
-  const mediaSrc = "'self' data: blob: https:";
+  const mediaSrc =
+    mode === "widget-declared"
+      ? `'self' data: blob: ${(_widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      : "'self' data: blob: https:";
 
   // Frame ancestors must always include localhost/127.0.0.1 for the cross-origin
   // sandbox architecture to work (sandbox-proxy swaps localhost <-> 127.0.0.1)
