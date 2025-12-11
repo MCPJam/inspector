@@ -908,6 +908,7 @@ export function MCPAppsRenderer({
               ? "100%"
               : undefined,
           height: isFullscreen ? "100%" : `${appliedHeight}px`,
+          minHeight: "400px",
         }}
       />
 
