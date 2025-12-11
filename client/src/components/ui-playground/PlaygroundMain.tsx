@@ -29,6 +29,7 @@ import {
   Hand,
   Settings2,
 } from "lucide-react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
@@ -74,6 +75,7 @@ import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -249,6 +251,7 @@ export function PlaygroundMain({
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   onTimeZoneChange,
 }: PlaygroundMainProps) {
+  const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
   const [input, setInput] = useState("");
@@ -427,6 +430,16 @@ export function PlaygroundMain({
     placeholder = "Sign in to use chat";
   }
 
+  const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
+  const handleSignUp = () => {
+    posthog.capture("sign_up_button_clicked", {
+      location: "app_builder_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    signUp();
+  };
+
   // Submit handler
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -509,10 +522,19 @@ export function PlaygroundMain({
       {isThreadEmpty ? (
         // Empty state - centered welcome message
         <div className="flex-1 flex items-center justify-center overflow-y-auto overflow-x-hidden px-4 min-h-0">
-          <div className="text-center max-w-md mx-auto">
-            <h3 className="text-sm font-semibold text-foreground mb-2">
-              Test ChatGPT Apps and MCP Apps
-            </h3>
+          <div className="text-center max-w-md mx-auto space-y-6 py-8">
+            {isAuthLoading ? (
+              <div className="space-y-4">
+                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                <p className="text-sm text-muted-foreground">Loading...</p>
+              </div>
+            ) : shouldShowUpsell ? (
+              <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+            ) : (
+              <h3 className="text-sm font-semibold text-foreground mb-2">
+                Test ChatGPT Apps and MCP Apps
+              </h3>
+            )}
           </div>
         </div>
       ) : (
