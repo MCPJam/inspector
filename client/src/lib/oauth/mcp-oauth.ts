@@ -7,6 +7,7 @@ import {
   OAuthClientProvider,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { HttpServerDefinition } from "@/shared/types.js";
+import { generateRandomString } from "./state-machines/shared/helpers";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -121,7 +122,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   state(): string {
-    return `mcp-state-${this.serverName}`;
+    return generateRandomString(32);
   }
 
   get redirectUrl(): string {
@@ -597,7 +598,6 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
-  localStorage.removeItem(`mcp-state-${serverName}`);
 }
 
 /**
