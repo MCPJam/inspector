@@ -1,7 +1,7 @@
 // Standard React component for Vite
-import { getProviderLogoFromProvider } from "./chat-helpers";
+import { getProviderLogoFromProvider } from "../../shared/chat-helpers";
 import { cn } from "@/lib/chat-utils";
-import { getProviderColor } from "./chat-helpers";
+import { getProviderColor } from "../../shared/chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface ProviderLogoProps {

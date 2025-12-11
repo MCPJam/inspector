@@ -37,13 +37,13 @@ import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
   buildAvailableModels,
   getDefaultModel,
-} from "@/components/chat-v2/model-helpers";
+} from "@/components/chat-v2/shared/model-helpers";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   detectOllamaModels,
   detectOllamaToolCapableModels,
 } from "@/lib/ollama-utils";
-import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/chat-helpers";
+import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 

@@ -25,16 +25,16 @@ import {
 } from "lucide-react";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
-import { MCPAppsRenderer } from "./mcp-apps-renderer";
-import { CspDebugPanel } from "./csp-debug-panel";
+import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
+import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps-renderer";
+import { CspDebugPanel } from "@/components/chat-v2/thread/csp-debug-panel";
 import {
   callTool,
   getToolServerId,
   ToolServerMap,
 } from "@/lib/apis/mcp-tools-api";
-import { MemoizedMarkdown } from "./memomized-markdown";
-import { getProviderLogoFromModel } from "./chat-helpers";
+import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
+import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
 import {
   detectUIType,
   getUIResourceUri,
@@ -68,8 +68,8 @@ import {
   isToolPart,
   safeStringify,
   type McpResource,
-} from "./thread-helpers";
-import { UserMessageBubble } from "./user-message-bubble";
+} from "@/components/chat-v2/thread/thread-helpers";
+import { UserMessageBubble } from "@/components/chat-v2/thread/user-message-bubble";
 
 interface ThreadProps {
   messages: UIMessage[];

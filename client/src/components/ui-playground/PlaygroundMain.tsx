@@ -34,9 +34,9 @@ import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
-import { formatErrorMessage } from "@/components/chat-v2/chat-helpers";
+import { formatErrorMessage } from "@/components/chat-v2/shared/chat-helpers";
 import { ErrorBox } from "@/components/chat-v2/error";
-import { ConfirmChatResetDialog } from "@/components/chat-v2/confirm-chat-reset-dialog";
+import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,7 +54,7 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
-import type { MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
+import type { MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import {
   useUIPlaygroundStore,
   DEVICE_VIEWPORT_CONFIGS,

@@ -1,6 +1,6 @@
 import { ModelDefinition } from "@/shared/types.js";
 import { generateId, type UIMessage } from "ai";
-import type { MCPPromptResult } from "./mcp-prompts-popover";
+import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import deepseekLogo from "/deepseek_logo.svg";
