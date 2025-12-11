@@ -365,7 +365,11 @@ export function PlaygroundMain({
   // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "k") {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        e.key.toLowerCase() === "k"
+      ) {
         e.preventDefault();
         if (!isThreadEmpty) {
           setShowClearConfirm(true);
@@ -556,12 +560,14 @@ export function PlaygroundMain({
 
       {/* Single ChatInput that persists - hidden when widget takes over */}
       {!isWidgetFullTakeover && (
-        <div className={cn(
-          "flex-shrink-0",
-          isThreadEmpty
-            ? "px-4 pb-4 max-w-xl mx-auto w-full"
-            : "bg-background/80 backdrop-blur-sm border-t border-border p-3"
-        )}>
+        <div
+          className={cn(
+            "flex-shrink-0",
+            isThreadEmpty
+              ? "px-4 pb-4 max-w-xl mx-auto w-full"
+              : "bg-background/80 backdrop-blur-sm border-t border-border p-3",
+          )}
+        >
           <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
         </div>
       )}
@@ -619,9 +625,7 @@ export function PlaygroundMain({
                           key={type}
                           onClick={() => onDeviceTypeChange?.(type)}
                           className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
-                            isSelected
-                              ? "bg-accent text-accent-foreground"
-                              : ""
+                            isSelected ? "bg-accent text-accent-foreground" : ""
                           }`}
                         >
                           <Icon className="h-3.5 w-3.5" />
@@ -881,9 +885,7 @@ export function PlaygroundMain({
                           key={type}
                           onClick={() => onDeviceTypeChange?.(type)}
                           className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
-                            isSelected
-                              ? "bg-accent text-accent-foreground"
-                              : ""
+                            isSelected ? "bg-accent text-accent-foreground" : ""
                           }`}
                         >
                           <Icon className="h-3.5 w-3.5" />

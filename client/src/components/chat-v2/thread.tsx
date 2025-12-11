@@ -588,7 +588,10 @@ function ToolPart({
             >
               {/* Display mode dropdown */}
               {showDisplayModeControls && (
-                <DropdownMenu open={displayModeOpen} onOpenChange={setDisplayModeOpen}>
+                <DropdownMenu
+                  open={displayModeOpen}
+                  onOpenChange={setDisplayModeOpen}
+                >
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
@@ -619,7 +622,10 @@ function ToolPart({
                               mode !== "fullscreen"
                             ) {
                               onExitFullscreen?.(toolCallId);
-                            } else if (displayMode === "pip" && mode !== "pip") {
+                            } else if (
+                              displayMode === "pip" &&
+                              mode !== "pip"
+                            ) {
                               onExitPip?.(toolCallId);
                             }
 
@@ -648,37 +654,37 @@ function ToolPart({
               {/* Debug buttons */}
               {hasWidgetDebug && (
                 <>
-              {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
-                <Tooltip key={tab}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDebugClick(tab);
-                      }}
-                      className={`p-1 rounded transition-colors cursor-pointer relative ${
-                        activeDebugTab === tab
-                          ? "bg-background text-foreground shadow-sm"
-                          : badge && badge > 0
-                            ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                            : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      {badge !== undefined && badge > 0 && (
-                        <Badge
-                          variant="destructive"
-                          className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                  {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
+                    <Tooltip key={tab}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDebugClick(tab);
+                          }}
+                          className={`p-1 rounded transition-colors cursor-pointer relative ${
+                            activeDebugTab === tab
+                              ? "bg-background text-foreground shadow-sm"
+                              : badge && badge > 0
+                                ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                          }`}
                         >
-                          {badge}
-                        </Badge>
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{label}</TooltipContent>
-                </Tooltip>
-              ))}
+                          <Icon className="h-3.5 w-3.5" />
+                          {badge !== undefined && badge > 0 && (
+                            <Badge
+                              variant="destructive"
+                              className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                            >
+                              {badge}
+                            </Badge>
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{label}</TooltipContent>
+                    </Tooltip>
+                  ))}
                 </>
               )}
             </span>

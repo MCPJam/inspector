@@ -382,7 +382,10 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
   setCustomViewport: (viewport) =>
     set((state) => {
       const newViewport = { ...state.customViewport, ...viewport };
-      localStorage.setItem(STORAGE_KEY_CUSTOM_VIEWPORT, JSON.stringify(newViewport));
+      localStorage.setItem(
+        STORAGE_KEY_CUSTOM_VIEWPORT,
+        JSON.stringify(newViewport),
+      );
       return {
         customViewport: newViewport,
         // Automatically switch to custom device type when setting custom viewport
