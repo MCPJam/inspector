@@ -630,6 +630,11 @@ export function useAppState() {
         .then((data) => {
           const cliConfig = data.config;
           if (cliConfig) {
+            // Handle initial tab navigation (if not already set via URL hash)
+            if (cliConfig.initialTab && !window.location.hash) {
+              window.location.hash = cliConfig.initialTab;
+            }
+
             // Handle multiple servers from config file
             if (cliConfig.servers && Array.isArray(cliConfig.servers)) {
               const autoConnectServer = cliConfig.autoConnectServer;
@@ -654,6 +659,7 @@ export function useAppState() {
                   args: server.args || [],
                   url: server.url,
                   env: server.env || {},
+                  headers: server.headers, // Include custom headers for HTTP
                 };
 
                 // Always add/update server from CLI config

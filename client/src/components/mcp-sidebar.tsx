@@ -46,7 +46,7 @@ const navigationSections = [
       },
       {
         title: "App Builder",
-        url: "#ui-playground",
+        url: "#app-builder",
         icon: Fish,
       },
     ],
