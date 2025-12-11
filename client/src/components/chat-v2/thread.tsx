@@ -488,7 +488,7 @@ function ToolPart({
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "csp" | null
-  >(null);
+  >("data");
   const [displayModeOpen, setDisplayModeOpen] = useState(false);
 
   const inputData = (part as any).input;
