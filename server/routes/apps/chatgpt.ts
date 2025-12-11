@@ -219,40 +219,6 @@ interface CspConfig {
   headerString: string;
 }
 
-const defaultResourceDomains = [
-  "https://unpkg.com",
-  "https://cdn.jsdelivr.net",
-  "https://cdnjs.cloudflare.com",
-  "https://cdn.tailwindcss.com",
-];
-const isDev = process.env.NODE_ENV !== "production";
-const devResourceDomains = isDev
-  ? [
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://127.0.0.1:3000",
-      "http://127.0.0.1:5173",
-      "ws://localhost:3000",
-      "ws://localhost:5173",
-    ]
-  : [];
-const devConnectDomains = isDev ? ["https:", "wss:", "ws:"] : [];
-const devScriptDomains = isDev ? ["https:"] : [];
-const trustedCdns = [
-  "https://persistent.oaistatic.com",
-  "https://*.oaistatic.com",
-  "https://unpkg.com",
-  "https://cdn.jsdelivr.net",
-  "https://cdnjs.cloudflare.com",
-  "https://cdn.skypack.dev",
-  "https://apps-sdk-widgets.vercel.app",
-  "https://dynamic.heygen.ai",
-  "https://static.heygen.ai",
-  "https://files2.heygen.ai",
-].join(" ");
-
 /**
  * Build CSP header string based on mode and widget metadata.
  *
@@ -262,33 +228,22 @@ const trustedCdns = [
  */
 function buildCspHeader(
   mode: CspMode,
-  widgetCsp?: WidgetCspMeta | null,
+  _widgetCsp?: WidgetCspMeta | null,
 ): CspConfig {
-  // Base trusted CDNs (always included for widget asset loading)
-  const baseTrustedCdns = [
-    "https://persistent.oaistatic.com",
-    "https://*.oaistatic.com",
-    "https://unpkg.com",
-    "https://cdn.jsdelivr.net",
-    "https://cdnjs.cloudflare.com",
-    "https://cdn.skypack.dev",
-    "https://cdn.tailwindcss.com",
+  // Always allow localhost/127.* for widget development + sandbox proxy HMR
+  const localhostSources = [
+    "http://localhost:*",
+    "http://127.0.0.1:*",
+    "https://localhost:*",
+    "https://127.0.0.1:*",
   ];
 
-  // Localhost sources for development
-  const localhostSources = isDev
-    ? [
-        "http://localhost:*",
-        "http://127.0.0.1:*",
-        "https://localhost:*",
-        "https://127.0.0.1:*",
-      ]
-    : [];
-
-  // WebSocket sources for development (HMR, etc.)
-  const wsSources = isDev
-    ? ["ws://localhost:*", "ws://127.0.0.1:*", "wss://localhost:*"]
-    : [];
+  // WebSocket sources for HMR, etc.
+  const wsSources = [
+    "ws://localhost:*",
+    "ws://127.0.0.1:*",
+    "wss://localhost:*",
+  ];
 
   let connectDomains: string[];
   let resourceDomains: string[];
@@ -309,7 +264,6 @@ function buildCspHeader(
         "data:",
         "blob:",
         "https:",
-        ...baseTrustedCdns,
         ...localhostSources,
       ];
       break;
@@ -318,7 +272,9 @@ function buildCspHeader(
       // Honor widget's declared CSP, with sensible defaults
       connectDomains = [
         "'self'",
-        ...(widgetCsp?.connect_domains || []),
+        "https:",
+        "wss:",
+        "ws:",
         ...localhostSources,
         ...wsSources,
       ];
@@ -326,7 +282,7 @@ function buildCspHeader(
         "'self'",
         "data:",
         "blob:",
-        ...(widgetCsp?.resource_domains || baseTrustedCdns),
+        "https:",
         ...localhostSources,
       ];
       break;
@@ -339,7 +295,6 @@ function buildCspHeader(
         "data:",
         "blob:",
         "https:",
-        ...baseTrustedCdns,
         ...localhostSources,
       ];
   }
@@ -350,15 +305,9 @@ function buildCspHeader(
   // Image/media sources - respect mode for widget-declared CSP
   // In permissive mode: allow all https: sources
   // In widget-declared mode: only allow declared resource_domains
-  const imgSrc =
-    mode === "widget-declared"
-      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
-      : `'self' data: blob: https: ${localhostSources.join(" ")}`;
+  const imgSrc = `'self' data: blob: https: ${localhostSources.join(" ")}`;
 
-  const mediaSrc =
-    mode === "widget-declared"
-      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
-      : "'self' data: blob: https:";
+  const mediaSrc = "'self' data: blob: https:";
 
   // Frame ancestors must always include localhost/127.0.0.1 for the cross-origin
   // sandbox architecture to work (sandbox-proxy swaps localhost <-> 127.0.0.1)
