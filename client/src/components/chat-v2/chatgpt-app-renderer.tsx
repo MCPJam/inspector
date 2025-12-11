@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { X, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
-import { useUiLogStore, extractMethod } from "@/stores/ui-log-store";
+import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import {
   ChatGPTSandboxedIframe,
@@ -630,7 +630,7 @@ export function ChatGPTAppRenderer({
     return url.toString();
   }, [widgetUrl, modalOpen, modalParams]);
 
-  const addUiLog = useUiLogStore((s) => s.addLog);
+  const addUiLog = useTrafficLogStore((s) => s.addLog);
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
   const setWidgetState = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);

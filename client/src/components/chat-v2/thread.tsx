@@ -21,6 +21,7 @@ import {
   Database,
   Box,
   Shield,
+  Check,
 } from "lucide-react";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -46,6 +47,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EmbeddedResource } from "@modelcontextprotocol/sdk/types.js";
 import {
   AnyPart,
@@ -482,6 +489,7 @@ function ToolPart({
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "csp" | null
   >(null);
+  const [displayModeOpen, setDisplayModeOpen] = useState(false);
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
@@ -572,90 +580,113 @@ function ToolPart({
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
-          {/* Display mode controls - only when controlled externally (playground mode) */}
-          {showDisplayModeControls && (
+          {/* Combined display mode and debug controls */}
+          {(showDisplayModeControls || hasWidgetDebug) && (
             <span
               className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
               onClick={(e) => e.stopPropagation()}
             >
-              {displayModeOptions.map(({ mode, icon: Icon, label }) => (
-                <Tooltip key={mode}>
-                  <TooltipTrigger asChild>
+              {/* Display mode dropdown */}
+              {showDisplayModeControls && (
+                <DropdownMenu
+                  open={displayModeOpen}
+                  onOpenChange={setDisplayModeOpen}
+                >
+                  <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (toolCallId) {
-                          // Handle exits
-                          if (
-                            displayMode === "fullscreen" &&
-                            mode !== "fullscreen"
-                          ) {
-                            onExitFullscreen?.(toolCallId);
-                          } else if (displayMode === "pip" && mode !== "pip") {
-                            onExitPip?.(toolCallId);
-                          }
-
-                          // Handle entries
-                          if (mode === "fullscreen") {
-                            onRequestFullscreen?.(toolCallId);
-                          } else if (mode === "pip") {
-                            onRequestPip?.(toolCallId);
-                          }
-                        }
-
-                        onDisplayModeChange?.(mode);
-                      }}
-                      className={`p-1 rounded transition-colors cursor-pointer ${
-                        displayMode === mode
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                      }`}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseEnter={() => setDisplayModeOpen(true)}
+                      className="p-1 rounded transition-colors cursor-pointer text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
                     >
-                      <Icon className="h-3.5 w-3.5" />
+                      {(() => {
+                        const CurrentIcon =
+                          displayModeOptions.find((o) => o.mode === displayMode)
+                            ?.icon ?? LayoutDashboard;
+                        return <CurrentIcon className="h-3.5 w-3.5" />;
+                      })()}
                     </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{label}</TooltipContent>
-                </Tooltip>
-              ))}
-            </span>
-          )}
-          {hasWidgetDebug && (
-            <span
-              className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
-                <Tooltip key={tab}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDebugClick(tab);
-                      }}
-                      className={`p-1 rounded transition-colors cursor-pointer relative ${
-                        activeDebugTab === tab
-                          ? "bg-background text-foreground shadow-sm"
-                          : badge && badge > 0
-                            ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                            : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      {badge !== undefined && badge > 0 && (
-                        <Badge
-                          variant="destructive"
-                          className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {displayModeOptions.map(({ mode, icon: Icon, label }) => (
+                      <DropdownMenuItem
+                        key={mode}
+                        onClick={() => {
+                          if (toolCallId) {
+                            // Handle exits
+                            if (
+                              displayMode === "fullscreen" &&
+                              mode !== "fullscreen"
+                            ) {
+                              onExitFullscreen?.(toolCallId);
+                            } else if (
+                              displayMode === "pip" &&
+                              mode !== "pip"
+                            ) {
+                              onExitPip?.(toolCallId);
+                            }
+
+                            // Handle entries
+                            if (mode === "fullscreen") {
+                              onRequestFullscreen?.(toolCallId);
+                            } else if (mode === "pip") {
+                              onRequestPip?.(toolCallId);
+                            }
+                          }
+
+                          onDisplayModeChange?.(mode);
+                        }}
+                        className="flex items-center gap-2 cursor-pointer"
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span>{label}</span>
+                        {displayMode === mode && (
+                          <Check className="h-4 w-4 ml-auto" />
+                        )}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              {/* Debug buttons */}
+              {hasWidgetDebug && (
+                <>
+                  {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
+                    <Tooltip key={tab}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDebugClick(tab);
+                          }}
+                          className={`p-1 rounded transition-colors cursor-pointer relative ${
+                            activeDebugTab === tab
+                              ? "bg-background text-foreground shadow-sm"
+                              : badge && badge > 0
+                                ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                          }`}
                         >
-                          {badge}
-                        </Badge>
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{label}</TooltipContent>
-                </Tooltip>
-              ))}
+                          <Icon className="h-3.5 w-3.5" />
+                          {badge !== undefined && badge > 0 && (
+                            <Badge
+                              variant="destructive"
+                              className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                            >
+                              {badge}
+                            </Badge>
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{label}</TooltipContent>
+                    </Tooltip>
+                  ))}
+                </>
+              )}
             </span>
           )}
           {toolState && StatusIcon && (
