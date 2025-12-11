@@ -1392,6 +1392,46 @@ useEffect(() => {
 
 **Log Clearing**: When chat is reset, the traffic log store is also cleared to provide a clean debugging state. This unified clearing behavior ensures that both conversation history and debug logs are synchronized.
 
+## Unified Traffic Logging
+
+As of PR #1050, the playground uses a unified traffic logging system (`traffic-log-store.ts`) that captures both UI Apps traffic and MCP Server RPC traffic in a single store. This replaces the previous `ui-log-store.ts` which only tracked UI Apps messages.
+
+### Traffic Log Store
+
+The store maintains two separate arrays for different traffic sources:
+
+```typescript
+interface TrafficLogState {
+  items: UiLogEvent[];              // UI Apps traffic (ChatGPT Apps, MCP Apps)
+  mcpServerItems: McpServerRpcItem[]; // MCP Server RPC traffic
+  addLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
+  addMcpServerLog: (item: Omit<McpServerRpcItem, "id">) => void;
+  clear: () => void;
+}
+```
+
+**UI Apps Traffic** (`UiLogEvent`):
+- Captures postMessage communication between host and widget iframes
+- Includes protocol (OpenAI Apps SDK or MCP Apps), direction, method, and message payload
+- Logged by `ChatGPTAppRenderer` and `MCPAppsRenderer` components
+
+**MCP Server RPC Traffic** (`McpServerRpcItem`):
+- Captures JSON-RPC messages between Inspector and MCP servers
+- Includes serverId, direction (IN/OUT), method, and payload
+- Streamed from backend via Server-Sent Events to `LoggerView`
+
+### Logger View Integration
+
+The `LoggerView` component (`client/src/components/logging/logger-view.tsx`) consumes both traffic sources:
+
+1. **Server RPC Streaming**: Connects to `/api/mcp/rpc-stream` endpoint and receives real-time JSON-RPC messages
+2. **UI Apps Logs**: Subscribes to `traffic-log-store` for UI Apps traffic
+3. **Unified Display**: Combines and sorts all traffic by timestamp (newest first)
+4. **Source Filtering**: Users can filter by traffic source (MCP Server, ChatGPT Apps, MCP Apps)
+5. **Actions**: Clear all logs, copy logs to clipboard
+
+This unified approach provides a complete view of all MCP-related traffic in a single interface, making it easier to debug complex interactions between the LLM, MCP servers, and custom UI widgets.
+
 ## Related Documentation
 
 - [MCPClientManager](./mcp-client-manager) - MCP orchestration layer
