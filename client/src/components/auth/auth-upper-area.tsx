@@ -16,8 +16,18 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { DiscordIcon } from "@/components/ui/discord-icon";
 import { GitHubIcon } from "@/components/ui/github-icon";
+import {
+  ActiveServerSelector,
+  ActiveServerSelectorProps,
+} from "@/components/ActiveServerSelector";
 
-export function AuthUpperArea() {
+interface AuthUpperAreaProps {
+  activeServerSelectorProps?: ActiveServerSelectorProps;
+}
+
+export function AuthUpperArea({
+  activeServerSelectorProps,
+}: AuthUpperAreaProps) {
   const { isLoading } = useConvexAuth();
   const { user, signIn, signOut, signUp } = useAuth();
   const posthog = usePostHog();
@@ -51,49 +61,10 @@ export function AuthUpperArea() {
     </div>
   );
 
-  if (!user) {
-    return (
-      <div className="flex items-center gap-2">
-        {communityLinks}
-        {isLoading ? (
-          <Button variant="outline" size="sm" disabled>
-            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
-          </Button>
-        ) : (
-          <>
-            <Button
-              variant="outline"
-              onClick={() => {
-                posthog.capture("login_button_clicked", {
-                  location: "auth_upper_area",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                });
-                signIn();
-              }}
-            >
-              Sign in
-            </Button>
-            <Button
-              onClick={() => {
-                posthog.capture("sign_up_button_clicked", {
-                  location: "auth_upper_area",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                });
-                signUp();
-              }}
-            >
-              Create account
-            </Button>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  const displayName = [user.firstName, user.lastName].filter(Boolean).join(" ");
-  const email = user.email;
+  const displayName = user
+    ? [user.firstName, user.lastName].filter(Boolean).join(" ")
+    : "";
+  const email = user?.email ?? "";
   const initials = getInitials(displayName);
 
   const handleSignOut = () => {
@@ -109,7 +80,7 @@ export function AuthUpperArea() {
     signOut({ returnTo });
   };
 
-  const avatarUrl = user.profilePictureUrl || undefined;
+  const avatarUrl = user?.profilePictureUrl || undefined;
 
   const dropdown = (
     <DropdownMenu>
@@ -165,21 +136,80 @@ export function AuthUpperArea() {
     </DropdownMenu>
   );
 
-  if (isLoading) {
+  const renderAuthControls = () => {
+    if (!user) {
+      return (
+        <div className="flex items-center gap-2">
+          {communityLinks}
+          {isLoading ? (
+            <Button variant="outline" size="sm" disabled>
+              <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+            </Button>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  posthog.capture("login_button_clicked", {
+                    location: "auth_upper_area",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  signIn();
+                }}
+              >
+                Sign in
+              </Button>
+              <Button
+                onClick={() => {
+                  posthog.capture("sign_up_button_clicked", {
+                    location: "auth_upper_area",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  signUp();
+                }}
+              >
+                Create account
+              </Button>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    if (isLoading) {
+      return (
+        <div className="flex items-center gap-2">
+          {communityLinks}
+          <Button variant="outline" size="sm" disabled>
+            <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
+          </Button>
+        </div>
+      );
+    }
+
     return (
       <div className="flex items-center gap-2">
         {communityLinks}
-        <Button variant="outline" size="sm" disabled>
-          <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
-        </Button>
+        {dropdown}
       </div>
     );
-  }
+  };
 
   return (
-    <div className="flex items-center gap-2">
-      {communityLinks}
-      {dropdown}
+    <div className="ml-auto flex h-full flex-1 items-center gap-2 no-drag min-w-0">
+      {activeServerSelectorProps && (
+        <div className="flex-1 min-w-0 h-full pr-2">
+          <ActiveServerSelector
+            {...activeServerSelectorProps}
+            className="h-full"
+          />
+        </div>
+      )}
+      <div className="ml-auto flex items-center gap-2 shrink-0">
+        {renderAuthControls()}
+      </div>
     </div>
   );
 }

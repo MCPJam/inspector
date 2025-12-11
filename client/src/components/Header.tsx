@@ -3,6 +3,7 @@ import { SidebarTrigger } from "./ui/sidebar";
 import { useHeaderIpc } from "./ipc/use-header-ipc";
 import { WorkspaceSelector } from "./connection/WorkspaceSelector";
 import { Workspace } from "@/state/app-types";
+import { ActiveServerSelectorProps } from "./ActiveServerSelector";
 
 interface HeaderProps {
   workspaces: Record<string, Workspace>;
@@ -11,6 +12,7 @@ interface HeaderProps {
   onCreateWorkspace: (name: string, switchTo?: boolean) => string;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
+  activeServerSelectorProps?: ActiveServerSelectorProps;
 }
 
 export const Header = ({
@@ -20,6 +22,7 @@ export const Header = ({
   onCreateWorkspace,
   onUpdateWorkspace,
   onDeleteWorkspace,
+  activeServerSelectorProps,
 }: HeaderProps) => {
   const { activeIpc, dismissActiveIpc } = useHeaderIpc();
 
@@ -37,9 +40,7 @@ export const Header = ({
             onDeleteWorkspace={onDeleteWorkspace}
           />
         </div>
-        <div className="ml-auto flex items-center gap-2 no-drag">
-          <AuthUpperArea />
-        </div>
+        <AuthUpperArea activeServerSelectorProps={activeServerSelectorProps} />
       </div>
       {activeIpc && activeIpc.render({ dismiss: dismissActiveIpc })}
     </header>
