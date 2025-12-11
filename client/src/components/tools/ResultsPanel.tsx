@@ -6,8 +6,8 @@ import type {
 import type { ToolExecutionResponse } from "@/lib/apis/mcp-tools-api";
 import { UIResourceRenderer } from "@mcp-ui/client";
 import { CheckCircle, XCircle } from "lucide-react";
-import { ChatGPTAppRenderer } from "../chat-v2/chatgpt-app-renderer";
-import { MCPAppsRenderer } from "../chat-v2/mcp-apps-renderer";
+import { ChatGPTAppRenderer } from "../chat-v2/thread/chatgpt-app-renderer";
+import { MCPAppsRenderer } from "../chat-v2/thread/mcp-apps-renderer";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";

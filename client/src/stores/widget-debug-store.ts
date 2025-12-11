@@ -51,6 +51,9 @@ export interface WidgetGlobals {
   safeArea?: {
     insets: { top: number; bottom: number; left: number; right: number };
   };
+  timeZone?: string;
+  deviceCapabilities?: { hover: boolean; touch: boolean };
+  safeAreaInsets?: { top: number; bottom: number; left: number; right: number };
   userAgent?: {
     device: { type: string };
     capabilities: { hover: boolean; touch: boolean };
