@@ -1000,13 +1000,14 @@ body: JSON.stringify({
 
 - `client/src/components/ChatTabV2.tsx` - Main chat UI with resizable layout
 - `client/src/components/ChatTab.tsx` - Legacy single-panel layout
-- `client/src/components/logging/json-rpc-logger-view.tsx` - MCP protocol viewer
+- `client/src/components/logging/json-rpc-logger-view.tsx` - MCP protocol viewer (renamed from `logger-view.tsx` in PR #1050)
 - `client/src/components/ui/resizable.tsx` - Resizable panel components
 - `client/src/hooks/use-chat.ts` - Chat state management
 - `client/src/components/chat/message.tsx` - Message rendering
 - `client/src/components/chat/chat-input.tsx` - Input component
 - `client/src/components/ElicitationDialog.tsx` - Elicitation UI
 - `client/src/lib/sse.ts` - SSE parsing utilities
+- `client/src/stores/traffic-log-store.ts` - Unified traffic logging (replaces `ui-log-store.ts` in PR #1050)
 
 ### Backend
 
