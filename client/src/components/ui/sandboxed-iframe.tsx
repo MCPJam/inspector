@@ -25,6 +25,8 @@ import {
 
 export interface SandboxedIframeHandle {
   postMessage: (data: unknown) => void;
+  /** Get the underlying iframe element */
+  getIframeElement: () => HTMLIFrameElement | null;
 }
 
 /** CSP metadata per SEP-1865 */
@@ -118,6 +120,7 @@ export const SandboxedIframe = forwardRef<
       postMessage: (data: unknown) => {
         outerRef.current?.contentWindow?.postMessage(data, sandboxProxyOrigin);
       },
+      getIframeElement: () => outerRef.current,
     }),
     [sandboxProxyOrigin],
   );
