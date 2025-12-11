@@ -1556,8 +1556,8 @@ Located in `client/src/components/chat-v2/csp-debug-panel.tsx`.
 #### Development vs Production
 
 - **Development**: Use permissive mode to avoid CSP issues while building widgets
-- **Testing**: Switch to strict mode in UI Playground to identify required domains
-- **Production**: Always use strict mode with properly declared `openai/widgetCSP` metadata
+- **Testing**: Both modes currently allow all HTTPS sources, simplifying widget development
+- **Production**: Consider implementing stricter CSP enforcement based on widget metadata for enhanced security
 
 <Warning>
   The `'unsafe-inline'` and `'unsafe-eval'` directives are currently required
