@@ -1363,6 +1363,34 @@ This provides a cleaner UX compared to the previous tabs-based approach, reducin
 
 As of PR #1050, the display mode controls and debug buttons are merged into a single toolbar in the thread header. The display mode selector appears as a dropdown menu (only in UI Playground), while debug buttons (Data, State, CSP) remain as icon buttons. This consolidation reduces visual clutter and provides a more compact interface, especially useful for narrow viewports.
 
+### Keyboard Shortcuts and Chat Reset
+
+**Clear Chat Shortcut** (`Cmd/Ctrl+Shift+K`): Added in PR #1050, this keyboard shortcut provides quick access to clear the conversation thread.
+
+```typescript
+// client/src/components/ui-playground/PlaygroundMain.tsx
+useEffect(() => {
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (
+      (e.metaKey || e.ctrlKey) &&
+      e.shiftKey &&
+      e.key.toLowerCase() === "k"
+    ) {
+      e.preventDefault();
+      if (!isThreadEmpty) {
+        setShowClearConfirm(true);
+      }
+    }
+  };
+  window.addEventListener("keydown", handleKeyDown);
+  return () => window.removeEventListener("keydown", handleKeyDown);
+}, [isThreadEmpty]);
+```
+
+**Chat Reset Confirmation**: The confirmation dialog includes a "Don't show this again" checkbox that saves the preference to localStorage (`skipChatResetConfirmation` key). When enabled, future clear operations execute immediately without confirmation. The dialog also auto-confirms if the preference is already set, providing a seamless UX for users who prefer to skip confirmations.
+
+**Log Clearing**: When chat is reset, the traffic log store is also cleared to provide a clean debugging state. This unified clearing behavior ensures that both conversation history and debug logs are synchronized.
+
 ## Related Documentation
 
 - [MCPClientManager](./mcp-client-manager) - MCP orchestration layer
