@@ -30,6 +30,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
+import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
@@ -72,6 +73,7 @@ import { Label } from "@/components/ui/label";
 import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -248,6 +250,7 @@ export function PlaygroundMain({
   onTimeZoneChange,
 }: PlaygroundMainProps) {
   const posthog = usePostHog();
+  const clearLogs = useTrafficLogStore((s) => s.clear);
   const [input, setInput] = useState("");
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
@@ -408,8 +411,9 @@ export function PlaygroundMain({
   // Handle clear chat
   const handleClearChat = useCallback(() => {
     resetChat();
+    clearLogs();
     setShowClearConfirm(false);
-  }, [resetChat]);
+  }, [resetChat, clearLogs]);
 
   // Placeholder text
   let placeholder = "Ask something to render UI...";
@@ -495,19 +499,16 @@ export function PlaygroundMain({
   const isWidgetFullTakeover =
     isMobileFullTakeover || isTabletFullscreenTakeover;
 
-  // Thread content
+  // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
-    <>
+    <div className="flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
-        // Empty state - min-h-0 allows flex child to shrink below content size
+        // Empty state - centered welcome message
         <div className="flex-1 flex items-center justify-center overflow-y-auto overflow-x-hidden px-4 min-h-0">
-          <div className="w-full max-w-xl space-y-6 py-8 min-w-0">
-            <div className="text-center max-w-md mx-auto">
-              <h3 className="text-sm font-semibold text-foreground mb-2">
-                Test ChatGPT Apps and MCP Apps
-              </h3>
-            </div>
-            <ChatInput {...sharedChatInputProps} hasMessages={false} />
+          <div className="text-center max-w-md mx-auto">
+            <h3 className="text-sm font-semibold text-foreground mb-2">
+              Test ChatGPT Apps and MCP Apps
+            </h3>
           </div>
         </div>
       ) : (
@@ -550,18 +551,21 @@ export function PlaygroundMain({
             </StickToBottom.Content>
             <ScrollToBottomButton />
           </div>
-
-          {/* Hide chat input when widget takes over (mobile fullscreen/pip, tablet fullscreen only) */}
-          {!isWidgetFullTakeover && (
-            <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
-              <div className="p-3">
-                <ChatInput {...sharedChatInputProps} hasMessages />
-              </div>
-            </div>
-          )}
         </StickToBottom>
       )}
-    </>
+
+      {/* Single ChatInput that persists - hidden when widget takes over */}
+      {!isWidgetFullTakeover && (
+        <div className={cn(
+          "flex-shrink-0",
+          isThreadEmpty
+            ? "px-4 pb-4 max-w-xl mx-auto w-full"
+            : "bg-background/80 backdrop-blur-sm border-t border-border p-3"
+        )}>
+          <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
+        </div>
+      )}
+    </div>
   );
 
   // Device frame container - display mode is passed to widgets via Thread
