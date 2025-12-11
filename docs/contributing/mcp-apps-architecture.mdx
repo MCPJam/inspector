@@ -271,19 +271,36 @@ Serves the sandbox proxy HTML that creates the double-iframe architecture.
 
 ### Content Security Policy
 
-The sandbox proxy uses a permissive CSP to allow widget content:
+The sandbox proxy uses different CSP modes based on widget trust level:
 
-```html
-<meta
-  http-equiv="Content-Security-Policy"
-  content="
-  default-src 'self';
-  script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.tailwindcss.com ...;
-  style-src * blob: data: 'unsafe-inline';
-  connect-src *;
-  ...
-"
-/>
+**Widget-declared mode** (strict): When a widget declares `connect_domains` and `resource_domains` in its CSP metadata, only those domains are allowed:
+
+```typescript
+// connect-src: Only declared domains + localhost
+connectDomains = [
+  "'self'",
+  ...(widgetCsp?.connect_domains || []),
+  "http://localhost:*",
+  "http://127.0.0.1:*",
+  "ws://localhost:*",
+  "wss://localhost:*"
+];
+
+// img-src, media-src: Only declared resource domains
+resourceDomains = [
+  "'self'",
+  "data:",
+  "blob:",
+  ...(widgetCsp?.resource_domains || []),
+  "http://localhost:*"
+];
+```
+
+**Permissive mode** (fallback): When no CSP metadata is provided, allows all HTTPS connections:
+
+```typescript
+connectDomains = ["'self'", "https:", "wss:", "ws:", ...localhostSources];
+resourceDomains = ["'self'", "data:", "blob:", "https:", ...localhostSources];
 ```
 
 ### Iframe sandbox attributes
@@ -297,7 +314,8 @@ The sandbox proxy uses a permissive CSP to allow widget content:
 - Double-iframe provides origin isolation
 - `allow-same-origin` required for localStorage access
 - Widgets should be treated as semi-trusted code
-- CSP headers restrict network access
+- Widget-declared CSP mode enforces strict domain allowlists
+- Permissive mode used only for backward compatibility
 
 ## Related files
 
