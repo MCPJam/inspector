@@ -87,7 +87,6 @@ export function MCPAppsRenderer({
   onSendFollowUp,
   onCallTool,
   pipWidgetId,
-  onRequestPip,
   onExitPip,
   displayMode: displayModeProp,
   onDisplayModeChange,
