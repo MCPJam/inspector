@@ -311,6 +311,7 @@ async function main() {
   let serverDisplayName = null;
   let initialTab = null;
   let bearerToken = null;
+  let useOAuth = false;
   const customHeaders = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -373,6 +374,12 @@ async function main() {
     // New: --bearer for Bearer token auth
     if (parsingFlags && arg === "--bearer" && i + 1 < args.length) {
       bearerToken = args[++i];
+      continue;
+    }
+
+    // New: --oauth flag to trigger OAuth flow
+    if (parsingFlags && arg === "--oauth") {
+      useOAuth = true;
       continue;
     }
 
@@ -503,12 +510,16 @@ async function main() {
         [displayName]: {
           url: httpUrl,
           ...(Object.keys(headers).length > 0 && { headers }),
+          ...(useOAuth && { useOAuth: true }),
         },
       },
     };
 
     envVars.MCP_CONFIG_DATA = JSON.stringify(httpServerConfig);
     envVars.MCP_AUTO_CONNECT_SERVER = displayName;
+    if (useOAuth) {
+      logInfo("OAuth: Will trigger OAuth flow on connect");
+    }
     logSuccess(`HTTP server "${displayName}" configured for auto-connect`);
   } else if (mcpServerCommand) {
     // Handle single MCP server command if provided (legacy mode)
