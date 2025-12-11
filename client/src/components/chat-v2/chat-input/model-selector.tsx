@@ -14,10 +14,14 @@ import {
   ModelProvider,
   isMCPJamProvidedModel,
 } from "@/shared/types.js";
-import { ProviderLogo } from "./provider-logo";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { ProviderLogo } from "./model/provider-logo";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useConvexAuth } from "convex/react";
-import { ConfirmChatResetDialog } from "./confirm-chat-reset-dialog";
+import { ConfirmChatResetDialog } from "./dialogs/confirm-chat-reset-dialog";
 
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
