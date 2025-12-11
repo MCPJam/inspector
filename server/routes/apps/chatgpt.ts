@@ -228,7 +228,7 @@ interface CspConfig {
  */
 function buildCspHeader(
   mode: CspMode,
-  _widgetCsp?: WidgetCspMeta | null,
+  widgetCsp?: WidgetCspMeta | null,
 ): CspConfig {
   // Always allow localhost/127.* for widget development + sandbox proxy HMR
   const localhostSources = [
@@ -272,9 +272,7 @@ function buildCspHeader(
       // Honor widget's declared CSP, with sensible defaults
       connectDomains = [
         "'self'",
-        "https:",
-        "wss:",
-        "ws:",
+        ...(widgetCsp?.connect_domains || []),
         ...localhostSources,
         ...wsSources,
       ];
@@ -282,7 +280,7 @@ function buildCspHeader(
         "'self'",
         "data:",
         "blob:",
-        "https:",
+        ...(widgetCsp?.resource_domains || []),
         ...localhostSources,
       ];
       break;
@@ -307,12 +305,12 @@ function buildCspHeader(
   // In widget-declared mode: only allow declared resource_domains
   const imgSrc =
     mode === "widget-declared"
-      ? `'self' data: blob: ${(_widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
       : `'self' data: blob: https: ${localhostSources.join(" ")}`;
 
   const mediaSrc =
     mode === "widget-declared"
-      ? `'self' data: blob: ${(_widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
+      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
       : "'self' data: blob: https:";
 
   // Frame ancestors must always include localhost/127.0.0.1 for the cross-origin
