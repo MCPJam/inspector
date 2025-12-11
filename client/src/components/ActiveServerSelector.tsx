@@ -7,7 +7,7 @@ import { Check } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
-import { ConfirmChatResetDialog } from "./chat-v2/confirm-chat-reset-dialog";
+import { ConfirmChatResetDialog } from "./chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 interface ActiveServerSelectorProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServer: string;

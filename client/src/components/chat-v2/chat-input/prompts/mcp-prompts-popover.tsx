@@ -12,9 +12,14 @@ import { cn } from "@/lib/chat-utils";
 import { MessageSquareCode, ListChecks, Loader2 } from "lucide-react";
 
 import { useEffect, useMemo, useState, FormEvent, useCallback } from "react";
-import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Input } from "../ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import type { MCPPrompt, MCPPromptArgument } from "@/shared/types";
 import {
   listPromptsForServers,
@@ -89,7 +94,6 @@ export function PromptsPopover({
               ...prompt,
               namespacedName,
               serverId,
-              isLoading: false,
             });
           });
         }

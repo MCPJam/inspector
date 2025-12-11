@@ -11,7 +11,7 @@ import { useState } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogo } from "@/lib/provider-logos";
 import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
-import { ChatGPTAppRenderer } from "@/components/chat-v2/chatgpt-app-renderer";
+import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
 
 interface ContentPart {
   type: string;
