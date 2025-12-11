@@ -1,14 +1,18 @@
 import { useRef, useState, useCallback } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { cn } from "@/lib/chat-utils";
-import { Button } from "../ui/button";
-import { TextareaAutosize } from "../ui/textarea-autosize";
-import { PromptsPopover } from "./mcp-prompts-popover";
+import { Button } from "@/components/ui/button";
+import { TextareaAutosize } from "@/components/ui/textarea-autosize";
+import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import { ArrowUp, Square } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
-import { ModelSelector } from "./model-selector";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import { ModelDefinition } from "@/shared/types";
-import { SystemPromptSelector } from "./system-prompt-selector";
+import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-prompt-selector";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
 import {
   Context,
@@ -20,12 +24,12 @@ import {
   ContextOutputUsage,
   ContextMCPServerUsage,
   ContextSystemPromptUsage,
-} from "./context";
+} from "@/components/chat-v2/chat-input/context";
 import {
   type MCPPromptResult,
   isMCPPromptsRequested,
-} from "./mcp-prompts-popover";
-import { MCPPromptResultCard } from "./mcp-prompt-result-card";
+} from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
+import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp-prompt-result-card";
 
 interface ChatInputProps {
   value: string;

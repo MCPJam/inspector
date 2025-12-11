@@ -19,12 +19,12 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
-import { type MCPPromptResult } from "@/components/chat-v2/mcp-prompts-popover";
+import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import {
   STARTER_PROMPTS,
   formatErrorMessage,
   buildMcpPromptMessages,
-} from "@/components/chat-v2/chat-helpers";
+} from "@/components/chat-v2/shared/chat-helpers";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
