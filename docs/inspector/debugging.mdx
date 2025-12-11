@@ -17,7 +17,12 @@ MCPJam Inspector provides powerful debugging and monitoring capabilities to help
 
 ## Logs
 
-View all messages being sent back and forth between MCPJam and your MCP server. We're working on building support to view all JSON-RPC messages. Tracing message levels are `ERROR`, `WARNING`, and `TRACE`.
+View all messages being sent back and forth between MCPJam and your MCP server. The logger captures two types of traffic:
+
+- **MCP Server RPC**: JSON-RPC messages between Inspector and your MCP servers (via STDIO/HTTP/SSE transports)
+- **UI Apps Traffic**: Messages between the host and custom UI widgets (ChatGPT Apps and MCP Apps)
+
+You can filter logs by source, clear all logs, or copy logs to clipboard. The logger streams server RPC traffic in real-time and displays up to 1000 recent messages. Tracing message levels are `ERROR`, `WARNING`, and `TRACE`.
 
 ## Widget debugging
 
