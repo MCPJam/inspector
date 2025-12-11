@@ -20,7 +20,7 @@ export const headerIpcs: HeaderIpc[] = [
               Try the new App Builder for ChatGPT Apps and MCP Apps
             </p>
             <a
-              href="#ui-playground"
+              href="#app-builder"
               onClick={dismiss}
               className="text-sm font-normal text-orange-700 hover:text-orange-800 underline underline-offset-2"
             >
