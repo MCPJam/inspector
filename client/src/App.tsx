@@ -15,7 +15,6 @@ import { RegistryTab } from "./components/RegistryTab";
 import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
-import { ActiveServerSelector } from "./components/ActiveServerSelector";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
@@ -42,6 +41,7 @@ import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import { listTools } from "./lib/apis/mcp-tools-api";
 import { isMCPApp, isOpenAIApp } from "./lib/mcp-ui/mcp-apps-utils";
+import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -200,6 +200,36 @@ export default function App() {
     return <LoadingScreen />;
   }
 
+  const shouldShowActiveServerSelector =
+    activeTab === "tools" ||
+    activeTab === "resources" ||
+    activeTab === "resource-templates" ||
+    activeTab === "prompts" ||
+    activeTab === "oauth-flow" ||
+    activeTab === "chat" ||
+    activeTab === "chat-v2" ||
+    activeTab === "ui-playground";
+
+  const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
+    shouldShowActiveServerSelector
+      ? {
+          serverConfigs:
+            activeTab === "oauth-flow"
+              ? appState.servers
+              : connectedServerConfigs,
+          selectedServer: appState.selectedServer,
+          onServerChange: setSelectedServer,
+          onConnect: handleConnect,
+          isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
+          onMultiServerToggle: toggleServerSelection,
+          selectedMultipleServers: appState.selectedMultipleServers,
+          showOnlyOAuthServers: activeTab === "oauth-flow",
+          showOnlyOpenAIAppsServers: activeTab === "ui-playground",
+          openAiAppOrMcpAppsServers: openAiAppOrMcpAppsServers,
+          hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
+        }
+      : undefined;
+
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
@@ -211,38 +241,9 @@ export default function App() {
           onCreateWorkspace={handleCreateWorkspace}
           onUpdateWorkspace={handleUpdateWorkspace}
           onDeleteWorkspace={handleDeleteWorkspace}
+          activeServerSelectorProps={activeServerSelectorProps}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {/* Active Server Selector - Only show on Tools, Resources, Resource Templates, Prompts, OAuth Flow, Chat, Chat v2, and UI Playground pages */}
-          {(activeTab === "tools" ||
-            activeTab === "resources" ||
-            activeTab === "resource-templates" ||
-            activeTab === "prompts" ||
-            activeTab === "oauth-flow" ||
-            activeTab === "chat" ||
-            activeTab === "chat-v2" ||
-            activeTab === "ui-playground") && (
-            <ActiveServerSelector
-              serverConfigs={
-                activeTab === "oauth-flow"
-                  ? appState.servers
-                  : connectedServerConfigs
-              }
-              selectedServer={appState.selectedServer}
-              onServerChange={setSelectedServer}
-              onConnect={handleConnect}
-              isMultiSelectEnabled={
-                activeTab === "chat" || activeTab === "chat-v2"
-              }
-              onMultiServerToggle={toggleServerSelection}
-              selectedMultipleServers={appState.selectedMultipleServers}
-              showOnlyOAuthServers={activeTab === "oauth-flow"}
-              showOnlyOpenAIAppsServers={activeTab === "ui-playground"}
-              openAiAppOrMcpAppsServers={openAiAppOrMcpAppsServers}
-              hasMessages={activeTab === "chat-v2" ? chatHasMessages : false}
-            />
-          )}
-
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
