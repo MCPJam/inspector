@@ -1,0 +1,390 @@
+import { useMemo, useState } from "react";
+import {
+  Box,
+  Check,
+  ChevronDown,
+  Database,
+  LayoutDashboard,
+  Maximize2,
+  PictureInPicture2,
+  Shield,
+} from "lucide-react";
+import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
+
+import { type DisplayMode } from "@/stores/ui-playground-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  getToolNameFromType,
+  getToolStateMeta,
+  safeStringify,
+  type ToolState,
+  isDynamicTool,
+} from "../thread-helpers";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
+import { CspDebugPanel } from "../csp-debug-panel";
+
+export function ToolPart({
+  part,
+  uiType,
+  displayMode,
+  onDisplayModeChange,
+  onRequestFullscreen,
+  onExitFullscreen,
+  onRequestPip,
+  onExitPip,
+}: {
+  part: ToolUIPart<UITools> | DynamicToolUIPart;
+  uiType?: UIType | null;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
+  onRequestFullscreen?: (toolCallId: string) => void;
+  onExitFullscreen?: (toolCallId: string) => void;
+  onRequestPip?: (toolCallId: string) => void;
+  onExitPip?: (toolCallId: string) => void;
+}) {
+  const label = isDynamicTool(part)
+    ? part.toolName
+    : getToolNameFromType((part as any).type);
+
+  const toolCallId = (part as any).toolCallId as string | undefined;
+  const state = part.state as ToolState | undefined;
+  const toolState = getToolStateMeta(state);
+  const StatusIcon = toolState?.Icon;
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const mcpIconClassName =
+    themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [activeDebugTab, setActiveDebugTab] = useState<
+    "data" | "state" | "csp" | null
+  >("data");
+  const [displayModeOpen, setDisplayModeOpen] = useState(false);
+
+  const inputData = (part as any).input;
+  const outputData = (part as any).output;
+  const errorText = (part as any).errorText ?? (part as any).error;
+  const hasInput = inputData !== undefined && inputData !== null;
+  const hasOutput = outputData !== undefined && outputData !== null;
+  const hasError = state === "output-error" && !!errorText;
+
+  const widgetDebugInfo = useWidgetDebugStore((s) =>
+    toolCallId ? s.widgets.get(toolCallId) : undefined,
+  );
+  const hasWidgetDebug = !!widgetDebugInfo;
+
+  const showDisplayModeControls =
+    displayMode !== undefined &&
+    onDisplayModeChange !== undefined &&
+    hasWidgetDebug;
+
+  const displayModeOptions: {
+    mode: DisplayMode;
+    icon: typeof LayoutDashboard;
+    label: string;
+  }[] = [
+    { mode: "inline", icon: LayoutDashboard, label: "Inline" },
+    { mode: "pip", icon: PictureInPicture2, label: "Picture in Picture" },
+    { mode: "fullscreen", icon: Maximize2, label: "Fullscreen" },
+  ];
+
+  const debugOptions = useMemo(() => {
+    const options: {
+      tab: "data" | "state" | "csp";
+      icon: typeof Database;
+      label: string;
+      badge?: number;
+    }[] = [{ tab: "data", icon: Database, label: "Data" }];
+
+    if (uiType === UIType.OPENAI_SDK) {
+      options.push({ tab: "state", icon: Box, label: "Widget State" });
+    }
+
+    options.push({
+      tab: "csp",
+      icon: Shield,
+      label: "CSP",
+      badge: widgetDebugInfo?.csp?.violations?.length,
+    });
+
+    return options;
+  }, [uiType, widgetDebugInfo?.csp?.violations?.length]);
+
+  const handleDebugClick = (tab: "data" | "state" | "csp") => {
+    if (activeDebugTab === tab) {
+      setActiveDebugTab(null);
+      setIsExpanded(false);
+    } else {
+      setActiveDebugTab(tab);
+      setIsExpanded(true);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
+        onClick={() => setIsExpanded((prev) => !prev)}
+        aria-expanded={isExpanded}
+      >
+        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
+          <span className="inline-flex items-center gap-2 min-w-0">
+            <img
+              src="/mcp.svg"
+              alt=""
+              role="presentation"
+              aria-hidden="true"
+              className={`${mcpIconClassName} shrink-0`}
+            />
+            <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
+              {label}
+            </span>
+          </span>
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
+          {(showDisplayModeControls || hasWidgetDebug) && (
+            <span
+              className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {showDisplayModeControls && (
+                <DropdownMenu
+                  open={displayModeOpen}
+                  onOpenChange={setDisplayModeOpen}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseEnter={() => setDisplayModeOpen(true)}
+                      className="p-1 rounded transition-colors cursor-pointer text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                    >
+                      {(() => {
+                        const CurrentIcon =
+                          displayModeOptions.find((o) => o.mode === displayMode)
+                            ?.icon ?? LayoutDashboard;
+                        return <CurrentIcon className="h-3.5 w-3.5" />;
+                      })()}
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {displayModeOptions.map(({ mode, icon: Icon, label }) => (
+                      <DropdownMenuItem
+                        key={mode}
+                        onClick={() => {
+                          if (toolCallId) {
+                            if (
+                              displayMode === "fullscreen" &&
+                              mode !== "fullscreen"
+                            ) {
+                              onExitFullscreen?.(toolCallId);
+                            } else if (
+                              displayMode === "pip" &&
+                              mode !== "pip"
+                            ) {
+                              onExitPip?.(toolCallId);
+                            }
+
+                            if (mode === "fullscreen") {
+                              onRequestFullscreen?.(toolCallId);
+                            } else if (mode === "pip") {
+                              onRequestPip?.(toolCallId);
+                            }
+                          }
+
+                          onDisplayModeChange?.(mode);
+                        }}
+                        className="flex items-center gap-2 cursor-pointer"
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span>{label}</span>
+                        {displayMode === mode && (
+                          <Check className="h-4 w-4 ml-auto" />
+                        )}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              {hasWidgetDebug && (
+                <>
+                  {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
+                    <Tooltip key={tab}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDebugClick(tab);
+                          }}
+                          className={`p-1 rounded transition-colors cursor-pointer relative ${
+                            activeDebugTab === tab
+                              ? "bg-background text-foreground shadow-sm"
+                              : badge && badge > 0
+                                ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                          {badge !== undefined && badge > 0 && (
+                            <Badge
+                              variant="destructive"
+                              className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                            >
+                              {badge}
+                            </Badge>
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>{label}</TooltipContent>
+                    </Tooltip>
+                  ))}
+                </>
+              )}
+            </span>
+          )}
+          {toolState && StatusIcon && (
+            <span
+              className="inline-flex h-5 w-5 items-center justify-center"
+              title={toolState.label}
+            >
+              <StatusIcon className={toolState.className} />
+              <span className="sr-only">{toolState.label}</span>
+            </span>
+          )}
+          <ChevronDown
+            className={`h-4 w-4 transition-transform duration-150 ${
+              isExpanded ? "rotate-180" : ""
+            }`}
+          />
+        </span>
+      </button>
+
+      {isExpanded && (
+        <div className="border-t border-border/40 px-3 py-3">
+          {hasWidgetDebug && activeDebugTab === "data" && (
+            <div className="space-y-4">
+              {hasInput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Input
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                    {safeStringify(inputData)}
+                  </pre>
+                </div>
+              )}
+              {hasOutput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Result
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                    {safeStringify(outputData)}
+                  </pre>
+                </div>
+              )}
+              {hasError && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Error
+                  </div>
+                  <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                    {errorText}
+                  </div>
+                </div>
+              )}
+              {!hasInput && !hasOutput && !hasError && (
+                <div className="text-muted-foreground/70">
+                  No tool details available.
+                </div>
+              )}
+            </div>
+          )}
+          {hasWidgetDebug && activeDebugTab === "state" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                  Widget State
+                </div>
+                <div className="text-[9px] text-muted-foreground/50">
+                  Updated:{" "}
+                  {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
+                </div>
+              </div>
+              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[300px] overflow-auto">
+                {widgetDebugInfo.widgetState
+                  ? safeStringify(widgetDebugInfo.widgetState)
+                  : "null (no state set)"}
+              </pre>
+              <div className="text-[9px] text-muted-foreground/50 mt-2">
+                Tip: Widget state persists across follow-up turns. Keep under 4k
+                tokens.
+              </div>
+            </div>
+          )}
+          {hasWidgetDebug && activeDebugTab === "csp" && (
+            <CspDebugPanel cspInfo={widgetDebugInfo.csp} />
+          )}
+          {!hasWidgetDebug && (
+            <div className="space-y-4">
+              {hasInput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Input
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
+                    {safeStringify(inputData)}
+                  </pre>
+                </div>
+              )}
+
+              {hasOutput && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Result
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
+                    {safeStringify(outputData)}
+                  </pre>
+                </div>
+              )}
+
+              {hasError && (
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                    Error
+                  </div>
+                  <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                    {errorText}
+                  </div>
+                </div>
+              )}
+
+              {!hasInput && !hasOutput && !hasError && (
+                <div className="text-muted-foreground/70">
+                  No tool details available.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
