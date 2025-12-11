@@ -15,7 +15,6 @@ import {
   useUIPlaygroundStore,
   DEVICE_VIEWPORT_CONFIGS,
   type CspMode,
-  type DeviceType,
 } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
 import {
@@ -140,8 +139,9 @@ export function MCPAppsRenderer({
     [isPlaygroundActive, playgroundSafeAreaInsets],
   );
 
-  // Get device type from playground store for platform/viewport derivation (SEP-1865)
+  // Get device type and custom viewport from playground store for platform/viewport derivation (SEP-1865)
   const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const customViewport = useUIPlaygroundStore((s) => s.customViewport);
 
   // Derive platform from device type per SEP-1865 (web | desktop | mobile)
   const platform = useMemo((): "web" | "desktop" | "mobile" => {
@@ -156,16 +156,22 @@ export function MCPAppsRenderer({
     }
   }, [isPlaygroundActive, playgroundDeviceType]);
 
-  // Derive viewport dimensions from device type (using shared config)
+  // Derive viewport dimensions from device type (using shared config + custom viewport)
   const viewportWidth = useMemo(() => {
     if (!isPlaygroundActive) return 400;
-    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType]?.width ?? 400;
-  }, [isPlaygroundActive, playgroundDeviceType]);
+    if (playgroundDeviceType === "custom") {
+      return customViewport.width;
+    }
+    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].width;
+  }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
 
   const viewportHeight = useMemo(() => {
     if (!isPlaygroundActive) return 400;
-    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType]?.height ?? 400;
-  }, [isPlaygroundActive, playgroundDeviceType]);
+    if (playgroundDeviceType === "custom") {
+      return customViewport.height;
+    }
+    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].height;
+  }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
 
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
@@ -202,8 +208,11 @@ export function MCPAppsRenderer({
   // maxHeight should match the device's viewport height (max available space)
   const maxHeight = useMemo(() => {
     if (!isPlaygroundActive) return 800;
-    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType]?.height ?? 800;
-  }, [isPlaygroundActive, playgroundDeviceType]);
+    if (playgroundDeviceType === "custom") {
+      return customViewport.height;
+    }
+    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].height;
+  }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
@@ -521,9 +530,9 @@ export function MCPAppsRenderer({
                     inputSchema: (toolMetadata?.inputSchema as object) ?? {
                       type: "object",
                     },
-                    ...(toolMetadata?.description && {
-                      description: toolMetadata.description,
-                    }),
+                    ...(toolMetadata?.description
+                      ? { description: toolMetadata.description }
+                      : {}),
                   },
                 },
               },
