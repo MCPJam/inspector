@@ -1,3 +1,4 @@
+import { useConvexAuth } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -37,8 +38,6 @@ import {
 } from "./lib/theme-utils";
 import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
-import LoginPage from "./components/LoginPage";
-import { useLoginPage } from "./hooks/use-log-in-page";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import { listTools } from "./lib/apis/mcp-tools-api";
@@ -51,8 +50,7 @@ export default function App() {
     Set<string>
   >(new Set());
   const posthog = usePostHog();
-  const { shouldShowLoginPage, isAuthenticated, isAuthLoading } =
-    useLoginPage();
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
   usePostHogIdentify();
 
@@ -86,10 +84,6 @@ export default function App() {
   );
   const isOAuthCallback = useMemo(
     () => window.location.pathname === "/callback",
-    [],
-  );
-  const isOAuthCallbackComplete = useMemo(
-    () => window.location.pathname.startsWith("/oauth/callback"),
     [],
   );
 
@@ -341,11 +335,7 @@ export default function App() {
       <RegistryStoreProvider>
         <AppStateProvider appState={appState}>
           <Toaster />
-          {shouldShowLoginPage && !isOAuthCallbackComplete ? (
-            <LoginPage />
-          ) : (
-            appContent
-          )}
+          {appContent}
         </AppStateProvider>
       </RegistryStoreProvider>
     </PreferencesStoreProvider>
