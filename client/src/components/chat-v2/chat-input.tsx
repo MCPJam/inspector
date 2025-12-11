@@ -221,8 +221,8 @@ export function ChatInput({
           autoFocus={!disabled}
         />
 
-        <div className="flex items-center justify-between gap-2 px-2 flex-wrap">
-          <div className="flex items-center gap-1 min-w-0 flex-shrink">
+        <div className="flex items-center justify-between gap-2 px-2 flex-wrap min-w-0">
+          <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
             <ModelSelector
               currentModel={currentModel}
               availableModels={availableModels}
@@ -247,7 +247,7 @@ export function ChatInput({
             />
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2">
             <Context
               usedTokens={tokenUsage?.totalTokens ?? 0}
               usage={

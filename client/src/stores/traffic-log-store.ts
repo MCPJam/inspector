@@ -1,7 +1,10 @@
 /**
- * UI Log Store - Client-side logging for MCP Apps (SEP-1865) and OpenAI Apps SDK traffic
+ * Traffic Log Store - Captures all MCP traffic for debugging
  *
- * Captures all messages between Host and App UIs (iframes).
+ * Includes:
+ * - MCP Apps / OpenAI Apps SDK traffic (iframe ↔ host messages)
+ * - MCP Server RPC traffic (client ↔ server messages)
+ *
  * This is a singleton store - no provider required.
  */
 
@@ -20,16 +23,28 @@ export interface UiLogEvent {
   message: unknown;
 }
 
-interface UiLogState {
+export interface McpServerRpcItem {
+  id: string;
+  serverId: string;
+  direction: string;
+  method: string;
+  timestamp: string;
+  payload: unknown;
+}
+
+interface TrafficLogState {
   items: UiLogEvent[];
+  mcpServerItems: McpServerRpcItem[];
   addLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
+  addMcpServerLog: (item: Omit<McpServerRpcItem, "id">) => void;
   clear: () => void;
 }
 
 const MAX_ITEMS = 1000;
 
-export const useUiLogStore = create<UiLogState>((set) => ({
+export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   items: [],
+  mcpServerItems: [],
   addLog: (event) => {
     const newItem: UiLogEvent = {
       ...event,
@@ -40,7 +55,16 @@ export const useUiLogStore = create<UiLogState>((set) => ({
       items: [newItem, ...state.items].slice(0, MAX_ITEMS),
     }));
   },
-  clear: () => set({ items: [] }),
+  addMcpServerLog: (item) => {
+    const newItem: McpServerRpcItem = {
+      ...item,
+      id: `${item.timestamp}-${Math.random().toString(36).slice(2)}`,
+    };
+    set((state) => ({
+      mcpServerItems: [newItem, ...state.mcpServerItems].slice(0, MAX_ITEMS),
+    }));
+  },
+  clear: () => set({ items: [], mcpServerItems: [] }),
 }));
 
 /**

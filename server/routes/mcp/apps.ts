@@ -12,6 +12,12 @@ import "../../types/hono";
 const apps = new Hono();
 
 /**
+ * SEP-1865 mandated mimetype for MCP Apps
+ * @see https://github.com/anthropics/anthropic-cookbook/blob/main/misc/sep-1865-mcp-apps.md
+ */
+const MCP_APPS_MIMETYPE = "text/html;profile=mcp-app";
+
+/**
  * CSP mode types - matches client-side CspMode type
  */
 type CspMode = "permissive" | "widget-declared";
@@ -136,6 +142,19 @@ apps.get("/widget-content/:toolId", async (c) => {
       return c.json({ error: "No content in resource" }, 404);
     }
 
+    // SEP-1865: Validate mimetype - MUST be "text/html;profile=mcp-app"
+    const contentMimeType = (content as { mimeType?: string }).mimeType;
+    const mimeTypeValid = contentMimeType === MCP_APPS_MIMETYPE;
+    const mimeTypeWarning = !mimeTypeValid
+      ? contentMimeType
+        ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+        : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+      : null;
+
+    if (mimeTypeWarning) {
+      console.warn("[MCP Apps] Mimetype validation:", mimeTypeWarning);
+    }
+
     let html: string;
     if ("text" in content && typeof content.text === "string") {
       html = content.text;
@@ -173,6 +192,10 @@ apps.get("/widget-content/:toolId", async (c) => {
       permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
       cspMode: effectiveCspMode,
       prefersBorder,
+      // SEP-1865 mimetype validation
+      mimeType: contentMimeType,
+      mimeTypeValid,
+      mimeTypeWarning,
     });
   } catch (error) {
     console.error("[MCP Apps] Error fetching resource:", error);
