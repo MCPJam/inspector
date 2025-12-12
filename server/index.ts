@@ -239,14 +239,7 @@ app.get("/api/mcp-cli-config", (c) => {
 
 // Static file serving (for production)
 if (process.env.NODE_ENV === "production") {
-  // Serve public assets (logos, etc.) at root level
-  app.use("/*.png", serveStatic({ root: "./public" }));
-  app.use("/*.svg", serveStatic({ root: "./public" }));
-  app.use("/*.jpg", serveStatic({ root: "./public" }));
-  app.use("/*.jpeg", serveStatic({ root: "./public" }));
-  app.use("/*.ico", serveStatic({ root: "./public" }));
-
-  // Serve static assets (JS, CSS, images, etc.)
+  // Serve static assets (JS, CSS, images, etc.) - includes public assets bundled by Vite
   app.use("/*", serveStatic({ root: "./dist/client" }));
 
   // SPA fallback - serve index.html for all non-API routes
