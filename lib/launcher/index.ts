@@ -7,11 +7,6 @@ import path from "path";
  */
 export interface LaunchOptions {
   /**
-   * Port to run the inspector on. Defaults to 6274.
-   */
-  port?: number;
-
-  /**
    * Server configuration for auto-connect
    */
   server?: {
@@ -41,12 +36,6 @@ export interface LaunchOptions {
    * Options: "servers", "tools", "resources", "prompts", "chat", "app-builder"
    */
   defaultTab?: string;
-
-  /**
-   * If true, opens the browser automatically. Defaults to true.
-   * Note: Currently this option is not fully supported - browser will always open.
-   */
-  open?: boolean;
 }
 
 /**
@@ -57,11 +46,6 @@ export interface InspectorInstance {
    * The URL where the inspector is running
    */
   url: string;
-
-  /**
-   * The port the inspector is running on
-   */
-  port: number;
 
   /**
    * Stop the inspector server
@@ -112,13 +96,13 @@ async function waitForServer(port: number, timeout = 30000): Promise<void> {
  * await inspector.stop();
  * ```
  */
+const INSPECTOR_PORT = 6274;
+
 export async function launchInspector(
   options: LaunchOptions = {}
 ): Promise<InspectorInstance> {
-  const port = options.port ?? 6274;
-
   // Find bin/start.js relative to this file
-  // From sdk/dist/launcher/index.js -> ../../../bin/start.js
+  // From dist/lib/launcher/index.js -> ../../../bin/start.js
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const binPath = path.resolve(__dirname, "../../../bin/start.js");
 
@@ -150,30 +134,45 @@ export async function launchInspector(
   }
 
   // Spawn the process
-  const args = ["--port", String(port)];
-
-  const child = spawn("node", [binPath, ...args], {
+  const child = spawn("node", [binPath], {
     env,
     stdio: "inherit",
     detached: false,
   });
 
-  // Handle spawn errors
-  child.on("error", (err) => {
-    throw new Error(`Failed to spawn inspector process: ${err.message}`);
-  });
+  // Wait for server to be ready, racing against spawn errors
+  await new Promise<void>((resolve, reject) => {
+    let resolved = false;
 
-  // Wait for server to be ready
-  await waitForServer(port);
+    child.on("error", (err) => {
+      if (!resolved) {
+        resolved = true;
+        reject(new Error(`Failed to spawn inspector process: ${err.message}`));
+      }
+    });
+
+    waitForServer(INSPECTOR_PORT)
+      .then(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve();
+        }
+      })
+      .catch((err) => {
+        if (!resolved) {
+          resolved = true;
+          reject(err);
+        }
+      });
+  });
 
   const tabHash = options.defaultTab
     ? `#${options.defaultTab === "chat" ? "chat-v2" : options.defaultTab}`
     : "";
-  const url = `http://localhost:${port}${tabHash}`;
+  const url = `http://localhost:${INSPECTOR_PORT}${tabHash}`;
 
   return {
     url,
-    port,
     process: child,
     stop: async () => {
       child.kill("SIGTERM");

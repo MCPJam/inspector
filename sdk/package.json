@@ -30,16 +30,6 @@
       "types": "./dist/telemetry/index.d.ts",
       "import": "./dist/telemetry/index.js",
       "require": "./dist/telemetry/index.cjs"
-    },
-    "./launcher": {
-      "types": "./dist/launcher/index.d.ts",
-      "import": "./dist/launcher/index.js",
-      "require": "./dist/launcher/index.cjs"
-    },
-    "./vite": {
-      "types": "./dist/vite/index.d.ts",
-      "import": "./dist/vite/index.js",
-      "require": "./dist/vite/index.cjs"
     }
   },
   "files": [
