@@ -120,22 +120,6 @@ export const ChatGPTSandboxedIframe = forwardRef<
   // Handle messages from the iframe chain
   const handleMessage = useCallback(
     (event: MessageEvent) => {
-      // Debug logging for openai messages
-      if (event.data?.type?.startsWith?.("openai:")) {
-        console.log(
-          "[ChatGPTSandboxedIframe] Message received:",
-          event.data?.type,
-          "origin:",
-          event.origin,
-          "source:",
-          event.source === outerIframeRef.current?.contentWindow
-            ? "outer"
-            : event.source === middleIframeRef.current?.contentWindow
-              ? "middle"
-              : "unknown",
-        );
-      }
-
       // Accept messages from outer iframe (which relays from middle)
       if (event.source !== outerIframeRef.current?.contentWindow) return;
 
@@ -151,12 +135,6 @@ export const ChatGPTSandboxedIframe = forwardRef<
         setProxyReady(true);
         return;
       }
-
-      // Forward all other messages to the handler
-      console.log(
-        "[ChatGPTSandboxedIframe] Forwarding to onMessage:",
-        event.data?.type,
-      );
       onMessage(event);
     },
     [allowAutoResize, onMessage, setIframeHeight],
