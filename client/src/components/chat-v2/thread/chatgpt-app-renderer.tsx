@@ -586,7 +586,9 @@ export function ChatGPTAppRenderer({
       if (!Number.isFinite(numericHeight) || numericHeight <= 0) return;
       const roundedHeight = Math.ceil(numericHeight);
       // Add a small buffer in auto-resize mode to avoid tiny scrollbars from subpixel rounding.
-      const bufferedHeight = allowAutoResize ? roundedHeight + 2 : roundedHeight;
+      const bufferedHeight = allowAutoResize
+        ? roundedHeight + 2
+        : roundedHeight;
       if (bufferedHeight === lastAppliedHeightRef.current) return;
       lastAppliedHeightRef.current = bufferedHeight;
 
