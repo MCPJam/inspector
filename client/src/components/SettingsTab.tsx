@@ -5,7 +5,6 @@ import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
 import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
 import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
-import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 
 interface ProviderConfig {
   id: string;
@@ -212,8 +211,6 @@ export function SettingsTab() {
             MCPJam Version: v{__APP_VERSION__}
           </p>
         </div>
-
-        <AccountApiKeySection />
 
         <div className="space-y-4">
           <div>
