@@ -198,8 +198,12 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// Middleware
-app.use("*", logger());
+// Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
+const enableHttpLogs =
+  process.env.NODE_ENV !== "production" || process.env.VERBOSE_LOGS === "true";
+if (enableHttpLogs) {
+  app.use("*", logger());
+}
 app.use(
   "*",
   cors({
