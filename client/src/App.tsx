@@ -208,7 +208,7 @@ export default function App() {
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
-    activeTab === "ui-playground";
+    activeTab === "app-builder";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -224,7 +224,7 @@ export default function App() {
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers: activeTab === "oauth-flow",
-          showOnlyOpenAIAppsServers: activeTab === "ui-playground",
+          showOnlyOpenAIAppsServers: activeTab === "app-builder",
           openAiAppOrMcpAppsServers: openAiAppOrMcpAppsServers,
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
         }
