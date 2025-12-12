@@ -205,6 +205,16 @@ window.mcpApp = {
 };
 ```
 
+### Resize handling
+
+When a widget calls `resize()` or sends `ui/notifications/size-changed`, the host:
+
+1. Ignores resize requests in fullscreen/PiP modes (they use 100% height)
+2. Applies border-box compensation to prevent feedback loops
+3. Animates the iframe height change using the Web Animations API
+4. Directly manipulates the iframe element (not React state) for performance
+```
+
 ### Events
 
 Widgets can listen for these events:
