@@ -176,7 +176,10 @@ export function ActiveServerSelector({
     const newScrollLeft =
       direction === "left"
         ? Math.max(0, node.scrollLeft - scrollAmount)
-        : Math.min(node.scrollWidth - node.clientWidth, node.scrollLeft + scrollAmount);
+        : Math.min(
+            node.scrollWidth - node.clientWidth,
+            node.scrollLeft + scrollAmount,
+          );
     node.scrollTo({
       left: newScrollLeft,
       behavior: "smooth",
