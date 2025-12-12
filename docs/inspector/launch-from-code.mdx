@@ -7,7 +7,8 @@ icon: "code"
 <Warning>
   **Beta Feature** - This API is in active development. We'd love your feedback!
 
-  [Share feedback on Discord](https://discord.gg/JEnDtz8X6z) or [open a GitHub issue](https://github.com/MCPJam/inspector/issues)
+[Share feedback on Discord](https://discord.gg/JEnDtz8X6z) or [open a GitHub issue](https://github.com/MCPJam/inspector/issues)
+
 </Warning>
 
 Launch MCPJam Inspector programmatically from your code. This is useful for:
@@ -28,14 +29,14 @@ npx @mcpjam/inspector \
 
 ### Available Flags
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--url <url>` | HTTP transport URL to connect to | `--url http://localhost:3000/mcp` |
-| `--name <name>` | Display name for the server | `--name "My Server"` |
-| `--tab <tab>` | Initial tab to navigate to | `--tab app-builder` |
-| `--bearer <token>` | Bearer token for Authorization header | `--bearer sk-xxx` |
-| `--oauth` | Trigger OAuth flow on connect | `--oauth` |
-| `--header <key=value>` | Custom header (repeatable) | `-H "X-Custom=value"` |
+| Flag                   | Description                           | Example                           |
+| ---------------------- | ------------------------------------- | --------------------------------- |
+| `--url <url>`          | HTTP transport URL to connect to      | `--url http://localhost:3000/mcp` |
+| `--name <name>`        | Display name for the server           | `--name "My Server"`              |
+| `--tab <tab>`          | Initial tab to navigate to            | `--tab app-builder`               |
+| `--bearer <token>`     | Bearer token for Authorization header | `--bearer sk-xxx`                 |
+| `--oauth`              | Trigger OAuth flow on connect         | `--oauth`                         |
+| `--header <key=value>` | Custom header (repeatable)            | `-H "X-Custom=value"`             |
 
 ### Example: OAuth Server
 
@@ -74,23 +75,23 @@ await inspector.stop();
 
 ### LaunchOptions
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `server.name` | `string` | - | Display name for the server in the UI |
-| `server.url` | `string` | - | HTTP URL of the MCP server |
-| `server.headers` | `Record<string, string>` | - | Custom headers to send with requests |
-| `server.useOAuth` | `boolean` | `false` | Trigger OAuth flow on connect |
-| `defaultTab` | `string` | - | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"chat"`, `"app-builder"` |
+| Option            | Type                     | Default | Description                                                                                |
+| ----------------- | ------------------------ | ------- | ------------------------------------------------------------------------------------------ |
+| `server.name`     | `string`                 | -       | Display name for the server in the UI                                                      |
+| `server.url`      | `string`                 | -       | HTTP URL of the MCP server                                                                 |
+| `server.headers`  | `Record<string, string>` | -       | Custom headers to send with requests                                                       |
+| `server.useOAuth` | `boolean`                | `false` | Trigger OAuth flow on connect                                                              |
+| `defaultTab`      | `string`                 | -       | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"chat"`, `"app-builder"` |
 
 ### InspectorInstance
 
 The returned instance provides:
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `url` | `string` | Full URL where inspector is running |
-| `process` | `ChildProcess` | Underlying Node.js child process |
-| `stop()` | `() => Promise<void>` | Gracefully stop the inspector |
+| Property  | Type                  | Description                         |
+| --------- | --------------------- | ----------------------------------- |
+| `url`     | `string`              | Full URL where inspector is running |
+| `process` | `ChildProcess`        | Underlying Node.js child process    |
+| `stop()`  | `() => Promise<void>` | Gracefully stop the inspector       |
 
 ### Example: Auto-launch with your MCP server
 
@@ -152,11 +153,11 @@ When you run `npm run dev`, the inspector automatically launches and connects to
 
 ### Plugin Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `server` | `object` | - | Server configuration (same as programmatic API) |
-| `defaultTab` | `string` | `"app-builder"` | Initial tab to navigate to |
-| `autoLaunch` | `boolean` | `true` | Launch inspector when Vite starts |
+| Option       | Type      | Default         | Description                                     |
+| ------------ | --------- | --------------- | ----------------------------------------------- |
+| `server`     | `object`  | -               | Server configuration (same as programmatic API) |
+| `defaultTab` | `string`  | `"app-builder"` | Initial tab to navigate to                      |
+| `autoLaunch` | `boolean` | `true`          | Launch inspector when Vite starts               |
 
 ## Feedback Wanted
 

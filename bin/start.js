@@ -360,13 +360,21 @@ async function main() {
     }
 
     // New: --name for server display name
-    if (parsingFlags && (arg === "--name" || arg === "--server-name") && i + 1 < args.length) {
+    if (
+      parsingFlags &&
+      (arg === "--name" || arg === "--server-name") &&
+      i + 1 < args.length
+    ) {
       serverDisplayName = args[++i];
       continue;
     }
 
     // New: --tab for initial tab navigation
-    if (parsingFlags && (arg === "--tab" || arg === "--view") && i + 1 < args.length) {
+    if (
+      parsingFlags &&
+      (arg === "--tab" || arg === "--view") &&
+      i + 1 < args.length
+    ) {
       initialTab = args[++i];
       continue;
     }
@@ -384,7 +392,11 @@ async function main() {
     }
 
     // New: --header for custom headers (repeatable)
-    if (parsingFlags && (arg === "--header" || arg === "-H") && i + 1 < args.length) {
+    if (
+      parsingFlags &&
+      (arg === "--header" || arg === "-H") &&
+      i + 1 < args.length
+    ) {
       const headerValue = args[++i];
       const equalsIndex = headerValue.indexOf("=");
       if (equalsIndex !== -1) {
@@ -392,7 +404,9 @@ async function main() {
         const value = headerValue.substring(equalsIndex + 1);
         customHeaders.push({ key, value });
       } else {
-        logWarning(`Invalid header format: ${headerValue}. Use "Key=Value" format.`);
+        logWarning(
+          `Invalid header format: ${headerValue}. Use "Key=Value" format.`,
+        );
       }
       continue;
     }

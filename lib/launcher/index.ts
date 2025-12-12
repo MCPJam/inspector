@@ -99,7 +99,7 @@ async function waitForServer(port: number, timeout = 30000): Promise<void> {
 const INSPECTOR_PORT = 6274;
 
 export async function launchInspector(
-  options: LaunchOptions = {}
+  options: LaunchOptions = {},
 ): Promise<InspectorInstance> {
   // Find bin/start.js relative to this file
   // From dist/lib/launcher/index.js -> ../../../bin/start.js
@@ -108,9 +108,9 @@ export async function launchInspector(
 
   // Build environment
   const env: Record<string, string> = {
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(([, v]) => v !== undefined)
-    ) as Record<string, string>,
+    ...(Object.fromEntries(
+      Object.entries(process.env).filter(([, v]) => v !== undefined),
+    ) as Record<string, string>),
   };
 
   if (options.server) {
