@@ -13,6 +13,8 @@
  * and potentially future OpenAI SDK consolidation.
  */
 
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import posthog from "posthog-js";
 import {
   useRef,
   useState,
@@ -126,6 +128,17 @@ export const SandboxedIframe = forwardRef<
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
+      if (event.data?.source !== "react-devtools-bridge") {
+        // Don't capture messages from react devtools
+        posthog.capture("mcp_apps_message_received", {
+          location: "sandboxed_iframe",
+          type: event.data?.method,
+          fullEventData: event.data,
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+        });
+      }
+
       if (event.origin !== sandboxProxyOrigin && sandboxProxyOrigin !== "*") {
         return;
       }
