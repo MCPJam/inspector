@@ -38,7 +38,7 @@ export interface LaunchOptions {
 
   /**
    * Initial tab to navigate to.
-   * Options: "servers", "tools", "resources", "prompts", "chat-v2", "app-builder", etc.
+   * Options: "servers", "tools", "resources", "prompts", "chat", "app-builder"
    */
   defaultTab?: string;
 
@@ -47,11 +47,6 @@ export interface LaunchOptions {
    * Note: Currently this option is not fully supported - browser will always open.
    */
   open?: boolean;
-
-  /**
-   * If true, suppresses console output. Defaults to false.
-   */
-  silent?: boolean;
 }
 
 /**
@@ -149,7 +144,9 @@ export async function launchInspector(
   }
 
   if (options.defaultTab) {
-    env.MCP_INITIAL_TAB = options.defaultTab;
+    // Map public API "chat" to internal "chat-v2" tab
+    const tab = options.defaultTab === "chat" ? "chat-v2" : options.defaultTab;
+    env.MCP_INITIAL_TAB = tab;
   }
 
   // Spawn the process
@@ -157,7 +154,7 @@ export async function launchInspector(
 
   const child = spawn("node", [binPath, ...args], {
     env,
-    stdio: options.silent ? "ignore" : "inherit",
+    stdio: "inherit",
     detached: false,
   });
 
@@ -169,7 +166,10 @@ export async function launchInspector(
   // Wait for server to be ready
   await waitForServer(port);
 
-  const url = `http://localhost:${port}${options.defaultTab ? `#${options.defaultTab}` : ""}`;
+  const tabHash = options.defaultTab
+    ? `#${options.defaultTab === "chat" ? "chat-v2" : options.defaultTab}`
+    : "";
+  const url = `http://localhost:${port}${tabHash}`;
 
   return {
     url,
