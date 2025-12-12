@@ -123,12 +123,18 @@ sequenceDiagram
 Located in `client/src/components/ui/sandboxed-iframe.tsx`:
 
 ```typescript
+export interface SandboxedIframeHandle {
+  postMessage: (data: unknown) => void;
+  getIframeElement: () => HTMLIFrameElement | null;
+}
+
 export const SandboxedIframe = forwardRef<SandboxedIframeHandle, SandboxedIframeProps>(
   function SandboxedIframe({ html, sandbox, onMessage, ... }, ref) {
     // Outer iframe loads sandbox proxy
     // Waits for ui/notifications/sandbox-ready
     // Sends HTML via ui/notifications/sandbox-resource-ready
     // Forwards all non-sandbox messages to parent handler
+    // Exposes getIframeElement() for direct DOM access (e.g., resizing)
   }
 );
 ```
