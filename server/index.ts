@@ -275,7 +275,7 @@ if (process.env.NODE_ENV === "production") {
 
 // Use server configuration
 const displayPort = process.env.ENVIRONMENT === "dev" ? 5173 : SERVER_PORT;
-logBox(`http://${SERVER_HOSTNAME}:${displayPort}`, "🚀 Inspector Launched");
+logBox(`http://${SERVER_HOSTNAME}:${displayPort}`, "🎵 MCPJam");
 
 // Start the Hono server
 const server = serve({
