@@ -43,7 +43,7 @@ const defaultTokens: ProviderTokens = {
   mistral: "",
   xai: "",
   ollama: "local", // Ollama runs locally, no API key needed
-  ollamaBaseUrl: "http://localhost:11434/api",
+  ollamaBaseUrl: "http://127.0.0.1:11434/api",
   litellm: "", // LiteLLM API key (optional, depends on proxy setup)
   litellmBaseUrl: "http://localhost:4000", // Default LiteLLM proxy URL
   litellmModelAlias: "", // Model name/alias to use with LiteLLM

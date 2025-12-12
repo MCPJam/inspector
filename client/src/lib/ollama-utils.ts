@@ -27,7 +27,7 @@ class OllamaClient {
     return /\/api$/.test(trimmed) ? trimmed : `${trimmed}/api`;
   }
 
-  constructor(baseUrl: string = "http://localhost:11434/api") {
+  constructor(baseUrl: string = "http://127.0.0.1:11434/api") {
     this.baseUrl = OllamaClient.normalizeBaseUrl(baseUrl);
   }
 

@@ -29,7 +29,7 @@ export const createLlmModel = (
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
     case "ollama": {
-      const raw = ollamaBaseUrl || "http://localhost:11434/api";
+      const raw = ollamaBaseUrl || "http://127.0.0.1:11434/api";
       const normalized = /\/api\/?$/.test(raw)
         ? raw
         : `${raw.replace(/\/+$/, "")}/api`;
