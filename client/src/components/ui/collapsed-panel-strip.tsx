@@ -45,3 +45,4 @@ export function CollapsedPanelStrip({
     </div>
   );
 }
+

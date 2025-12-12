@@ -10,16 +10,18 @@ import open from "open";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const MCP_BANNER = `
-███╗   ███╗ ██████╗██████╗     ██╗ █████╗ ███╗   ███╗
-████╗ ████║██╔════╝██╔══██╗    ██║██╔══██╗████╗ ████║
-██╔████╔██║██║     ██████╔╝    ██║███████║██╔████╔██║
-██║╚██╔╝██║██║     ██╔═══╝██   ██║██╔══██║██║╚██╔╝██║
-██║ ╚═╝ ██║╚██████╗██║    ╚█████╔╝██║  ██║██║ ╚═╝ ██║
-╚═╝     ╚═╝ ╚═════╝╚═╝     ╚════╝ ╚═╝  ╚═╝╚═╝     ╚═╝                                                    
-`;
+// Banner split into MCP (white) and JAM (primary orange) parts
+const MCP_BANNER_LINES = [
+  ["███╗   ███╗ ██████╗██████╗", "     ██╗ █████╗ ███╗   ███╗"],
+  ["████╗ ████║██╔════╝██╔══██╗", "    ██║██╔══██╗████╗ ████║"],
+  ["██╔████╔██║██║     ██████╔╝", "    ██║███████║██╔████╔██║"],
+  ["██║╚██╔╝██║██║     ██╔═══╝", "██   ██║██╔══██║██║╚██╔╝██║"],
+  ["██║ ╚═╝ ██║╚██████╗██║    ", "╚█████╔╝██║  ██║██║ ╚═╝ ██║"],
+  ["╚═╝     ╚═╝ ╚═════╝╚═╝     ", "╚════╝ ╚═╝  ╚═╝╚═╝     ╚═╝"],
+];
 
 // ANSI color codes
+// Theme colors from index.css (oklch converted to RGB)
 const colors = {
   reset: "\x1b[0m",
   bright: "\x1b[1m",
@@ -31,6 +33,8 @@ const colors = {
   magenta: "\x1b[35m",
   cyan: "\x1b[36m",
   white: "\x1b[37m",
+  primary: "\x1b[38;2;207;115;69m", // oklch(0.6832 0.1382 38.744) - orange
+  default: "\x1b[39m", // Default foreground - adapts to terminal theme
   bgRed: "\x1b[41m",
   bgGreen: "\x1b[42m",
   bgYellow: "\x1b[43m",
@@ -42,6 +46,14 @@ const colors = {
 // Utility functions for beautiful output
 function log(message, color = colors.reset) {
   console.log(`${color}${message}${colors.reset}`);
+}
+
+function printBanner() {
+  console.log();
+  for (const [mcp, jam] of MCP_BANNER_LINES) {
+    console.log(`${colors.default}${mcp}${colors.primary}${jam}${colors.reset}`);
+  }
+  console.log();
 }
 
 function logSuccess(message) {
@@ -80,7 +92,7 @@ function logBox(content, title = null) {
   const maxLength = Math.max(...lines.map((line) => line.length));
   const width = maxLength + 4;
 
-  log("┌" + "─".repeat(width) + "┐", colors.cyan);
+  log("┌" + "─".repeat(width) + "┐", colors.primary);
   if (title) {
     const titlePadding = Math.floor((width - title.length - 2) / 2);
     log(
@@ -89,17 +101,17 @@ function logBox(content, title = null) {
         title +
         " ".repeat(width - title.length - titlePadding) +
         "│",
-      colors.cyan,
+      colors.primary,
     );
-    log("├" + "─".repeat(width) + "┤", colors.cyan);
+    log("├" + "─".repeat(width) + "┤", colors.primary);
   }
 
   lines.forEach((line) => {
     const padding = width - line.length - 2;
-    log("│ " + line + " ".repeat(padding) + " │", colors.cyan);
+    log("│ " + line + " ".repeat(padding) + " │", colors.primary);
   });
 
-  log("└" + "─".repeat(width) + "┘", colors.cyan);
+  log("└" + "─".repeat(width) + "┘", colors.primary);
 }
 
 function delay(ms) {
@@ -292,8 +304,7 @@ async function setupOllamaInSingleTerminal(model) {
 async function main() {
   // Show MCP banner at startup
   console.clear();
-  log(MCP_BANNER, colors.cyan);
-  logDivider();
+  printBanner();
 
   // Parse command line arguments
   const args = process.argv.slice(2);
@@ -599,10 +610,8 @@ async function main() {
     const hasExplicitPort = envVars.PORT !== undefined;
 
     if (hasExplicitPort) {
-      logInfo(`Using explicitly requested port: ${requestedPort}`);
       if (await isPortAvailable(requestedPort)) {
         PORT = requestedPort.toString();
-        logSuccess(`Port ${requestedPort} is available and ready`);
       } else {
         logError(`Explicitly requested port ${requestedPort} is not available`);
         logInfo(
@@ -611,11 +620,9 @@ async function main() {
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     } else {
-      // Fixed port policy: use default port 3000 and fail fast if unavailable
-      logInfo("No specific port requested, using fixed default port 6274");
+      // Fixed port policy: use default port 6274 and fail fast if unavailable
       if (await isPortAvailable(requestedPort)) {
         PORT = requestedPort.toString();
-        logSuccess(`Default port ${requestedPort} is available`);
       } else {
         logError(
           `Default port ${requestedPort} is already in use. Please free the port`,
