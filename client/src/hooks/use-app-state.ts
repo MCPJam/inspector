@@ -94,9 +94,19 @@ export function useAppState() {
   // OAuth callback finish handler
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
-      window.history.replaceState({}, document.title, window.location.pathname);
+      // Get saved hash but don't clear URL yet - wait until OAuth succeeds
+      const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
+
       try {
         const result = await handleOAuthCallback(code);
+
+        // Only clear URL and hash after successful OAuth
+        localStorage.removeItem("mcp-oauth-return-hash");
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname + savedHash,
+        );
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
 
@@ -169,6 +179,16 @@ export function useAppState() {
           error instanceof Error ? error.message : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
+
+        // Clear URL on failure too, but keep ?code= removal to prevent redirect loops
+        // The CLI config check uses urlParams.has("code") to prevent re-triggering OAuth
+        localStorage.removeItem("mcp-oauth-return-hash");
+        localStorage.removeItem("mcp-oauth-pending");
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname + savedHash,
+        );
       }
     },
     [logger],
@@ -239,6 +259,48 @@ export function useAppState() {
 
       try {
         if (formData.type === "http" && formData.useOAuth && formData.url) {
+          // Check if we already have valid OAuth tokens for this server
+          const existingTokens = getStoredTokens(formData.name);
+          if (existingTokens?.access_token) {
+            // We have existing tokens - connect using them instead of triggering new OAuth
+            logger.info("Connecting with existing OAuth tokens", {
+              serverName: formData.name,
+            });
+            const serverConfig = {
+              url: new URL(formData.url),
+              requestInit: {
+                headers: {
+                  Authorization: `Bearer ${existingTokens.access_token}`,
+                  ...(formData.headers || {}),
+                },
+              },
+            };
+            const connectionResult = await testConnection(
+              serverConfig as MCPServerConfig,
+              formData.name,
+            );
+            if (isStaleOp(formData.name, token)) return;
+            if (connectionResult.success) {
+              dispatch({
+                type: "CONNECT_SUCCESS",
+                name: formData.name,
+                config: serverConfig as MCPServerConfig,
+                tokens: existingTokens,
+              });
+              await fetchAndStoreInitInfo(formData.name);
+              toast.success(
+                `Connected successfully with existing OAuth tokens!`,
+              );
+              return;
+            } else {
+              // Tokens might be expired - fall through to trigger OAuth flow
+              logger.warn("Existing tokens failed, will trigger OAuth flow", {
+                serverName: formData.name,
+                error: connectionResult.error,
+              });
+            }
+          }
+
           // Mark oauth-flow status for UI while initiating
           dispatch({
             type: "UPSERT_SERVER",
@@ -312,7 +374,13 @@ export function useAppState() {
         }
 
         // Non-OAuth connect - clear any lingering OAuth data
-        clearOAuthData(formData.name);
+        // But NOT if there's a pending OAuth callback (would clear the code verifier)
+        const hasPendingCallback = new URLSearchParams(
+          window.location.search,
+        ).has("code");
+        if (!hasPendingCallback) {
+          clearOAuthData(formData.name);
+        }
         const result = await testConnection(mcpConfig, formData.name);
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
@@ -392,7 +460,11 @@ export function useAppState() {
       } as ServerWithName;
 
       // Clear OAuth data when switching away from OAuth
-      if (!formData.useOAuth) {
+      // But NOT if there's a pending OAuth callback (would clear the code verifier)
+      const hasPendingOAuthCallback = new URLSearchParams(
+        window.location.search,
+      ).has("code");
+      if (!formData.useOAuth && !hasPendingOAuthCallback) {
         clearOAuthData(serverName);
       }
 
@@ -630,6 +702,11 @@ export function useAppState() {
         .then((data) => {
           const cliConfig = data.config;
           if (cliConfig) {
+            // Handle initial tab navigation (if not already set via URL hash)
+            if (cliConfig.initialTab && !window.location.hash) {
+              window.location.hash = cliConfig.initialTab;
+            }
+
             // Handle multiple servers from config file
             if (cliConfig.servers && Array.isArray(cliConfig.servers)) {
               const autoConnectServer = cliConfig.autoConnectServer;
@@ -645,8 +722,12 @@ export function useAppState() {
 
               // Add all servers to the UI, but only auto-connect to filtered ones
               cliConfig.servers.forEach((server: any) => {
+                const serverName = server.name || "CLI Server";
+                // Check if OAuth callback is in progress (prevents race condition redirect loop)
+                const urlParams = new URLSearchParams(window.location.search);
+                const oauthCallbackInProgress = urlParams.has("code");
                 const formData: ServerFormData = {
-                  name: server.name || "CLI Server",
+                  name: serverName,
                   type: (server.type === "sse"
                     ? "http"
                     : server.type || "stdio") as "stdio" | "http",
@@ -654,6 +735,8 @@ export function useAppState() {
                   args: server.args || [],
                   url: server.url,
                   env: server.env || {},
+                  headers: server.headers, // Include custom headers for HTTP
+                  useOAuth: server.useOAuth ?? false, // Store the actual auth method from CLI config
                 };
 
                 // Always add/update server from CLI config
@@ -672,7 +755,17 @@ export function useAppState() {
                 });
 
                 // Only auto-connect if matches filter (or no filter)
-                if (!autoConnectServer || server.name === autoConnectServer) {
+                // Skip auto-connect for OAuth servers when callback is in progress
+                // (the callback handler will complete the connection)
+                if (oauthCallbackInProgress && server.useOAuth) {
+                  logger.info("Skipping auto-connect for OAuth server", {
+                    serverName: server.name,
+                    reason: "OAuth callback in progress",
+                  });
+                } else if (
+                  !autoConnectServer ||
+                  server.name === autoConnectServer
+                ) {
                   logger.info("Auto-connecting to server", {
                     serverName: server.name,
                   });

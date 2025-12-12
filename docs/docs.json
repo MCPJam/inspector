@@ -25,6 +25,7 @@
           "inspector/debugging",
           "inspector/guided-oauth",
           "evals/overview",
+          "inspector/launch-from-code",
           "inspector/docs-server"
         ]
       },
