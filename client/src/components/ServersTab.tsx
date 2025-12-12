@@ -4,7 +4,6 @@ import { Button } from "./ui/button";
 import {
   Plus,
   FileText,
-  Layers,
   Cable,
   Link,
   Loader2,
@@ -150,16 +149,6 @@ export function ServersTab({
       environment: detectEnvironment(),
     });
     setIsImportingJson(true);
-    setIsActionMenuOpen(false);
-  };
-
-  const handleAddFromRegistryClick = () => {
-    posthog.capture("add_from_registry_button_clicked", {
-      location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-    });
-    window.location.hash = "registry";
     setIsActionMenuOpen(false);
   };
 
@@ -350,14 +339,6 @@ export function ServersTab({
           >
             <FileText className="h-4 w-4 mr-2" />
             Import JSON
-          </Button>
-          <Button
-            variant="ghost"
-            className="justify-start"
-            onClick={handleAddFromRegistryClick}
-          >
-            <Layers className="h-4 w-4 mr-2" />
-            Add from Registry
           </Button>
         </div>
       </HoverCardContent>

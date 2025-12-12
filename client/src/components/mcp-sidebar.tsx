@@ -8,7 +8,6 @@ import {
   FlaskConical,
   HandMetal,
   Workflow,
-  Box,
   FileCode,
   Activity,
   Fish,
@@ -26,8 +25,6 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
-import { DiscordIcon } from "./ui/discord-icon";
-import { GitHubIcon } from "./ui/github-icon";
 
 // Define sections with their respective items
 const navigationSections = [
@@ -80,24 +77,19 @@ const navigationSections = [
     id: "others",
     items: [
       {
-        title: "Tracing",
-        url: "#tracing",
-        icon: Activity,
-      },
-      {
         title: "OAuth Debugger",
         url: "#oauth-flow",
         icon: Workflow,
       },
       {
+        title: "Tracing",
+        url: "#tracing",
+        icon: Activity,
+      },
+      {
         title: "Evals",
         url: "#evals",
         icon: FlaskConical,
-      },
-      {
-        title: "MCP Registry",
-        url: "#registry",
-        icon: Box,
       },
     ],
   },
