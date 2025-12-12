@@ -324,6 +324,7 @@ async function main() {
   let bearerToken = null;
   let useOAuth = false;
   const customHeaders = [];
+  let verboseLogs = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -399,6 +400,12 @@ async function main() {
     // New: --oauth flag to trigger OAuth flow
     if (parsingFlags && arg === "--oauth") {
       useOAuth = true;
+      continue;
+    }
+
+    // New: --verbose flag to enable HTTP request logs in production
+    if (parsingFlags && (arg === "--verbose" || arg === "-v")) {
+      verboseLogs = true;
       continue;
     }
 
@@ -696,6 +703,7 @@ async function main() {
         ...process.env,
         NODE_ENV: "production",
         PORT: PORT,
+        ...(verboseLogs && { VERBOSE_LOGS: "true" }),
       },
       cwd: projectRoot,
       stdio: "inherit",
