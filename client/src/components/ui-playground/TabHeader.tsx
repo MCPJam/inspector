@@ -38,8 +38,8 @@ export function TabHeader({
 }: TabHeaderProps) {
   return (
     <div className="border-b border-border flex-shrink-0">
-      {/* Top row: Tabs + primary Run */}
       <div className="px-2 py-1.5 flex items-center gap-2">
+        {/* Tabs */}
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => onTabChange("tools")}
@@ -70,6 +70,45 @@ export function TabHeader({
             )}
           </button>
         </div>
+
+        {/* Secondary actions */}
+        <div className="flex items-center gap-0.5 text-muted-foreground/80">
+          <Button
+            onClick={onSave}
+            disabled={!canSave}
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0"
+            title="Save request"
+          >
+            <Save className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            onClick={onRefresh}
+            variant="ghost"
+            size="sm"
+            disabled={fetchingTools}
+            className="h-7 w-7 p-0"
+            title="Refresh tools"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${fetchingTools ? "animate-spin" : ""}`}
+            />
+          </Button>
+          {onClose && (
+            <Button
+              onClick={onClose}
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              title="Hide sidebar"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+
+        {/* Run button */}
         <Button
           onClick={onExecute}
           disabled={isExecuting || !canExecute}
@@ -83,43 +122,6 @@ export function TabHeader({
           )}
           <span className="ml-1">Run</span>
         </Button>
-      </div>
-
-      {/* Secondary row: quiet actions */}
-      <div className="px-2 pb-1.5 flex items-center gap-1.5 text-muted-foreground/80">
-        <Button
-          onClick={onSave}
-          disabled={!canSave}
-          variant="ghost"
-          size="sm"
-          className="h-7 w-8 p-0"
-          title="Save request"
-        >
-          <Save className="h-3 w-3" />
-        </Button>
-        <Button
-          onClick={onRefresh}
-          variant="ghost"
-          size="sm"
-          disabled={fetchingTools}
-          className="h-7 w-8 p-0"
-          title="Refresh tools"
-        >
-          <RefreshCw
-            className={`h-3 w-3 ${fetchingTools ? "animate-spin" : ""}`}
-          />
-        </Button>
-        {onClose && (
-          <Button
-            onClick={onClose}
-            variant="ghost"
-            size="sm"
-            className="h-7 w-8 p-0"
-            title="Hide sidebar"
-          >
-            <PanelLeftClose className="h-3 w-3" />
-          </Button>
-        )}
       </div>
     </div>
   );

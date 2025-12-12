@@ -168,11 +168,20 @@ export function ActiveServerSelector({
     };
   }, [servers.length]);
 
-  const scrollToEdge = (direction: "left" | "right") => {
+  const scroll = (direction: "left" | "right") => {
     const node = scrollRef.current;
     if (!node) return;
+    // Scroll by approximately 2 tab widths (200px) for smooth incremental navigation
+    const scrollAmount = 200;
+    const newScrollLeft =
+      direction === "left"
+        ? Math.max(0, node.scrollLeft - scrollAmount)
+        : Math.min(
+            node.scrollWidth - node.clientWidth,
+            node.scrollLeft + scrollAmount,
+          );
     node.scrollTo({
-      left: direction === "left" ? 0 : node.scrollWidth,
+      left: newScrollLeft,
       behavior: "smooth",
     });
   };
@@ -275,8 +284,8 @@ export function ActiveServerSelector({
         {canScrollLeft && (
           <button
             className="absolute left-0 top-0 h-full px-3 flex items-center bg-gradient-to-r from-background via-background/95 to-background/40 cursor-pointer"
-            onClick={() => scrollToEdge("left")}
-            aria-label="Scroll to first server"
+            onClick={() => scroll("left")}
+            aria-label="Scroll left"
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -284,8 +293,8 @@ export function ActiveServerSelector({
         {canScrollRight && (
           <button
             className="absolute right-0 top-0 h-full px-3 flex items-center bg-gradient-to-l from-background via-background/95 to-background/40 cursor-pointer"
-            onClick={() => scrollToEdge("right")}
-            aria-label="Scroll to last server"
+            onClick={() => scroll("right")}
+            aria-label="Scroll right"
           >
             <ChevronRight className="h-5 w-5" />
           </button>
