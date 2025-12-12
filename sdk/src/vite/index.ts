@@ -94,7 +94,6 @@ export function mcpInspector(options: MCPInspectorPluginOptions = {}): Plugin {
             server: options.server,
             defaultTab: options.defaultTab ?? "app-builder",
             open: options.open ?? true,
-            silent: false,
           });
           console.log(`\n  MCP Inspector running at ${inspector.url}\n`);
         } catch (error) {
