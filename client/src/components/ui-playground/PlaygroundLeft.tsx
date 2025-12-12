@@ -96,7 +96,6 @@ export function PlaygroundLeft({
 
   const handleLoadRequest = (req: SavedRequest) => {
     onLoadRequest(req);
-    setActiveTab("tools");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -113,7 +112,7 @@ export function PlaygroundLeft({
 
   const mainContent = (
     <div className="h-full min-h-0">
-      {activeTab === "saved" ? (
+      {activeTab === "saved" && !selectedToolName ? (
         <SavedRequestsTab
           searchQuery={searchQuery}
           onSearchQueryChange={onSearchQueryChange}
