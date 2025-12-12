@@ -202,9 +202,9 @@ export function MCPAppsRenderer({
       displayMode,
     ],
   );
-  const [contentHeight, setContentHeight] = useState<number>(400);
 
-  // maxHeight should match the device's viewport height (max available space)
+  // maxHeight is sent to guest UI as part of viewport info (SEP-1865 protocol)
+  // Note: We no longer use this to clamp resize, but apps may use it for layout decisions
   const maxHeight = useMemo(() => {
     if (!isPlaygroundActive) return 800;
     if (playgroundDeviceType === "custom") {
@@ -212,6 +212,7 @@ export function MCPAppsRenderer({
     }
     return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].height;
   }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
+
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
@@ -647,10 +648,32 @@ export function MCPAppsRenderer({
           case "ui/notifications/size-changed": // SEP-1865 spec
           case "ui/notifications/size-change": {
             // Support both for backwards compatibility
+            // Skip resize in fullscreen/pip modes (they use 100% height)
+            if (displayMode !== "inline") break;
+
             const sizeParams = params as { height?: number };
-            if (typeof sizeParams.height === "number") {
-              setContentHeight(Math.min(sizeParams.height, maxHeight));
+            const iframe = sandboxRef.current?.getIframeElement();
+            if (!iframe) break;
+
+            let { height } = sizeParams;
+            if (height === undefined) break;
+
+            // Border-box compensation: add border thickness to prevent resize feedback loops
+            const style = getComputedStyle(iframe);
+            const isBorderBox = style.boxSizing === "border-box";
+
+            if (isBorderBox) {
+              height +=
+                parseFloat(style.borderTopWidth) +
+                parseFloat(style.borderBottomWidth);
             }
+
+            // Animate height change smoothly using Web Animations API
+            const from: Keyframe = { height: `${iframe.offsetHeight}px` };
+            const to: Keyframe = { height: `${height}px` };
+            iframe.style.height = to.height as string;
+            iframe.animate([from, to], { duration: 300, easing: "ease-out" });
+
             break;
           }
 
@@ -663,8 +686,6 @@ export function MCPAppsRenderer({
     [
       themeMode,
       displayMode,
-      contentHeight,
-      maxHeight,
       locale,
       timeZone,
       platform,
@@ -825,8 +846,6 @@ export function MCPAppsRenderer({
   const isPip =
     displayMode === "pip" && (isControlled || pipWidgetId === toolCallId);
   const isFullscreen = displayMode === "fullscreen";
-  // Apply maxHeight constraint, but no minimum - let widget control its size
-  const appliedHeight = Math.min(contentHeight, maxHeight);
 
   let containerClassName = "mt-3 space-y-2 relative group";
   if (isFullscreen) {
@@ -867,9 +886,9 @@ export function MCPAppsRenderer({
         permissive={widgetPermissive}
         onMessage={handleMessage}
         title={`MCP App: ${toolName}`}
-        className="w-full border border-border/40 rounded-md bg-background transition-[height] duration-200 ease-out overflow-auto"
+        className="w-full border border-border/40 rounded-md bg-background"
         style={{
-          height: isFullscreen ? "100%" : `${appliedHeight}px`,
+          height: isFullscreen ? "100%" : "400px",
         }}
       />
 
