@@ -584,12 +584,16 @@ export function ChatGPTAppRenderer({
     (height: unknown) => {
       const numericHeight = Number(height);
       if (!Number.isFinite(numericHeight) || numericHeight <= 0) return;
-      const roundedHeight = Math.round(numericHeight);
-      if (roundedHeight === lastAppliedHeightRef.current) return;
-      lastAppliedHeightRef.current = roundedHeight;
+      const roundedHeight = Math.ceil(numericHeight);
+      // Add a small buffer in auto-resize mode to avoid tiny scrollbars from subpixel rounding.
+      const bufferedHeight = allowAutoResize
+        ? roundedHeight + 2
+        : roundedHeight;
+      if (bufferedHeight === lastAppliedHeightRef.current) return;
+      lastAppliedHeightRef.current = bufferedHeight;
 
       setContentHeight((prev) =>
-        prev !== roundedHeight ? roundedHeight : prev,
+        prev !== bufferedHeight ? bufferedHeight : prev,
       );
 
       const shouldApplyImperatively = allowAutoResize;
@@ -597,8 +601,8 @@ export function ChatGPTAppRenderer({
       if (shouldApplyImperatively) {
         const effectiveHeight =
           typeof maxHeight === "number" && Number.isFinite(maxHeight)
-            ? Math.min(roundedHeight, maxHeight)
-            : roundedHeight;
+            ? Math.min(bufferedHeight, maxHeight)
+            : bufferedHeight;
         sandboxRef.current?.setHeight?.(effectiveHeight);
       }
     },
