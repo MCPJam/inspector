@@ -18,6 +18,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   splitting: false,
-  target: "node18",
-  shims: true, // Adds ESM shims for CJS (import.meta polyfill)
+  target: "es2019",
 });
