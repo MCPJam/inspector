@@ -157,15 +157,15 @@ window.URL.revokeObjectURL=OrigURL.revokeObjectURL;window.URL.canParse=OrigURL.c
 })();</script>`;
 }
 
-// Widget base styles: prevent scrollbars by disabling overflow.
-// The auto-resize mechanism (measureAndNotifyHeight) reports content height
-// to the host, which expands the iframe accordingly - scrollbars are unnecessary.
-// This matches ChatGPT's inline widget behavior where the container sizes to content.
+// Widget base styles: keep layout clean but allow vertical scrolling when the host
+// uses a fixed-height container (fullscreen/PiP). Inline mode still auto-resizes,
+// so scrollbars typically remain hidden while staying available when needed.
 const WIDGET_BASE_CSS = `<style>
 html, body {
   margin: 0;
   padding: 0;
-  overflow: hidden; /* Prevent scrollbars - iframe resizes to content via auto-resize */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 </style>`;
 
@@ -219,40 +219,6 @@ interface CspConfig {
   headerString: string;
 }
 
-const defaultResourceDomains = [
-  "https://unpkg.com",
-  "https://cdn.jsdelivr.net",
-  "https://cdnjs.cloudflare.com",
-  "https://cdn.tailwindcss.com",
-];
-const isDev = process.env.NODE_ENV !== "production";
-const devResourceDomains = isDev
-  ? [
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://127.0.0.1:3000",
-      "http://127.0.0.1:5173",
-      "ws://localhost:3000",
-      "ws://localhost:5173",
-    ]
-  : [];
-const devConnectDomains = isDev ? ["https:", "wss:", "ws:"] : [];
-const devScriptDomains = isDev ? ["https:"] : [];
-const trustedCdns = [
-  "https://persistent.oaistatic.com",
-  "https://*.oaistatic.com",
-  "https://unpkg.com",
-  "https://cdn.jsdelivr.net",
-  "https://cdnjs.cloudflare.com",
-  "https://cdn.skypack.dev",
-  "https://apps-sdk-widgets.vercel.app",
-  "https://dynamic.heygen.ai",
-  "https://static.heygen.ai",
-  "https://files2.heygen.ai",
-].join(" ");
-
 /**
  * Build CSP header string based on mode and widget metadata.
  *
@@ -264,31 +230,20 @@ function buildCspHeader(
   mode: CspMode,
   widgetCsp?: WidgetCspMeta | null,
 ): CspConfig {
-  // Base trusted CDNs (always included for widget asset loading)
-  const baseTrustedCdns = [
-    "https://persistent.oaistatic.com",
-    "https://*.oaistatic.com",
-    "https://unpkg.com",
-    "https://cdn.jsdelivr.net",
-    "https://cdnjs.cloudflare.com",
-    "https://cdn.skypack.dev",
-    "https://cdn.tailwindcss.com",
+  // Always allow localhost/127.* for widget development + sandbox proxy HMR
+  const localhostSources = [
+    "http://localhost:*",
+    "http://127.0.0.1:*",
+    "https://localhost:*",
+    "https://127.0.0.1:*",
   ];
 
-  // Localhost sources for development
-  const localhostSources = isDev
-    ? [
-        "http://localhost:*",
-        "http://127.0.0.1:*",
-        "https://localhost:*",
-        "https://127.0.0.1:*",
-      ]
-    : [];
-
-  // WebSocket sources for development (HMR, etc.)
-  const wsSources = isDev
-    ? ["ws://localhost:*", "ws://127.0.0.1:*", "wss://localhost:*"]
-    : [];
+  // WebSocket sources for HMR, etc.
+  const wsSources = [
+    "ws://localhost:*",
+    "ws://127.0.0.1:*",
+    "wss://localhost:*",
+  ];
 
   let connectDomains: string[];
   let resourceDomains: string[];
@@ -309,7 +264,6 @@ function buildCspHeader(
         "data:",
         "blob:",
         "https:",
-        ...baseTrustedCdns,
         ...localhostSources,
       ];
       break;
@@ -326,7 +280,7 @@ function buildCspHeader(
         "'self'",
         "data:",
         "blob:",
-        ...(widgetCsp?.resource_domains || baseTrustedCdns),
+        ...(widgetCsp?.resource_domains || []),
         ...localhostSources,
       ];
       break;
@@ -339,7 +293,6 @@ function buildCspHeader(
         "data:",
         "blob:",
         "https:",
-        ...baseTrustedCdns,
         ...localhostSources,
       ];
   }
