@@ -372,6 +372,7 @@ export function ResultsPanel({
                       return {
                         content: result?.content || [],
                         structuredContent: result?.structuredContent || result,
+                        isError: result?.isError ?? false,
                       };
                     }
 
@@ -418,7 +419,7 @@ export function ResultsPanel({
                         _meta: null,
                         content: result?.content || [],
                         structuredContent: structuredContent,
-                        isError: false,
+                        isError: result?.isError ?? false,
                         result: JSON.stringify(structuredContent),
                         meta: {},
                       };
