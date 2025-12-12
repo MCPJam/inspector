@@ -23,4 +23,3 @@ services:
       retries: 3
       start_period: 5s
     restart: unless-stopped
-
