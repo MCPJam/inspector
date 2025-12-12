@@ -810,15 +810,13 @@ export function ChatGPTAppRenderer({
               handleOAuthChallenge(wwwAuth, calledToolName);
             }
 
-            // Send full result to widget - let the widget handle the result structure
-            const responseError = result?.isError
-              ? result?.content?.[0]?.text || "Tool returned an error"
-              : undefined;
+            // Send full result to widget - let the widget handle isError
+            // Don't set error field for tool errors (isError: true) - only for transport errors
+            // Per OpenAI Apps SDK spec, callTool() should resolve with { isError: true }, not reject
             postToWidget({
               type: "openai:callTool:response",
               callId,
               result,
-              error: responseError,
             });
           } catch (err) {
             postToWidget({
