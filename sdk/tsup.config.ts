@@ -10,6 +10,8 @@ export default defineConfig({
     index: join(sdkDir, "src/index.ts"),
     "mcp-client-manager/index": join(sdkDir, "src/mcp-client-manager/index.ts"),
     "telemetry/index": join(sdkDir, "src/telemetry/index.ts"),
+    "launcher/index": join(sdkDir, "src/launcher/index.ts"),
+    "vite/index": join(sdkDir, "src/vite/index.ts"),
   },
   outDir: join(sdkDir, "dist"),
   tsconfig: join(sdkDir, "tsconfig.json"),
@@ -18,5 +20,6 @@ export default defineConfig({
   dts: true,
   clean: true,
   splitting: false,
-  target: "es2019",
+  target: "node18",
+  shims: true, // Adds ESM shims for CJS (import.meta polyfill)
 });
