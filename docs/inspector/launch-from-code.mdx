@@ -1,0 +1,176 @@
+---
+title: "Launch from Code (Beta)"
+description: "Programmatically launch and configure MCPJam Inspector from your code or build tools"
+icon: "code"
+---
+
+<Warning>
+  **Beta Feature** - This API is in active development. We'd love your feedback!
+
+[Share feedback on Discord](https://discord.gg/JEnDtz8X6z) or [open a GitHub issue](https://github.com/MCPJam/inspector/issues)
+
+</Warning>
+
+Launch MCPJam Inspector programmatically from your code. This is useful for:
+
+- **MCP server developers** - Auto-launch the inspector when running your dev server
+- **Framework integrations** - Embed inspector into your Vite dev workflow
+
+## CLI Flags
+
+Configure the inspector via CLI flags when running `npx @mcpjam/inspector`:
+
+```bash
+npx @mcpjam/inspector \
+  --url http://localhost:3000/mcp \
+  --name "My Server" \
+  --tab app-builder
+```
+
+### Available Flags
+
+| Flag                   | Description                           | Example                           |
+| ---------------------- | ------------------------------------- | --------------------------------- |
+| `--url <url>`          | HTTP transport URL to connect to      | `--url http://localhost:3000/mcp` |
+| `--name <name>`        | Display name for the server           | `--name "My Server"`              |
+| `--tab <tab>`          | Initial tab to navigate to            | `--tab app-builder`               |
+| `--bearer <token>`     | Bearer token for Authorization header | `--bearer sk-xxx`                 |
+| `--oauth`              | Trigger OAuth flow on connect         | `--oauth`                         |
+| `--header <key=value>` | Custom header (repeatable)            | `-H "X-Custom=value"`             |
+
+### Example: OAuth Server
+
+```bash
+npx @mcpjam/inspector \
+  --url https://my-oauth-server.com/mcp \
+  --name "OAuth Server" \
+  --oauth \
+  --tab servers
+```
+
+## Programmatic API
+
+Use `launchInspector()` to spawn the inspector from any Node.js script:
+
+```bash
+npm install @mcpjam/inspector
+```
+
+```typescript
+import { launchInspector } from "@mcpjam/inspector";
+
+const inspector = await launchInspector({
+  server: {
+    name: "My MCP Server",
+    url: "http://localhost:3000/mcp",
+  },
+  defaultTab: "tools",
+});
+
+console.log(`Inspector running at ${inspector.url}`);
+
+// When done, stop the inspector
+await inspector.stop();
+```
+
+### LaunchOptions
+
+| Option            | Type                     | Default | Description                                                                                |
+| ----------------- | ------------------------ | ------- | ------------------------------------------------------------------------------------------ |
+| `server.name`     | `string`                 | -       | Display name for the server in the UI                                                      |
+| `server.url`      | `string`                 | -       | HTTP URL of the MCP server                                                                 |
+| `server.headers`  | `Record<string, string>` | -       | Custom headers to send with requests                                                       |
+| `server.useOAuth` | `boolean`                | `false` | Trigger OAuth flow on connect                                                              |
+| `defaultTab`      | `string`                 | -       | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"chat"`, `"app-builder"` |
+
+### InspectorInstance
+
+The returned instance provides:
+
+| Property  | Type                  | Description                         |
+| --------- | --------------------- | ----------------------------------- |
+| `url`     | `string`              | Full URL where inspector is running |
+| `process` | `ChildProcess`        | Underlying Node.js child process    |
+| `stop()`  | `() => Promise<void>` | Gracefully stop the inspector       |
+
+### Example: Auto-launch with your MCP server
+
+```typescript
+// dev.ts - Run with: npx tsx dev.ts
+import { launchInspector } from "@mcpjam/inspector";
+import { startMyMCPServer } from "./server";
+
+async function main() {
+  // Start your MCP server
+  const server = await startMyMCPServer({ port: 3000 });
+  console.log("MCP server running on http://localhost:3000/mcp");
+
+  // Launch inspector connected to it
+  const inspector = await launchInspector({
+    server: {
+      name: "Dev Server",
+      url: "http://localhost:3000/mcp",
+    },
+    defaultTab: "app-builder",
+  });
+
+  console.log(`Inspector: ${inspector.url}`);
+
+  // Handle cleanup
+  process.on("SIGINT", async () => {
+    await inspector.stop();
+    await server.close();
+    process.exit(0);
+  });
+}
+
+main();
+```
+
+## Vite Plugin
+
+For Vite-based projects, use the plugin to auto-launch the inspector alongside your dev server:
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import { mcpInspector } from "@mcpjam/inspector/vite";
+
+export default defineConfig({
+  plugins: [
+    mcpInspector({
+      server: {
+        name: "My MCP Server",
+        url: "http://localhost:3000/mcp",
+      },
+      defaultTab: "app-builder",
+    }),
+  ],
+});
+```
+
+When you run `npm run dev`, the inspector automatically launches and connects to your server.
+
+### Plugin Options
+
+| Option       | Type      | Default         | Description                                     |
+| ------------ | --------- | --------------- | ----------------------------------------------- |
+| `server`     | `object`  | -               | Server configuration (same as programmatic API) |
+| `defaultTab` | `string`  | `"app-builder"` | Initial tab to navigate to                      |
+| `autoLaunch` | `boolean` | `true`          | Launch inspector when Vite starts               |
+
+## Feedback Wanted
+
+This is a beta feature and we're actively iterating on the API. We'd love to hear:
+
+- What use cases are you building?
+- What's missing from the API?
+- Any bugs or rough edges?
+
+<Card
+  title="Share Feedback"
+  icon="comments"
+  href="https://discord.gg/JEnDtz8X6z"
+>
+  Join our Discord to share feedback and connect with other MCP developers
+</Card>

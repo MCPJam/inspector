@@ -306,6 +306,14 @@ async function main() {
   let mcpServerName = null;
   let rebuildRequested = false;
 
+  // New HTTP transport flags
+  let httpUrl = null;
+  let serverDisplayName = null;
+  let initialTab = null;
+  let bearerToken = null;
+  let useOAuth = false;
+  const customHeaders = [];
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
@@ -342,6 +350,64 @@ async function main() {
 
     if (parsingFlags && (arg === "--rebuild" || arg === "--force-rebuild")) {
       rebuildRequested = true;
+      continue;
+    }
+
+    // New: --url for HTTP transport
+    if (parsingFlags && arg === "--url" && i + 1 < args.length) {
+      httpUrl = args[++i];
+      continue;
+    }
+
+    // New: --name for server display name
+    if (
+      parsingFlags &&
+      (arg === "--name" || arg === "--server-name") &&
+      i + 1 < args.length
+    ) {
+      serverDisplayName = args[++i];
+      continue;
+    }
+
+    // New: --tab for initial tab navigation
+    if (
+      parsingFlags &&
+      (arg === "--tab" || arg === "--view") &&
+      i + 1 < args.length
+    ) {
+      initialTab = args[++i];
+      continue;
+    }
+
+    // New: --bearer for Bearer token auth
+    if (parsingFlags && arg === "--bearer" && i + 1 < args.length) {
+      bearerToken = args[++i];
+      continue;
+    }
+
+    // New: --oauth flag to trigger OAuth flow
+    if (parsingFlags && arg === "--oauth") {
+      useOAuth = true;
+      continue;
+    }
+
+    // New: --header for custom headers (repeatable)
+    if (
+      parsingFlags &&
+      (arg === "--header" || arg === "-H") &&
+      i + 1 < args.length
+    ) {
+      const headerValue = args[++i];
+      const equalsIndex = headerValue.indexOf("=");
+      if (equalsIndex !== -1) {
+        const key = headerValue.substring(0, equalsIndex);
+        const value = headerValue.substring(equalsIndex + 1);
+        customHeaders.push({ key, value });
+      } else {
+        logWarning(
+          `Invalid header format: ${headerValue}. Use "Key=Value" format.`,
+        );
+      }
       continue;
     }
 
@@ -427,6 +493,48 @@ async function main() {
       logError(`Failed to read MCP config file: ${error.message}`);
       process.exit(1);
     }
+  } else if (httpUrl) {
+    // Handle HTTP URL mode (for Vite plugin integration, etc.)
+    const displayName = serverDisplayName || "HTTP Server";
+    logStep("MCP Server", `Configuring HTTP server: ${displayName}`);
+    logInfo(`URL: ${httpUrl}`);
+
+    // Validate the URL
+    try {
+      new URL(httpUrl);
+    } catch (err) {
+      logError(`Invalid URL format: ${httpUrl}`);
+      process.exit(1);
+    }
+
+    // Build headers object
+    const headers = {};
+    if (bearerToken) {
+      headers["Authorization"] = `Bearer ${bearerToken}`;
+      logInfo("Auth: Bearer token configured");
+    }
+    for (const { key, value } of customHeaders) {
+      headers[key] = value;
+      logInfo(`Header: ${key}=${value}`);
+    }
+
+    // Create a synthetic MCP config for the HTTP server
+    const httpServerConfig = {
+      mcpServers: {
+        [displayName]: {
+          url: httpUrl,
+          ...(Object.keys(headers).length > 0 && { headers }),
+          ...(useOAuth && { useOAuth: true }),
+        },
+      },
+    };
+
+    envVars.MCP_CONFIG_DATA = JSON.stringify(httpServerConfig);
+    envVars.MCP_AUTO_CONNECT_SERVER = displayName;
+    if (useOAuth) {
+      logInfo("OAuth: Will trigger OAuth flow on connect");
+    }
+    logSuccess(`HTTP server "${displayName}" configured for auto-connect`);
   } else if (mcpServerCommand) {
     // Handle single MCP server command if provided (legacy mode)
     logStep(
@@ -441,6 +549,12 @@ async function main() {
     }
 
     logSuccess(`MCP server will auto-connect on startup`);
+  }
+
+  // Pass global options (applicable to all modes)
+  if (initialTab) {
+    envVars.MCP_INITIAL_TAB = initialTab;
+    logInfo(`Initial tab: ${initialTab}`);
   }
 
   // Handle Ollama setup if requested
@@ -603,7 +717,12 @@ async function main() {
       const defaultHost =
         process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
       const host = process.env.HOST || defaultHost;
-      const url = process.env.BASE_URL || `http://${host}:${PORT}`;
+      let url = process.env.BASE_URL || `http://${host}:${PORT}`;
+
+      // Append initial tab hash if specified
+      if (initialTab) {
+        url = `${url}#${initialTab}`;
+      }
 
       try {
         await open(url);

@@ -54,6 +54,9 @@ import "./types/hono"; // Type extensions
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
+  // Global options that apply to all modes
+  const initialTab = process.env.MCP_INITIAL_TAB || null;
+
   // First check if we have a full config file
   const configData = process.env.MCP_CONFIG_DATA;
   if (configData) {
@@ -62,14 +65,22 @@ function getMCPConfigFromEnv() {
       if (config.mcpServers && Object.keys(config.mcpServers).length > 0) {
         // Transform the config to match client expectations
         const servers = Object.entries(config.mcpServers).map(
-          ([name, serverConfig]: [string, any]) => ({
-            name,
-            type: serverConfig.type || "stdio", // Default to stdio if not specified
-            command: serverConfig.command,
-            args: serverConfig.args || [],
-            env: serverConfig.env || {},
-            url: serverConfig.url, // For SSE/HTTP connections
-          }),
+          ([name, serverConfig]: [string, any]) => {
+            // Determine type: if url is present it's HTTP, otherwise stdio
+            const hasUrl = !!serverConfig.url;
+            const type = serverConfig.type || (hasUrl ? "http" : "stdio");
+
+            return {
+              name,
+              type,
+              command: serverConfig.command,
+              args: serverConfig.args || [],
+              env: serverConfig.env || {},
+              url: serverConfig.url, // For SSE/HTTP connections
+              headers: serverConfig.headers, // Custom headers for HTTP
+              useOAuth: serverConfig.useOAuth, // Trigger OAuth flow
+            };
+          },
         );
 
         // Check for auto-connect server filter
@@ -78,6 +89,7 @@ function getMCPConfigFromEnv() {
         return {
           servers,
           autoConnectServer: autoConnectServer || null,
+          initialTab,
         };
       }
     } catch (error) {
@@ -88,6 +100,13 @@ function getMCPConfigFromEnv() {
   // Fall back to legacy single server mode
   const command = process.env.MCP_SERVER_COMMAND;
   if (!command) {
+    // No server config, but still return global options if set
+    if (initialTab) {
+      return {
+        servers: [],
+        initialTab,
+      };
+    }
     return null;
   }
 
@@ -103,6 +122,7 @@ function getMCPConfigFromEnv() {
         env: {},
       },
     ],
+    initialTab,
   };
 }
 
