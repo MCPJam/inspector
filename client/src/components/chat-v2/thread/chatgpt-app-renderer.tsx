@@ -20,6 +20,8 @@ import {
 } from "@/components/ui/chatgpt-sandboxed-iframe";
 import { toast } from "sonner";
 import { type DisplayMode } from "@/stores/ui-playground-store";
+import posthog from "posthog-js";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 type ToolState =
   | "input-streaming"
@@ -747,17 +749,27 @@ export function ChatGPTAppRenderer({
 
   const handleSandboxMessage = useCallback(
     async (event: MessageEvent) => {
-      if (event.data?.type)
-        addUiLog({
-          widgetId: resolvedToolCallId,
-          serverId,
-          direction: "ui-to-host",
-          protocol: "openai-apps",
-          method: extractMethod(event.data, "openai-apps"),
-          message: event.data,
-        });
+      const eventType = event.data?.type;
+      addUiLog({
+        widgetId: resolvedToolCallId,
+        serverId,
+        direction: "ui-to-host",
+        protocol: "openai-apps",
+        method: extractMethod(event.data, "openai-apps"),
+        message: event.data,
+      });
 
-      switch (event.data?.type) {
+      if (eventType !== "openai:resize") {
+        posthog.capture("openai_app_message_received", {
+          location: "chatgpt_app_renderer",
+          type: eventType,
+          fullEventData: event.data,
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+        });
+      }
+
+      switch (eventType) {
         case "openai:resize": {
           applyMeasuredHeight(event.data.height);
           break;
@@ -886,12 +898,6 @@ export function ChatGPTAppRenderer({
             columnNumber,
             timestamp: timestamp || Date.now(),
           });
-
-          // Also log to console for developers
-          console.warn(
-            `[CSP Violation] ${directive}: Blocked ${blockedUri}`,
-            sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
-          );
           break;
         }
         case "openai:openExternal": {
