@@ -15,7 +15,6 @@ import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
 import apps from "./apps";
-import registry from "./registry";
 import models from "./models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
@@ -91,9 +90,6 @@ mcp.route("/export", exporter);
 // Unified HTTP bridges (SSE + POST) for connected servers
 mcp.route("/adapter-http", adapterHttp);
 mcp.route("/manager-http", managerHttp);
-
-// Registry endpoints - MCP server registry integration
-mcp.route("/registry", registry);
 
 // Models endpoints - fetch model metadata from Convex backend
 mcp.route("/models", models);
