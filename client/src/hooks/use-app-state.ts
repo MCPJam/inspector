@@ -288,7 +288,9 @@ export function useAppState() {
                 tokens: existingTokens,
               });
               await fetchAndStoreInitInfo(formData.name);
-              toast.success(`Connected successfully with existing OAuth tokens!`);
+              toast.success(
+                `Connected successfully with existing OAuth tokens!`,
+              );
               return;
             } else {
               // Tokens might be expired - fall through to trigger OAuth flow
@@ -373,8 +375,9 @@ export function useAppState() {
 
         // Non-OAuth connect - clear any lingering OAuth data
         // But NOT if there's a pending OAuth callback (would clear the code verifier)
-        const hasPendingCallback =
-          new URLSearchParams(window.location.search).has("code");
+        const hasPendingCallback = new URLSearchParams(
+          window.location.search,
+        ).has("code");
         if (!hasPendingCallback) {
           clearOAuthData(formData.name);
         }
@@ -458,8 +461,9 @@ export function useAppState() {
 
       // Clear OAuth data when switching away from OAuth
       // But NOT if there's a pending OAuth callback (would clear the code verifier)
-      const hasPendingOAuthCallback =
-        new URLSearchParams(window.location.search).has("code");
+      const hasPendingOAuthCallback = new URLSearchParams(
+        window.location.search,
+      ).has("code");
       if (!formData.useOAuth && !hasPendingOAuthCallback) {
         clearOAuthData(serverName);
       }
@@ -758,7 +762,10 @@ export function useAppState() {
                     serverName: server.name,
                     reason: "OAuth callback in progress",
                   });
-                } else if (!autoConnectServer || server.name === autoConnectServer) {
+                } else if (
+                  !autoConnectServer ||
+                  server.name === autoConnectServer
+                ) {
                   logger.info("Auto-connecting to server", {
                     serverName: server.name,
                   });
