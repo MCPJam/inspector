@@ -11,14 +11,12 @@ import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import { RegistryTab } from "./components/RegistryTab";
 import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
-import { RegistryStoreProvider } from "./stores/registry/registry-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
@@ -152,12 +150,14 @@ export default function App() {
 
       // Extract the top-level tab from subroutes (e.g., "/evals/suite/123" -> "evals")
       const topLevelTab = hash.startsWith("/") ? hash.split("/")[1] : hash;
+      const normalizedTab =
+        topLevelTab === "registry" ? "servers" : topLevelTab;
 
-      setActiveTab(topLevelTab);
-      if (topLevelTab === "chat" || topLevelTab === "chat-v2") {
+      setActiveTab(normalizedTab);
+      if (normalizedTab === "chat" || normalizedTab === "chat-v2") {
         setSelectedMultipleServersToAllServers();
       }
-      if (hash !== "chat-v2") {
+      if (normalizedTab !== "chat-v2") {
         setChatHasMessages(false);
       }
     };
@@ -256,10 +256,6 @@ export default function App() {
             />
           )}
 
-          {activeTab === "registry" && (
-            <RegistryTab onConnect={handleConnect} />
-          )}
-
           {activeTab === "tools" && (
             <div className="h-full overflow-hidden">
               <ToolsTab
@@ -333,12 +329,10 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
-      <RegistryStoreProvider>
-        <AppStateProvider appState={appState}>
-          <Toaster />
-          {appContent}
-        </AppStateProvider>
-      </RegistryStoreProvider>
+      <AppStateProvider appState={appState}>
+        <Toaster />
+        {appContent}
+      </AppStateProvider>
     </PreferencesStoreProvider>
   );
 }
