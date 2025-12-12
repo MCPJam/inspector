@@ -296,7 +296,7 @@ export function ChatInput({
                     type="button"
                     size="icon"
                     variant="destructive"
-                    className="size-[34px] rounded-full transition-colors bg-red-500 hover:bg-red-600"
+                    className="size-[34px] rounded-full transition-colors bg-destructive text-destructive-foreground hover:bg-destructive/90"
                     onClick={() => stop()}
                   >
                     <Square size={16} />
