@@ -6,11 +6,6 @@ import { launchInspector, InspectorInstance } from "../launcher/index.js";
  */
 export interface MCPInspectorPluginOptions {
   /**
-   * Port to run the inspector on. Defaults to 6274.
-   */
-  port?: number;
-
-  /**
    * Server configuration for auto-connect.
    * If not provided, the inspector launches without a pre-configured server.
    */
@@ -46,12 +41,6 @@ export interface MCPInspectorPluginOptions {
    * Defaults to true.
    */
   autoLaunch?: boolean;
-
-  /**
-   * If true, opens the browser to the inspector URL. Defaults to true.
-   * Note: Currently this option is not fully supported - browser will always open.
-   */
-  open?: boolean;
 }
 
 /**
@@ -90,10 +79,8 @@ export function mcpInspector(options: MCPInspectorPluginOptions = {}): Plugin {
       server.httpServer?.once("listening", async () => {
         try {
           inspector = await launchInspector({
-            port: options.port,
             server: options.server,
             defaultTab: options.defaultTab ?? "app-builder",
-            open: options.open ?? true,
           });
           console.log(`\n  MCP Inspector running at ${inspector.url}\n`);
         } catch (error) {

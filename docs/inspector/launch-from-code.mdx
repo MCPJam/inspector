@@ -56,7 +56,7 @@ npm install @mcpjam/inspector
 ```
 
 ```typescript
-import { launchInspector } from "@mcpjam/inspector/launcher";
+import { launchInspector } from "@mcpjam/inspector";
 
 const inspector = await launchInspector({
   server: {
@@ -80,7 +80,7 @@ await inspector.stop();
 | `server.url` | `string` | - | HTTP URL of the MCP server |
 | `server.headers` | `Record<string, string>` | - | Custom headers to send with requests |
 | `server.useOAuth` | `boolean` | `false` | Trigger OAuth flow on connect |
-| `defaultTab` | `string` | - | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"chat-v2"`, `"app-builder"` |
+| `defaultTab` | `string` | - | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"chat"`, `"app-builder"` |
 
 ### InspectorInstance
 
@@ -96,7 +96,7 @@ The returned instance provides:
 
 ```typescript
 // dev.ts - Run with: npx tsx dev.ts
-import { launchInspector } from "@mcpjam/inspector/launcher";
+import { launchInspector } from "@mcpjam/inspector";
 import { startMyMCPServer } from "./server";
 
 async function main() {
