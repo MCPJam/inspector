@@ -261,7 +261,9 @@ ${toolsContext}
 
     return validatedTests;
   } catch (parseError) {
-    logger.error("Failed to parse LLM response:", parseError, { assistantResponse });
+    logger.error("Failed to parse LLM response:", parseError, {
+      assistantResponse,
+    });
     throw new Error(
       `Failed to parse test cases from LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
     );

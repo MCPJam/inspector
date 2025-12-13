@@ -51,7 +51,9 @@ function log(message, color = colors.reset) {
 function printBanner() {
   console.log();
   for (const [mcp, jam] of MCP_BANNER_LINES) {
-    console.log(`${colors.default}${mcp}${colors.primary}${jam}${colors.reset}`);
+    console.log(
+      `${colors.default}${mcp}${colors.primary}${jam}${colors.reset}`,
+    );
   }
   console.log();
 }

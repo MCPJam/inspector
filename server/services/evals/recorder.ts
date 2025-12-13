@@ -108,11 +108,15 @@ export const createSuiteRunRecorder = ({
         });
 
         if (!matchingIteration) {
-          logger.error("[evals] Could not find pre-created iteration for", undefined, {
-            testCaseId,
-            testCaseSnapshot,
-            iterationNumber,
-          });
+          logger.error(
+            "[evals] Could not find pre-created iteration for",
+            undefined,
+            {
+              testCaseId,
+              testCaseSnapshot,
+              iterationNumber,
+            },
+          );
           return undefined;
         }
 
@@ -239,7 +243,10 @@ export const createSuiteRunRecorder = ({
           return;
         }
 
-        logger.error("[evals] Failed to finalize suite run:", new Error(errorMessage));
+        logger.error(
+          "[evals] Failed to finalize suite run:",
+          new Error(errorMessage),
+        );
       }
     },
   };
