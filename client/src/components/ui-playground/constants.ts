@@ -10,7 +10,7 @@ export const PANEL_SIZES = {
   LEFT: {
     DEFAULT: 30,
     MIN: 0,
-    MAX: 100,
+    MAX: 40,
   },
   CENTER: {
     DEFAULT_WITH_PANELS: 70,

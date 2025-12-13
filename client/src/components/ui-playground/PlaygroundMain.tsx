@@ -662,7 +662,7 @@ export function PlaygroundMain({
                     {/* Custom option */}
                     <button
                       onClick={() => onDeviceTypeChange?.("custom")}
-                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors cursor-pointer ${
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
                         deviceType === "custom"
                           ? "bg-accent text-accent-foreground"
                           : ""
@@ -737,7 +737,7 @@ export function PlaygroundMain({
                     <Select value={locale} onValueChange={onLocaleChange}>
                       <SelectTrigger
                         size="sm"
-                        className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent cursor-pointer"
+                        className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
                       >
                         <Globe className="h-3.5 w-3.5" />
                         <SelectValue>{locale}</SelectValue>
@@ -772,7 +772,7 @@ export function PlaygroundMain({
                     >
                       <SelectTrigger
                         size="sm"
-                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent cursor-pointer"
+                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
                       >
                         <Shield className="h-3.5 w-3.5" />
                         <SelectValue>
@@ -815,7 +815,7 @@ export function PlaygroundMain({
                       onClick={() =>
                         setCapabilities({ hover: !capabilities.hover })
                       }
-                      className="h-7 w-7 cursor-pointer"
+                      className="h-7 w-7"
                     >
                       <MousePointer2 className="h-3.5 w-3.5" />
                     </Button>
@@ -835,7 +835,7 @@ export function PlaygroundMain({
                       onClick={() =>
                         setCapabilities({ touch: !capabilities.touch })
                       }
-                      className="h-7 w-7 cursor-pointer"
+                      className="h-7 w-7"
                     >
                       <Hand className="h-3.5 w-3.5" />
                     </Button>
@@ -874,7 +874,7 @@ export function PlaygroundMain({
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-7 px-2 text-xs gap-1.5 cursor-pointer"
+                        className="h-7 px-2 text-xs gap-1.5"
                       >
                         <DeviceIcon className="h-3.5 w-3.5" />
                         <span>{deviceConfig.label}</span>
@@ -906,7 +906,7 @@ export function PlaygroundMain({
                         <button
                           key={type}
                           onClick={() => onDeviceTypeChange?.(type)}
-                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors cursor-pointer ${
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
                             isSelected ? "bg-accent text-accent-foreground" : ""
                           }`}
                         >
@@ -922,7 +922,7 @@ export function PlaygroundMain({
                     {/* Custom option */}
                     <button
                       onClick={() => onDeviceTypeChange?.("custom")}
-                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors cursor-pointer ${
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
                         deviceType === "custom"
                           ? "bg-accent text-accent-foreground"
                           : ""
@@ -997,7 +997,7 @@ export function PlaygroundMain({
                     <Select value={locale} onValueChange={onLocaleChange}>
                       <SelectTrigger
                         size="sm"
-                        className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent cursor-pointer"
+                        className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
                       >
                         <Globe className="h-3.5 w-3.5" />
                         <SelectValue>{locale}</SelectValue>
@@ -1029,7 +1029,7 @@ export function PlaygroundMain({
                     <Select value={timeZone} onValueChange={onTimeZoneChange}>
                       <SelectTrigger
                         size="sm"
-                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent cursor-pointer"
+                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
                       >
                         <Clock className="h-3.5 w-3.5" />
                         <SelectValue>
@@ -1067,7 +1067,7 @@ export function PlaygroundMain({
                     >
                       <SelectTrigger
                         size="sm"
-                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent cursor-pointer"
+                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
                       >
                         <Shield className="h-3.5 w-3.5" />
                         <SelectValue>
@@ -1110,7 +1110,7 @@ export function PlaygroundMain({
                       onClick={() =>
                         setCapabilities({ hover: !capabilities.hover })
                       }
-                      className="h-7 w-7 cursor-pointer"
+                      className="h-7 w-7"
                     >
                       <MousePointer2 className="h-3.5 w-3.5" />
                     </Button>
@@ -1130,7 +1130,7 @@ export function PlaygroundMain({
                       onClick={() =>
                         setCapabilities({ touch: !capabilities.touch })
                       }
-                      className="h-7 w-7 cursor-pointer"
+                      className="h-7 w-7"
                     >
                       <Hand className="h-3.5 w-3.5" />
                     </Button>
@@ -1165,7 +1165,7 @@ export function PlaygroundMain({
                 variant="ghost"
                 size="icon"
                 onClick={handleThemeChange}
-                className="h-7 w-7 cursor-pointer"
+                className="h-7 w-7"
               >
                 {themeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
@@ -1188,7 +1188,7 @@ export function PlaygroundMain({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
                   onClick={() => setShowClearConfirm(true)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
