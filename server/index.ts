@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
@@ -93,7 +94,7 @@ function getMCPConfigFromEnv() {
         };
       }
     } catch (error) {
-      console.error("Failed to parse MCP_CONFIG_DATA:", error);
+      appLogger.error("Failed to parse MCP_CONFIG_DATA:", error);
     }
   }
 
@@ -132,7 +133,7 @@ try {
 } catch {}
 
 const app = new Hono().onError((err, c) => {
-  console.error("Unhandled error:", err);
+  appLogger.error("Unhandled error:", err);
 
   // Report all unhandled errors to Sentry (including HTTPExceptions)
   Sentry.captureException(err);

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import { logger } from "../../utils/logger";
 
 const prompts = new Hono();
 
@@ -16,7 +17,7 @@ prompts.post("/list", async (c) => {
     const { prompts } = await mcpClientManager.listPrompts(serverId);
     return c.json({ prompts });
   } catch (error) {
-    console.error("Error fetching prompts:", error);
+    logger.error("Error fetching prompts", error, { serverId: "unknown" });
     return c.json(
       {
         success: false,
@@ -49,12 +50,17 @@ prompts.post("/list-multi", async (c) => {
           const { prompts } = await mcpClientManager.listPrompts(serverId);
           promptsByServer[serverId] = prompts ?? [];
         } catch (error) {
-          console.error(
-            `Error fetching prompts for server ${serverId}:`,
-            error,
-          );
-          errors[serverId] =
+          const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
+          // Only log unexpected errors (not "Unknown MCP server" which is expected during startup race conditions)
+          if (!errorMessage.includes("Unknown MCP server")) {
+            logger.error(
+              `Error fetching prompts for server ${serverId}`,
+              error,
+              { serverId },
+            );
+          }
+          errors[serverId] = errorMessage;
           promptsByServer[serverId] = [];
         }
       }),
@@ -67,7 +73,7 @@ prompts.post("/list-multi", async (c) => {
 
     return c.json(payload);
   } catch (error) {
-    console.error("Error fetching batch prompts:", error);
+    logger.error("Error fetching batch prompts", error);
     return c.json(
       {
         success: false,
@@ -116,7 +122,7 @@ prompts.post("/get", async (c) => {
 
     return c.json({ content });
   } catch (error) {
-    console.error("Error getting prompt:", error);
+    logger.error("Error getting prompt", error);
     return c.json(
       {
         success: false,
