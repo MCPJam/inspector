@@ -99,10 +99,7 @@ async function createIterationDirectly(
 
     return result?.iterationId as string | undefined;
   } catch (error) {
-    logger.error(
-      "[evals] Failed to create iteration:",
-      error,
-    );
+    logger.error("[evals] Failed to create iteration:", error);
     return undefined;
   }
 }
@@ -168,7 +165,10 @@ async function finishIterationDirectly(
       return;
     }
 
-    logger.error("[evals] Failed to finish iteration:", new Error(errorMessage));
+    logger.error(
+      "[evals] Failed to finish iteration:",
+      new Error(errorMessage),
+    );
   }
 }
 
@@ -594,7 +594,10 @@ const runIterationViaBackend = async ({
       if (!json?.ok || !Array.isArray(json.messages)) {
         iterationError = "Invalid backend response payload";
         iterationErrorDetails = JSON.stringify(json, null, 2);
-        logger.error("[evals] invalid backend response payload", new Error("Invalid backend response payload"));
+        logger.error(
+          "[evals] invalid backend response payload",
+          new Error("Invalid backend response payload"),
+        );
         break;
       }
 

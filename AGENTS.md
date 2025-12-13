@@ -26,17 +26,18 @@ logger.debug("Processing request", requestData);
 Use the built-in colored logging functions:
 
 ```javascript
-logSuccess("Server started");      // ✅ green
-logInfo("Using port 6274");        // ℹ️  blue
-logWarning("Port in use");         // ⚠️  yellow
-logError("Failed to start");       // ❌ red
-logStep("Build", "Compiling...");  // [Build] cyan header
-logProgress("Waiting...");         // ⏳ magenta
-logDivider();                      // ── dim line
-logBox("http://localhost:6274", "MCPJam");  // boxed output
+logSuccess("Server started"); // ✅ green
+logInfo("Using port 6274"); // ℹ️  blue
+logWarning("Port in use"); // ⚠️  yellow
+logError("Failed to start"); // ❌ red
+logStep("Build", "Compiling..."); // [Build] cyan header
+logProgress("Waiting..."); // ⏳ magenta
+logDivider(); // ── dim line
+logBox("http://localhost:6274", "MCPJam"); // boxed output
 ```
 
 For verbose-only output (hidden unless `--verbose` flag):
+
 ```javascript
 verboseInfo("Loading config...");
 verboseSuccess("Config loaded");
