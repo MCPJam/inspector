@@ -12,6 +12,7 @@ import {
 } from "./evals/types";
 import type { MCPClientManager } from "@/sdk";
 import { createLlmModel } from "../utils/chat-helpers";
+import { logger } from "../utils/logger";
 import {
   getModelById,
   isMCPJamProvidedModel,
@@ -98,10 +99,7 @@ async function createIterationDirectly(
 
     return result?.iterationId as string | undefined;
   } catch (error) {
-    console.error(
-      "[evals] Failed to create iteration:",
-      error instanceof Error ? error.message : error,
-    );
+    logger.error("[evals] Failed to create iteration:", error);
     return undefined;
   }
 }
@@ -130,7 +128,7 @@ async function finishIterationDirectly(
       { iterationId: params.iterationId },
     );
     if (iteration?.status === "cancelled") {
-      console.log(
+      logger.debug(
         "[evals] Skipping update for cancelled iteration:",
         params.iterationId,
       );
@@ -167,7 +165,10 @@ async function finishIterationDirectly(
       return;
     }
 
-    console.error("[evals] Failed to finish iteration:", errorMessage);
+    logger.error(
+      "[evals] Failed to finish iteration:",
+      new Error(errorMessage),
+    );
   }
 }
 
@@ -393,12 +394,12 @@ const runIterationWithAiSdk = async ({
   } catch (error) {
     // Check if request was aborted
     if (error instanceof Error && error.name === "AbortError") {
-      console.log("[evals] iteration aborted due to cancellation");
+      logger.debug("[evals] iteration aborted due to cancellation");
       // Don't record anything for aborted iterations
       return evaluateResults(expectedToolCalls, []);
     }
 
-    console.error("[evals] iteration failed", error);
+    logger.error("[evals] iteration failed", error);
 
     let errorMessage: string | undefined = undefined;
     let errorDetails: string | undefined = undefined;
@@ -585,7 +586,7 @@ const runIterationViaBackend = async ({
         iterationError = `Backend stream error: ${res.status} ${errorText}`;
         // Store the full error response as details
         iterationErrorDetails = errorText;
-        console.error("[evals] backend stream error", res.statusText);
+        logger.error("[evals] backend stream error", new Error(res.statusText));
         break;
       }
 
@@ -593,7 +594,10 @@ const runIterationViaBackend = async ({
       if (!json?.ok || !Array.isArray(json.messages)) {
         iterationError = "Invalid backend response payload";
         iterationErrorDetails = JSON.stringify(json, null, 2);
-        console.error("[evals] invalid backend response payload");
+        logger.error(
+          "[evals] invalid backend response payload",
+          new Error("Invalid backend response payload"),
+        );
         break;
       }
 
@@ -646,7 +650,7 @@ const runIterationViaBackend = async ({
     } catch (error) {
       // Check if request was aborted
       if (error instanceof Error && error.name === "AbortError") {
-        console.log("[evals] backend iteration aborted due to cancellation");
+        logger.debug("[evals] backend iteration aborted due to cancellation");
         // Return empty result for aborted iterations
         return evaluateResults(expectedToolCalls, []);
       }
@@ -670,7 +674,7 @@ const runIterationViaBackend = async ({
         iterationError = iterationError.substring(0, 497) + "...";
       }
 
-      console.error("[evals] backend fetch failed", error);
+      logger.error("[evals] backend fetch failed", error);
       break;
     }
   }
@@ -894,7 +898,7 @@ export const runEvalSuiteWithAiSdk = async ({
       ]);
     } catch (error) {
       if (error instanceof Error && error.message === "RUN_CANCELLED") {
-        console.log(
+        logger.debug(
           "[evals] Run was cancelled, all in-flight requests aborted",
         );
 
@@ -924,7 +928,7 @@ export const runEvalSuiteWithAiSdk = async ({
         }
       } else {
         // Test failed entirely - log error but continue
-        console.error("[evals] Test case failed:", result.reason);
+        logger.error("[evals] Test case failed:", result.reason);
         // Count as one failed test
         summary.total += 1;
         summary.failed += 1;

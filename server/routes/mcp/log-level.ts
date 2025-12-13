@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import "../../types/hono"; // Extend Hono context
+import { logger } from "../../utils/logger";
 
 type SetLogLevelRequest = {
   serverId?: string;
@@ -61,7 +62,10 @@ logLevel.post("/", async (c) => {
       message: `Logging level set to "${level}" for server "${serverId}"`,
     });
   } catch (error) {
-    console.error("Error setting MCP server logging level:", error);
+    logger.error("Error setting MCP server logging level", error, {
+      serverId,
+      level,
+    });
     return c.json(
       {
         success: false,
