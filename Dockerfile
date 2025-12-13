@@ -25,13 +25,36 @@ RUN --mount=type=bind,source=sdk/package.json,target=sdk/package.json \
 # Create a stage for building the application.
 FROM deps AS build
 
-# Copy the rest of the source files into the image.
-COPY . .
-
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# Run the build script.
-RUN npm run build
+# Layer 1: Copy configuration files (rarely change)
+COPY tsconfig.json package.json ./
+COPY lib/tsconfig.json lib/tsup.config.ts ./lib/
+COPY server/tsconfig.json server/tsup.config.ts ./server/
+COPY sdk/tsconfig.json sdk/tsup.config.ts sdk/package.json ./sdk/
+
+# Layer 2: Copy static files that don't need building
+COPY bin ./bin
+
+# Layer 3: Copy shared code (used by all modules, changes infrequently)
+COPY shared ./shared
+
+# Layer 4: Build SDK first (changes infrequently, required by server and client)
+COPY sdk/src ./sdk/src
+RUN npm run build:sdk
+
+# Layer 5: Build lib (changes infrequently)
+COPY lib ./lib
+RUN npm run build:lib
+
+# Layer 6: Build server (changes moderately, depends on SDK)
+COPY server ./server
+RUN npm run build:server
+
+# Layer 7: Build client (changes most frequently, depends on SDK and shared)
+COPY client ./client
+COPY .env.production ./
+RUN npm run build:client
 
 ################################################################################
 # Create a new stage to run the application with minimal runtime dependencies
@@ -55,6 +78,7 @@ COPY --from=deps /usr/src/app/sdk/node_modules ./sdk/node_modules
 COPY --from=build /usr/src/app/bin ./bin
 COPY --from=build /usr/src/app/dist ./dist
 COPY --from=build /usr/src/app/sdk/dist ./sdk/dist
+COPY --from=build /usr/src/app/.env.production ./.env.production
 
 # Expose the port that the application listens on.
 EXPOSE 6274
