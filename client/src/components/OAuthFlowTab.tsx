@@ -508,7 +508,7 @@ export const OAuthFlowTab = ({
                     ? undefined
                     : handleAdvance,
                 continueLabel,
-                continueDisabled: canApplyTokens || continueDisabled,
+                continueDisabled: Boolean(canApplyTokens || continueDisabled),
                 resetDisabled: !hasProfile || oauthFlowState.isInitiatingAuth,
                 onConnectServer:
                   canApplyTokens && !isServerConnected

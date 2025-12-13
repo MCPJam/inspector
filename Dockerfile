@@ -1,97 +1,63 @@
-# Multi-stage build for production deployment
-# Matches the build process used in GitHub Actions workflow
+ARG NODE_VERSION=20
 
-# Stage 1: Dependencies installation
-FROM node:20-slim AS deps
-WORKDIR /app
+FROM node:${NODE_VERSION}-alpine as base
 
-# Copy package files for dependency installation
-COPY package.json package-lock.json ./
-COPY sdk/package.json sdk/package-lock.json ./sdk/
+WORKDIR /usr/src/app
 
-# Install dependencies (using --legacy-peer-deps to handle peer dependency conflicts)
-# Combine into single RUN to reduce layers and improve caching
-RUN npm ci --legacy-peer-deps && \
-    npm --prefix sdk ci --legacy-peer-deps
+################################################################################
+# Create a stage for installing production dependecies.
+FROM base AS deps
 
-# Stage 2: Build all artifacts
-FROM deps AS builder
-WORKDIR /app
+# Download dependencies as a separate step to take advantage of Docker's caching.
+# Leverage a cache mount to /root/.npm to speed up subsequent builds.
+# Leverage bind mounts to package.json and package-lock.json to avoid having to copy them
+# into this layer.
+RUN --mount=type=bind,source=package.json,target=package.json \
+    --mount=type=bind,source=package-lock.json,target=package-lock.json \
+    --mount=type=cache,target=/root/.npm \
+    npm ci --legacy-peer-deps
 
-# Set environment variables for build (before copying source for better caching)
-ENV VITE_DOCKER=true
+RUN --mount=type=bind,source=sdk/package.json,target=sdk/package.json \
+    --mount=type=bind,source=sdk/package-lock.json,target=sdk/package-lock.json \
+    --mount=type=cache,target=/root/.npm \
+    npm ci --legacy-peer-deps --prefix sdk
+################################################################################
+# Create a stage for building the application.
+FROM deps AS build
+
+# Copy the rest of the source files into the image.
+COPY . .
+
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-ENV NODE_ENV=production
 
-# Copy source files needed for build
-# Order by change frequency: config files first, then source code
-COPY tsconfig.json ./
-COPY shared/ ./shared/
-COPY lib/ ./lib/
-COPY sdk/ ./sdk/
-COPY server/ ./server/
-COPY client/ ./client/
-# .env.production is only needed at runtime, not during build
-# (removed from builder stage - will be copied in production stage)
-
-# Run the full build process (matches npm run build)
+# Run the build script.
 RUN npm run build
 
-# Stage 3: Production runtime
-FROM node:20-slim AS production
+################################################################################
+# Create a new stage to run the application with minimal runtime dependencies
+# where the necessary files are copied from the build stage.
+FROM base as final
 
-# Build arguments for runtime configuration
-ARG CONVEX_HTTP_URL
-ENV CONVEX_HTTP_URL=${CONVEX_HTTP_URL}
+# Use production node environment by default.
+ENV NODE_ENV production
 
-# Install dumb-init for proper signal handling
-# Cache apt packages by doing update separately (only invalidates when package list changes)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends dumb-init && \
-    rm -rf /var/lib/apt/lists/*
+# Run the application as a non-root user.
+USER node
 
-# Create non-root user (before copying files to set ownership during copy)
-RUN groupadd --gid 1001 nodejs && \
-    useradd --uid 1001 --gid nodejs --shell /bin/bash --create-home mcpjam
+# Copy package.json so that package manager commands can be used.
+COPY package.json .
+COPY sdk/package.json ./sdk/
 
-# Create app directory
-WORKDIR /app
+# Copy the production dependencies from the deps stage and also
+# the built application from the build stage into the image.
+COPY --from=deps /usr/src/app/node_modules ./node_modules
+COPY --from=deps /usr/src/app/sdk/node_modules ./sdk/node_modules
+COPY --from=build /usr/src/app/bin ./bin
+COPY --from=build /usr/src/app/dist ./dist
+COPY --from=build /usr/src/app/sdk/dist ./sdk/dist
 
-# Copy built artifacts with correct ownership (avoids slow chown -R on large dirs)
-COPY --from=builder --chown=mcpjam:nodejs /app/dist ./dist
-
-# Copy SDK dist and package.json (required at runtime)
-COPY --from=builder --chown=mcpjam:nodejs /app/sdk/dist ./sdk/dist
-COPY --from=builder --chown=mcpjam:nodejs /app/sdk/package.json ./sdk/package.json
-
-# Copy runtime dependencies with correct ownership
-# Using --chown here is critical - node_modules can have 50k+ files!
-COPY --from=deps --chown=mcpjam:nodejs /app/package.json ./package.json
-COPY --from=deps --chown=mcpjam:nodejs /app/node_modules ./node_modules
-COPY --from=deps --chown=mcpjam:nodejs /app/sdk/node_modules ./sdk/node_modules
-
-# Copy shared types and startup script
-COPY --chown=mcpjam:nodejs shared/ ./shared/
-COPY --chown=mcpjam:nodejs bin/ ./bin/
-# Copy .env.production for runtime (not needed during build)
-COPY --chown=mcpjam:nodejs .env.production ./
-
-# Switch to non-root user (no chown needed - files already have correct ownership)
-USER mcpjam
-
-# Expose port
+# Expose the port that the application listens on.
 EXPOSE 6274
 
-# Set environment variables
-ENV PORT=6274
-ENV NODE_ENV=production
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "require('http').request('http://localhost:6274/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).end()"
-
-# Use dumb-init to handle signals properly
-ENTRYPOINT ["dumb-init", "--"]
-
-# Start the application using npm start (matches GitHub workflow)
-CMD ["npm", "start"]
+# Run the application.
+CMD npm start

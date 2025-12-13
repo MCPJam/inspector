@@ -6,8 +6,6 @@ import {
   ArrowUpFromLine,
   Search,
   Trash2,
-  Server,
-  AppWindow,
   PanelRightClose,
   Loader2,
   Copy,
@@ -36,7 +34,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import type { ServerWithName } from "@/state/app-types";
 
 type RpcDirection = "in" | "out" | string;
-type TrafficSource = "mcp-server" | "mcp-apps";
+type TrafficSource = "mcp-server" | "mcp-apps" | "chatgpt-apps";
 
 interface RpcEventMessage {
   serverId: string;
@@ -87,7 +85,7 @@ function normalizePayload(
 export function LoggerView({
   serverIds,
   onClose,
-  isLogLevelVisible = true,
+  isLogLevelVisible = false,
   isCollapsable = true,
   isSearchVisible = true,
 }: LoggerViewProps = {}) {
@@ -97,9 +95,6 @@ export function LoggerView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedServerId, setSelectedServerId] = useState<string>("");
   const [selectedLevel, setSelectedLevel] = useState<LoggingLevel>("debug");
-  const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
-    "all",
-  );
   const [isUpdatingLevel, setIsUpdatingLevel] = useState(false);
 
   // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
@@ -116,7 +111,10 @@ export function LoggerView({
       method: item.method,
       timestamp: item.timestamp,
       payload: item.message,
-      source: "mcp-apps" as TrafficSource,
+      source:
+        item.protocol === "mcp-apps"
+          ? ("mcp-apps" as TrafficSource)
+          : ("chatgpt-apps" as TrafficSource),
       protocol: item.protocol,
       widgetId: item.widgetId,
     }));
@@ -285,11 +283,6 @@ export function LoggerView({
   const filteredItems = useMemo(() => {
     let result = allItems;
 
-    // Filter by source type
-    if (sourceFilter !== "all") {
-      result = result.filter((item) => item.source === sourceFilter);
-    }
-
     // Filter by serverIds if provided
     if (serverIds && serverIds.length > 0) {
       const serverIdSet = new Set(serverIds);
@@ -310,7 +303,7 @@ export function LoggerView({
     }
 
     return result;
-  }, [allItems, searchQuery, serverIds, sourceFilter]);
+  }, [allItems, searchQuery, serverIds]);
 
   const canUpdateLogLevel = !!selectedServerId && !isUpdatingLevel;
 
@@ -320,44 +313,6 @@ export function LoggerView({
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold text-foreground">Logs</h2>
           <div className="flex items-center gap-0.5">
-            {/* Source filter buttons */}
-            <div className="flex items-center rounded-md border border-border overflow-hidden mr-1">
-              <button
-                onClick={() => setSourceFilter("all")}
-                className={`px-2 py-1 text-[10px] transition-colors ${
-                  sourceFilter === "all"
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Show all logs"
-              >
-                All
-              </button>
-              <button
-                onClick={() => setSourceFilter("mcp-server")}
-                className={`px-2 py-1 text-[10px] flex items-center gap-1 border-l border-border transition-colors ${
-                  sourceFilter === "mcp-server"
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Show MCP Server logs only"
-              >
-                <Server className="h-3 w-3" />
-                Server
-              </button>
-              <button
-                onClick={() => setSourceFilter("mcp-apps")}
-                className={`px-2 py-1 text-[10px] flex items-center gap-1 border-l border-border transition-colors ${
-                  sourceFilter === "mcp-apps"
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Show UI/Apps logs only"
-              >
-                <AppWindow className="h-3 w-3" />
-                Apps
-              </button>
-            </div>
             <Button
               variant="ghost"
               size="sm"
@@ -496,19 +451,15 @@ export function LoggerView({
         ) : (
           filteredItems.map((it) => {
             const isExpanded = expanded.has(it.id);
-            const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
+            const isMcpApps = it.source === "mcp-apps";
+            const isChatgptApps = it.source === "chatgpt-apps";
             const isIncoming =
               it.direction === "RECEIVE" || it.direction === "UI→HOST";
-
-            // Border color: purple for Apps traffic, none for MCP Server
-            const borderClass = isAppsTraffic
-              ? "border-l-2 border-l-purple-500/50"
-              : "";
 
             return (
               <div
                 key={it.id}
-                className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
+                className="group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card"
               >
                 <div
                   className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
@@ -524,20 +475,32 @@ export function LoggerView({
                   <div className="flex items-center gap-2 flex-1 min-w-0">
                     {/* Source indicator */}
                     <span
-                      className={`flex items-center justify-center p-0.5 rounded ${
-                        isAppsTraffic
-                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                          : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
-                      }`}
-                      title={isAppsTraffic ? "Apps (UI)" : "MCP Server"}
+                      className="hidden sm:flex items-center justify-center p-0.5 rounded"
+                      title={
+                        isMcpApps
+                          ? "MCP Apps (UI)"
+                          : isChatgptApps
+                            ? "ChatGPT Apps (UI)"
+                            : "MCP Server"
+                      }
                     >
-                      {isAppsTraffic ? (
-                        <AppWindow className="h-3 w-3" />
-                      ) : (
-                        <Server className="h-3 w-3" />
-                      )}
+                      {isMcpApps ? (
+                        <img
+                          src="/mcp.svg"
+                          alt="MCP App"
+                          className="h-3 w-3 flex-shrink-0 dark:invert"
+                          title="MCP App"
+                        />
+                      ) : isChatgptApps ? (
+                        <img
+                          src="/openai_logo.png"
+                          alt="OpenAI App"
+                          className="h-3 w-3 flex-shrink-0"
+                          title="OpenAI App"
+                        />
+                      ) : null}
                     </span>
-                    <span className="text-muted-foreground font-mono text-xs">
+                    <span className="hidden md:inline-block text-muted-foreground font-mono text-xs">
                       {new Date(it.timestamp).toLocaleTimeString()}
                     </span>
                     <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50">
