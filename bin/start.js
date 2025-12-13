@@ -326,6 +326,19 @@ async function main() {
   const customHeaders = [];
   let verboseLogs = false;
 
+  // First pass: check for --verbose flag before processing other args
+  for (const arg of args) {
+    if (arg === "--verbose" || arg === "-v") {
+      verboseLogs = true;
+      break;
+    }
+  }
+
+  // Conditional logging functions (only log when verbose)
+  const verboseInfo = (message) => verboseLogs && logInfo(message);
+  const verboseSuccess = (message) => verboseLogs && logSuccess(message);
+  const verboseStep = (step, message) => verboseLogs && logStep(step, message);
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
@@ -514,8 +527,8 @@ async function main() {
   } else if (httpUrl) {
     // Handle HTTP URL mode (for Vite plugin integration, etc.)
     const displayName = serverDisplayName || "HTTP Server";
-    logStep("MCP Server", `Configuring HTTP server: ${displayName}`);
-    logInfo(`URL: ${httpUrl}`);
+    verboseStep("MCP Server", `Configuring HTTP server: ${displayName}`);
+    verboseInfo(`URL: ${httpUrl}`);
 
     // Validate the URL
     try {
@@ -529,11 +542,11 @@ async function main() {
     const headers = {};
     if (bearerToken) {
       headers["Authorization"] = `Bearer ${bearerToken}`;
-      logInfo("Auth: Bearer token configured");
+      verboseInfo("Auth: Bearer token configured");
     }
     for (const { key, value } of customHeaders) {
       headers[key] = value;
-      logInfo(`Header: ${key}=${value}`);
+      verboseInfo(`Header: ${key}=${value}`);
     }
 
     // Create a synthetic MCP config for the HTTP server
@@ -550,9 +563,9 @@ async function main() {
     envVars.MCP_CONFIG_DATA = JSON.stringify(httpServerConfig);
     envVars.MCP_AUTO_CONNECT_SERVER = displayName;
     if (useOAuth) {
-      logInfo("OAuth: Will trigger OAuth flow on connect");
+      verboseInfo("OAuth: Will trigger OAuth flow on connect");
     }
-    logSuccess(`HTTP server "${displayName}" configured for auto-connect`);
+    verboseSuccess(`HTTP server "${displayName}" configured for auto-connect`);
   } else if (mcpServerCommand) {
     // Handle single MCP server command if provided (legacy mode)
     logStep(
@@ -572,7 +585,7 @@ async function main() {
   // Pass global options (applicable to all modes)
   if (initialTab) {
     envVars.MCP_INITIAL_TAB = initialTab;
-    logInfo(`Initial tab: ${initialTab}`);
+    verboseInfo(`Initial tab: ${initialTab}`);
   }
 
   // Handle Ollama setup if requested

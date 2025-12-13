@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { logger } from "../../utils/logger";
 
 const registry = new Hono();
 
@@ -23,7 +24,7 @@ registry.get("/servers", async (c) => {
     const data = await response.json();
     return c.json(data);
   } catch (error) {
-    console.error("Error fetching registry servers:", error);
+    logger.error("Error fetching registry servers", error);
     return c.json(
       {
         success: false,
@@ -50,7 +51,7 @@ registry.get("/servers/:serverName/versions", async (c) => {
     const data = await response.json();
     return c.json(data);
   } catch (error) {
-    console.error("Error fetching server versions:", error);
+    logger.error("Error fetching server versions", error, { serverName });
     return c.json(
       {
         success: false,
@@ -79,7 +80,10 @@ registry.get("/servers/:serverName/versions/:version", async (c) => {
     const data = await response.json();
     return c.json(data);
   } catch (error) {
-    console.error("Error fetching server version:", error);
+    logger.error("Error fetching server version", error, {
+      serverName,
+      version,
+    });
     return c.json(
       {
         success: false,
