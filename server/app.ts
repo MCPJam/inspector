@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import fixPath from "fix-path";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
 import dotenv from "dotenv";
 import { existsSync } from "fs";
@@ -78,7 +79,7 @@ export function createHonoApp() {
     },
   );
   if (process.env.DEBUG_MCP_SELECTION === "1") {
-    console.log("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
+    appLogger.debug("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
   }
 
   // Middleware to inject the client manager into context
@@ -87,8 +88,13 @@ export function createHonoApp() {
     await next();
   });
 
-  // Middleware
-  app.use("*", logger());
+  // Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
+  const enableHttpLogs =
+    process.env.NODE_ENV !== "production" ||
+    process.env.VERBOSE_LOGS === "true";
+  if (enableHttpLogs) {
+    app.use("*", logger());
+  }
   app.use(
     "*",
     cors({

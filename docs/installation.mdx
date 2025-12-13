@@ -141,3 +141,22 @@ Example configuration file structure:
   }
 }
 ```
+
+## Start with Verbose Logging
+
+Enable verbose HTTP request logging for debugging purposes. This is useful when troubleshooting connection issues with MCP servers.
+
+```bash
+npx @mcpjam/inspector@latest --verbose
+```
+
+Or use the short form:
+
+```bash
+npx @mcpjam/inspector@latest -v
+```
+
+<Info>
+  Verbose mode logs all HTTP requests made by the inspector, which can help
+  diagnose connectivity problems or inspect server communication.
+</Info>

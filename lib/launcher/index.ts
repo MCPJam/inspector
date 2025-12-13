@@ -36,6 +36,12 @@ export interface LaunchOptions {
    * Options: "servers", "tools", "resources", "prompts", "chat", "app-builder"
    */
   defaultTab?: string;
+
+  /**
+   * Enable verbose logging output.
+   * When false (default), the inspector runs silently.
+   */
+  verbose?: boolean;
 }
 
 /**
@@ -131,6 +137,10 @@ export async function launchInspector(
     // Map public API "chat" to internal "chat-v2" tab
     const tab = options.defaultTab === "chat" ? "chat-v2" : options.defaultTab;
     env.MCP_INITIAL_TAB = tab;
+  }
+
+  if (options.verbose) {
+    env.VERBOSE_LOGS = "true";
   }
 
   // Spawn the process

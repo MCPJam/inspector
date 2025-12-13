@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
@@ -93,7 +94,7 @@ function getMCPConfigFromEnv() {
         };
       }
     } catch (error) {
-      console.error("Failed to parse MCP_CONFIG_DATA:", error);
+      appLogger.error("Failed to parse MCP_CONFIG_DATA:", error);
     }
   }
 
@@ -132,10 +133,7 @@ try {
 } catch {}
 
 const app = new Hono().onError((err, c) => {
-  console.error("Unhandled error:", err);
-
-  // Report all unhandled errors to Sentry (including HTTPExceptions)
-  Sentry.captureException(err);
+  appLogger.error("Unhandled error:", err);
 
   // Return appropriate response
   if (err instanceof HTTPException) {
@@ -198,8 +196,12 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// Middleware
-app.use("*", logger());
+// Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
+const enableHttpLogs =
+  process.env.NODE_ENV !== "production" || process.env.VERBOSE_LOGS === "true";
+if (enableHttpLogs) {
+  app.use("*", logger());
+}
 app.use(
   "*",
   cors({
@@ -239,14 +241,7 @@ app.get("/api/mcp-cli-config", (c) => {
 
 // Static file serving (for production)
 if (process.env.NODE_ENV === "production") {
-  // Serve public assets (logos, etc.) at root level
-  app.use("/*.png", serveStatic({ root: "./public" }));
-  app.use("/*.svg", serveStatic({ root: "./public" }));
-  app.use("/*.jpg", serveStatic({ root: "./public" }));
-  app.use("/*.jpeg", serveStatic({ root: "./public" }));
-  app.use("/*.ico", serveStatic({ root: "./public" }));
-
-  // Serve static assets (JS, CSS, images, etc.)
+  // Serve static assets (JS, CSS, images, etc.) - includes public assets bundled by Vite
   app.use("/*", serveStatic({ root: "./dist/client" }));
 
   // SPA fallback - serve index.html for all non-API routes
@@ -282,7 +277,7 @@ if (process.env.NODE_ENV === "production") {
 
 // Use server configuration
 const displayPort = process.env.ENVIRONMENT === "dev" ? 5173 : SERVER_PORT;
-logBox(`http://${SERVER_HOSTNAME}:${displayPort}`, "🚀 Inspector Launched");
+logBox(`http://${SERVER_HOSTNAME}:${displayPort}`, "🎵 MCPJam");
 
 // Start the Hono server
 const server = serve({

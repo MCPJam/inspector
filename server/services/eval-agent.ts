@@ -1,4 +1,5 @@
 import type { ModelMessage } from "ai";
+import { logger } from "../utils/logger";
 
 export interface DiscoveredTool {
   name: string;
@@ -260,7 +261,9 @@ ${toolsContext}
 
     return validatedTests;
   } catch (parseError) {
-    console.error("Failed to parse LLM response:", assistantResponse);
+    logger.error("Failed to parse LLM response:", parseError, {
+      assistantResponse,
+    });
     throw new Error(
       `Failed to parse test cases from LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
     );

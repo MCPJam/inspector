@@ -3,6 +3,7 @@ import { tunnelManager } from "../../services/tunnel-manager";
 import { LOCAL_SERVER_ADDR } from "../../config";
 import { cleanupOrphanedTunnels } from "../../services/tunnel-cleanup";
 import "../../types/hono";
+import { logger } from "../../utils/logger";
 
 const tunnels = new Hono();
 
@@ -72,7 +73,7 @@ async function recordTunnel(
 ): Promise<void> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
-    console.warn("CONVEX_HTTP_URL not configured, skipping tunnel recording");
+    logger.warn("CONVEX_HTTP_URL not configured, skipping tunnel recording");
     return;
   }
 
@@ -91,7 +92,7 @@ async function recordTunnel(
       body: JSON.stringify({ serverId, url, credentialId, domainId, domain }),
     });
   } catch (error) {
-    console.error("Failed to record tunnel:", error);
+    logger.error("Failed to record tunnel", error, { serverId, url });
     // Don't throw - tunnel is already created, just log the error
   }
 }
@@ -121,7 +122,7 @@ async function reportTunnelClosure(
       body: JSON.stringify({ serverId }),
     });
   } catch (error) {
-    console.error("Failed to report tunnel closure:", error);
+    logger.error("Failed to report tunnel closure", error, { serverId });
   }
 }
 
@@ -151,7 +152,10 @@ async function cleanupCredential(
       body: JSON.stringify({ credentialId, domainId }),
     });
   } catch (error) {
-    console.error("Failed to cleanup credential:", error);
+    logger.error("Failed to cleanup credential", error, {
+      credentialId,
+      domainId,
+    });
   }
 }
 
@@ -188,7 +192,7 @@ tunnels.post("/create", async (c) => {
       existed: false,
     });
   } catch (error: any) {
-    console.error("Error creating tunnel:", error);
+    logger.error("Error creating tunnel", error);
     return c.json(
       {
         error: error.message || "Failed to create tunnel",
@@ -239,7 +243,7 @@ tunnels.delete("/", async (c) => {
     tunnelManager.clearCredentials();
     return c.json({ success: true });
   } catch (error: any) {
-    console.error("Error closing tunnel:", error);
+    logger.error("Error closing tunnel", error);
     return c.json(
       {
         error: error.message || "Failed to close tunnel",
@@ -257,7 +261,7 @@ tunnels.post("/cleanup-orphaned", async (c) => {
     await cleanupOrphanedTunnels(authHeader);
     return c.json({ success: true });
   } catch (error: any) {
-    console.error("Error cleaning up orphaned tunnels:", error);
+    logger.error("Error cleaning up orphaned tunnels", error);
     return c.json(
       {
         error: error.message || "Failed to cleanup orphaned tunnels",
