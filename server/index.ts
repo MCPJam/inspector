@@ -135,9 +135,6 @@ try {
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
-  // Report all unhandled errors to Sentry (including HTTPExceptions)
-  Sentry.captureException(err);
-
   // Return appropriate response
   if (err instanceof HTTPException) {
     return err.getResponse();
