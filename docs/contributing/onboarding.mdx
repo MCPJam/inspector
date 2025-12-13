@@ -168,6 +168,23 @@ MCPJam supports multiple LLM providers:
 - Keep components small and focused
 - Co-locate component-specific code
 
+### Logging
+
+**Do not use `console.log`, `console.warn`, or `console.error` directly in server code.**
+
+Use the centralized logger utility in `server/` code:
+
+```typescript
+import { logger } from "@/utils/logger";
+
+logger.error("Something failed", error, { userId: "123" });
+logger.warn("Deprecated API used", { endpoint: "/old" });
+logger.info("Server started");
+logger.debug("Processing request", requestData);
+```
+
+The logger automatically sends errors/warnings to Sentry and respects the `--verbose` flag (silent in production by default). For CLI scripts (`bin/start.js`), use the built-in colored logging functions. Browser `console.*` is acceptable for client-side debugging.
+
 ### File Naming
 
 | Type       | Convention | Example                 |

@@ -19,6 +19,16 @@ MCPJam Inspector provides powerful debugging and monitoring capabilities to help
 
 View all messages being sent back and forth between MCPJam and your MCP server. We're working on building support to view all JSON-RPC messages. Tracing message levels are `ERROR`, `WARNING`, and `TRACE`.
 
+### Verbose logging
+
+For detailed HTTP request logging, start the inspector with the `--verbose` flag:
+
+```bash
+npx @mcpjam/inspector@latest --verbose
+```
+
+This enables detailed logging of all HTTP requests, which is helpful when troubleshooting connection issues or debugging server communication. See [Installation](/installation#start-with-verbose-logging) for more details.
+
 ## Widget debugging
 
 When using OpenAI Apps or MCP Apps in the playground, you can debug widget state and globals directly from tool call results.
