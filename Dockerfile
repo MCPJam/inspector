@@ -25,13 +25,27 @@ RUN --mount=type=bind,source=sdk/package.json,target=sdk/package.json \
 # Create a stage for building the application.
 FROM deps AS build
 
-# Copy the rest of the source files into the image.
-COPY . .
-
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# Run the build script.
-RUN npm run build
+COPY tsconfig.json package.json ./
+COPY lib/tsconfig.json lib/tsup.config.ts ./lib/
+COPY server/tsconfig.json server/tsup.config.ts ./server/
+COPY sdk/tsconfig.json sdk/tsup.config.ts sdk/package.json ./sdk/
+
+COPY shared ./shared
+
+COPY sdk/src ./sdk/src
+RUN npm run build:sdk
+
+COPY lib ./lib
+RUN npm run build:lib
+
+COPY server ./server
+RUN npm run build:server
+
+COPY client ./client
+COPY .env.production ./
+RUN npm run build:client
 
 ################################################################################
 # Create a new stage to run the application with minimal runtime dependencies
