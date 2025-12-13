@@ -64,7 +64,7 @@ jobs:
 
   build-arm64:
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
