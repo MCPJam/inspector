@@ -16,27 +16,10 @@ After installing the package, you should see a link to `localhost`. Open that li
 
 ## Docker
 
-Run MCPJam Inspector using Docker Compose:
+Run MCPJam Inspector using Docker:
 
 ```bash
-# Build and start the service
-docker compose up -d
-
-# View logs
-docker compose logs -f
-
-# Stop the service
-docker compose down
-```
-
-To build from source:
-
-```bash
-# Build the Docker image locally
-docker build -t mcpjam/mcp-inspector:latest .
-
-# Then run with docker compose
-docker compose up -d
+docker run -p 6274:6274 mcpjam/mcp-inspector
 ```
 
 The application will be available at **`http://127.0.0.1:6274`**.
