@@ -4,8 +4,6 @@ services:
       context: .
     ports:
       - 6274:6274
-    env_file:
-      - .env.production
     environment:
       - NODE_ENV=production
     extra_hosts:

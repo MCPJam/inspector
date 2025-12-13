@@ -16,6 +16,7 @@
 **/.vscode
 **/.next
 **/.cache
+**/.vite
 **/*.*proj.user
 **/*.dbmdl
 **/*.jfm
@@ -32,3 +33,34 @@
 **/dist
 LICENSE
 README.md
+
+# Additional build artifacts and cache directories
+.vite
+.cache
+out
+.cursor
+client/dist
+.git
+*.log
+docs/
+.github/
+.env.local
+.npm-cache
+*.md
+!package.json
+!sdk/package.json
+
+# Allow .env.production to be copied into the image
+!.env.production
+
+# Electron build artifacts
+out/
+
+# Test and development files
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+**/test/
+**/tests/
+**/__tests__/
