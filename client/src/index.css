@@ -6,6 +6,8 @@
 @import "./styles/presets/soft-pop.css";
 @import "./styles/presets/tangerine.css";
 
+@source "../../node_modules/streamdown/dist/*.js";
+
 @theme {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
