@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import { logger } from "../../utils/logger";
 
 const resourceTemplates = new Hono();
 
@@ -16,7 +17,7 @@ resourceTemplates.post("/list", async (c) => {
       await mcpClientManager.listResourceTemplates(serverId);
     return c.json({ resourceTemplates: templates });
   } catch (error) {
-    console.error("Error fetching resource templates:", error);
+    logger.error("Error fetching resource templates", error, { serverId });
     return c.json(
       {
         success: false,

@@ -322,7 +322,10 @@ export class MCPClientManager {
       // clear pending
       state.promise = undefined;
       this.clientStates.set(serverId, state);
-      this.setLoggingLevel(serverId, "debug"); // TODO: Allow the user to configure the debugging level to debug.
+      // Set logging level if supported (ignore errors if server doesn't support it)
+      this.setLoggingLevel(serverId, "debug").catch(() => {
+        // Silently ignore - server may not support logging/setLevel
+      });
       return client;
     })().catch((error) => {
       this.resetState(serverId);

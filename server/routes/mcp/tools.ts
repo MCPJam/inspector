@@ -9,6 +9,7 @@ import {
   mapModelIdToTokenizerBackend,
   estimateTokensFromChars,
 } from "../../utils/tokenizer-helpers";
+import { logger } from "../../utils/logger";
 
 const tools = new Hono();
 
@@ -47,7 +48,9 @@ async function countToolsTokens(
 
     return estimateTokensFromChars(toolsText);
   } catch (error) {
-    console.warn("[tools] Error counting tokens:", error);
+    logger.warn("[tools] Error counting tokens", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return 0;
   }
 }

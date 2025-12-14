@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono";
+import { logger } from "../../utils/logger";
 
 const models = new Hono();
 
@@ -44,9 +45,9 @@ models.get("/", async (c) => {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(
-        `[models] Convex backend error: ${response.status} ${errorText}`,
-      );
+      logger.error("[models] Convex backend error", new Error(errorText), {
+        status: response.status,
+      });
       return c.json(
         {
           ok: false,
@@ -59,7 +60,7 @@ models.get("/", async (c) => {
     const data = await response.json();
     return c.json(data);
   } catch (error) {
-    console.error("[models] Error fetching model metadata:", error);
+    logger.error("[models] Error fetching model metadata", error);
     return c.json(
       {
         ok: false,

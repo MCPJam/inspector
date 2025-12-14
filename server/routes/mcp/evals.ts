@@ -9,6 +9,7 @@ import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
 import type { MCPClientManager } from "@/sdk";
 import "../../types/hono";
+import { logger } from "../../utils/logger";
 
 // Helper to compute config revision (same as in Convex)
 function normalizeForSignature(value: unknown): unknown {
@@ -78,10 +79,10 @@ async function collectToolsForServers(
           serverId,
         }));
       } catch (error) {
-        console.warn(
-          `[evals] Failed to list tools for server ${serverId}:`,
-          error,
-        );
+        logger.warn(`[evals] Failed to list tools for server ${serverId}`, {
+          serverId,
+          error: error instanceof Error ? error.message : String(error),
+        });
         return [] as DiscoveredTool[];
       }
     }),
@@ -384,7 +385,7 @@ evals.post("/run", async (c) => {
     } catch (evalError) {
       const errorMessage =
         evalError instanceof Error ? evalError.message : String(evalError);
-      console.error("[Error running evals]:", errorMessage);
+      logger.error("[Error running evals]", evalError);
       return c.json(
         {
           error: errorMessage,
@@ -395,7 +396,7 @@ evals.post("/run", async (c) => {
   } catch (runError) {
     const errorMessage =
       runError instanceof Error ? runError.message : String(runError);
-    console.error("[Error running evals]:", errorMessage);
+    logger.error("[Error running evals]", runError);
     return c.json(
       {
         error: errorMessage,
@@ -533,7 +534,7 @@ evals.post("/run-test-case", async (c) => {
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("[Error running test case]:", errorMessage);
+    logger.error("[Error running test case]", error);
     return c.json({ error: errorMessage }, 500);
   }
 });
@@ -569,7 +570,7 @@ evals.post("/cancel", async (c) => {
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("[Error cancelling run]:", errorMessage);
+    logger.error("[Error cancelling run]", error);
 
     // Check for specific error messages
     if (errorMessage.includes("Cannot cancel run")) {
@@ -644,7 +645,7 @@ evals.post("/generate-tests", async (c) => {
       tests: testCases,
     });
   } catch (error) {
-    console.error("Error in /evals/generate-tests:", error);
+    logger.error("Error in /evals/generate-tests", error);
     return c.json(
       {
         error: error instanceof Error ? error.message : "Unknown error",

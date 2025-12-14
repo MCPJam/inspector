@@ -8,6 +8,7 @@
 
 import { Hono } from "hono";
 import "../../types/hono";
+import { logger } from "../../utils/logger";
 
 const apps = new Hono();
 
@@ -87,7 +88,7 @@ apps.post("/widget/store", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error("[MCP Apps] Error storing widget data:", error);
+    logger.error("[MCP Apps] Error storing widget data", error, { toolId });
     return c.json(
       {
         success: false,
@@ -152,7 +153,9 @@ apps.get("/widget-content/:toolId", async (c) => {
       : null;
 
     if (mimeTypeWarning) {
-      console.warn("[MCP Apps] Mimetype validation:", mimeTypeWarning);
+      logger.warn("[MCP Apps] Mimetype validation: " + mimeTypeWarning, {
+        resourceUri,
+      });
     }
 
     let html: string;
@@ -170,7 +173,8 @@ apps.get("/widget-content/:toolId", async (c) => {
     const prefersBorder = uiMeta?.prefersBorder;
 
     // Log CSP configuration for security review (SEP-1865)
-    console.log("[MCP Apps] CSP configuration for %s:", resourceUri, {
+    logger.debug("[MCP Apps] CSP configuration", {
+      resourceUri,
       effectiveCspMode,
       widgetDeclaredCsp: csp
         ? {
@@ -198,7 +202,7 @@ apps.get("/widget-content/:toolId", async (c) => {
       mimeTypeWarning,
     });
   } catch (error) {
-    console.error("[MCP Apps] Error fetching resource:", error);
+    logger.error("[MCP Apps] Error fetching resource", error, { resourceUri });
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,

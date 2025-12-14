@@ -1,6 +1,7 @@
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
 import type { UsageTotals } from "./types";
+import { logger } from "../../utils/logger";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -107,11 +108,15 @@ export const createSuiteRunRecorder = ({
         });
 
         if (!matchingIteration) {
-          console.error("[evals] Could not find pre-created iteration for", {
-            testCaseId,
-            testCaseSnapshot,
-            iterationNumber,
-          });
+          logger.error(
+            "[evals] Could not find pre-created iteration for",
+            undefined,
+            {
+              testCaseId,
+              testCaseSnapshot,
+              iterationNumber,
+            },
+          );
           return undefined;
         }
 
@@ -135,9 +140,9 @@ export const createSuiteRunRecorder = ({
           return undefined;
         }
 
-        console.error(
+        logger.error(
           "[evals] Failed to record iteration start:",
-          errorMessage,
+          new Error(errorMessage),
         );
         return undefined;
       }
@@ -164,7 +169,7 @@ export const createSuiteRunRecorder = ({
           { iterationId },
         );
         if (iteration?.status === "cancelled") {
-          console.log(
+          logger.debug(
             "[evals] Skipping update for cancelled iteration:",
             iterationId,
           );
@@ -205,9 +210,9 @@ export const createSuiteRunRecorder = ({
           return;
         }
 
-        console.error(
+        logger.error(
           "[evals] Failed to record iteration result:",
-          errorMessage,
+          new Error(errorMessage),
         );
       }
     },
@@ -238,7 +243,10 @@ export const createSuiteRunRecorder = ({
           return;
         }
 
-        console.error("[evals] Failed to finalize suite run:", errorMessage);
+        logger.error(
+          "[evals] Failed to finalize suite run:",
+          new Error(errorMessage),
+        );
       }
     },
   };

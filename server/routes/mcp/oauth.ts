@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { ContentfulStatusCode } from "hono/utils/http-status";
+import { logger } from "../../utils/logger";
 
 const oauth = new Hono();
 
@@ -151,7 +152,7 @@ oauth.post("/debug/proxy", async (c) => {
             try {
               await reader.cancel();
             } catch (e) {
-              console.error("Error canceling SSE reader:", e);
+              logger.error("Error canceling SSE reader", e);
             }
           }
         }
@@ -170,7 +171,7 @@ oauth.post("/debug/proxy", async (c) => {
           rawBuffer: buffer,
         };
       } catch (error) {
-        console.error("Failed to parse SSE response:", error);
+        logger.error("Failed to parse SSE response", error);
         responseBody = {
           error: "Failed to parse SSE stream",
           details: error instanceof Error ? error.message : String(error),
@@ -198,7 +199,7 @@ oauth.post("/debug/proxy", async (c) => {
       body: responseBody,
     });
   } catch (error) {
-    console.error("[OAuth Debug Proxy] Error:", error);
+    logger.error("[OAuth Debug Proxy] Error", error);
     return c.json(
       {
         error:
@@ -308,7 +309,7 @@ oauth.post("/proxy", async (c) => {
       body: responseBody,
     });
   } catch (error) {
-    console.error("OAuth proxy error:", error);
+    logger.error("OAuth proxy error", error);
     return c.json(
       {
         error:
@@ -368,7 +369,7 @@ oauth.get("/metadata", async (c) => {
     // Return the metadata with proper CORS headers
     return c.json(metadata);
   } catch (error) {
-    console.error("OAuth metadata proxy error:", error);
+    logger.error("OAuth metadata proxy error", error);
     return c.json(
       {
         error:

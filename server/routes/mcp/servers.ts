@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { MCPServerConfig } from "@/sdk";
 import "../../types/hono"; // Type extensions
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
+import { logger } from "../../utils/logger";
 
 const servers = new Hono();
 
@@ -23,7 +24,7 @@ servers.get("/", async (c) => {
       servers: serverList,
     });
   } catch (error) {
-    console.error("Error listing servers:", error);
+    logger.error("Error listing servers", error);
     return c.json(
       {
         success: false,
@@ -47,7 +48,7 @@ servers.get("/status/:serverId", async (c) => {
       status,
     });
   } catch (error) {
-    console.error("Error getting server status:", error);
+    logger.error("Error getting server status", error, { serverId });
     return c.json(
       {
         success: false,
@@ -81,7 +82,7 @@ servers.get("/init-info/:serverId", async (c) => {
       initInfo,
     });
   } catch (error) {
-    console.error("Error getting initialization info:", error);
+    logger.error("Error getting initialization info", error, { serverId });
     return c.json(
       {
         success: false,
@@ -118,7 +119,7 @@ servers.delete("/:serverId", async (c) => {
       message: `Disconnected from server: ${serverId}`,
     });
   } catch (error) {
-    console.error("Error disconnecting server:", error);
+    logger.error("Error disconnecting server", error, { serverId });
     return c.json(
       {
         success: false,
@@ -189,7 +190,7 @@ servers.post("/reconnect", async (c) => {
       ...(success ? {} : { error: message }),
     });
   } catch (error) {
-    console.error("Error reconnecting server:", error);
+    logger.error("Error reconnecting server", error, { serverId });
     return c.json(
       {
         success: false,

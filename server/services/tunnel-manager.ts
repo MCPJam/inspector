@@ -1,5 +1,6 @@
 import ngrok from "@ngrok/ngrok";
 import type { Listener } from "@ngrok/ngrok";
+import { logger } from "../utils/logger";
 
 class TunnelManager {
   private listener: Listener | null = null;
@@ -51,10 +52,10 @@ class TunnelManager {
       this.listener = await ngrok.forward(config);
       this.baseUrl = this.listener.url()!;
 
-      console.log(`✓ Created tunnel: ${this.baseUrl} -> ${addr}`);
+      logger.info(`✓ Created tunnel: ${this.baseUrl} -> ${addr}`);
       return this.baseUrl;
     } catch (error: any) {
-      console.error(`✗ Failed to create tunnel:`, error.message);
+      logger.error(`✗ Failed to create tunnel:`, error);
       this.clearCredentials();
       throw error;
     }
@@ -69,7 +70,7 @@ class TunnelManager {
 
     try {
       await ngrok.disconnect();
-      console.log(`✓ Closed tunnel`);
+      logger.info(`✓ Closed tunnel`);
     } catch (error) {
       // Already disconnected
     }

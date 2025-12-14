@@ -41,6 +41,12 @@ export interface MCPInspectorPluginOptions {
    * Defaults to true.
    */
   autoLaunch?: boolean;
+
+  /**
+   * Enable verbose logging output.
+   * When false (default), the inspector runs silently.
+   */
+  verbose?: boolean;
 }
 
 /**
@@ -81,6 +87,7 @@ export function mcpInspector(options: MCPInspectorPluginOptions = {}): Plugin {
           inspector = await launchInspector({
             server: options.server,
             defaultTab: options.defaultTab ?? "app-builder",
+            verbose: options.verbose,
           });
           console.log(`\n  MCP Inspector running at ${inspector.url}\n`);
         } catch (error) {

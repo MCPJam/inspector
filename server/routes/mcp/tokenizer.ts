@@ -4,6 +4,7 @@ import {
   mapModelIdToTokenizerBackend,
   estimateTokensFromChars,
 } from "../../utils/tokenizer-helpers";
+import { logger } from "../../utils/logger";
 
 const tokenizer = new Hono();
 
@@ -100,17 +101,17 @@ tokenizer.post("/count-tools", async (c) => {
               if (data.ok) {
                 tokenCounts[serverId] = data.tokenCount || 0;
               } else {
-                console.warn(
-                  `[tokenizer] Failed to count tokens for server ${serverId}:`,
-                  data.error,
+                logger.warn(
+                  `[tokenizer] Failed to count tokens for server ${serverId}`,
+                  { serverId, error: data.error },
                 );
                 // Fallback to character-based estimation on backend error
                 tokenCounts[serverId] = estimateTokensFromChars(toolsText);
               }
             } else {
-              console.warn(
-                `[tokenizer] Failed to count tokens for server ${serverId}:`,
-                response.status,
+              logger.warn(
+                `[tokenizer] Failed to count tokens for server ${serverId}`,
+                { serverId, status: response.status },
               );
               // Fallback to character-based estimation on HTTP error
               tokenCounts[serverId] = estimateTokensFromChars(toolsText);
@@ -120,10 +121,10 @@ tokenizer.post("/count-tools", async (c) => {
             tokenCounts[serverId] = estimateTokensFromChars(toolsText);
           }
         } catch (error) {
-          console.warn(
-            `[tokenizer] Error counting tokens for server ${serverId}:`,
-            error,
-          );
+          logger.warn(`[tokenizer] Error counting tokens for server`, {
+            serverId,
+            error: error instanceof Error ? error.message : String(error),
+          });
           // Fallback to character-based estimation on error
           try {
             const tools = await mcpClientManager.getToolsForAiSdk([serverId]);
@@ -141,7 +142,7 @@ tokenizer.post("/count-tools", async (c) => {
       tokenCounts,
     });
   } catch (error) {
-    console.error("[tokenizer] Error counting MCP tools tokens:", error);
+    logger.error("[tokenizer] Error counting MCP tools tokens", error);
     return c.json(
       {
         ok: false,
@@ -226,10 +227,9 @@ tokenizer.post("/count-text", async (c) => {
               tokenCount: data.tokenCount || 0,
             });
           } else {
-            console.warn(
-              `[tokenizer] Failed to count tokens for text:`,
-              data.error,
-            );
+            logger.warn(`[tokenizer] Failed to count tokens for text`, {
+              error: data.error,
+            });
             // Fallback to character-based estimation on backend error
             return c.json({
               ok: true,
@@ -237,10 +237,9 @@ tokenizer.post("/count-text", async (c) => {
             });
           }
         } else {
-          console.warn(
-            `[tokenizer] Failed to count tokens for text:`,
-            response.status,
-          );
+          logger.warn(`[tokenizer] Failed to count tokens for text`, {
+            status: response.status,
+          });
           // Fallback to character-based estimation on HTTP error
           return c.json({
             ok: true,
@@ -248,7 +247,9 @@ tokenizer.post("/count-text", async (c) => {
           });
         }
       } catch (error) {
-        console.warn(`[tokenizer] Error counting tokens for text:`, error);
+        logger.warn(`[tokenizer] Error counting tokens for text`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
         // Fallback to character-based estimation on error
         return c.json({
           ok: true,
@@ -263,7 +264,7 @@ tokenizer.post("/count-text", async (c) => {
       });
     }
   } catch (error) {
-    console.error("[tokenizer] Error counting text tokens:", error);
+    logger.error("[tokenizer] Error counting text tokens", error);
     return c.json(
       {
         ok: false,
