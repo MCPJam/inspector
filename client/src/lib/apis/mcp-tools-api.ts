@@ -42,6 +42,9 @@ export type ToolExecutionResponse =
   | {
       status: "task_created";
       task: TaskData;
+      // Optional string for LLM hosts to return as immediate tool result while task executes
+      // Per MCP Tasks spec (2025-11-25): io.modelcontextprotocol/model-immediate-response in _meta
+      modelImmediateResponse?: string;
     }
   | {
       error: string;

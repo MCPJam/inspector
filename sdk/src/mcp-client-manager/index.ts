@@ -18,6 +18,7 @@ import {
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
   PromptListChangedNotificationSchema,
+  type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
@@ -35,6 +36,18 @@ const TaskSchema = z.object({
 const ListTasksResultSchema = z.object({
   tasks: z.array(TaskSchema),
   nextCursor: z.string().optional(),
+});
+
+// Task status notification schema (MCP Tasks spec 2025-11-25)
+// notifications/tasks/status - sent by receiver when task status changes
+const TaskStatusNotificationSchema = z.object({
+  method: z.literal("notifications/tasks/status"),
+  params: z.object({
+    taskId: z.string(),
+    status: z.enum(["working", "input_required", "completed", "failed", "cancelled"]),
+    statusMessage: z.string().optional(),
+    lastUpdatedAt: z.string().optional(),
+  }).optional(),
 });
 
 import type {
@@ -163,6 +176,8 @@ export class MCPClientManager {
     requestId: string;
     message: string;
     schema: unknown;
+    /** Task ID if this elicitation is related to a task (MCP Tasks spec 2025-11-25) */
+    relatedTaskId?: string;
   }) => Promise<ElicitResult> | ElicitResult;
   private readonly pendingElicitations = new Map<
     string,
@@ -820,6 +835,49 @@ export class MCPClientManager {
     );
   }
 
+  // Task status notification handler (MCP Tasks spec 2025-11-25)
+  // Registers a handler for notifications/tasks/status notifications
+  // Note: Per spec, requestors MUST NOT rely on receiving these notifications
+  onTaskStatusChanged(serverId: string, handler: NotificationHandler): void {
+    this.addNotificationHandler(
+      serverId,
+      TaskStatusNotificationSchema,
+      handler,
+    );
+  }
+
+  // Get server capabilities (MCP Tasks spec 2025-11-25)
+  // Used to check if server supports task-augmented requests
+  getServerCapabilities(serverId: string): ServerCapabilities | undefined {
+    const client = this.clientStates.get(serverId)?.client;
+    if (!client) {
+      return undefined;
+    }
+    return client.getServerCapabilities();
+  }
+
+  // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
+  // Returns true if server declares tasks.requests.tools.call capability
+  supportsTasksForToolCalls(serverId: string): boolean {
+    const capabilities = this.getServerCapabilities(serverId);
+    // Per spec: capabilities.tasks.requests.tools.call indicates support
+    return Boolean(
+      (capabilities as any)?.tasks?.requests?.tools?.call
+    );
+  }
+
+  // Check if server supports tasks/list operation (MCP Tasks spec 2025-11-25)
+  supportsTasksList(serverId: string): boolean {
+    const capabilities = this.getServerCapabilities(serverId);
+    return Boolean((capabilities as any)?.tasks?.list);
+  }
+
+  // Check if server supports tasks/cancel operation (MCP Tasks spec 2025-11-25)
+  supportsTasksCancel(serverId: string): boolean {
+    const capabilities = this.getServerCapabilities(serverId);
+    return Boolean((capabilities as any)?.tasks?.cancel);
+  }
+
   getClient(serverId: string): Client | undefined {
     return this.clientStates.get(serverId)?.client;
   }
@@ -846,11 +904,15 @@ export class MCPClientManager {
   }
 
   // Global elicitation callback API (no serverId required)
+  // Per MCP Tasks spec (2025-11-25), elicitations related to a task include
+  // io.modelcontextprotocol/related-task in _meta
   setElicitationCallback(
     callback: (request: {
       requestId: string;
       message: string;
       schema: unknown;
+      /** Task ID if this elicitation is related to a task (MCP Tasks spec 2025-11-25) */
+      relatedTaskId?: string;
     }) => Promise<ElicitResult> | ElicitResult,
   ): void {
     this.elicitationCallback = callback;
@@ -1037,12 +1099,18 @@ export class MCPClientManager {
         const reqId = `elicit_${Date.now()}_${Math.random()
           .toString(36)
           .slice(2, 9)}`;
+        // Extract related task ID from _meta per MCP Tasks spec (2025-11-25)
+        // All requests related to a task MUST include io.modelcontextprotocol/related-task in _meta
+        const meta = (request.params as any)?._meta;
+        const relatedTask = meta?.["io.modelcontextprotocol/related-task"];
+        const relatedTaskId = relatedTask?.taskId as string | undefined;
         return await this.elicitationCallback!({
           requestId: reqId,
           message: (request.params as any)?.message,
           schema:
             (request.params as any)?.requestedSchema ??
             (request.params as any)?.schema,
+          relatedTaskId,
         });
       });
       return;

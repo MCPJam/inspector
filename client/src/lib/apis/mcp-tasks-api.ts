@@ -96,3 +96,36 @@ export async function cancelTask(
   }
   return body as Task;
 }
+
+// Task capabilities for a server (MCP Tasks spec 2025-11-25)
+export interface TaskCapabilities {
+  // Server supports task-augmented tools/call requests
+  supportsToolCalls: boolean;
+  // Server supports tasks/list operation
+  supportsList: boolean;
+  // Server supports tasks/cancel operation
+  supportsCancel: boolean;
+}
+
+// Get task capabilities for a server
+// Per MCP Tasks spec: clients SHOULD only augment requests with tasks
+// if the corresponding capability has been declared by the receiver
+export async function getTaskCapabilities(
+  serverId: string,
+): Promise<TaskCapabilities> {
+  const res = await fetch("/api/mcp/tasks/capabilities", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverId }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    throw new Error(body?.error || `Get task capabilities failed (${res.status})`);
+  }
+  return body as TaskCapabilities;
+}
