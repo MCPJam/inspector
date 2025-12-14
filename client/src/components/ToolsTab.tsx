@@ -40,6 +40,10 @@ import {
   type ToolExecutionResponse,
   type TaskOptions,
 } from "@/lib/apis/mcp-tools-api";
+import {
+  getTaskCapabilities,
+  type TaskCapabilities,
+} from "@/lib/apis/mcp-tasks-api";
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
@@ -138,6 +142,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   }>({ title: "" });
   const [executeAsTask, setExecuteAsTask] = useState(false);
   const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
+  // Task capabilities from server (MCP Tasks spec 2025-11-25)
+  const [taskCapabilities, setTaskCapabilities] = useState<TaskCapabilities | null>(null);
+  // TTL for task execution (milliseconds, 0 = no expiration)
+  const [taskTtl, setTaskTtl] = useState<number>(0);
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -180,8 +188,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     return "optional"; // Default to optional for inspector - allow testing
   }, [selectedTool, tools]);
 
-  // For inspector tool, always allow task execution to enable testing
-  const canExecuteAsTask = true;
+  // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
+  // Per spec: clients SHOULD only augment requests with tasks if capability is declared
+  // For inspector, we allow override to enable testing even without capability
+  const serverSupportsTaskToolCalls = taskCapabilities?.supportsToolCalls ?? false;
+  const canExecuteAsTask = serverSupportsTaskToolCalls || true; // Allow override for testing
 
   useEffect(() => {
     if (!serverConfig || !serverName) {
@@ -195,10 +206,34 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setUnstructuredValidationResult("not_applicable");
       setError("");
       setActiveElicitation(null);
+      setTaskCapabilities(null);
       return;
     }
     void fetchTools();
+    // Fetch task capabilities for this server (MCP Tasks spec 2025-11-25)
+    void fetchTaskCapabilities();
   }, [serverConfig, serverName]);
+
+  // Fetch task capabilities for the server
+  const fetchTaskCapabilities = async () => {
+    if (!serverName) return;
+    try {
+      const capabilities = await getTaskCapabilities(serverName);
+      setTaskCapabilities(capabilities);
+      logger.info("Task capabilities fetched", {
+        serverId: serverName,
+        supportsToolCalls: capabilities.supportsToolCalls,
+        supportsList: capabilities.supportsList,
+        supportsCancel: capabilities.supportsCancel,
+      });
+    } catch (err) {
+      // Server may not support tasks - this is fine, just log it
+      logger.debug("Could not fetch task capabilities", {
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setTaskCapabilities(null);
+    }
+  };
 
   useEffect(() => {
     if (!serverConfig) return;
@@ -343,7 +378,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     // Handle task creation response (MCP Tasks spec 2025-11-25)
     if ("status" in response && response.status === "task_created") {
-      const { task } = response;
+      const { task, modelImmediateResponse } = response;
       setCreatedTaskId(task.taskId);
 
       // Track the task locally so it appears in the Tasks tab
@@ -361,6 +396,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         ttl: task.ttl,
         pollInterval: task.pollInterval,
         duration: Date.now() - startedAt,
+        // Per MCP Tasks spec: optional string for LLM hosts to return to model immediately
+        modelImmediateResponse: modelImmediateResponse || undefined,
       });
 
       // Navigate to Tasks tab to monitor the task
@@ -403,10 +440,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
       // Pass task options if executing as background task (MCP Tasks spec 2025-11-25)
       // Use task execution if: user checked the option OR tool requires it
-      // TTL of 0 means no expiration
+      // Per spec: ttl is the requested duration in milliseconds to retain task from creation
       const shouldUseTask = executeAsTask || selectedToolTaskSupport === "required";
       const taskOptions: TaskOptions | undefined = shouldUseTask
-        ? { ttl: 0 }
+        ? { ttl: taskTtl } // User-configurable TTL (0 = no expiration)
         : undefined;
 
       const response = await executeToolApi(
@@ -597,6 +634,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 executeAsTask={canExecuteAsTask ? executeAsTask : undefined}
                 onExecuteAsTaskChange={canExecuteAsTask ? setExecuteAsTask : undefined}
                 taskRequired={selectedToolTaskSupport === "required"}
+                // MCP Tasks spec 2025-11-25: TTL configuration
+                taskTtl={taskTtl}
+                onTaskTtlChange={setTaskTtl}
+                serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
               />
             ) : (
               <ResizablePanel defaultSize={70} minSize={50}>

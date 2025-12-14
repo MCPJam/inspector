@@ -108,4 +108,33 @@ tasks.post("/cancel", async (c) => {
   }
 });
 
+// Get task capabilities for a server (MCP Tasks spec 2025-11-25)
+// Returns what task-related features the server supports
+tasks.post("/capabilities", async (c) => {
+  try {
+    const { serverId } = (await c.req.json()) as {
+      serverId?: string;
+    };
+
+    if (!serverId) return c.json({ error: "serverId is required" }, 400);
+
+    const capabilities = {
+      // Server supports task-augmented tools/call requests
+      supportsToolCalls: c.mcpClientManager.supportsTasksForToolCalls(serverId),
+      // Server supports tasks/list operation
+      supportsList: c.mcpClientManager.supportsTasksList(serverId),
+      // Server supports tasks/cancel operation
+      supportsCancel: c.mcpClientManager.supportsTasksCancel(serverId),
+    };
+
+    return c.json(capabilities);
+  } catch (error) {
+    console.error("Error getting task capabilities:", error);
+    return c.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      500,
+    );
+  }
+});
+
 export default tasks;

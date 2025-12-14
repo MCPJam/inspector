@@ -28,7 +28,8 @@ let isCallbackRegistered = false;
 elicitation.use("*", async (c, next) => {
   if (!isCallbackRegistered) {
     const manager = c.mcpClientManager;
-    manager.setElicitationCallback(({ requestId, message, schema }) => {
+    // Per MCP Tasks spec (2025-11-25), elicitations related to a task include relatedTaskId
+    manager.setElicitationCallback(({ requestId, message, schema, relatedTaskId }) => {
       return new Promise<ElicitResult>((resolve, reject) => {
         try {
           manager.getPendingElicitations().set(requestId, { resolve, reject });
@@ -39,6 +40,8 @@ elicitation.use("*", async (c, next) => {
           message,
           schema,
           timestamp: new Date().toISOString(),
+          // Include related task ID if this elicitation is associated with a task
+          relatedTaskId,
         });
       });
     });

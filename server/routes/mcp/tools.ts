@@ -294,11 +294,17 @@ tools.post("/execute", async (c) => {
       // When task augmentation is used, server returns { task: { taskId, status, ... } }
       const result = next.result as any;
 
+      // Extract model-immediate-response from _meta (MCP Tasks spec 2025-11-25)
+      // This optional field allows LLM hosts to return control to the model while task executes
+      const modelImmediateResponse = result?._meta?.["io.modelcontextprotocol/model-immediate-response"];
+
       // Standard MCP Tasks spec format: top-level task property
       if (result?.task?.taskId && result?.task?.status) {
         return c.json({
           status: "task_created",
           task: result.task,
+          // Include model-immediate-response if provided by server
+          modelImmediateResponse,
         });
       }
 
@@ -318,6 +324,8 @@ tools.post("/execute", async (c) => {
             ttl: metaTask.ttl ?? null,
             pollInterval: metaTask.pollInterval,
           },
+          // Include model-immediate-response if provided by server
+          modelImmediateResponse,
         });
       }
 
