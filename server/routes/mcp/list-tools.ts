@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { MCPClientManager } from "@/sdk";
 import "../../types/hono";
+import { logger } from "../../utils/logger";
 
 const listTools = new Hono();
 
@@ -40,13 +41,16 @@ listTools.post("/", async (c) => {
         }));
         allTools.push(...serverTools);
       } catch (error) {
-        console.warn(`Failed to list tools for server ${serverId}:`, error);
+        logger.warn(`Failed to list tools for server ${serverId}`, {
+          serverId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
     return c.json({ tools: allTools });
   } catch (error) {
-    console.error("Error in /list-tools:", error);
+    logger.error("Error in /list-tools", error);
     return c.json(
       {
         error: error instanceof Error ? error.message : "Unknown error",

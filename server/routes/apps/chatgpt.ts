@@ -4,6 +4,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { API_RUNTIME_SCRIPT } from "./chatgpt.bundled";
 import "../../types/hono";
+import { logger } from "../../utils/logger";
 
 const chatgpt = new Hono();
 
@@ -391,7 +392,7 @@ chatgpt.post("/widget/store", async (c) => {
     });
     return c.json({ success: true });
   } catch (error) {
-    console.error("Error storing widget data:", error);
+    logger.error("Error storing widget data:", error);
     return c.json(
       {
         success: false,
@@ -513,7 +514,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
         (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ?? false,
     });
   } catch (error) {
-    console.error("Error serving widget HTML:", error);
+    logger.error("Error serving widget HTML:", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,
@@ -648,7 +649,7 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
 
     return c.html(modifiedHtml);
   } catch (error) {
-    console.error("Error serving widget content:", error);
+    logger.error("Error serving widget content:", error);
     return c.html(
       `<html><body>Error: ${error instanceof Error ? error.message : "Unknown error"}</body></html>`,
       500,

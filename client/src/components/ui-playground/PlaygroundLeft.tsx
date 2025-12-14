@@ -176,16 +176,16 @@ export function PlaygroundLeft({
         className="flex-1 min-h-0"
         autoSaveId="ui-playground-left-logger"
       >
-        <ResizablePanel defaultSize={50} minSize={10} maxSize={90}>
+        <ResizablePanel defaultSize={65} minSize={10}>
           {mainContent}
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={50} minSize={10} maxSize={90}>
+        <ResizablePanel defaultSize={35} minSize={10} maxSize={70}>
           <div className="h-full min-h-0 flex flex-col border-t border-border bg-background">
             <LoggerView
               isCollapsable={false}
               isLogLevelVisible={false}
-              isSearchVisible={true}
+              isSearchVisible={false}
             />
           </div>
         </ResizablePanel>

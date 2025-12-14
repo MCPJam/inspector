@@ -14,6 +14,7 @@ import {
   hasUnresolvedToolCalls,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
+import { logger } from "../../utils/logger";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
@@ -248,7 +249,7 @@ chatV2.post("/", async (c) => {
         }
       },
       onError: (error) => {
-        console.error("[mcp/chat-v2] stream error:", error);
+        logger.error("[mcp/chat-v2] stream error", error);
         // Return detailed error message to be sent to the client
         if (error instanceof Error) {
           const responseBody = (error as any).responseBody;
@@ -264,7 +265,7 @@ chatV2.post("/", async (c) => {
       },
     });
   } catch (error) {
-    console.error("[mcp/chat-v2] failed to process chat request", error);
+    logger.error("[mcp/chat-v2] failed to process chat request", error);
     return c.json({ error: "Unexpected error" }, 500);
   }
 });

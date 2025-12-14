@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import { logger } from "../../utils/logger";
 
 const resources = new Hono();
 
@@ -43,7 +44,7 @@ resources.post("/list", async (c) => {
     const { resources } = await mcpClientManager.listResources(serverId);
     return c.json({ resources });
   } catch (error) {
-    console.error("Error fetching resources:", error);
+    logger.error("Error fetching resources", error, { serverId });
     return c.json(
       {
         success: false,
@@ -84,7 +85,7 @@ resources.post("/read", async (c) => {
 
     return c.json({ content });
   } catch (error) {
-    console.error("Error reading resource:", error);
+    logger.error("Error reading resource", error, { serverId, uri });
     return c.json(
       {
         success: false,
