@@ -61,6 +61,10 @@ export function Thread({
 
   return (
     <div className="flex-1 min-h-0 pb-4">
+      {/* Fixed spacer to reserve space for PIP widget */}
+      {pipWidgetId && (
+        <div className="h-[480px] flex-shrink-0 pointer-events-none" />
+      )}
       <div className="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8">
         {messages.map((message, idx) => (
           <MessageView
