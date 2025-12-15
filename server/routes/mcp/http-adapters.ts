@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { handleJsonRpc, BridgeMode } from "../../services/mcp-http-bridge";
+import { buildCorsHeaders } from "../../utils/cors";
 
 // In-memory SSE session store per serverId:sessionId
 type Session = {
@@ -16,40 +17,49 @@ const latestSessionByServer: Map<string, string> = new Map();
 function createHttpHandler(mode: BridgeMode, routePrefix: string) {
   const router = new Hono();
 
-  router.options("/:serverId", (c) =>
-    c.body(null, 204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-      "Access-Control-Allow-Headers":
-        "*, Authorization, Content-Type, Accept, Accept-Language",
-      "Access-Control-Expose-Headers": "*",
-      "Access-Control-Max-Age": "86400",
-    }),
-  );
+  const handlePreflight = (c: any) => {
+    const originHeader = c.req.header("origin");
+    const { headers, allowedOrigin } = buildCorsHeaders(originHeader, {
+      allowMethods: "GET,POST,HEAD,OPTIONS",
+      allowHeaders:
+        "Authorization, Content-Type, Accept, Accept-Language, X-MCPJam-Endpoint-Base",
+      exposeHeaders: "*",
+      maxAge: "86400",
+      allowCredentials: true,
+      allowPrivateNetwork: true,
+      requestPrivateNetwork:
+        c.req.header("access-control-request-private-network") === "true",
+    });
+
+    if (originHeader && !allowedOrigin) {
+      return c.json({ error: "Origin not allowed" }, 403, { Vary: "Origin" });
+    }
+
+    headers.Vary = `${headers.Vary}, Access-Control-Request-Headers`;
+    return c.body(null, 204, headers);
+  };
+
+  router.options("/:serverId", handlePreflight);
 
   // Wildcard variants to tolerate trailing paths (e.g., /mcp)
-  router.options("/:serverId/*", (c) =>
-    c.body(null, 204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-      "Access-Control-Allow-Headers":
-        "*, Authorization, Content-Type, Accept, Accept-Language",
-      "Access-Control-Expose-Headers": "*",
-      "Access-Control-Max-Age": "86400",
-    }),
-  );
+  router.options("/:serverId/*", handlePreflight);
 
   async function handleHttp(c: any) {
     const serverId = c.req.param("serverId");
     const method = c.req.method;
+    const originHeader = c.req.header("origin");
+    const { headers: corsHeaders } = buildCorsHeaders(originHeader, {
+      exposeHeaders: "*",
+      allowCredentials: true,
+    });
 
     // SSE endpoint for clients that probe/subscribe via GET; HEAD advertises event-stream
     if (method === "HEAD") {
       return c.body(null, 200, {
+        ...corsHeaders,
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*",
         "X-Accel-Buffering": "no",
       });
     }
@@ -127,18 +137,17 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         },
       });
       return c.body(stream as any, 200, {
+        ...corsHeaders,
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Expose-Headers": "*",
         "X-Accel-Buffering": "no",
         "Transfer-Encoding": "chunked",
       });
     }
 
     if (method !== "POST") {
-      return c.json({ error: "Unsupported request" }, 400);
+      return c.json({ error: "Unsupported request" }, 400, corsHeaders);
     }
 
     // Parse JSON body (best effort)
@@ -172,17 +181,21 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     );
     if (!response) {
       // Notification → 202 Accepted
-      return c.body("Accepted", 202, { "Access-Control-Allow-Origin": "*" });
+      return c.body("Accepted", 202, corsHeaders);
     }
     return c.body(JSON.stringify(response), 200, {
+      ...corsHeaders,
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Expose-Headers": "*",
     });
   }
 
   // Endpoint to receive client messages for SSE transport: /:serverId/messages?sessionId=...
   router.post("/:serverId/messages", async (c) => {
+    const originHeader = c.req.header("origin");
+    const { headers: corsHeaders } = buildCorsHeaders(originHeader, {
+      exposeHeaders: "*",
+      allowCredentials: true,
+    });
     const serverId = c.req.param("serverId");
     const url = new URL(c.req.url);
     const sessionId = url.searchParams.get("sessionId") || "";
@@ -195,7 +208,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       }
     }
     if (!sess) {
-      return c.json({ error: "Invalid session" }, 400);
+      return c.json({ error: "Invalid session" }, 400, corsHeaders);
     }
     let body: any;
     try {
@@ -242,15 +255,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         } catch {}
       }
       // 202 Accepted per SSE transport semantics
-      return c.body("Accepted", 202, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Expose-Headers": "*",
-      });
+      return c.body("Accepted", 202, corsHeaders);
     } catch (e: any) {
-      return c.body("Error", 400, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Expose-Headers": "*",
-      });
+      return c.body("Error", 400, corsHeaders);
     }
   });
 

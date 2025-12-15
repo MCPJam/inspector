@@ -3,6 +3,7 @@ import type { MCPServerConfig } from "@/sdk";
 import "../../types/hono"; // Type extensions
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
+import { buildCorsHeaders } from "../../utils/cors";
 
 const servers = new Hono();
 
@@ -48,7 +49,7 @@ servers.get("/status/:serverId", async (c) => {
       status,
     });
   } catch (error) {
-    logger.error("Error getting server status", error, { serverId });
+    logger.error("Error getting server status", error);
     return c.json(
       {
         success: false,
@@ -82,7 +83,7 @@ servers.get("/init-info/:serverId", async (c) => {
       initInfo,
     });
   } catch (error) {
-    logger.error("Error getting initialization info", error, { serverId });
+    logger.error("Error getting initialization info", error);
     return c.json(
       {
         success: false,
@@ -119,7 +120,7 @@ servers.delete("/:serverId", async (c) => {
       message: `Disconnected from server: ${serverId}`,
     });
   } catch (error) {
-    logger.error("Error disconnecting server", error, { serverId });
+    logger.error("Error disconnecting server", error);
     return c.json(
       {
         success: false,
@@ -190,7 +191,7 @@ servers.post("/reconnect", async (c) => {
       ...(success ? {} : { error: message }),
     });
   } catch (error) {
-    logger.error("Error reconnecting server", error, { serverId });
+    logger.error("Error reconnecting server", error);
     return c.json(
       {
         success: false,
@@ -203,6 +204,11 @@ servers.post("/reconnect", async (c) => {
 
 // Stream JSON-RPC messages over SSE for all servers.
 servers.get("/rpc/stream", async (c) => {
+  const originHeader = c.req.header("origin");
+  const { headers: corsHeaders } = buildCorsHeaders(originHeader, {
+    exposeHeaders: "*",
+    allowCredentials: true,
+  });
   const serverIds = c.mcpClientManager.listServers();
   const url = new URL(c.req.url);
   const replay = parseInt(url.searchParams.get("replay") || "0", 10);
@@ -256,11 +262,10 @@ servers.get("/rpc/stream", async (c) => {
 
   return new Response(stream, {
     headers: {
+      ...corsHeaders,
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Expose-Headers": "*",
     },
   });
 });
