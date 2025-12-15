@@ -60,7 +60,7 @@ export function OllamaConfigDialog({
               type="url"
               value={value}
               onChange={(e) => onValueChange(e.target.value)}
-              placeholder="http://localhost:11434/api"
+              placeholder="http://127.0.0.1:11434/api"
               className="mt-1"
             />
           </div>
