@@ -30,6 +30,8 @@ import {
   getTask,
   getTaskResult,
   cancelTask,
+  getLatestProgress,
+  type ProgressEvent,
 } from "@/lib/apis/mcp-tasks-api";
 import {
   getTrackedTasksForServer,
@@ -38,6 +40,7 @@ import {
 } from "@/lib/task-tracker";
 import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
+import { Progress } from "./ui/progress";
 
 const POLL_INTERVAL_STORAGE_KEY = "mcp-inspector-tasks-poll-interval";
 const DEFAULT_POLL_INTERVAL = 3000;
@@ -122,6 +125,7 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
     }
     return DEFAULT_POLL_INTERVAL;
   });
+  const [progress, setProgress] = useState<ProgressEvent | null>(null);
 
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
@@ -284,6 +288,35 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
       setPendingRequest(null);
     }
   }, [selectedTaskId, selectedTask?.status, fetchTaskResult, serverName]);
+
+  // Poll for progress when there are working tasks
+  useEffect(() => {
+    if (!serverName) return;
+
+    // Check if any task is currently working
+    const hasWorkingTasks = tasks.some((t) => t.status === "working");
+    if (!hasWorkingTasks) {
+      setProgress(null);
+      return;
+    }
+
+    // Fetch progress immediately
+    const fetchProgress = async () => {
+      try {
+        const latestProgress = await getLatestProgress(serverName);
+        setProgress(latestProgress);
+      } catch (err) {
+        console.debug("Failed to fetch progress:", err);
+      }
+    };
+
+    fetchProgress();
+
+    // Poll for progress more frequently than task status (every 500ms)
+    const interval = setInterval(fetchProgress, 500);
+
+    return () => clearInterval(interval);
+  }, [serverName, tasks]);
 
   if (!serverConfig || !serverName) {
     return (
@@ -515,6 +548,29 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
                         <p className="text-xs text-muted-foreground leading-relaxed">
                           {selectedTask.statusMessage}
                         </p>
+                      )}
+                      {/* Progress bar for working tasks */}
+                      {selectedTask.status === "working" && progress && progress.total && (
+                        <div className="space-y-1.5 pt-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Progress</span>
+                            <span className="font-mono text-foreground">
+                              {progress.progress} / {progress.total}
+                              <span className="ml-2 text-muted-foreground">
+                                ({Math.round((progress.progress / progress.total) * 100)}%)
+                              </span>
+                            </span>
+                          </div>
+                          <Progress
+                            value={(progress.progress / progress.total) * 100}
+                            className="h-2"
+                          />
+                          {progress.message && (
+                            <p className="text-xs text-muted-foreground/80 italic">
+                              {progress.message}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   </>
