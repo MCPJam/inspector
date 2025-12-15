@@ -129,3 +129,55 @@ export async function getTaskCapabilities(
   }
   return body as TaskCapabilities;
 }
+
+// Progress notification data
+export interface ProgressEvent {
+  serverId: string;
+  progressToken: string | number;
+  progress: number;
+  total?: number;
+  message?: string;
+  timestamp: string;
+}
+
+// Get the latest progress for a server
+export async function getLatestProgress(
+  serverId: string,
+): Promise<ProgressEvent | null> {
+  const res = await fetch("/api/mcp/tasks/progress", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverId }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    throw new Error(body?.error || `Get progress failed (${res.status})`);
+  }
+  return body.progress as ProgressEvent | null;
+}
+
+// Get all active progress for a server
+export async function getAllProgress(
+  serverId: string,
+): Promise<ProgressEvent[]> {
+  const res = await fetch("/api/mcp/tasks/progress/all", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverId }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    throw new Error(body?.error || `Get all progress failed (${res.status})`);
+  }
+  return body.progress as ProgressEvent[];
+}

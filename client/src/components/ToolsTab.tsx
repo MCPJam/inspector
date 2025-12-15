@@ -189,10 +189,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   }, [selectedTool, tools]);
 
   // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
-  // Per spec: clients SHOULD only augment requests with tasks if capability is declared
-  // For inspector, we allow override to enable testing even without capability
+  // Per spec: clients MUST NOT use task augmentation if server doesn't declare capability
   const serverSupportsTaskToolCalls = taskCapabilities?.supportsToolCalls ?? false;
-  const canExecuteAsTask = serverSupportsTaskToolCalls || true; // Allow override for testing
 
   useEffect(() => {
     if (!serverConfig || !serverName) {
@@ -439,9 +437,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setLastToolParameters(params);
 
       // Pass task options if executing as background task (MCP Tasks spec 2025-11-25)
-      // Use task execution if: user checked the option OR tool requires it
-      // Per spec: ttl is the requested duration in milliseconds to retain task from creation
-      const shouldUseTask = executeAsTask || selectedToolTaskSupport === "required";
+      // Use task execution only if: server supports tasks AND (user checked option OR tool requires it)
+      // Per spec: clients MUST NOT use task augmentation without server capability
+      const shouldUseTask = serverSupportsTaskToolCalls && (executeAsTask || selectedToolTaskSupport === "required");
       const taskOptions: TaskOptions | undefined = shouldUseTask
         ? { ttl: taskTtl } // User-configurable TTL (0 = no expiration)
         : undefined;
@@ -630,10 +628,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 onExecute={executeTool}
                 onSave={handleSaveCurrent}
                 onFieldChange={updateFieldValue}
-                // Only show task execution option if server and tool support it
-                executeAsTask={canExecuteAsTask ? executeAsTask : undefined}
-                onExecuteAsTaskChange={canExecuteAsTask ? setExecuteAsTask : undefined}
-                taskRequired={selectedToolTaskSupport === "required"}
+                // Only show task execution option if server supports tasks and tool allows it
+                // Per MCP spec: clients MUST NOT use task augmentation without server capability
+                executeAsTask={serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden" ? executeAsTask : undefined}
+                onExecuteAsTaskChange={serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden" ? setExecuteAsTask : undefined}
+                taskRequired={serverSupportsTaskToolCalls && selectedToolTaskSupport === "required"}
                 // MCP Tasks spec 2025-11-25: TTL configuration
                 taskTtl={taskTtl}
                 onTaskTtlChange={setTaskTtl}

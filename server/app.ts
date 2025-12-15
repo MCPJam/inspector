@@ -14,6 +14,7 @@ import mcpRoutes from "./routes/mcp/index.js";
 import appsRoutes from "./routes/apps/index.js";
 import { MCPClientManager } from "@/sdk";
 import { rpcLogBus } from "./services/rpc-log-bus";
+import { progressStore } from "./services/progress-store";
 import { CORS_ORIGINS } from "./config.js";
 import path from "path";
 
@@ -74,6 +75,17 @@ export function createHonoApp() {
           direction,
           timestamp: new Date().toISOString(),
           message,
+        });
+      },
+      progressHandler: ({ serverId, progressToken, progress, total, message }) => {
+        // Store progress for UI access using the real progressToken from the notification
+        progressStore.publish({
+          serverId,
+          progressToken,
+          progress,
+          total,
+          message,
+          timestamp: new Date().toISOString(),
         });
       },
     },

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono";
+import { progressStore } from "../../services/progress-store";
 
 const tasks = new Hono();
 
@@ -130,6 +131,47 @@ tasks.post("/capabilities", async (c) => {
     return c.json(capabilities);
   } catch (error) {
     console.error("Error getting task capabilities:", error);
+    return c.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      500,
+    );
+  }
+});
+
+// Get latest progress for a server
+// Returns the most recent progress notification received
+tasks.post("/progress", async (c) => {
+  try {
+    const { serverId } = (await c.req.json()) as {
+      serverId?: string;
+    };
+
+    if (!serverId) return c.json({ error: "serverId is required" }, 400);
+
+    const progress = progressStore.getLatestProgress(serverId);
+    return c.json({ progress: progress ?? null });
+  } catch (error) {
+    console.error("Error getting progress:", error);
+    return c.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      500,
+    );
+  }
+});
+
+// Get all active progress for a server
+tasks.post("/progress/all", async (c) => {
+  try {
+    const { serverId } = (await c.req.json()) as {
+      serverId?: string;
+    };
+
+    if (!serverId) return c.json({ error: "serverId is required" }, 400);
+
+    const allProgress = progressStore.getAllProgress(serverId);
+    return c.json({ progress: allProgress });
+  } catch (error) {
+    console.error("Error getting all progress:", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,

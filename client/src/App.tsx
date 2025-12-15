@@ -206,6 +206,7 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "resource-templates" ||
     activeTab === "prompts" ||
+    activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
     activeTab === "chat-v2" ||

@@ -18,6 +18,7 @@ import {
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
   PromptListChangedNotificationSchema,
+  ProgressNotificationSchema,
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -172,6 +173,13 @@ export class MCPClientManager {
     message: unknown;
     serverId: string;
   }) => void;
+  private defaultProgressHandler?: (event: {
+    serverId: string;
+    progressToken: string | number;
+    progress: number;
+    total?: number;
+    message?: string;
+  }) => void;
   private elicitationCallback?: (request: {
     requestId: string;
     message: string;
@@ -200,6 +208,13 @@ export class MCPClientManager {
         message: unknown;
         serverId: string;
       }) => void;
+      progressHandler?: (event: {
+        serverId: string;
+        progressToken: string | number;
+        progress: number;
+        total?: number;
+        message?: string;
+      }) => void;
     } = {},
   ) {
     this.defaultClientVersion = options.defaultClientVersion ?? "1.0.0";
@@ -209,6 +224,7 @@ export class MCPClientManager {
       options.defaultTimeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
+    this.defaultProgressHandler = options.progressHandler;
 
     for (const [id, config] of Object.entries(servers)) {
       void this.connectToServer(id, config);
@@ -324,6 +340,7 @@ export class MCPClientManager {
       );
 
       this.applyNotificationHandlers(serverId, client);
+      this.applyProgressNotificationHandler(serverId, client);
       this.applyElicitationHandler(serverId, client);
 
       if (config.onError) {
@@ -554,10 +571,19 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
-      mergedOptions.onprogress = () => {
-        // register an empty on progress so that the client will send
-        // progress notifications...the notifications will be sent through the
-        // rpc logger
+      mergedOptions.onprogress = (progress) => {
+        // Call the progress handler if registered
+        // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
+        // Generate a unique token for in-flight request progress
+        if (this.defaultProgressHandler) {
+          this.defaultProgressHandler({
+            serverId,
+            progressToken: `${serverId}-request-${Date.now()}`,
+            progress: progress.progress,
+            total: progress.total,
+            message: progress.message,
+          });
+        }
       };
     }
 
@@ -624,10 +650,19 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
-      mergedOptions.onprogress = () => {
-        // register an empty on progress so that the client will send
-        // progress notifications...the notifications will be sent through the
-        // rpc logger
+      mergedOptions.onprogress = (progress) => {
+        // Call the progress handler if registered
+        // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
+        // Generate a unique token for in-flight request progress
+        if (this.defaultProgressHandler) {
+          this.defaultProgressHandler({
+            serverId,
+            progressToken: `${serverId}-request-${Date.now()}`,
+            progress: progress.progress,
+            total: progress.total,
+            message: progress.message,
+          });
+        }
       };
     }
     return client.readResource(params, mergedOptions);
@@ -704,10 +739,19 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
-      mergedOptions.onprogress = () => {
-        // register an empty on progress so that the client will send
-        // progress notifications...the notifications will be sent through the
-        // rpc logger
+      mergedOptions.onprogress = (progress) => {
+        // Call the progress handler if registered
+        // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
+        // Generate a unique token for in-flight request progress
+        if (this.defaultProgressHandler) {
+          this.defaultProgressHandler({
+            serverId,
+            progressToken: `${serverId}-request-${Date.now()}`,
+            progress: progress.progress,
+            total: progress.total,
+            message: progress.message,
+          });
+        }
       };
     }
     return client.getPrompt(params, mergedOptions);
@@ -858,24 +902,30 @@ export class MCPClientManager {
 
   // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
   // Returns true if server declares tasks.requests.tools.call capability
+  // Checks both top-level tasks and experimental.tasks (tasks are still experimental)
   supportsTasksForToolCalls(serverId: string): boolean {
     const capabilities = this.getServerCapabilities(serverId);
+    const caps = capabilities as any;
     // Per spec: capabilities.tasks.requests.tools.call indicates support
+    // Also check experimental.tasks for servers using experimental namespace
     return Boolean(
-      (capabilities as any)?.tasks?.requests?.tools?.call
+      caps?.tasks?.requests?.tools?.call ||
+      caps?.experimental?.tasks?.requests?.tools?.call
     );
   }
 
   // Check if server supports tasks/list operation (MCP Tasks spec 2025-11-25)
   supportsTasksList(serverId: string): boolean {
     const capabilities = this.getServerCapabilities(serverId);
-    return Boolean((capabilities as any)?.tasks?.list);
+    const caps = capabilities as any;
+    return Boolean(caps?.tasks?.list || caps?.experimental?.tasks?.list);
   }
 
   // Check if server supports tasks/cancel operation (MCP Tasks spec 2025-11-25)
   supportsTasksCancel(serverId: string): boolean {
     const capabilities = this.getServerCapabilities(serverId);
-    return Boolean((capabilities as any)?.tasks?.cancel);
+    const caps = capabilities as any;
+    return Boolean(caps?.tasks?.cancel || caps?.experimental?.tasks?.cancel);
   }
 
   getClient(serverId: string): Client | undefined {
@@ -1083,6 +1133,28 @@ export class MCPClientManager {
         }
       }
     };
+  }
+
+  // Set up handler for notifications/progress to capture progress from background tasks
+  // Per MCP Tasks spec: "The progressToken provided in the initial request remains valid
+  // throughout the task lifetime" - this captures async progress notifications
+  private applyProgressNotificationHandler(serverId: string, client: Client): void {
+    if (!this.defaultProgressHandler) {
+      return;
+    }
+
+    client.setNotificationHandler(ProgressNotificationSchema, (notification) => {
+      const params = notification.params;
+      if (this.defaultProgressHandler) {
+        this.defaultProgressHandler({
+          serverId,
+          progressToken: params.progressToken,
+          progress: params.progress,
+          total: params.total,
+          message: params.message,
+        });
+      }
+    });
   }
 
   private applyElicitationHandler(serverId: string, client: Client): void {
