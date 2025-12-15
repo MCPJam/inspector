@@ -17,6 +17,7 @@ import {
   AlertCircle,
   Slash,
   Square,
+  Trash2,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
@@ -33,8 +34,13 @@ import {
 import {
   getTrackedTasksForServer,
   untrackTask,
+  clearTrackedTasksForServer,
 } from "@/lib/task-tracker";
 import { Switch } from "./ui/switch";
+import { Input } from "./ui/input";
+
+const POLL_INTERVAL_STORAGE_KEY = "mcp-inspector-tasks-poll-interval";
+const DEFAULT_POLL_INTERVAL = 3000;
 
 interface TasksTabProps {
   serverConfig?: MCPServerConfig;
@@ -106,18 +112,40 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
   const [error, setError] = useState<string>("");
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [userPollInterval, setUserPollInterval] = useState<number>(() => {
+    const stored = localStorage.getItem(POLL_INTERVAL_STORAGE_KEY);
+    if (stored) {
+      const parsed = parseInt(stored, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+    return DEFAULT_POLL_INTERVAL;
+  });
 
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
   }, [tasks, selectedTaskId]);
 
-  // Get the minimum poll interval from tasks (default to 3000ms if none provided)
-  const pollInterval = useMemo(() => {
-    const intervals = tasks
-      .map((t) => t.pollInterval)
-      .filter((i): i is number => typeof i === "number" && i > 0);
-    return intervals.length > 0 ? Math.min(...intervals) : 3000;
-  }, [tasks]);
+  // Use user-configured poll interval (persisted in localStorage)
+  const pollInterval = userPollInterval;
+
+  const handlePollIntervalChange = useCallback((value: string) => {
+    const parsed = parseInt(value, 10);
+    if (!isNaN(parsed) && parsed >= 500) {
+      setUserPollInterval(parsed);
+      localStorage.setItem(POLL_INTERVAL_STORAGE_KEY, String(parsed));
+    }
+  }, []);
+
+  const handleClearTasks = useCallback(() => {
+    if (!serverName) return;
+    clearTrackedTasksForServer(serverName);
+    setTasks([]);
+    setSelectedTaskId("");
+    setTaskResult(null);
+    setPendingRequest(null);
+  }, [serverName]);
 
   const fetchTasks = useCallback(async () => {
     if (!serverName) return;
@@ -216,7 +244,7 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
     }
   }, [serverConfig, serverName, fetchTasks]);
 
-  // Auto-refresh logic - uses server-provided pollInterval (MCP Tasks spec 2025-11-25)
+  // Auto-refresh logic - uses user-configured pollInterval (persisted in localStorage)
   useEffect(() => {
     if (!autoRefresh || !serverName) return;
 
@@ -289,6 +317,18 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5">
+                      <Input
+                        type="number"
+                        min={500}
+                        step={500}
+                        value={userPollInterval}
+                        onChange={(e) => handlePollIntervalChange(e.target.value)}
+                        className="h-6 w-16 text-[10px] px-1.5 text-center"
+                        title="Poll interval in milliseconds"
+                      />
+                      <span className="text-[10px] text-muted-foreground">ms</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
                       <Switch
                         id="auto-refresh"
                         checked={autoRefresh}
@@ -307,10 +347,20 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
                       variant="ghost"
                       size="sm"
                       disabled={fetchingTasks}
+                      title="Refresh tasks"
                     >
                       <RefreshCw
                         className={`h-3 w-3 ${fetchingTasks ? "animate-spin" : ""} cursor-pointer`}
                       />
+                    </Button>
+                    <Button
+                      onClick={handleClearTasks}
+                      variant="ghost"
+                      size="sm"
+                      disabled={tasks.length === 0}
+                      title="Clear tracked tasks"
+                    >
+                      <Trash2 className="h-3 w-3 cursor-pointer" />
                     </Button>
                   </div>
                 </div>
