@@ -5,11 +5,25 @@
  * created tasks locally and poll their status via tasks/get.
  */
 
+import type { Task } from "./apis/mcp-tasks-api";
+
+export type PrimitiveType = "tool" | "prompt" | "resource";
+
+export interface StatusHistoryEntry {
+  status: Task["status"];
+  timestamp: string;
+  statusMessage?: string;
+}
+
 export interface TrackedTask {
   taskId: string;
   serverId: string;
   createdAt: string;
   toolName?: string;
+  // New fields for visualization
+  primitiveType?: PrimitiveType;
+  primitiveName?: string;
+  statusHistory?: StatusHistoryEntry[];
 }
 
 const STORAGE_KEY = "mcp-tracked-tasks";
@@ -91,4 +105,51 @@ export function clearAllTrackedTasks(): void {
   } catch {
     // Ignore errors
   }
+}
+
+/**
+ * Update status history for a task when its status changes
+ */
+export function updateTaskStatusHistory(
+  taskId: string,
+  newStatus: Task["status"],
+  statusMessage?: string,
+): void {
+  const tasks = getTrackedTasks();
+  const task = tasks.find((t) => t.taskId === taskId);
+
+  if (!task) return;
+
+  // Initialize statusHistory if not present (for backward compatibility)
+  if (!task.statusHistory) {
+    task.statusHistory = [
+      {
+        status: "working",
+        timestamp: task.createdAt,
+      },
+    ];
+  }
+
+  // Only add if status actually changed
+  const lastEntry = task.statusHistory[task.statusHistory.length - 1];
+  if (lastEntry?.status !== newStatus) {
+    task.statusHistory.push({
+      status: newStatus,
+      timestamp: new Date().toISOString(),
+      statusMessage,
+    });
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    } catch {
+      // Ignore errors
+    }
+  }
+}
+
+/**
+ * Get a tracked task by ID
+ */
+export function getTrackedTaskById(taskId: string): TrackedTask | undefined {
+  return getTrackedTasks().find((t) => t.taskId === taskId);
 }

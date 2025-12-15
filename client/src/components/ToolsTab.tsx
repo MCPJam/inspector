@@ -166,7 +166,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   // Per MCP Tasks spec: execution.taskSupport can be "required", "optional", or "forbidden"
   // FastMCP uses execution.task with values "always", "optional", "never"
   const selectedToolTaskSupport = useMemo((): "required" | "optional" | "forbidden" => {
-    if (!selectedTool || !tools[selectedTool]) return "optional";
+    if (!selectedTool || !tools[selectedTool]) return "forbidden";
     const tool = tools[selectedTool];
     const execution = (tool as any).execution;
 
@@ -180,12 +180,15 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     }
 
     // Check FastMCP format: execution.task ("always", "optional", "never")
+    // Also handle if FastMCP uses standard values ("required", "forbidden")
     const taskMode = execution?.task;
-    if (taskMode === "always") return "required";
+    if (taskMode === "always" || taskMode === "required") return "required";
     if (taskMode === "optional") return "optional";
-    if (taskMode === "never") return "forbidden";
+    if (taskMode === "never" || taskMode === "forbidden") return "forbidden";
 
-    return "optional"; // Default to optional for inspector - allow testing
+    // Per MCP spec: if execution.taskSupport is not present, treat as "forbidden"
+    // Clients MUST NOT attempt to invoke the tool as a task
+    return "forbidden";
   }, [selectedTool, tools]);
 
   // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
@@ -385,6 +388,15 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         serverId: serverName,
         createdAt: task.createdAt,
         toolName,
+        primitiveType: "tool",
+        primitiveName: toolName,
+        statusHistory: [
+          {
+            status: task.status,
+            timestamp: task.createdAt,
+            statusMessage: task.statusMessage,
+          },
+        ],
       });
 
       logger.info("Background task created", {

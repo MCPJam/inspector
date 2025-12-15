@@ -288,12 +288,13 @@ export default function App() {
             />
           )}
 
-          {activeTab === "tasks" && (
+          <div className={activeTab === "tasks" ? "" : "hidden"}>
             <TasksTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
+              isActive={activeTab === "tasks"}
             />
-          )}
+          </div>
 
           {activeTab === "auth" && (
             <AuthTab

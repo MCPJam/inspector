@@ -8,16 +8,19 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "./ui/accordion";
+import {
   ListTodo,
   RefreshCw,
   ChevronRight,
-  Loader2,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
-  Slash,
   Square,
   Trash2,
+  Clock,
+  CheckCircle,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
@@ -35,12 +38,21 @@ import {
 } from "@/lib/apis/mcp-tasks-api";
 import {
   getTrackedTasksForServer,
+  getTrackedTaskById,
   untrackTask,
   clearTrackedTasksForServer,
+  updateTaskStatusHistory,
 } from "@/lib/task-tracker";
 import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
 import { Progress } from "./ui/progress";
+import { STATUS_CONFIG } from "./tasks/task-status-config";
+import { TaskTimeline } from "./tasks/TaskTimeline";
+import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
+import {
+  PRIMITIVE_TYPE_CONFIG,
+  formatRelativeTime,
+} from "@/lib/task-utils";
 
 const POLL_INTERVAL_STORAGE_KEY = "mcp-inspector-tasks-poll-interval";
 const DEFAULT_POLL_INTERVAL = 3000;
@@ -48,40 +60,8 @@ const DEFAULT_POLL_INTERVAL = 3000;
 interface TasksTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  isActive?: boolean;
 }
-
-const STATUS_CONFIG = {
-  working: {
-    icon: Loader2,
-    color: "text-blue-500",
-    bgColor: "bg-blue-500/10",
-    animate: true,
-  },
-  input_required: {
-    icon: AlertCircle,
-    color: "text-yellow-500",
-    bgColor: "bg-yellow-500/10",
-    animate: false,
-  },
-  completed: {
-    icon: CheckCircle,
-    color: "text-green-500",
-    bgColor: "bg-green-500/10",
-    animate: false,
-  },
-  failed: {
-    icon: XCircle,
-    color: "text-red-500",
-    bgColor: "bg-red-500/10",
-    animate: false,
-  },
-  cancelled: {
-    icon: Slash,
-    color: "text-gray-500",
-    bgColor: "bg-gray-500/10",
-    animate: false,
-  },
-};
 
 function TaskStatusIcon({ status }: { status: Task["status"] }) {
   const config = STATUS_CONFIG[status];
@@ -105,7 +85,7 @@ function isTerminalStatus(status: Task["status"]): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
+export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTabProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
   const [taskResult, setTaskResult] = useState<unknown>(null);
@@ -113,7 +93,7 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
   const [loading, setLoading] = useState(false);
   const [fetchingTasks, setFetchingTasks] = useState(false);
   const [error, setError] = useState<string>("");
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
   const [cancelling, setCancelling] = useState(false);
   const [userPollInterval, setUserPollInterval] = useState<number>(() => {
     const stored = localStorage.getItem(POLL_INTERVAL_STORAGE_KEY);
@@ -170,14 +150,25 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
           .map(async (tracked) => {
             try {
               const status = await getTask(serverName, tracked.taskId);
+              // Update status history if status changed
+              updateTaskStatusHistory(
+                tracked.taskId,
+                status.status,
+                status.statusMessage,
+              );
               return status;
             } catch {
               // Task no longer exists on server, remove from tracking
               untrackTask(tracked.taskId);
               return null;
             }
-          })
+          }),
       );
+
+      // Also update status history for server-returned tasks
+      for (const task of serverResult.tasks) {
+        updateTaskStatusHistory(task.taskId, task.status, task.statusMessage);
+      }
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
       const allTasks = [
@@ -238,26 +229,27 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
     }
   }, [serverName, selectedTaskId, fetchTasks]);
 
-  // Fetch tasks on mount and when server changes
+  // Fetch tasks on mount and when server changes (only when tab is active)
   useEffect(() => {
-    if (serverConfig && serverName) {
+    if (serverConfig && serverName && isActive) {
       setTasks([]);
       setSelectedTaskId("");
       setTaskResult(null);
       fetchTasks();
     }
-  }, [serverConfig, serverName, fetchTasks]);
+  }, [serverConfig, serverName, fetchTasks, isActive]);
 
   // Auto-refresh logic - uses user-configured pollInterval (persisted in localStorage)
+  // Only poll when tab is active
   useEffect(() => {
-    if (!autoRefresh || !serverName) return;
+    if (!autoRefresh || !serverName || !isActive) return;
 
     const interval = setInterval(() => {
       fetchTasks();
     }, pollInterval);
 
     return () => clearInterval(interval);
-  }, [autoRefresh, serverName, fetchTasks, pollInterval]);
+  }, [autoRefresh, serverName, fetchTasks, pollInterval, isActive]);
 
   // Fetch result when selecting a completed task, or pending request for input_required
   // Per MCP Tasks spec: when task is input_required, tasks/result returns the pending request
@@ -289,9 +281,9 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
     }
   }, [selectedTaskId, selectedTask?.status, fetchTaskResult, serverName]);
 
-  // Poll for progress when there are working tasks
+  // Poll for progress when there are working tasks (only when tab is active)
   useEffect(() => {
-    if (!serverName) return;
+    if (!serverName || !isActive) return;
 
     // Check if any task is currently working
     const hasWorkingTasks = tasks.some((t) => t.status === "working");
@@ -316,7 +308,7 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
     const interval = setInterval(fetchProgress, 500);
 
     return () => clearInterval(interval);
-  }, [serverName, tasks]);
+  }, [serverName, tasks, isActive]);
 
   if (!serverConfig || !serverName) {
     return (
@@ -425,44 +417,77 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
                         </div>
                       ) : (
                         <div className="space-y-1">
-                          {tasks.map((task) => (
-                            <div
-                              key={task.taskId}
-                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                selectedTaskId === task.taskId
-                                  ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                  : "hover:shadow-sm"
-                              }`}
-                              onClick={() => setSelectedTaskId(task.taskId)}
-                            >
-                              <div className="flex items-start gap-3">
-                                <div className="mt-0.5">
-                                  <TaskStatusIcon status={task.status} />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <code className="font-mono text-xs font-medium text-foreground truncate max-w-[150px]">
-                                      {task.taskId.substring(0, 12)}...
-                                    </code>
+                          {tasks.map((task) => {
+                            const trackedTask = getTrackedTaskById(task.taskId);
+                            const primitiveType =
+                              trackedTask?.primitiveType || "tool";
+                            const primitiveName =
+                              trackedTask?.primitiveName ||
+                              trackedTask?.toolName ||
+                              task.taskId.substring(0, 12);
+                            const primitiveConfig =
+                              PRIMITIVE_TYPE_CONFIG[primitiveType];
+                            const PrimitiveIcon = primitiveConfig.icon;
+
+                            return (
+                              <div
+                                key={task.taskId}
+                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                                  selectedTaskId === task.taskId
+                                    ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                    : "hover:shadow-sm"
+                                }`}
+                                onClick={() => setSelectedTaskId(task.taskId)}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <div className="mt-0.5">
+                                    <TaskStatusIcon status={task.status} />
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    <Badge
-                                      variant="outline"
-                                      className={`text-[10px] ${STATUS_CONFIG[task.status].bgColor} ${STATUS_CONFIG[task.status].color} border-0`}
-                                    >
-                                      {task.status}
-                                    </Badge>
+                                  <div className="flex-1 min-w-0">
+                                    {/* Primary: Primitive type badge + Name */}
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <Badge
+                                        variant="outline"
+                                        className={`text-[10px] ${primitiveConfig.color} gap-1 px-1.5`}
+                                      >
+                                        <PrimitiveIcon className="h-3 w-3" />
+                                        {primitiveConfig.label}
+                                      </Badge>
+                                      <span className="font-medium text-xs text-foreground truncate">
+                                        {primitiveName}
+                                      </span>
+                                    </div>
+                                    {/* Secondary: Status badge + Relative time */}
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                      <Badge
+                                        variant="outline"
+                                        className={`text-[10px] ${STATUS_CONFIG[task.status].bgColor} ${STATUS_CONFIG[task.status].color} border-0`}
+                                      >
+                                        {task.status}
+                                      </Badge>
+                                      <span className="text-[10px]">
+                                        {formatRelativeTime(task.createdAt)}
+                                      </span>
+                                    </div>
+                                    {/* Status message */}
+                                    {task.statusMessage && (
+                                      <p className="text-[10px] mt-1.5 line-clamp-1 leading-relaxed text-muted-foreground">
+                                        {task.statusMessage}
+                                      </p>
+                                    )}
+                                    {/* Inline progress for working tasks */}
+                                    {task.status === "working" && (
+                                      <TaskInlineProgress
+                                        serverId={serverName}
+                                        startedAt={task.createdAt}
+                                      />
+                                    )}
                                   </div>
-                                  {task.statusMessage && (
-                                    <p className="text-xs mt-2 line-clamp-1 leading-relaxed text-muted-foreground">
-                                      {task.statusMessage}
-                                    </p>
-                                  )}
+                                  <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                                 </div>
-                                <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -529,7 +554,7 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
                     </div>
 
                     {/* Task Details */}
-                    <div className="px-6 py-4 bg-muted/50 border-b border-border space-y-2">
+                    <div className="px-6 py-4 bg-muted/50 border-b border-border space-y-3">
                       <div className="grid grid-cols-2 gap-4 text-xs">
                         <div>
                           <span className="text-muted-foreground">Created:</span>
@@ -572,6 +597,29 @@ export function TasksTab({ serverConfig, serverName }: TasksTabProps) {
                           )}
                         </div>
                       )}
+                      {/* Status Timeline (collapsible) */}
+                      <Accordion
+                        type="single"
+                        collapsible
+                        className="w-full"
+                      >
+                        <AccordionItem value="timeline" className="border-0">
+                          <AccordionTrigger className="py-2 text-xs hover:no-underline">
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-3 w-3" />
+                              Status Timeline
+                            </div>
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <TaskTimeline
+                              statusHistory={
+                                getTrackedTaskById(selectedTaskId)
+                                  ?.statusHistory || []
+                              }
+                            />
+                          </AccordionContent>
+                        </AccordionItem>
+                      </Accordion>
                     </div>
                   </>
                 ) : (
