@@ -21,6 +21,7 @@ import {
   Trash2,
   Clock,
   CheckCircle,
+  AlertCircle,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
@@ -42,6 +43,8 @@ import {
   untrackTask,
   clearTrackedTasksForServer,
   updateTaskStatusHistory,
+  getDismissedTaskIds,
+  dismissTasksForServer,
 } from "@/lib/task-tracker";
 import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
@@ -124,12 +127,15 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
 
   const handleClearTasks = useCallback(() => {
     if (!serverName) return;
+    // Dismiss all current tasks so they won't show after refresh
+    const taskIds = tasks.map((t) => t.taskId);
+    dismissTasksForServer(serverName, taskIds);
     clearTrackedTasksForServer(serverName);
     setTasks([]);
     setSelectedTaskId("");
     setTaskResult(null);
     setPendingRequest(null);
-  }, [serverName]);
+  }, [serverName, tasks]);
 
   const fetchTasks = useCallback(async () => {
     if (!serverName) return;
@@ -138,6 +144,9 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
     setError("");
 
     try {
+      // Get dismissed task IDs to filter them out
+      const dismissedIds = getDismissedTaskIds(serverName);
+
       // Get tasks from server (may be empty for servers like FastMCP)
       const serverResult = await listTasks(serverName);
       const serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
@@ -147,6 +156,7 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
       const trackedTaskStatuses = await Promise.all(
         trackedTasks
           .filter((t) => !serverTaskIds.has(t.taskId)) // Skip if already in server list
+          .filter((t) => !dismissedIds.has(t.taskId)) // Skip dismissed tasks
           .map(async (tracked) => {
             try {
               const status = await getTask(serverName, tracked.taskId);
@@ -171,9 +181,10 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
       }
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
+      // Filter out dismissed tasks from server results
       const allTasks = [
         ...trackedTaskStatuses.filter((t): t is Task => t !== null),
-        ...serverResult.tasks,
+        ...serverResult.tasks.filter((t) => !dismissedIds.has(t.taskId)),
       ];
 
       // Sort by createdAt descending (most recent first)
@@ -251,10 +262,11 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
     return () => clearInterval(interval);
   }, [autoRefresh, serverName, fetchTasks, pollInterval, isActive]);
 
-  // Fetch result when selecting a completed task, or pending request for input_required
+  // Fetch result when selecting a completed or failed task, or pending request for input_required
   // Per MCP Tasks spec: when task is input_required, tasks/result returns the pending request
+  // Per MCP Tasks spec: for failed tasks, tasks/result returns the JSON-RPC error
   useEffect(() => {
-    if (selectedTask?.status === "completed") {
+    if (selectedTask?.status === "completed" || selectedTask?.status === "failed") {
       setPendingRequest(null);
       fetchTaskResult(selectedTaskId);
     } else if (selectedTask?.status === "input_required") {
@@ -735,6 +747,48 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                                     ? "Fetching pending request..."
                                     : "The task is waiting for input from the client"}
                                 </p>
+                              </div>
+                            )
+                          ) : selectedTask.status === "failed" ? (
+                            // Show error result for failed tasks
+                            taskResult === null ? (
+                              <div className="flex flex-col items-center justify-center py-16 text-center">
+                                <div className="w-10 h-10 bg-destructive/10 rounded-full flex items-center justify-center mb-3">
+                                  <TaskStatusIcon status={selectedTask.status} />
+                                </div>
+                                <p className="text-xs text-muted-foreground font-semibold mb-1">
+                                  Task failed
+                                </p>
+                                <p className="text-xs text-muted-foreground/70">
+                                  Loading error details...
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs">
+                                  <p className="font-semibold mb-1">Task Failed</p>
+                                  <p>The task encountered an error during execution.</p>
+                                </div>
+                                <div className="text-xs text-muted-foreground mb-2">
+                                  Error Details:
+                                </div>
+                                <JsonView
+                                  src={taskResult as object}
+                                  dark={true}
+                                  theme="atom"
+                                  enableClipboard={true}
+                                  displaySize={false}
+                                  collapseStringsAfterLength={100}
+                                  style={{
+                                    fontSize: "12px",
+                                    fontFamily:
+                                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                    backgroundColor: "hsl(var(--background))",
+                                    padding: "0",
+                                    borderRadius: "0",
+                                    border: "none",
+                                  }}
+                                />
                               </div>
                             )
                           ) : selectedTask.status !== "completed" ? (

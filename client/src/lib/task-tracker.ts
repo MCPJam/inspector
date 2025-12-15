@@ -27,6 +27,7 @@ export interface TrackedTask {
 }
 
 const STORAGE_KEY = "mcp-tracked-tasks";
+const DISMISSED_STORAGE_KEY = "mcp-dismissed-tasks";
 const MAX_TRACKED_TASKS = 50;
 
 /**
@@ -152,4 +153,50 @@ export function updateTaskStatusHistory(
  */
 export function getTrackedTaskById(taskId: string): TrackedTask | undefined {
   return getTrackedTasks().find((t) => t.taskId === taskId);
+}
+
+/**
+ * Get dismissed task IDs for a server
+ */
+export function getDismissedTaskIds(serverId: string): Set<string> {
+  try {
+    const data = localStorage.getItem(DISMISSED_STORAGE_KEY);
+    const dismissed: Record<string, string[]> = data ? JSON.parse(data) : {};
+    return new Set(dismissed[serverId] || []);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Dismiss tasks for a server (they won't show after refresh)
+ */
+export function dismissTasksForServer(
+  serverId: string,
+  taskIds: string[],
+): void {
+  try {
+    const data = localStorage.getItem(DISMISSED_STORAGE_KEY);
+    const dismissed: Record<string, string[]> = data ? JSON.parse(data) : {};
+    const existing = new Set(dismissed[serverId] || []);
+    taskIds.forEach((id) => existing.add(id));
+    dismissed[serverId] = Array.from(existing);
+    localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(dismissed));
+  } catch {
+    // Ignore errors
+  }
+}
+
+/**
+ * Clear dismissed tasks for a server (allow them to show again)
+ */
+export function clearDismissedTasksForServer(serverId: string): void {
+  try {
+    const data = localStorage.getItem(DISMISSED_STORAGE_KEY);
+    const dismissed: Record<string, string[]> = data ? JSON.parse(data) : {};
+    delete dismissed[serverId];
+    localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(dismissed));
+  } catch {
+    // Ignore errors
+  }
 }
