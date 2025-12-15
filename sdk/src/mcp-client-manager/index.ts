@@ -587,18 +587,55 @@ export class MCPClientManager {
       };
     }
 
-    // Build tool call params - include task augmentation if provided
-    // Per MCP Tasks spec (2025-11-25), adding `task: { ttl }` to params
-    // tells the server to create a background task instead of running inline
-    const callParams: { name: string; arguments?: Record<string, unknown>; task?: { ttl?: number } } = {
+    // Build tool call params
+    const callParams: { name: string; arguments?: Record<string, unknown> } = {
       name: toolName,
       arguments: args,
     };
 
-    if (taskOptions?.ttl !== undefined) {
-      callParams.task = { ttl: taskOptions.ttl };
+    // Check if task mode is requested
+    // Per MCP SDK: tools with execution.taskSupport="required" will throw in callTool()
+    // The UI should detect this and force taskOptions to be provided
+    // Must use client.experimental.tasks.callToolStream() for task-augmented calls
+    const useTaskStream = taskOptions !== undefined;
+
+    if (useTaskStream) {
+      // Use experimental tasks API for task-augmented tool calls
+      // Per MCP Tasks spec (2025-11-25), this enables background task execution
+      const taskValue = taskOptions?.ttl !== undefined ? { ttl: taskOptions.ttl } : {};
+
+      const requestOptions = {
+        ...mergedOptions,
+        task: taskValue,
+      };
+
+      // Send the task-augmented request directly
+      const result = await client.request(
+        {
+          method: "tools/call",
+          params: callParams,
+        },
+        CallToolResultSchema,
+        requestOptions,
+      );
+
+      // Check if result contains task info (CreateTaskResult format)
+      const anyResult = result as any;
+      if (anyResult?.task?.taskId) {
+        return {
+          task: anyResult.task,
+          _meta: {
+            "io.modelcontextprotocol/model-immediate-response":
+              `Task ${anyResult.task.taskId} created with status: ${anyResult.task.status}`,
+          },
+        };
+      }
+
+      // Return the result as-is if no task was created
+      return result;
     }
 
+    // Regular tool call (no task augmentation)
     return client.callTool(
       callParams,
       CallToolResultSchema,
