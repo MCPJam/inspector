@@ -14,6 +14,11 @@ import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@/sdk";
+import {
+  buildCorsHeaders,
+  getAllowedOrigin,
+  isAllowedHost,
+} from "./utils/cors";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -143,6 +148,31 @@ const app = new Hono().onError((err, c) => {
   return c.json({ error: "Internal server error" }, 500);
 });
 
+// Reject requests that are not targeting the loopback host or that originate
+// from unexpected origins. This mitigates the "0.0.0.0 day" class of attacks
+// that coerce local services into serving cross-origin traffic.
+app.use("*", async (c, next) => {
+  const hostHeader = c.req.header("x-forwarded-host") || c.req.header("host");
+  if (!isAllowedHost(hostHeader)) {
+    appLogger.warn("Blocked request with disallowed host header", {
+      host: hostHeader,
+      path: c.req.path,
+    });
+    return c.json({ error: "Host not allowed" }, 403);
+  }
+
+  const originHeader = c.req.header("origin");
+  if (originHeader && !getAllowedOrigin(originHeader)) {
+    appLogger.warn("Blocked request with disallowed origin", {
+      origin: originHeader,
+      path: c.req.path,
+    });
+    return c.json({ error: "Origin not allowed" }, 403, { Vary: "Origin" });
+  }
+
+  await next();
+});
+
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const envFile =
   process.env.NODE_ENV === "production"
@@ -218,14 +248,23 @@ app.route("/api/mcp", mcpRoutes);
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
 // CORS preflight
 app.options("/sse/message", (c) => {
-  return c.body(null, 204, {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
-    "Access-Control-Allow-Headers":
-      "Authorization, Content-Type, Accept, Accept-Language",
-    "Access-Control-Max-Age": "86400",
-    Vary: "Origin, Access-Control-Request-Headers",
+  const originHeader = c.req.header("origin");
+  const { headers, allowedOrigin } = buildCorsHeaders(originHeader, {
+    allowMethods: "POST,OPTIONS",
+    allowHeaders:
+      "Authorization, Content-Type, Accept, Accept-Language, X-MCPJam-Endpoint-Base",
+    maxAge: "86400",
+    allowPrivateNetwork: true,
+    requestPrivateNetwork:
+      c.req.header("access-control-request-private-network") === "true",
   });
+
+  if (originHeader && !allowedOrigin) {
+    return c.json({ error: "Origin not allowed" }, 403, { Vary: "Origin" });
+  }
+
+  headers.Vary = `${headers.Vary}, Access-Control-Request-Headers`;
+  return c.body(null, 204, headers);
 });
 
 // Health check

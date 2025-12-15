@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { ElicitResult } from "@modelcontextprotocol/sdk/types.js";
+import { buildCorsHeaders } from "../../utils/cors";
 
 const elicitation = new Hono();
 
@@ -49,6 +50,10 @@ elicitation.use("*", async (c, next) => {
 
 // SSE stream for elicitation events
 elicitation.get("/stream", async (c) => {
+  const originHeader = c.req.header("origin");
+  const { headers: corsHeaders } = buildCorsHeaders(originHeader, {
+    allowCredentials: true,
+  });
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -85,11 +90,11 @@ elicitation.get("/stream", async (c) => {
   return new Response(stream as any, {
     status: 200,
     headers: {
+      ...corsHeaders,
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
-      "Access-Control-Allow-Origin": "*",
     },
   });
 });
