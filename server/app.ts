@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 import mcpRoutes from "./routes/mcp/index.js";
 import appsRoutes from "./routes/apps/index.js";
 import { MCPClientManager } from "@/sdk";
+import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { progressStore } from "./services/progress-store";
 import { CORS_ORIGINS } from "./config.js";
@@ -90,6 +91,11 @@ export function createHonoApp() {
       },
     },
   );
+
+  // Initialize elicitation callback immediately so tasks/result calls work
+  // without needing to hit the elicitation endpoints first
+  initElicitationCallback(mcpClientManager);
+
   if (process.env.DEBUG_MCP_SELECTION === "1") {
     appLogger.debug("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
   }

@@ -986,7 +986,13 @@ export class MCPClientManager {
     this.elicitationHandlers.delete(serverId);
     const client = this.clientStates.get(serverId)?.client;
     if (client) {
-      client.removeRequestHandler("elicitation/create");
+      // Re-apply global callback if one exists, otherwise remove handler entirely
+      // This ensures task elicitations continue to work after ToolsTab executions complete
+      if (this.elicitationCallback) {
+        this.applyElicitationHandler(serverId, client);
+      } else {
+        client.removeRequestHandler("elicitation/create");
+      }
     }
   }
 
