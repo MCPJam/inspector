@@ -3,13 +3,58 @@ import {
   Wrench,
   MessageSquare,
   FileText,
+  Loader2,
+  AlertCircle,
+  CheckCircle,
+  XCircle,
+  Slash,
   type LucideIcon,
 } from "lucide-react";
-import type { PrimitiveType, StatusHistoryEntry } from "./task-tracker";
+import type { Task } from "./apis/mcp-tasks-api";
+import type { PrimitiveType } from "./task-tracker";
 
-/**
- * Configuration for primitive types (tool, prompt, resource)
- */
+// Status configuration for task states
+export interface StatusConfig {
+  icon: LucideIcon;
+  color: string;
+  bgColor: string;
+  animate: boolean;
+}
+
+export const STATUS_CONFIG: Record<Task["status"], StatusConfig> = {
+  working: {
+    icon: Loader2,
+    color: "text-blue-500",
+    bgColor: "bg-blue-500/10",
+    animate: true,
+  },
+  input_required: {
+    icon: AlertCircle,
+    color: "text-yellow-500",
+    bgColor: "bg-yellow-500/10",
+    animate: false,
+  },
+  completed: {
+    icon: CheckCircle,
+    color: "text-green-500",
+    bgColor: "bg-green-500/10",
+    animate: false,
+  },
+  failed: {
+    icon: XCircle,
+    color: "text-red-500",
+    bgColor: "bg-red-500/10",
+    animate: false,
+  },
+  cancelled: {
+    icon: Slash,
+    color: "text-gray-500",
+    bgColor: "bg-gray-500/10",
+    animate: false,
+  },
+};
+
+// Primitive type configuration
 export const PRIMITIVE_TYPE_CONFIG: Record<
   PrimitiveType,
   { icon: LucideIcon; label: string; color: string }
@@ -19,9 +64,6 @@ export const PRIMITIVE_TYPE_CONFIG: Record<
   resource: { icon: FileText, label: "Resource", color: "text-emerald-500" },
 };
 
-/**
- * Format a timestamp as relative time (e.g., "2 minutes ago")
- */
 export function formatRelativeTime(isoString: string): string {
   try {
     return formatDistanceToNow(new Date(isoString), { addSuffix: true });
@@ -30,15 +72,9 @@ export function formatRelativeTime(isoString: string): string {
   }
 }
 
-/**
- * Format elapsed time from a start timestamp (e.g., "1m 23s")
- */
 export function formatElapsedTime(startTime: string): string {
   try {
-    const start = new Date(startTime).getTime();
-    const now = Date.now();
-    const elapsed = now - start;
-
+    const elapsed = Date.now() - new Date(startTime).getTime();
     if (elapsed < 1000) return "<1s";
     if (elapsed < 60000) return `${Math.floor(elapsed / 1000)}s`;
     if (elapsed < 3600000) {
@@ -54,47 +90,6 @@ export function formatElapsedTime(startTime: string): string {
   }
 }
 
-/**
- * Calculate duration of a status history entry
- */
-export function calculateStateDuration(
-  statusHistory: StatusHistoryEntry[],
-  index: number,
-): string {
-  const entry = statusHistory[index];
-  const nextEntry = statusHistory[index + 1];
-
-  if (!entry) return "—";
-
-  try {
-    const start = new Date(entry.timestamp).getTime();
-    const end = nextEntry
-      ? new Date(nextEntry.timestamp).getTime()
-      : Date.now();
-    const duration = end - start;
-
-    if (duration < 1000) return "<1s";
-    if (duration < 60000) return `${Math.floor(duration / 1000)}s`;
-    if (duration < 3600000) {
-      const minutes = Math.floor(duration / 60000);
-      const seconds = Math.floor((duration % 60000) / 1000);
-      return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-    }
-    const hours = Math.floor(duration / 3600000);
-    const minutes = Math.floor((duration % 3600000) / 60000);
-    return `${hours}h ${minutes}m`;
-  } catch {
-    return "—";
-  }
-}
-
-/**
- * Check if a task status is terminal (completed, failed, or cancelled)
- */
-export function isTerminalStatus(
-  status: StatusHistoryEntry["status"],
-): boolean {
-  return (
-    status === "completed" || status === "failed" || status === "cancelled"
-  );
+export function isTerminalStatus(status: Task["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }

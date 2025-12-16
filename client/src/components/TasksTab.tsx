@@ -8,18 +8,11 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "./ui/accordion";
-import {
   ListTodo,
   RefreshCw,
   ChevronRight,
   Square,
   Trash2,
-  Clock,
   AlertCircle,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
@@ -43,17 +36,15 @@ import {
   getTrackedTaskById,
   untrackTask,
   clearTrackedTasksForServer,
-  updateTaskStatusHistory,
   getDismissedTaskIds,
   dismissTasksForServer,
 } from "@/lib/task-tracker";
 import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
 import { Progress } from "./ui/progress";
-import { STATUS_CONFIG } from "./tasks/task-status-config";
-import { TaskTimeline } from "./tasks/TaskTimeline";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import {
+  STATUS_CONFIG,
   PRIMITIVE_TYPE_CONFIG,
   formatRelativeTime,
 } from "@/lib/task-utils";
@@ -121,22 +112,14 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
   }, [tasks, selectedTaskId]);
 
-  // Get task IDs that are in input_required status for elicitation filtering
-  const inputRequiredTaskIds = useMemo(() => {
-    return tasks.filter((t) => t.status === "input_required").map((t) => t.taskId);
-  }, [tasks]);
-
   // Subscribe to task-related elicitations via SSE
   // Per MCP Tasks spec (2025-11-25): when a task is in input_required status,
   // the server sends elicitations with relatedTaskId in the metadata
-  // IMPORTANT: Keep SSE connection open whenever tab is active (not just when
-  // input_required tasks exist) to avoid race conditions where elicitation
-  // is sent before we detect the input_required status via polling
   const {
     elicitation: taskElicitation,
     isResponding: elicitationResponding,
     respond: respondToElicitation,
-  } = useTaskElicitation(undefined, isActive);
+  } = useTaskElicitation(isActive);
 
   // Convert hook elicitation to DialogElicitation format for the dialog
   const dialogElicitation: DialogElicitation | null = taskElicitation
@@ -200,14 +183,7 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
           .filter((t) => !dismissedIds.has(t.taskId)) // Skip dismissed tasks
           .map(async (tracked) => {
             try {
-              const status = await getTask(serverName, tracked.taskId);
-              // Update status history if status changed
-              updateTaskStatusHistory(
-                tracked.taskId,
-                status.status,
-                status.statusMessage,
-              );
-              return status;
+              return await getTask(serverName, tracked.taskId);
             } catch {
               // Task no longer exists on server, remove from tracking
               untrackTask(tracked.taskId);
@@ -215,11 +191,6 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
             }
           }),
       );
-
-      // Also update status history for server-returned tasks
-      for (const task of serverResult.tasks) {
-        updateTaskStatusHistory(task.taskId, task.status, task.statusMessage);
-      }
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
       // Filter out dismissed tasks from server results
@@ -694,29 +665,6 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                           )}
                         </div>
                       )}
-                      {/* Status Timeline (collapsible) */}
-                      <Accordion
-                        type="single"
-                        collapsible
-                        className="w-full"
-                      >
-                        <AccordionItem value="timeline" className="border-0">
-                          <AccordionTrigger className="py-2 text-xs hover:no-underline">
-                            <div className="flex items-center gap-2">
-                              <Clock className="h-3 w-3" />
-                              Status Timeline
-                            </div>
-                          </AccordionTrigger>
-                          <AccordionContent>
-                            <TaskTimeline
-                              statusHistory={
-                                getTrackedTaskById(selectedTaskId)
-                                  ?.statusHistory || []
-                              }
-                            />
-                          </AccordionContent>
-                        </AccordionItem>
-                      </Accordion>
                     </div>
 
                     {/* Task Result in Details Panel */}
