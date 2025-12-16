@@ -273,21 +273,29 @@ export function ChatInput({
               hasMessages={hasMessages}
             >
               <ContextTrigger />
-              <ContextContent>
-                {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
-                  <ContextContentHeader />
-                )}
-                <ContextContentBody>
+              {/* Only render popover content when there's something to show */}
+              {(hasMessages && tokenUsage && tokenUsage.totalTokens > 0) ||
+              (systemPromptTokenCount && systemPromptTokenCount > 0) ||
+              systemPromptTokenCountLoading ||
+              (mcpToolsTokenCount &&
+                Object.keys(mcpToolsTokenCount).length > 0) ||
+              mcpToolsTokenCountLoading ? (
+                <ContextContent>
                   {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
-                    <>
-                      <ContextInputUsage />
-                      <ContextOutputUsage />
-                    </>
+                    <ContextContentHeader />
                   )}
-                  <ContextSystemPromptUsage />
-                  <ContextMCPServerUsage />
-                </ContextContentBody>
-              </ContextContent>
+                  <ContextContentBody>
+                    {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
+                      <>
+                        <ContextInputUsage />
+                        <ContextOutputUsage />
+                      </>
+                    )}
+                    <ContextSystemPromptUsage />
+                    <ContextMCPServerUsage />
+                  </ContextContentBody>
+                </ContextContent>
+              ) : null}
             </Context>
             {isLoading ? (
               <Tooltip>
