@@ -22,6 +22,7 @@
           "inspector/connecting-servers",
           "inspector/llm-playground",
           "inspector/tools-prompts-resources",
+          "inspector/tasks",
           "inspector/debugging",
           "inspector/guided-oauth",
           "evals/overview",
