@@ -88,6 +88,7 @@ tasks.post("/result", async (c) => {
 });
 
 // Cancel a task
+// Per MCP Tasks spec (2025-11-25): only attempt cancel if server declares tasks.cancel capability
 tasks.post("/cancel", async (c) => {
   try {
     const { serverId, taskId } = (await c.req.json()) as {
@@ -97,6 +98,14 @@ tasks.post("/cancel", async (c) => {
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
     if (!taskId) return c.json({ error: "taskId is required" }, 400);
+
+    // Check if server supports cancel operation before attempting
+    if (!c.mcpClientManager.supportsTasksCancel(serverId)) {
+      return c.json(
+        { error: "Server does not support task cancellation (tasks.cancel capability not declared)" },
+        400,
+      );
+    }
 
     const result = await c.mcpClientManager.cancelTask(serverId, taskId);
     return c.json(result);

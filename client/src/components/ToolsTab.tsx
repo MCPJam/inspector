@@ -442,8 +442,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       // Use task execution only if: server supports tasks AND (user checked option OR tool requires it)
       // Per spec: clients MUST NOT use task augmentation without server capability
       const shouldUseTask = serverSupportsTaskToolCalls && (executeAsTask || selectedToolTaskSupport === "required");
+      // Per MCP spec: ttl is optional. Only include if user specified a non-zero value.
+      // 0 could be misinterpreted by servers, so we use undefined to let server decide.
       const taskOptions: TaskOptions | undefined = shouldUseTask
-        ? { ttl: taskTtl } // User-configurable TTL (0 = no expiration)
+        ? { ttl: taskTtl > 0 ? taskTtl : undefined }
         : undefined;
 
       const response = await executeToolApi(

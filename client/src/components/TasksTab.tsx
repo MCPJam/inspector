@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
@@ -41,6 +41,7 @@ import {
 } from "@/lib/task-tracker";
 import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
+import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { Progress } from "./ui/progress";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import { STATUS_CONFIG, formatRelativeTime } from "@/lib/task-utils";
@@ -99,14 +100,30 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
     }
     return DEFAULT_POLL_INTERVAL;
   });
+  // Track if user has explicitly overridden the server suggestion
+  const [userOverride, setUserOverride] = useState<number | null>(null);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
   // undefined = not yet fetched, null = server doesn't support, object = loaded
   const [taskCapabilities, setTaskCapabilities] = useState<TaskCapabilities | null | undefined>(undefined);
+  // Track the task ID for pending input_required requests to avoid race conditions
+  const pendingInputRequestTaskIdRef = useRef<string | null>(null);
 
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
   }, [tasks, selectedTaskId]);
+
+  // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
+  // Calculate server-suggested poll interval from non-terminal tasks
+  // Use the minimum pollInterval from active tasks to not miss updates
+  const serverSuggestedPollInterval = useMemo(() => {
+    const activeTasksWithPollInterval = tasks
+      .filter((t) => !isTerminalStatus(t.status) && t.pollInterval)
+      .map((t) => t.pollInterval!);
+
+    if (activeTasksWithPollInterval.length === 0) return null;
+    return Math.min(...activeTasksWithPollInterval);
+  }, [tasks]);
 
   // Subscribe to task-related elicitations via SSE
   // Per MCP Tasks spec (2025-11-25): when a task is in input_required status,
@@ -127,16 +144,32 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
       }
     : null;
 
-  // Use user-configured poll interval (persisted in localStorage)
-  const pollInterval = userPollInterval;
+  // Priority: user override > server suggestion > user default
+  // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
+  // But we allow user to explicitly override if they want
+  const pollInterval = userOverride ?? serverSuggestedPollInterval ?? userPollInterval;
+  const usingServerInterval = serverSuggestedPollInterval !== null && userOverride === null;
 
   const handlePollIntervalChange = useCallback((value: string) => {
     const parsed = parseInt(value, 10);
     if (!isNaN(parsed) && parsed >= 500) {
+      // Set override if server is suggesting an interval
+      if (serverSuggestedPollInterval !== null) {
+        setUserOverride(parsed);
+      }
+      // Always save to localStorage as the user's preferred fallback
       setUserPollInterval(parsed);
       localStorage.setItem(POLL_INTERVAL_STORAGE_KEY, String(parsed));
     }
-  }, []);
+  }, [serverSuggestedPollInterval]);
+
+  // Clear override when server suggestion goes away (tasks complete)
+  // so next time server suggests, we use that value again
+  useEffect(() => {
+    if (serverSuggestedPollInterval === null) {
+      setUserOverride(null);
+    }
+  }, [serverSuggestedPollInterval]);
 
   const handleClearTasks = useCallback(() => {
     if (!serverName) return;
@@ -320,28 +353,39 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
   useEffect(() => {
     if (selectedTask?.status === "completed" || selectedTask?.status === "failed") {
       setPendingRequest(null);
+      pendingInputRequestTaskIdRef.current = null;
       fetchTaskResult(selectedTaskId);
     } else if (selectedTask?.status === "input_required") {
       // Per spec: "When the requestor encounters the input_required status,
       // it SHOULD preemptively call tasks/result"
       setTaskResult(null);
+      // Track which task ID we're fetching for to avoid race conditions
+      const currentTaskId = selectedTaskId;
+      pendingInputRequestTaskIdRef.current = currentTaskId;
       // Fetch the pending request (e.g., elicitation)
       (async () => {
         if (!serverName) return;
         setLoading(true);
         try {
-          const result = await getTaskResult(serverName, selectedTaskId);
-          setPendingRequest(result);
+          const result = await getTaskResult(serverName, currentTaskId);
+          // Only update state if this is still the active request (avoid race condition)
+          if (pendingInputRequestTaskIdRef.current === currentTaskId) {
+            setPendingRequest(result);
+          }
         } catch (err) {
           // This may block waiting for input, which is expected behavior
           console.debug("tasks/result for input_required:", err);
         } finally {
-          setLoading(false);
+          // Only clear loading if this is still the active request
+          if (pendingInputRequestTaskIdRef.current === currentTaskId) {
+            setLoading(false);
+          }
         }
       })();
     } else {
       setTaskResult(null);
       setPendingRequest(null);
+      pendingInputRequestTaskIdRef.current = null;
     }
   }, [selectedTaskId, selectedTask?.status, fetchTaskResult, serverName]);
 
@@ -394,9 +438,9 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
             <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
               <div className="h-full flex flex-col border-r border-border bg-background">
                 {/* Header */}
-                <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
-                  <div className="flex items-center gap-3">
-                    <ListTodo className="h-3 w-3 text-muted-foreground" />
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
+                  <div className="flex items-center gap-2">
+                    <ListTodo className="h-3.5 w-3.5 text-muted-foreground" />
                     <h2 className="text-xs font-semibold text-foreground">
                       Tasks
                     </h2>
@@ -404,54 +448,98 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                       {tasks.length}
                     </Badge>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5">
-                      <Input
-                        type="number"
-                        min={500}
-                        step={500}
-                        defaultValue={userPollInterval}
-                        key={`poll-${userPollInterval}`}
-                        onBlur={(e) => handlePollIntervalChange(e.target.value)}
-                        className="h-6 w-16 text-[10px] px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                        title="Poll interval in milliseconds"
-                      />
-                      <span className="text-[10px] text-muted-foreground">ms</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Switch
-                        id="auto-refresh"
-                        checked={autoRefresh}
-                        onCheckedChange={setAutoRefresh}
-                        className="scale-75"
-                      />
-                      <label
-                        htmlFor="auto-refresh"
-                        className="text-[10px] text-muted-foreground cursor-pointer"
-                      >
-                        Auto
-                      </label>
-                    </div>
-                    <Button
-                      onClick={fetchTasks}
-                      variant="ghost"
-                      size="sm"
-                      disabled={fetchingTasks}
-                      title="Refresh tasks"
-                    >
-                      <RefreshCw
-                        className={`h-3 w-3 ${fetchingTasks ? "animate-spin" : ""} cursor-pointer`}
-                      />
-                    </Button>
-                    <Button
-                      onClick={handleClearTasks}
-                      variant="ghost"
-                      size="sm"
-                      disabled={tasks.length === 0}
-                      title="Clear tracked tasks"
-                    >
-                      <Trash2 className="h-3 w-3 cursor-pointer" />
-                    </Button>
+                  <div className="flex items-center gap-3 ml-4">
+                    {/* Polling controls - always show input, prefilled with effective interval */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5">
+                          <Input
+                            type="number"
+                            min={500}
+                            step={500}
+                            defaultValue={pollInterval}
+                            key={`poll-${pollInterval}`}
+                            onBlur={(e) => handlePollIntervalChange(e.target.value)}
+                            className="h-6 w-16 text-[10px] px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                          <span className="text-[10px] text-muted-foreground">ms</span>
+                          {usingServerInterval && (
+                            <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4 ml-0.5">
+                              server
+                            </Badge>
+                          )}
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-xs">
+                        {usingServerInterval ? (
+                          <span>
+                            Prefilled with server-suggested interval.
+                            <br />
+                            Edit to override.
+                          </span>
+                        ) : (
+                          <span>Poll interval (min 500ms)</span>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5">
+                          <Switch
+                            id="auto-refresh"
+                            checked={autoRefresh}
+                            onCheckedChange={setAutoRefresh}
+                            className="scale-75"
+                          />
+                          <label
+                            htmlFor="auto-refresh"
+                            className="text-[10px] text-muted-foreground cursor-pointer"
+                          >
+                            Auto
+                          </label>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        Automatically poll for task status updates
+                      </TooltipContent>
+                    </Tooltip>
+
+                    {/* Divider */}
+                    <div className="h-4 w-px bg-border" />
+
+                    {/* Action buttons */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          onClick={fetchTasks}
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={fetchingTasks}
+                        >
+                          <RefreshCw
+                            className={`h-3.5 w-3.5 ${fetchingTasks ? "animate-spin-pulse text-primary" : ""}`}
+                          />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Refresh tasks</TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          onClick={handleClearTasks}
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          disabled={tasks.length === 0}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Clear all tasks</TooltipContent>
+                    </Tooltip>
                   </div>
                 </div>
 
@@ -549,16 +637,18 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                     {/* Header */}
                     <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
                       <div className="flex items-center gap-3">
-                        <TaskStatusIcon status={selectedTask.status} />
+                        <div className="flex items-center gap-2">
+                          <TaskStatusIcon status={selectedTask.status} />
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${STATUS_CONFIG[selectedTask.status].bgColor} ${STATUS_CONFIG[selectedTask.status].color} border-0`}
+                          >
+                            {selectedTask.status}
+                          </Badge>
+                        </div>
                         <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
                           {selectedTask.taskId}
                         </code>
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${STATUS_CONFIG[selectedTask.status].bgColor} ${STATUS_CONFIG[selectedTask.status].color} border-0`}
-                        >
-                          {selectedTask.status}
-                        </Badge>
                         {selectedTask.ttl !== null && (
                           <Badge variant="outline" className="text-xs">
                             TTL: {selectedTask.ttl}ms

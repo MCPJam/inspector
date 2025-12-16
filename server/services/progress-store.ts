@@ -9,15 +9,27 @@ export type ProgressEvent = {
   timestamp: string;
 };
 
+// Stale progress entries are cleaned up after this duration (5 minutes)
+const PROGRESS_STALE_THRESHOLD_MS = 5 * 60 * 1000;
+// Run cleanup every 60 seconds
+const CLEANUP_INTERVAL_MS = 60 * 1000;
+
 /**
  * In-memory store for progress notifications.
  * Stores the latest progress per serverId + progressToken combination.
  * Also emits events for real-time streaming to clients.
+ * Automatically cleans up stale progress entries to prevent memory leaks.
  */
 class ProgressStore {
   private readonly emitter = new EventEmitter();
   // Map: serverId -> Map<progressToken, ProgressEvent>
   private readonly store = new Map<string, Map<string | number, ProgressEvent>>();
+  private cleanupInterval: NodeJS.Timeout | null = null;
+
+  constructor() {
+    // Start periodic cleanup to prevent memory leaks
+    this.startCleanupInterval();
+  }
 
   /**
    * Store a progress update
@@ -30,6 +42,47 @@ class ProgressStore {
     }
     serverProgress.set(event.progressToken, event);
     this.emitter.emit("progress", event);
+  }
+
+  /**
+   * Clean up stale progress entries (older than PROGRESS_STALE_THRESHOLD_MS)
+   */
+  private cleanupStaleEntries(): void {
+    const now = Date.now();
+    for (const [serverId, serverProgress] of this.store.entries()) {
+      for (const [token, event] of serverProgress.entries()) {
+        const eventTime = new Date(event.timestamp).getTime();
+        if (now - eventTime > PROGRESS_STALE_THRESHOLD_MS) {
+          serverProgress.delete(token);
+        }
+      }
+      // Remove empty server maps
+      if (serverProgress.size === 0) {
+        this.store.delete(serverId);
+      }
+    }
+  }
+
+  /**
+   * Start periodic cleanup of stale entries
+   */
+  private startCleanupInterval(): void {
+    if (this.cleanupInterval) return;
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupStaleEntries();
+    }, CLEANUP_INTERVAL_MS);
+    // Don't prevent process exit
+    this.cleanupInterval.unref();
+  }
+
+  /**
+   * Stop periodic cleanup (useful for testing)
+   */
+  stopCleanupInterval(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
   }
 
   /**
