@@ -381,9 +381,9 @@ await mcpClientManager.disconnectAllServers();
 
 <ResponseField
   name="executeTool"
-  type="(serverId: string, toolName: string, args: Record<string, unknown>, options?) => Promise<CallToolResult>"
+  type="(serverId: string, toolName: string, args: Record<string, unknown>, options?, taskOptions?) => Promise<CallToolResult | CreateTaskResult>"
 >
-  Execute a tool on a specific server.
+  Execute a tool on a specific server. Pass `taskOptions` to execute as a background task. Returns `CreateTaskResult` with task info if executed as task, otherwise returns `CallToolResult`.
 </ResponseField>
 
 <ResponseField
