@@ -734,6 +734,38 @@ const manager = new MCPClientManager(
 ```
 </CodeGroup>
 
+### Example 6: Background Task Execution
+
+<CodeGroup>
+```typescript Task Execution
+// Check if server supports tasks
+if (manager.supportsTasksForToolCalls("myserver")) {
+  // Execute tool as background task with 60 second TTL
+  const result = await manager.executeTool(
+    "myserver",
+    "long_running_operation",
+    { input: "data" },
+    undefined, // options
+    { ttl: 60000 } // taskOptions
+  );
+
+  if ("task" in result) {
+    console.log("Task created:", result.task.taskId);
+    
+    // Poll for task status
+    const task = await manager.getTask("myserver", result.task.taskId);
+    console.log("Task status:", task.status);
+    
+    // Get result when completed
+    if (task.status === "completed") {
+      const taskResult = await manager.getTaskResult("myserver", result.task.taskId);
+      console.log("Task result:", taskResult);
+    }
+  }
+}
+```
+</CodeGroup>
+
 ## Best Practices
 
 <CardGroup cols={2}>
