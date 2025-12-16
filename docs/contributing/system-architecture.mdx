@@ -276,9 +276,16 @@ sequenceDiagram
     │   ├── /resources
     │   │   ├── GET / - List resources
     │   │   └── GET /:uri - Read resource
-    │   └── /prompts
-    │       ├── GET / - List prompts
-    │       └── POST /:name/get - Get prompt
+    │   ├── /prompts
+    │   │   ├── GET / - List prompts
+    │   │   └── POST /:name/get - Get prompt
+    │   └── /tasks
+    │       ├── POST /list - List tasks
+    │       ├── POST /get - Get task status
+    │       ├── POST /result - Get task result
+    │       ├── POST /cancel - Cancel task
+    │       ├── POST /capabilities - Get task capabilities
+    │       └── POST /progress - Get task progress
     ├── /openai
     │   ├── POST /widget/store - Store widget data
     │   ├── GET /widget/:toolId - Widget container page
