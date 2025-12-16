@@ -296,7 +296,8 @@ tools.post("/execute", async (c) => {
 
       // Extract model-immediate-response from _meta (MCP Tasks spec 2025-11-25)
       // This optional field allows LLM hosts to return control to the model while task executes
-      const modelImmediateResponse = result?._meta?.["io.modelcontextprotocol/model-immediate-response"];
+      const modelImmediateResponse =
+        result?._meta?.["io.modelcontextprotocol/model-immediate-response"];
 
       // Standard MCP Tasks spec format: top-level task property
       if (result?.task?.taskId && result?.task?.status) {
@@ -309,8 +310,9 @@ tools.post("/execute", async (c) => {
       }
 
       // Check for task info in _meta["modelcontextprotocol.io/task"] or _meta["io.modelcontextprotocol/related-task"]
-      const metaTask = result?._meta?.["modelcontextprotocol.io/task"]
-        || result?._meta?.["io.modelcontextprotocol/related-task"];
+      const metaTask =
+        result?._meta?.["modelcontextprotocol.io/task"] ||
+        result?._meta?.["io.modelcontextprotocol/related-task"];
       if (metaTask?.taskId && metaTask?.status) {
         return c.json({
           status: "task_created",

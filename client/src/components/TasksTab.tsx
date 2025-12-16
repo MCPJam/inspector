@@ -77,10 +77,16 @@ function formatDate(isoString: string): string {
 }
 
 function isTerminalStatus(status: Task["status"]): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
 }
 
-export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTabProps) {
+export function TasksTab({
+  serverConfig,
+  serverName,
+  isActive = true,
+}: TasksTabProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
   const [taskResult, setTaskResult] = useState<unknown>(null);
@@ -105,7 +111,9 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
   // undefined = not yet fetched, null = server doesn't support, object = loaded
-  const [taskCapabilities, setTaskCapabilities] = useState<TaskCapabilities | null | undefined>(undefined);
+  const [taskCapabilities, setTaskCapabilities] = useState<
+    TaskCapabilities | null | undefined
+  >(undefined);
   // Track the task ID for pending input_required requests to avoid race conditions
   const pendingInputRequestTaskIdRef = useRef<string | null>(null);
 
@@ -147,21 +155,26 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
   // Priority: user override > server suggestion > user default
   // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
   // But we allow user to explicitly override if they want
-  const pollInterval = userOverride ?? serverSuggestedPollInterval ?? userPollInterval;
-  const usingServerInterval = serverSuggestedPollInterval !== null && userOverride === null;
+  const pollInterval =
+    userOverride ?? serverSuggestedPollInterval ?? userPollInterval;
+  const usingServerInterval =
+    serverSuggestedPollInterval !== null && userOverride === null;
 
-  const handlePollIntervalChange = useCallback((value: string) => {
-    const parsed = parseInt(value, 10);
-    if (!isNaN(parsed) && parsed >= 500) {
-      // Set override if server is suggesting an interval
-      if (serverSuggestedPollInterval !== null) {
-        setUserOverride(parsed);
+  const handlePollIntervalChange = useCallback(
+    (value: string) => {
+      const parsed = parseInt(value, 10);
+      if (!isNaN(parsed) && parsed >= 500) {
+        // Set override if server is suggesting an interval
+        if (serverSuggestedPollInterval !== null) {
+          setUserOverride(parsed);
+        }
+        // Always save to localStorage as the user's preferred fallback
+        setUserPollInterval(parsed);
+        localStorage.setItem(POLL_INTERVAL_STORAGE_KEY, String(parsed));
       }
-      // Always save to localStorage as the user's preferred fallback
-      setUserPollInterval(parsed);
-      localStorage.setItem(POLL_INTERVAL_STORAGE_KEY, String(parsed));
-    }
-  }, [serverSuggestedPollInterval]);
+    },
+    [serverSuggestedPollInterval],
+  );
 
   // Clear override when server suggestion goes away (tasks complete)
   // so next time server suggests, we use that value again
@@ -255,7 +268,9 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
         await fetchTasks();
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to respond to elicitation",
+          err instanceof Error
+            ? err.message
+            : "Failed to respond to elicitation",
         );
       }
     },
@@ -327,7 +342,12 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
   // Fetch tasks on mount and when server changes (only when tab is active)
   // Wait for capabilities to be fetched first (undefined = still loading)
   useEffect(() => {
-    if (serverConfig && serverName && isActive && taskCapabilities !== undefined) {
+    if (
+      serverConfig &&
+      serverName &&
+      isActive &&
+      taskCapabilities !== undefined
+    ) {
       setTasks([]);
       setSelectedTaskId("");
       setTaskResult(null);
@@ -351,7 +371,10 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
   // Per MCP Tasks spec: when task is input_required, tasks/result returns the pending request
   // Per MCP Tasks spec: for failed tasks, tasks/result returns the JSON-RPC error
   useEffect(() => {
-    if (selectedTask?.status === "completed" || selectedTask?.status === "failed") {
+    if (
+      selectedTask?.status === "completed" ||
+      selectedTask?.status === "failed"
+    ) {
       setPendingRequest(null);
       pendingInputRequestTaskIdRef.current = null;
       fetchTaskResult(selectedTaskId);
@@ -458,12 +481,19 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                             step={500}
                             defaultValue={pollInterval}
                             key={`poll-${pollInterval}`}
-                            onBlur={(e) => handlePollIntervalChange(e.target.value)}
+                            onBlur={(e) =>
+                              handlePollIntervalChange(e.target.value)
+                            }
                             className="h-6 w-16 text-[10px] px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
-                          <span className="text-[10px] text-muted-foreground">ms</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            ms
+                          </span>
                           {usingServerInterval && (
-                            <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4 ml-0.5">
+                            <Badge
+                              variant="secondary"
+                              className="text-[9px] px-1 py-0 h-4 ml-0.5"
+                            >
                               server
                             </Badge>
                           )}
@@ -522,7 +552,9 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                           />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom">Refresh tasks</TooltipContent>
+                      <TooltipContent side="bottom">
+                        Refresh tasks
+                      </TooltipContent>
                     </Tooltip>
 
                     <Tooltip>
@@ -537,7 +569,9 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom">Clear all tasks</TooltipContent>
+                      <TooltipContent side="bottom">
+                        Clear all tasks
+                      </TooltipContent>
                     </Tooltip>
                   </div>
                 </div>
@@ -599,12 +633,6 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                                     <span className="text-[10px] text-muted-foreground">
                                       {formatRelativeTime(task.createdAt)}
                                     </span>
-                                    {/* Status message */}
-                                    {task.statusMessage && (
-                                      <p className="text-[10px] mt-1.5 line-clamp-1 leading-relaxed text-muted-foreground">
-                                        {task.statusMessage}
-                                      </p>
-                                    )}
                                     {/* Inline progress for working tasks */}
                                     {task.status === "working" && (
                                       <TaskInlineProgress
@@ -685,13 +713,17 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                     <div className="px-6 py-4 bg-muted/50 border-b border-border space-y-3">
                       <div className="grid grid-cols-2 gap-4 text-xs">
                         <div>
-                          <span className="text-muted-foreground">Created:</span>
+                          <span className="text-muted-foreground">
+                            Created:
+                          </span>
                           <span className="ml-2 font-mono text-foreground">
                             {formatDate(selectedTask.createdAt)}
                           </span>
                         </div>
                         <div>
-                          <span className="text-muted-foreground">Updated:</span>
+                          <span className="text-muted-foreground">
+                            Updated:
+                          </span>
                           <span className="ml-2 font-mono text-foreground">
                             {formatDate(selectedTask.lastUpdatedAt)}
                           </span>
@@ -703,35 +735,45 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                         </p>
                       )}
                       {/* Progress bar for working tasks */}
-                      {selectedTask.status === "working" && progress && progress.total && (
-                        <div className="space-y-1.5 pt-2">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Progress</span>
-                            <span className="font-mono text-foreground">
-                              {progress.progress} / {progress.total}
-                              <span className="ml-2 text-muted-foreground">
-                                ({Math.round((progress.progress / progress.total) * 100)}%)
+                      {selectedTask.status === "working" &&
+                        progress &&
+                        progress.total && (
+                          <div className="space-y-1.5 pt-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">
+                                Progress
                               </span>
-                            </span>
+                              <span className="font-mono text-foreground">
+                                {progress.progress} / {progress.total}
+                                <span className="ml-2 text-muted-foreground">
+                                  (
+                                  {Math.round(
+                                    (progress.progress / progress.total) * 100,
+                                  )}
+                                  %)
+                                </span>
+                              </span>
+                            </div>
+                            <Progress
+                              value={(progress.progress / progress.total) * 100}
+                              className="h-2"
+                            />
+                            {progress.message && (
+                              <p className="text-xs text-muted-foreground/80 italic">
+                                {progress.message}
+                              </p>
+                            )}
                           </div>
-                          <Progress
-                            value={(progress.progress / progress.total) * 100}
-                            className="h-2"
-                          />
-                          {progress.message && (
-                            <p className="text-xs text-muted-foreground/80 italic">
-                              {progress.message}
-                            </p>
-                          )}
-                        </div>
-                      )}
+                        )}
                     </div>
 
                     {/* Task Result in Details Panel */}
                     <div className="flex-1 overflow-hidden flex flex-col">
                       <div className="px-6 py-3 border-b border-border bg-background">
                         <h3 className="text-xs font-semibold text-foreground">
-                          {selectedTask.status === "input_required" ? "Pending Request" : "Task Result"}
+                          {selectedTask.status === "input_required"
+                            ? "Pending Request"
+                            : "Task Result"}
                         </h3>
                       </div>
                       <ScrollArea className="flex-1">
@@ -754,7 +796,8 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                                 collapseStringsAfterLength={100}
                                 style={{
                                   fontSize: "12px",
-                                  fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                  fontFamily:
+                                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
                                   backgroundColor: "hsl(var(--background))",
                                   padding: "0",
                                   borderRadius: "0",
@@ -769,7 +812,8 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                                 </p>
                               </div>
                             )
-                          ) : selectedTask.status === "completed" || selectedTask.status === "failed" ? (
+                          ) : selectedTask.status === "completed" ||
+                            selectedTask.status === "failed" ? (
                             taskResult !== null ? (
                               <JsonView
                                 src={taskResult as object}
@@ -780,7 +824,8 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                                 collapseStringsAfterLength={100}
                                 style={{
                                   fontSize: "12px",
-                                  fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                  fontFamily:
+                                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
                                   backgroundColor: "hsl(var(--background))",
                                   padding: "0",
                                   borderRadius: "0",
@@ -868,7 +913,8 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                           collapseStringsAfterLength={100}
                           style={{
                             fontSize: "12px",
-                            fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
                             backgroundColor: "hsl(var(--background))",
                             padding: "0",
                             borderRadius: "0",

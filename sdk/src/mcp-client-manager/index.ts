@@ -27,7 +27,13 @@ import { z } from "zod";
 // Task schemas for MCP Tasks experimental feature (spec 2025-11-25)
 const TaskSchema = z.object({
   taskId: z.string(),
-  status: z.enum(["working", "input_required", "completed", "failed", "cancelled"]),
+  status: z.enum([
+    "working",
+    "input_required",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
   statusMessage: z.string().optional(),
   createdAt: z.string(),
   lastUpdatedAt: z.string(),
@@ -45,15 +51,23 @@ const ListTasksResultSchema = z.object({
 // Per spec, notification includes the full Task object
 const TaskStatusNotificationSchema = z.object({
   method: z.literal("notifications/tasks/status"),
-  params: z.object({
-    taskId: z.string(),
-    status: z.enum(["working", "input_required", "completed", "failed", "cancelled"]),
-    statusMessage: z.string().optional(),
-    createdAt: z.string(),
-    lastUpdatedAt: z.string(),
-    ttl: z.number().nullable(),
-    pollInterval: z.number().optional(),
-  }).optional(),
+  params: z
+    .object({
+      taskId: z.string(),
+      status: z.enum([
+        "working",
+        "input_required",
+        "completed",
+        "failed",
+        "cancelled",
+      ]),
+      statusMessage: z.string().optional(),
+      createdAt: z.string(),
+      lastUpdatedAt: z.string(),
+      ttl: z.number().nullable(),
+      pollInterval: z.number().optional(),
+    })
+    .optional(),
 });
 
 // Generic result schema for tasks/result - accepts any valid result
@@ -613,7 +627,8 @@ export class MCPClientManager {
     if (useTaskStream) {
       // Use task-augmented tool call per MCP Tasks spec (2025-11-25)
       // The task field MUST be in params, not in request options
-      const taskValue = taskOptions?.ttl !== undefined ? { ttl: taskOptions.ttl } : {};
+      const taskValue =
+        taskOptions?.ttl !== undefined ? { ttl: taskOptions.ttl } : {};
 
       // Per MCP Tasks spec: task field goes in params alongside name/arguments
       // {
@@ -636,18 +651,13 @@ export class MCPClientManager {
       return {
         task: result.task,
         _meta: {
-          "io.modelcontextprotocol/model-immediate-response":
-            `Task ${result.task.taskId} created with status: ${result.task.status}`,
+          "io.modelcontextprotocol/model-immediate-response": `Task ${result.task.taskId} created with status: ${result.task.status}`,
         },
       };
     }
 
     // Regular tool call (no task augmentation)
-    return client.callTool(
-      callParams,
-      CallToolResultSchema,
-      mergedOptions,
-    );
+    return client.callTool(callParams, CallToolResultSchema, mergedOptions);
   }
 
   async setLoggingLevel(serverId: string, level: LoggingLevel = "debug") {
@@ -804,7 +814,11 @@ export class MCPClientManager {
   }
 
   // Tasks methods - MCP Tasks experimental feature (spec 2025-11-25)
-  async listTasks(serverId: string, cursor?: string, options?: ClientRequestOptions) {
+  async listTasks(
+    serverId: string,
+    cursor?: string,
+    options?: ClientRequestOptions,
+  ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
     try {
@@ -825,7 +839,11 @@ export class MCPClientManager {
     }
   }
 
-  async getTask(serverId: string, taskId: string, options?: ClientRequestOptions) {
+  async getTask(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions,
+  ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
     return client.request(
@@ -838,7 +856,11 @@ export class MCPClientManager {
     );
   }
 
-  async getTaskResult(serverId: string, taskId: string, options?: ClientRequestOptions) {
+  async getTaskResult(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions,
+  ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
     // Per MCP Tasks spec (2025-11-25), tasks/result returns exactly what the
@@ -855,7 +877,11 @@ export class MCPClientManager {
     );
   }
 
-  async cancelTask(serverId: string, taskId: string, options?: ClientRequestOptions) {
+  async cancelTask(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions,
+  ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
     return client.request(
@@ -957,7 +983,7 @@ export class MCPClientManager {
     // Also check experimental.tasks for servers using experimental namespace
     return Boolean(
       caps?.tasks?.requests?.tools?.call ||
-      caps?.experimental?.tasks?.requests?.tools?.call
+      caps?.experimental?.tasks?.requests?.tools?.call,
     );
   }
 
@@ -1191,23 +1217,29 @@ export class MCPClientManager {
   // Set up handler for notifications/progress to capture progress from background tasks
   // Per MCP Tasks spec: "The progressToken provided in the initial request remains valid
   // throughout the task lifetime" - this captures async progress notifications
-  private applyProgressNotificationHandler(serverId: string, client: Client): void {
+  private applyProgressNotificationHandler(
+    serverId: string,
+    client: Client,
+  ): void {
     if (!this.defaultProgressHandler) {
       return;
     }
 
-    client.setNotificationHandler(ProgressNotificationSchema, (notification) => {
-      const params = notification.params;
-      if (this.defaultProgressHandler) {
-        this.defaultProgressHandler({
-          serverId,
-          progressToken: params.progressToken,
-          progress: params.progress,
-          total: params.total,
-          message: params.message,
-        });
-      }
-    });
+    client.setNotificationHandler(
+      ProgressNotificationSchema,
+      (notification) => {
+        const params = notification.params;
+        if (this.defaultProgressHandler) {
+          this.defaultProgressHandler({
+            serverId,
+            progressToken: params.progressToken,
+            progress: params.progress,
+            total: params.total,
+            message: params.message,
+          });
+        }
+      },
+    );
   }
 
   private applyElicitationHandler(serverId: string, client: Client): void {

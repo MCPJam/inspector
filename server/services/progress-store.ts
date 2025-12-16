@@ -23,7 +23,10 @@ const CLEANUP_INTERVAL_MS = 60 * 1000;
 class ProgressStore {
   private readonly emitter = new EventEmitter();
   // Map: serverId -> Map<progressToken, ProgressEvent>
-  private readonly store = new Map<string, Map<string | number, ProgressEvent>>();
+  private readonly store = new Map<
+    string,
+    Map<string | number, ProgressEvent>
+  >();
   private cleanupInterval: NodeJS.Timeout | null = null;
 
   constructor() {
@@ -88,7 +91,10 @@ class ProgressStore {
   /**
    * Get the latest progress for a specific progressToken
    */
-  getProgress(serverId: string, progressToken: string | number): ProgressEvent | undefined {
+  getProgress(
+    serverId: string,
+    progressToken: string | number,
+  ): ProgressEvent | undefined {
     return this.store.get(serverId)?.get(progressToken);
   }
 
@@ -108,7 +114,10 @@ class ProgressStore {
     const all = this.getAllProgress(serverId);
     if (all.length === 0) return undefined;
     // Return the most recent by timestamp
-    return all.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+    return all.sort(
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    )[0];
   }
 
   /**
@@ -130,7 +139,7 @@ class ProgressStore {
    */
   subscribe(
     serverIds: string[],
-    listener: (event: ProgressEvent) => void
+    listener: (event: ProgressEvent) => void,
   ): () => void {
     const filter = new Set(serverIds);
     const handler = (event: ProgressEvent) => {

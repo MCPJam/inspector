@@ -10,7 +10,9 @@ import {
  * the server sends elicitations with relatedTaskId in the metadata.
  */
 export function useTaskElicitation(enabled: boolean = true) {
-  const [elicitation, setElicitation] = useState<TaskElicitationRequest | null>(null);
+  const [elicitation, setElicitation] = useState<TaskElicitationRequest | null>(
+    null,
+  );
   const [isResponding, setIsResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -43,7 +45,7 @@ export function useTaskElicitation(enabled: boolean = true) {
           setElicitation((current) =>
             current && (!data.requestId || data.requestId === current.requestId)
               ? null
-              : current
+              : current,
           );
         }
       } catch {
@@ -75,7 +77,8 @@ export function useTaskElicitation(enabled: boolean = true) {
         await respondToTaskElicitation(elicitation.requestId, action, content);
         setElicitation(null);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to respond";
+        const message =
+          err instanceof Error ? err.message : "Failed to respond";
         setError(message);
         throw err;
       } finally {
