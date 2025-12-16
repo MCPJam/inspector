@@ -285,12 +285,14 @@ export function ChatInput({
                     <ContextContentHeader />
                   )}
                   <ContextContentBody>
-                    {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
-                      <>
-                        <ContextInputUsage />
-                        <ContextOutputUsage />
-                      </>
-                    )}
+                    {hasMessages &&
+                      tokenUsage &&
+                      tokenUsage.totalTokens > 0 && (
+                        <>
+                          <ContextInputUsage />
+                          <ContextOutputUsage />
+                        </>
+                      )}
                     <ContextSystemPromptUsage />
                     <ContextMCPServerUsage />
                   </ContextContentBody>
