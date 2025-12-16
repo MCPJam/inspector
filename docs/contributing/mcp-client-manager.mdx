@@ -464,6 +464,64 @@ Options:
   Get a prompt with optional arguments.
 </ResponseField>
 
+### Tasks
+
+<ResponseField
+  name="listTasks"
+  type="(serverId: string, cursor?, options?) => Promise<ListTasksResult>"
+>
+  List all tasks for a server. Returns empty list if server doesn't support `tasks/list`.
+</ResponseField>
+
+<ResponseField
+  name="getTask"
+  type="(serverId: string, taskId: string, options?) => Promise<Task>"
+>
+  Get current status of a specific task.
+</ResponseField>
+
+<ResponseField
+  name="getTaskResult"
+  type="(serverId: string, taskId: string, options?) => Promise<unknown>"
+>
+  Get the result of a completed task. Returns the underlying operation result (e.g., CallToolResult for tool calls).
+</ResponseField>
+
+<ResponseField
+  name="cancelTask"
+  type="(serverId: string, taskId: string, options?) => Promise<Task>"
+>
+  Cancel a running task. Only available if server supports `tasks/cancel` capability.
+</ResponseField>
+
+<ResponseField
+  name="getServerCapabilities"
+  type="(serverId: string) => ServerCapabilities | undefined"
+>
+  Get server capabilities to check task support.
+</ResponseField>
+
+<ResponseField
+  name="supportsTasksForToolCalls"
+  type="(serverId: string) => boolean"
+>
+  Check if server supports task-augmented tool calls (`tasks.requests.tools.call` capability).
+</ResponseField>
+
+<ResponseField
+  name="supportsTasksList"
+  type="(serverId: string) => boolean"
+>
+  Check if server supports `tasks/list` operation.
+</ResponseField>
+
+<ResponseField
+  name="supportsTasksCancel"
+  type="(serverId: string) => boolean"
+>
+  Check if server supports `tasks/cancel` operation.
+</ResponseField>
+
 ### Notifications
 
 <ResponseField
