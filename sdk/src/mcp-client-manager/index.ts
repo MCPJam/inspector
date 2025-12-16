@@ -41,15 +41,23 @@ const ListTasksResultSchema = z.object({
 
 // Task status notification schema (MCP Tasks spec 2025-11-25)
 // notifications/tasks/status - sent by receiver when task status changes
+// Per spec, notification includes the full Task object
 const TaskStatusNotificationSchema = z.object({
   method: z.literal("notifications/tasks/status"),
   params: z.object({
     taskId: z.string(),
     status: z.enum(["working", "input_required", "completed", "failed", "cancelled"]),
     statusMessage: z.string().optional(),
-    lastUpdatedAt: z.string().optional(),
+    createdAt: z.string(),
+    lastUpdatedAt: z.string(),
+    ttl: z.number().nullable(),
+    pollInterval: z.number().optional(),
   }).optional(),
 });
+
+// Generic result schema for tasks/result - accepts any valid result
+// Per MCP spec: "tasks/result returns exactly what the underlying request would have returned"
+const TaskResultSchema = z.unknown();
 
 import type {
   ElicitRequest,
@@ -167,6 +175,8 @@ export class MCPClientManager {
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
   private defaultLogJsonRpc: boolean = false;
+  // Counter for generating unique progress tokens (avoids collision from Date.now())
+  private progressTokenCounter: number = 0;
 
   private defaultRpcLogger?: (event: {
     direction: "send" | "receive";
@@ -571,14 +581,15 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
+      // Generate a unique token for this request (counter ensures uniqueness even within same ms)
+      const progressToken = `${serverId}-request-${Date.now()}-${++this.progressTokenCounter}`;
       mergedOptions.onprogress = (progress) => {
         // Call the progress handler if registered
         // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
-        // Generate a unique token for in-flight request progress
         if (this.defaultProgressHandler) {
           this.defaultProgressHandler({
             serverId,
-            progressToken: `${serverId}-request-${Date.now()}`,
+            progressToken,
             progress: progress.progress,
             total: progress.total,
             message: progress.message,
@@ -621,8 +632,9 @@ export class MCPClientManager {
       );
 
       // Check if result contains task info (CreateTaskResult format)
+      // Per MCP spec, CreateTaskResult contains task object with taskId and status
       const anyResult = result as any;
-      if (anyResult?.task?.taskId) {
+      if (anyResult?.task?.taskId && anyResult?.task?.status) {
         return {
           task: anyResult.task,
           _meta: {
@@ -688,14 +700,15 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
+      // Generate a unique token for this request (counter ensures uniqueness even within same ms)
+      const progressToken = `${serverId}-request-${Date.now()}-${++this.progressTokenCounter}`;
       mergedOptions.onprogress = (progress) => {
         // Call the progress handler if registered
         // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
-        // Generate a unique token for in-flight request progress
         if (this.defaultProgressHandler) {
           this.defaultProgressHandler({
             serverId,
-            progressToken: `${serverId}-request-${Date.now()}`,
+            progressToken,
             progress: progress.progress,
             total: progress.total,
             message: progress.message,
@@ -777,14 +790,15 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
+      // Generate a unique token for this request (counter ensures uniqueness even within same ms)
+      const progressToken = `${serverId}-request-${Date.now()}-${++this.progressTokenCounter}`;
       mergedOptions.onprogress = (progress) => {
         // Call the progress handler if registered
         // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
-        // Generate a unique token for in-flight request progress
         if (this.defaultProgressHandler) {
           this.defaultProgressHandler({
             serverId,
-            progressToken: `${serverId}-request-${Date.now()}`,
+            progressToken,
             progress: progress.progress,
             total: progress.total,
             message: progress.message,
@@ -833,15 +847,16 @@ export class MCPClientManager {
   async getTaskResult(serverId: string, taskId: string, options?: ClientRequestOptions) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
-    // Task result for tool calls returns CallToolResult
     // Per MCP Tasks spec (2025-11-25), tasks/result returns exactly what the
-    // underlying request would have returned
+    // underlying request would have returned (e.g., CallToolResult for tool calls,
+    // SamplingCreateMessageResult for sampling, etc.)
+    // Use generic schema to accept any valid result type
     return client.request(
       {
         method: "tasks/result",
         params: { taskId },
       },
-      CallToolResultSchema,
+      TaskResultSchema,
       this.withTimeout(serverId, options),
     );
   }
