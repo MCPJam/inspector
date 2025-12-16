@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { X, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
@@ -22,6 +23,8 @@ import { toast } from "sonner";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import type { CheckoutSession } from "@/shared/acp-types.ts";
+import { CheckoutDialog } from "./checkout-dialog";
 
 type ToolState =
   | "input-streaming"
@@ -506,6 +509,13 @@ export function ChatGPTAppRenderer({
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, any>>({});
   const [modalTitle, setModalTitle] = useState<string>("");
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutSession, setCheckoutSession] =
+    useState<CheckoutSession | null>(null);
+  const [checkoutCallId, setCheckoutCallId] = useState<number | null>(null);
+  const [checkoutTarget, setCheckoutTarget] = useState<"inline" | "modal">(
+    "inline",
+  );
   const previousWidgetStateRef = useRef<string | null>(null);
   const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
@@ -735,6 +745,24 @@ export function ChatGPTAppRenderer({
     [addUiLog, resolvedToolCallId, serverId, modalSandboxReady],
   );
 
+  const respondToCheckout = useCallback(
+    (payload: { result?: unknown; error?: string }) => {
+      if (checkoutCallId == null) return;
+      postToWidget(
+        {
+          type: "openai:requestCheckout:response",
+          callId: checkoutCallId,
+          ...payload,
+        },
+        checkoutTarget === "modal",
+      );
+      setCheckoutCallId(null);
+      setCheckoutSession(null);
+      setCheckoutOpen(false);
+    },
+    [checkoutCallId, checkoutTarget, postToWidget],
+  );
+
   // Host-backed navigation: send navigation command to widget
   const navigateWidget = useCallback(
     (direction: "back" | "forward") => {
@@ -912,6 +940,27 @@ export function ChatGPTAppRenderer({
           }
           break;
         }
+        case "openai:requestCheckout": {
+          if (typeof event.data.callId !== "number") break;
+          const session =
+            event.data.session && typeof event.data.session === "object"
+              ? (event.data.session as CheckoutSession)
+              : null;
+          if (!session) break;
+          if (checkoutCallId != null) {
+            postToWidget({
+              type: "openai:requestCheckout:response",
+              callId: event.data.callId,
+              error: "Another checkout is already in progress",
+            });
+            break;
+          }
+          setCheckoutTarget("inline");
+          setCheckoutCallId(event.data.callId);
+          setCheckoutSession(session);
+          setCheckoutOpen(true);
+          break;
+        }
         case "openai:requestModal": {
           setModalTitle(event.data.title || "Modal");
           setModalParams(event.data.params || {});
@@ -944,6 +993,7 @@ export function ChatGPTAppRenderer({
       setWidgetState,
       applyMeasuredHeight,
       addCspViolation,
+      checkoutCallId,
     ],
   );
 
@@ -979,6 +1029,30 @@ export function ChatGPTAppRenderer({
           state: newState,
         });
       }
+
+      if (event.data?.type === "openai:requestCheckout") {
+        if (typeof event.data.callId !== "number") return;
+        const session =
+          event.data.session && typeof event.data.session === "object"
+            ? (event.data.session as CheckoutSession)
+            : null;
+        if (!session) return;
+        if (checkoutCallId != null) {
+          postToWidget(
+            {
+              type: "openai:requestCheckout:response",
+              callId: event.data.callId,
+              error: "Another checkout is already in progress",
+            },
+            true,
+          );
+          return;
+        }
+        setCheckoutTarget("modal");
+        setCheckoutCallId(event.data.callId);
+        setCheckoutSession(session);
+        setCheckoutOpen(true);
+      }
     },
     [
       addUiLog,
@@ -986,6 +1060,8 @@ export function ChatGPTAppRenderer({
       serverId,
       setWidgetState,
       onWidgetStateChange,
+      checkoutCallId,
+      postToWidget,
     ],
   );
 
@@ -1302,6 +1378,14 @@ export function ChatGPTAppRenderer({
           </div>
         </DialogContent>
       </Dialog>
+
+      <CheckoutDialog
+        open={checkoutOpen}
+        onOpenChange={setCheckoutOpen}
+        checkoutSession={checkoutSession}
+        checkoutCallId={checkoutCallId}
+        onRespond={respondToCheckout}
+      />
     </div>
   );
 }
