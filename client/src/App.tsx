@@ -5,6 +5,7 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { ResourceTemplatesTab } from "./components/ResourceTemplatesTab";
 import { PromptsTab } from "./components/PromptsTab";
+import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
 import { SettingsTab } from "./components/SettingsTab";
@@ -205,6 +206,7 @@ export default function App() {
     activeTab === "resources" ||
     activeTab === "resource-templates" ||
     activeTab === "prompts" ||
+    activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
@@ -285,6 +287,14 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
+
+          <div className={activeTab === "tasks" ? "" : "hidden"}>
+            <TasksTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+              isActive={activeTab === "tasks"}
+            />
+          </div>
 
           {activeTab === "auth" && (
             <AuthTab

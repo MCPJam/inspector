@@ -93,7 +93,7 @@
     "@hono/node-server": "^1.13.7",
     "@hookform/resolvers": "^3.10.0",
     "@mcp-ui/client": "^5.9.0",
-    "@modelcontextprotocol/sdk": "^1.24.0",
+    "@modelcontextprotocol/sdk": "^1.25.0",
     "@ngrok/ngrok": "^1.6.0",
     "@openrouter/ai-sdk-provider": "^1.2.0",
     "@sentry/electron": "^5.10.0",

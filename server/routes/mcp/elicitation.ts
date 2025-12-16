@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { ElicitResult } from "@modelcontextprotocol/sdk/types.js";
+import type { MCPClientManager } from "@/sdk";
 
 const elicitation = new Hono();
 
@@ -22,28 +23,53 @@ function broadcastElicitation(event: unknown) {
   }
 }
 
-let isCallbackRegistered = false;
+// Track which manager instances have had their callback registered
+const registeredManagers = new WeakSet<MCPClientManager>();
 
-// Ensure manager callback gets registered exactly once on first request
-elicitation.use("*", async (c, next) => {
-  if (!isCallbackRegistered) {
-    const manager = c.mcpClientManager;
-    manager.setElicitationCallback(({ requestId, message, schema }) => {
+/**
+ * Initialize the global elicitation callback on the MCPClientManager.
+ * This should be called immediately after creating the manager to ensure
+ * elicitations work for task-augmented requests (MCP Tasks spec 2025-11-25).
+ *
+ * Without this, tasks/result calls might fail with "Method not found" if
+ * no one has hit the elicitation routes yet.
+ */
+export function initElicitationCallback(manager: MCPClientManager): void {
+  // Use WeakSet to track registration per manager instance
+  // This handles hot reload scenarios where a new manager is created
+  if (registeredManagers.has(manager)) return;
+
+  // Per MCP Tasks spec (2025-11-25), elicitations related to a task include relatedTaskId
+  manager.setElicitationCallback(
+    ({ requestId, message, schema, relatedTaskId }) => {
       return new Promise<ElicitResult>((resolve, reject) => {
         try {
           manager.getPendingElicitations().set(requestId, { resolve, reject });
-        } catch {}
+        } catch (err) {
+          logger.error("[elicitation] Failed to store pending elicitation", {
+            error: err,
+          });
+        }
         broadcastElicitation({
           type: "elicitation_request",
           requestId,
           message,
           schema,
           timestamp: new Date().toISOString(),
+          // Include related task ID if this elicitation is associated with a task
+          relatedTaskId,
         });
       });
-    });
-    isCallbackRegistered = true;
-  }
+    },
+  );
+  registeredManagers.add(manager);
+}
+
+// Legacy middleware - kept for backwards compatibility, but initElicitationCallback
+// should be called during app initialization for tasks to work properly
+elicitation.use("*", async (c, next) => {
+  // Ensure callback is registered (handles edge cases where middleware is hit first)
+  initElicitationCallback(c.mcpClientManager);
   await next();
 });
 

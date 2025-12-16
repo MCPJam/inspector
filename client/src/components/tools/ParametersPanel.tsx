@@ -1,6 +1,6 @@
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
-import { RefreshCw, Play, Save as SaveIcon } from "lucide-react";
+import { RefreshCw, Play, Save as SaveIcon, Clock } from "lucide-react";
 import { TruncatedText } from "../ui/truncated-text";
 import { ResizablePanel } from "../ui/resizable";
 import { Input } from "../ui/input";
@@ -19,6 +19,15 @@ interface ParametersPanelProps {
   onSave: () => void;
   onFieldChange: (name: string, value: any) => void;
   onToggleField?: (name: string, isSet: boolean) => void;
+  executeAsTask?: boolean;
+  onExecuteAsTaskChange?: (value: boolean) => void;
+  /** If true, tool requires task execution (MCP Tasks spec) */
+  taskRequired?: boolean;
+  /** TTL for task execution in milliseconds (MCP Tasks spec 2025-11-25) */
+  taskTtl?: number;
+  onTaskTtlChange?: (value: number) => void;
+  /** Whether server declares tasks.requests.tools.call capability */
+  serverSupportsTaskToolCalls?: boolean;
 }
 
 export function ParametersPanel({
@@ -31,6 +40,12 @@ export function ParametersPanel({
   onSave,
   onFieldChange,
   onToggleField,
+  executeAsTask,
+  onExecuteAsTaskChange,
+  taskRequired,
+  taskTtl,
+  onTaskTtlChange,
+  serverSupportsTaskToolCalls,
 }: ParametersPanelProps) {
   const posthog = usePostHog();
 
@@ -61,13 +76,87 @@ export function ParametersPanel({
               </code>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {/* Task execution option - show if server and tool support it */}
+            {taskRequired ? (
+              // Tool requires task execution (MCP Tasks spec)
+              <div className="flex items-center gap-2">
+                <span
+                  className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400"
+                  title="This tool requires background task execution"
+                >
+                  <Clock className="h-3 w-3" />
+                  <span>Task required</span>
+                </span>
+                {/* TTL input for required tasks */}
+                {onTaskTtlChange && (
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      min={0}
+                      defaultValue={taskTtl ?? 0}
+                      key={`ttl-req-${taskTtl}`}
+                      onBlur={(e) =>
+                        onTaskTtlChange(parseInt(e.target.value) || 0)
+                      }
+                      className="w-20 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      title="TTL in milliseconds (0 = no expiration)"
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      ms TTL
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : onExecuteAsTaskChange ? (
+              <div className="flex items-center gap-2">
+                <label
+                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                  title={
+                    serverSupportsTaskToolCalls
+                      ? "Execute as a background task (MCP Tasks)"
+                      : "Execute as a background task (server may not support tasks)"
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={executeAsTask ?? false}
+                    onChange={(e) => onExecuteAsTaskChange(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
+                  />
+                  <Clock
+                    className={`h-3 w-3 ${serverSupportsTaskToolCalls === false ? "text-amber-500" : ""}`}
+                  />
+                  <span>Task</span>
+                </label>
+                {/* TTL input - show when task execution is enabled */}
+                {executeAsTask && onTaskTtlChange && (
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      min={0}
+                      defaultValue={taskTtl ?? 0}
+                      key={`ttl-opt-${taskTtl}`}
+                      onBlur={(e) =>
+                        onTaskTtlChange(parseInt(e.target.value) || 0)
+                      }
+                      className="w-20 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      title="TTL in milliseconds (0 = no expiration)"
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      ms TTL
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : null}
             <Button
               onClick={() => {
                 posthog.capture("execute_tool", {
                   location: "parameters_panel",
                   platform: detectPlatform(),
                   environment: detectEnvironment(),
+                  as_task: executeAsTask ?? false,
                 });
                 onExecute();
               }}

@@ -14,11 +14,66 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolResultSchema,
+  CreateTaskResultSchema,
   ElicitRequestSchema,
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
   PromptListChangedNotificationSchema,
+  ProgressNotificationSchema,
+  type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+
+// Task schemas for MCP Tasks experimental feature (spec 2025-11-25)
+const TaskSchema = z.object({
+  taskId: z.string(),
+  status: z.enum([
+    "working",
+    "input_required",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
+  statusMessage: z.string().optional(),
+  createdAt: z.string(),
+  lastUpdatedAt: z.string(),
+  ttl: z.number().nullable(),
+  pollInterval: z.number().optional(),
+});
+
+const ListTasksResultSchema = z.object({
+  tasks: z.array(TaskSchema),
+  nextCursor: z.string().optional(),
+});
+
+// Task status notification schema (MCP Tasks spec 2025-11-25)
+// notifications/tasks/status - sent by receiver when task status changes
+// Per spec, notification includes the full Task object
+const TaskStatusNotificationSchema = z.object({
+  method: z.literal("notifications/tasks/status"),
+  params: z
+    .object({
+      taskId: z.string(),
+      status: z.enum([
+        "working",
+        "input_required",
+        "completed",
+        "failed",
+        "cancelled",
+      ]),
+      statusMessage: z.string().optional(),
+      createdAt: z.string(),
+      lastUpdatedAt: z.string(),
+      ttl: z.number().nullable(),
+      pollInterval: z.number().optional(),
+    })
+    .optional(),
+});
+
+// Generic result schema for tasks/result - accepts any valid result
+// Per MCP spec: "tasks/result returns exactly what the underlying request would have returned"
+const TaskResultSchema = z.unknown();
+
 import type {
   ElicitRequest,
   ElicitResult,
@@ -115,6 +170,9 @@ type ServerSummary = {
 };
 
 export type ExecuteToolArguments = Record<string, unknown>;
+export type TaskOptions = {
+  ttl?: number;
+};
 export type ElicitationHandler = (
   params: ElicitRequest["params"],
 ) => Promise<ElicitResult> | ElicitResult;
@@ -132,16 +190,27 @@ export class MCPClientManager {
   private readonly defaultCapabilities: ClientCapabilityOptions;
   private readonly defaultTimeout: number;
   private defaultLogJsonRpc: boolean = false;
+  // Counter for generating unique progress tokens (avoids collision from Date.now())
+  private progressTokenCounter: number = 0;
 
   private defaultRpcLogger?: (event: {
     direction: "send" | "receive";
     message: unknown;
     serverId: string;
   }) => void;
+  private defaultProgressHandler?: (event: {
+    serverId: string;
+    progressToken: string | number;
+    progress: number;
+    total?: number;
+    message?: string;
+  }) => void;
   private elicitationCallback?: (request: {
     requestId: string;
     message: string;
     schema: unknown;
+    /** Task ID if this elicitation is related to a task (MCP Tasks spec 2025-11-25) */
+    relatedTaskId?: string;
   }) => Promise<ElicitResult> | ElicitResult;
   private readonly pendingElicitations = new Map<
     string,
@@ -164,6 +233,13 @@ export class MCPClientManager {
         message: unknown;
         serverId: string;
       }) => void;
+      progressHandler?: (event: {
+        serverId: string;
+        progressToken: string | number;
+        progress: number;
+        total?: number;
+        message?: string;
+      }) => void;
     } = {},
   ) {
     this.defaultClientVersion = options.defaultClientVersion ?? "1.0.0";
@@ -173,6 +249,7 @@ export class MCPClientManager {
       options.defaultTimeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
+    this.defaultProgressHandler = options.progressHandler;
 
     for (const [id, config] of Object.entries(servers)) {
       void this.connectToServer(id, config);
@@ -288,6 +365,7 @@ export class MCPClientManager {
       );
 
       this.applyNotificationHandlers(serverId, client);
+      this.applyProgressNotificationHandler(serverId, client);
       this.applyElicitationHandler(serverId, client);
 
       if (config.onError) {
@@ -510,6 +588,7 @@ export class MCPClientManager {
     toolName: string,
     args: ExecuteToolArguments = {},
     options?: CallToolOptions,
+    taskOptions?: TaskOptions,
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientById(serverId);
@@ -517,21 +596,68 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
-      mergedOptions.onprogress = () => {
-        // register an empty on progress so that the client will send
-        // progress notifications...the notifications will be sent through the
-        // rpc logger
+      // Generate a unique token for this request (counter ensures uniqueness even within same ms)
+      const progressToken = `${serverId}-request-${Date.now()}-${++this.progressTokenCounter}`;
+      mergedOptions.onprogress = (progress) => {
+        // Call the progress handler if registered
+        // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
+        if (this.defaultProgressHandler) {
+          this.defaultProgressHandler({
+            serverId,
+            progressToken,
+            progress: progress.progress,
+            total: progress.total,
+            message: progress.message,
+          });
+        }
       };
     }
 
-    return client.callTool(
-      {
-        name: toolName,
-        arguments: args,
-      },
-      CallToolResultSchema,
-      mergedOptions,
-    );
+    // Build tool call params
+    const callParams: { name: string; arguments?: Record<string, unknown> } = {
+      name: toolName,
+      arguments: args,
+    };
+
+    // Check if task mode is requested
+    // Per MCP SDK: tools with execution.taskSupport="required" will throw in callTool()
+    // The UI should detect this and force taskOptions to be provided
+    const useTaskStream = taskOptions !== undefined;
+
+    if (useTaskStream) {
+      // Use task-augmented tool call per MCP Tasks spec (2025-11-25)
+      // The task field MUST be in params, not in request options
+      const taskValue =
+        taskOptions?.ttl !== undefined ? { ttl: taskOptions.ttl } : {};
+
+      // Per MCP Tasks spec: task field goes in params alongside name/arguments
+      // {
+      //   "method": "tools/call",
+      //   "params": { "name": "...", "arguments": {...}, "task": { "ttl": 60000 } }
+      // }
+      const result = await client.request(
+        {
+          method: "tools/call",
+          params: {
+            ...callParams,
+            task: taskValue,
+          },
+        },
+        CreateTaskResultSchema,
+        mergedOptions,
+      );
+
+      // Per MCP Tasks spec, CreateTaskResult contains task object with taskId and status
+      return {
+        task: result.task,
+        _meta: {
+          "io.modelcontextprotocol/model-immediate-response": `Task ${result.task.taskId} created with status: ${result.task.status}`,
+        },
+      };
+    }
+
+    // Regular tool call (no task augmentation)
+    return client.callTool(callParams, CallToolResultSchema, mergedOptions);
   }
 
   async setLoggingLevel(serverId: string, level: LoggingLevel = "debug") {
@@ -578,10 +704,20 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
-      mergedOptions.onprogress = () => {
-        // register an empty on progress so that the client will send
-        // progress notifications...the notifications will be sent through the
-        // rpc logger
+      // Generate a unique token for this request (counter ensures uniqueness even within same ms)
+      const progressToken = `${serverId}-request-${Date.now()}-${++this.progressTokenCounter}`;
+      mergedOptions.onprogress = (progress) => {
+        // Call the progress handler if registered
+        // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
+        if (this.defaultProgressHandler) {
+          this.defaultProgressHandler({
+            serverId,
+            progressToken,
+            progress: progress.progress,
+            total: progress.total,
+            message: progress.message,
+          });
+        }
       };
     }
     return client.readResource(params, mergedOptions);
@@ -658,13 +794,104 @@ export class MCPClientManager {
     // Merge global progress handler with any provided options
     const mergedOptions = this.withTimeout(serverId, options);
     if (!mergedOptions.onprogress) {
-      mergedOptions.onprogress = () => {
-        // register an empty on progress so that the client will send
-        // progress notifications...the notifications will be sent through the
-        // rpc logger
+      // Generate a unique token for this request (counter ensures uniqueness even within same ms)
+      const progressToken = `${serverId}-request-${Date.now()}-${++this.progressTokenCounter}`;
+      mergedOptions.onprogress = (progress) => {
+        // Call the progress handler if registered
+        // Note: onprogress callbacks don't include progressToken (SDK manages it internally)
+        if (this.defaultProgressHandler) {
+          this.defaultProgressHandler({
+            serverId,
+            progressToken,
+            progress: progress.progress,
+            total: progress.total,
+            message: progress.message,
+          });
+        }
       };
     }
     return client.getPrompt(params, mergedOptions);
+  }
+
+  // Tasks methods - MCP Tasks experimental feature (spec 2025-11-25)
+  async listTasks(
+    serverId: string,
+    cursor?: string,
+    options?: ClientRequestOptions,
+  ) {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    try {
+      const result = await client.request(
+        {
+          method: "tasks/list",
+          params: cursor ? { cursor } : {},
+        },
+        ListTasksResultSchema,
+        this.withTimeout(serverId, options),
+      );
+      return result;
+    } catch (error) {
+      if (this.isMethodUnavailableError(error, "tasks/list")) {
+        return { tasks: [] };
+      }
+      throw error;
+    }
+  }
+
+  async getTask(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions,
+  ) {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    return client.request(
+      {
+        method: "tasks/get",
+        params: { taskId },
+      },
+      TaskSchema,
+      this.withTimeout(serverId, options),
+    );
+  }
+
+  async getTaskResult(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions,
+  ) {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    // Per MCP Tasks spec (2025-11-25), tasks/result returns exactly what the
+    // underlying request would have returned (e.g., CallToolResult for tool calls,
+    // SamplingCreateMessageResult for sampling, etc.)
+    // Use generic schema to accept any valid result type
+    return client.request(
+      {
+        method: "tasks/result",
+        params: { taskId },
+      },
+      TaskResultSchema,
+      this.withTimeout(serverId, options),
+    );
+  }
+
+  async cancelTask(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions,
+  ) {
+    await this.ensureConnected(serverId);
+    const client = this.getClientById(serverId);
+    return client.request(
+      {
+        method: "tasks/cancel",
+        params: { taskId },
+      },
+      TaskSchema,
+      this.withTimeout(serverId, options),
+    );
   }
 
   getSessionIdByServer(serverId: string): string | undefined {
@@ -725,6 +952,55 @@ export class MCPClientManager {
     );
   }
 
+  // Task status notification handler (MCP Tasks spec 2025-11-25)
+  // Registers a handler for notifications/tasks/status notifications
+  // Note: Per spec, requestors MUST NOT rely on receiving these notifications
+  onTaskStatusChanged(serverId: string, handler: NotificationHandler): void {
+    this.addNotificationHandler(
+      serverId,
+      TaskStatusNotificationSchema,
+      handler,
+    );
+  }
+
+  // Get server capabilities (MCP Tasks spec 2025-11-25)
+  // Used to check if server supports task-augmented requests
+  getServerCapabilities(serverId: string): ServerCapabilities | undefined {
+    const client = this.clientStates.get(serverId)?.client;
+    if (!client) {
+      return undefined;
+    }
+    return client.getServerCapabilities();
+  }
+
+  // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
+  // Returns true if server declares tasks.requests.tools.call capability
+  // Checks both top-level tasks and experimental.tasks (tasks are still experimental)
+  supportsTasksForToolCalls(serverId: string): boolean {
+    const capabilities = this.getServerCapabilities(serverId);
+    const caps = capabilities as any;
+    // Per spec: capabilities.tasks.requests.tools.call indicates support
+    // Also check experimental.tasks for servers using experimental namespace
+    return Boolean(
+      caps?.tasks?.requests?.tools?.call ||
+      caps?.experimental?.tasks?.requests?.tools?.call,
+    );
+  }
+
+  // Check if server supports tasks/list operation (MCP Tasks spec 2025-11-25)
+  supportsTasksList(serverId: string): boolean {
+    const capabilities = this.getServerCapabilities(serverId);
+    const caps = capabilities as any;
+    return Boolean(caps?.tasks?.list || caps?.experimental?.tasks?.list);
+  }
+
+  // Check if server supports tasks/cancel operation (MCP Tasks spec 2025-11-25)
+  supportsTasksCancel(serverId: string): boolean {
+    const capabilities = this.getServerCapabilities(serverId);
+    const caps = capabilities as any;
+    return Boolean(caps?.tasks?.cancel || caps?.experimental?.tasks?.cancel);
+  }
+
   getClient(serverId: string): Client | undefined {
     return this.clientStates.get(serverId)?.client;
   }
@@ -746,16 +1022,26 @@ export class MCPClientManager {
     this.elicitationHandlers.delete(serverId);
     const client = this.clientStates.get(serverId)?.client;
     if (client) {
-      client.removeRequestHandler("elicitation/create");
+      // Re-apply global callback if one exists, otherwise remove handler entirely
+      // This ensures task elicitations continue to work after ToolsTab executions complete
+      if (this.elicitationCallback) {
+        this.applyElicitationHandler(serverId, client);
+      } else {
+        client.removeRequestHandler("elicitation/create");
+      }
     }
   }
 
   // Global elicitation callback API (no serverId required)
+  // Per MCP Tasks spec (2025-11-25), elicitations related to a task include
+  // io.modelcontextprotocol/related-task in _meta
   setElicitationCallback(
     callback: (request: {
       requestId: string;
       message: string;
       schema: unknown;
+      /** Task ID if this elicitation is related to a task (MCP Tasks spec 2025-11-25) */
+      relatedTaskId?: string;
     }) => Promise<ElicitResult> | ElicitResult,
   ): void {
     this.elicitationCallback = callback;
@@ -928,6 +1214,34 @@ export class MCPClientManager {
     };
   }
 
+  // Set up handler for notifications/progress to capture progress from background tasks
+  // Per MCP Tasks spec: "The progressToken provided in the initial request remains valid
+  // throughout the task lifetime" - this captures async progress notifications
+  private applyProgressNotificationHandler(
+    serverId: string,
+    client: Client,
+  ): void {
+    if (!this.defaultProgressHandler) {
+      return;
+    }
+
+    client.setNotificationHandler(
+      ProgressNotificationSchema,
+      (notification) => {
+        const params = notification.params;
+        if (this.defaultProgressHandler) {
+          this.defaultProgressHandler({
+            serverId,
+            progressToken: params.progressToken,
+            progress: params.progress,
+            total: params.total,
+            message: params.message,
+          });
+        }
+      },
+    );
+  }
+
   private applyElicitationHandler(serverId: string, client: Client): void {
     const serverSpecific = this.elicitationHandlers.get(serverId);
     if (serverSpecific) {
@@ -942,12 +1256,18 @@ export class MCPClientManager {
         const reqId = `elicit_${Date.now()}_${Math.random()
           .toString(36)
           .slice(2, 9)}`;
+        // Extract related task ID from _meta per MCP Tasks spec (2025-11-25)
+        // All requests related to a task MUST include io.modelcontextprotocol/related-task in _meta
+        const meta = (request.params as any)?._meta;
+        const relatedTask = meta?.["io.modelcontextprotocol/related-task"];
+        const relatedTaskId = relatedTask?.taskId as string | undefined;
         return await this.elicitationCallback!({
           requestId: reqId,
           message: (request.params as any)?.message,
           schema:
             (request.params as any)?.requestedSchema ??
             (request.params as any)?.schema,
+          relatedTaskId,
         });
       });
       return;
@@ -1212,3 +1532,18 @@ export type MCPConvertedToolSet<
   SCHEMAS extends ToolSchemaOverrides | "automatic",
 > = ConvertedToolSet<SCHEMAS>;
 export type MCPToolSchemaOverrides = ToolSchemaOverrides;
+
+// Tasks types - MCP Tasks experimental feature (spec 2025-11-25)
+export type MCPListTasksResult = {
+  tasks: MCPTask[];
+  nextCursor?: string;
+};
+export type MCPTask = {
+  taskId: string;
+  status: "working" | "input_required" | "completed" | "failed" | "cancelled";
+  statusMessage?: string;
+  createdAt: string;
+  lastUpdatedAt: string;
+  ttl: number | null;
+  pollInterval?: number;
+};
