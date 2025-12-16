@@ -1,0 +1,247 @@
+---
+title: "Background Tasks"
+description: "Monitor and manage long-running MCP operations"
+icon: "ListTodo"
+---
+
+The Tasks tab provides a comprehensive interface for monitoring and managing background tasks created by MCP servers. Tasks allow tools, prompts, and other operations to run asynchronously while you continue working.
+
+## Overview
+
+MCP Tasks (spec 2025-11-25) enable servers to execute operations in the background, providing:
+
+- **Asynchronous execution**: Long-running operations don't block your workflow
+- **Progress tracking**: Real-time updates on task status and completion
+- **Task management**: View, monitor, and cancel active tasks
+- **Result retrieval**: Access completed task results when ready
+
+## Task Lifecycle
+
+Tasks progress through several states:
+
+<Steps>
+  <Step title="Working" icon="loader">
+    Task is actively executing. Progress updates may be available.
+  </Step>
+  <Step title="Input Required" icon="alert-circle">
+    Task needs user input to continue (elicitation).
+  </Step>
+  <Step title="Completed" icon="check-circle">
+    Task finished successfully. Results are available.
+  </Step>
+  <Step title="Failed" icon="x-circle">
+    Task encountered an error. Error details are available.
+  </Step>
+  <Step title="Cancelled" icon="slash">
+    Task was cancelled by user or expired.
+  </Step>
+</Steps>
+
+## Creating Tasks
+
+### From Tools Tab
+
+When executing a tool, you can run it as a background task:
+
+1. Navigate to the **Tools** tab
+2. Select a tool and configure parameters
+3. Check the **Task** checkbox to execute as background task
+4. (Optional) Set a **TTL** (time-to-live) in milliseconds
+5. Click **Execute**
+
+The tool will execute in the background, and you'll be redirected to the Tasks tab to monitor progress.
+
+<Note>
+  Some tools require task execution (marked with "Task required"). These tools
+  automatically run as background tasks.
+</Note>
+
+### Task Options
+
+- **TTL (Time-to-Live)**: Maximum time (in milliseconds) the task can run before expiring. Set to 0 for no expiration.
+- **Server Capability**: Task execution is only available if the server declares `tasks.requests.tools.call` capability.
+
+## Monitoring Tasks
+
+### Task List
+
+The left panel shows all active and completed tasks:
+
+- **Status indicator**: Visual icon showing current task state
+- **Task name**: Tool or operation name
+- **Relative time**: When the task was created
+- **Progress bar**: For working tasks with known progress
+
+### Task Details
+
+Select a task to view detailed information:
+
+- **Task ID**: Unique identifier for the task
+- **Status**: Current state with status message
+- **Timestamps**: Creation and last update times
+- **TTL**: Time-to-live configuration
+- **Poll Interval**: Server-suggested refresh rate
+- **Progress**: Real-time progress updates (when available)
+
+### Task Results
+
+Completed or failed tasks display their results:
+
+- **Completed tasks**: Show the operation result (e.g., tool output)
+- **Failed tasks**: Display error information
+- **Input required**: Show pending elicitation requests
+
+## Auto-Refresh
+
+The Tasks tab includes intelligent auto-refresh:
+
+- **Automatic activation**: Enables when tasks are actively running
+- **Server-suggested intervals**: Respects poll intervals from the server
+- **Manual override**: Adjust refresh rate or disable auto-refresh
+- **Minimum interval**: 500ms to prevent excessive polling
+
+<Tip>
+  The poll interval input is pre-filled with the server's suggested rate. You
+  can override this value if needed.
+</Tip>
+
+## Task Management
+
+### Cancelling Tasks
+
+Cancel a running task:
+
+1. Select the task from the list
+2. Click **Cancel Task** in the task details header
+3. The task status will update to "cancelled"
+
+<Warning>
+  Task cancellation is only available if the server declares `tasks.cancel`
+  capability. Not all servers support cancellation.
+</Warning>
+
+### Clearing Tasks
+
+Remove all tasks from the list:
+
+1. Click the trash icon in the Tasks header
+2. All tasks are dismissed and removed from view
+3. Dismissed tasks won't reappear after refresh
+
+## Progress Tracking
+
+### Determinate Progress
+
+When a task reports total progress:
+
+- Progress bar shows completion percentage
+- Current/total values displayed (e.g., "5/10")
+- Optional progress message from the server
+
+### Indeterminate Progress
+
+When total progress is unknown:
+
+- Animated progress indicator shows activity
+- Elapsed time displayed
+- Status message updates from server
+
+## Elicitation Handling
+
+Tasks may request user input during execution:
+
+1. Task status changes to "input_required"
+2. Elicitation dialog appears with the request
+3. Provide required input or decline
+4. Task continues execution after response
+
+<Info>
+  Elicitations related to tasks include the task ID in metadata, allowing you to
+  track which task needs input.
+</Info>
+
+## Server Capabilities
+
+The Tasks tab adapts based on server capabilities:
+
+- **tasks.requests.tools.call**: Server supports task-augmented tool calls
+- **tasks.list**: Server supports listing tasks
+- **tasks.cancel**: Server supports task cancellation
+
+If a server doesn't support tasks, the task execution option won't appear in the Tools tab.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Tasks for Long Operations" icon="clock">
+    Execute time-consuming operations as tasks to avoid blocking the UI.
+  </Card>
+  <Card title="Set Appropriate TTLs" icon="timer">
+    Configure time-to-live values based on expected operation duration.
+  </Card>
+  <Card title="Monitor Progress" icon="chart-line">
+    Keep the Tasks tab open to track progress of active operations.
+  </Card>
+  <Card title="Handle Elicitations Promptly" icon="message-square">
+    Respond to input requests quickly to avoid task timeouts.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Task execution option not available">
+    **Cause**: Server doesn't support task-augmented requests.
+    
+    **Solution**: Verify the server declares `tasks.requests.tools.call` capability. Check server documentation for task support.
+  </Accordion>
+
+  <Accordion title="Tasks not appearing in list">
+    **Cause**: Server may not support `tasks/list` operation.
+    
+    **Solution**: Tasks created during your session are tracked locally and will appear even if the server doesn't support listing. Previously created tasks may not be visible.
+  </Accordion>
+
+  <Accordion title="Cannot cancel task">
+    **Cause**: Server doesn't support task cancellation.
+    
+    **Solution**: Wait for the task to complete or expire based on its TTL. Not all servers implement cancellation.
+  </Accordion>
+
+  <Accordion title="Task stuck in 'working' state">
+    **Cause**: Server may have crashed or lost connection.
+    
+    **Solution**: Check server logs and connection status. The task will eventually expire based on its TTL.
+  </Accordion>
+</AccordionGroup>
+
+## Technical Details
+
+### MCP Tasks Specification
+
+Tasks follow the MCP Tasks specification (2025-11-25):
+
+- **Task augmentation**: Requests include `task` field with options
+- **Progress notifications**: Servers send `notifications/progress` events
+- **Status updates**: Servers may send `notifications/tasks/status` events
+- **Result retrieval**: `tasks/result` returns the underlying operation result
+
+### Local Task Tracking
+
+Inspector tracks tasks locally to support servers that don't persist task lists:
+
+- Tasks created during your session are stored in browser localStorage
+- Dismissed tasks are filtered from the view
+- Maximum 50 tasks tracked per server
+- Stale entries cleaned up automatically
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Tools Tab" icon="wrench" href="/inspector/tools-prompts-resources">
+    Execute tools as background tasks
+  </Card>
+  <Card title="Debugging" icon="bug" href="/inspector/debugging">
+    View JSON-RPC messages for task operations
+  </Card>
+</CardGroup>
