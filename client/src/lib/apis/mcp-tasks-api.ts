@@ -1,17 +1,8 @@
-export interface Task {
-  taskId: string;
-  status: "working" | "input_required" | "completed" | "failed" | "cancelled";
-  statusMessage?: string;
-  createdAt: string;
-  lastUpdatedAt: string;
-  ttl: number | null;
-  pollInterval?: number;
-}
+import type { MCPTask, MCPListTasksResult } from "@/sdk";
 
-export interface ListTasksResult {
-  tasks: Task[];
-  nextCursor?: string;
-}
+// Re-export SDK types for convenience
+export type Task = MCPTask;
+export type ListTasksResult = MCPListTasksResult;
 
 export async function listTasks(
   serverId: string,

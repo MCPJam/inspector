@@ -1,39 +1,24 @@
 /**
- * Simple task tracker for MCP Tasks
- *
- * Since servers don't persist tasks in tasks/list, we track
- * created tasks locally and poll their status via tasks/get.
+ * Lightweight task tracker for MCP Tasks
+ * Tracks task IDs locally since some servers (e.g., FastMCP) don't persist tasks in tasks/list.
  */
 
-import type { Task } from "./apis/mcp-tasks-api";
-
 export type PrimitiveType = "tool" | "prompt" | "resource";
-
-export interface StatusHistoryEntry {
-  status: Task["status"];
-  timestamp: string;
-  statusMessage?: string;
-}
 
 export interface TrackedTask {
   taskId: string;
   serverId: string;
   createdAt: string;
   toolName?: string;
-  // New fields for visualization
   primitiveType?: PrimitiveType;
   primitiveName?: string;
-  statusHistory?: StatusHistoryEntry[];
+  dismissed?: boolean;
 }
 
 const STORAGE_KEY = "mcp-tracked-tasks";
-const DISMISSED_STORAGE_KEY = "mcp-dismissed-tasks";
 const MAX_TRACKED_TASKS = 50;
 
-/**
- * Get all tracked tasks from localStorage
- */
-export function getTrackedTasks(): TrackedTask[] {
+function loadTasks(): TrackedTask[] {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
     return data ? JSON.parse(data) : [];
@@ -42,160 +27,73 @@ export function getTrackedTasks(): TrackedTask[] {
   }
 }
 
-/**
- * Get tracked tasks for a specific server
- */
-export function getTrackedTasksForServer(serverId: string): TrackedTask[] {
-  return getTrackedTasks().filter((t) => t.serverId === serverId);
-}
-
-/**
- * Add a task to tracking
- */
-export function trackTask(task: TrackedTask): void {
-  const tasks = getTrackedTasks();
-
-  // Don't add duplicates
-  if (tasks.some((t) => t.taskId === task.taskId)) {
-    return;
-  }
-
-  // Add new task at the beginning
-  tasks.unshift(task);
-
-  // Keep only the most recent tasks
-  const trimmed = tasks.slice(0, MAX_TRACKED_TASKS);
-
+function saveTasks(tasks: TrackedTask[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
   } catch {
     // localStorage might be full or unavailable
   }
 }
 
-/**
- * Remove a task from tracking
- */
+export function getTrackedTasks(): TrackedTask[] {
+  return loadTasks();
+}
+
+export function getTrackedTasksForServer(serverId: string): TrackedTask[] {
+  return loadTasks().filter((t) => t.serverId === serverId && !t.dismissed);
+}
+
+export function getTrackedTaskById(taskId: string): TrackedTask | undefined {
+  return loadTasks().find((t) => t.taskId === taskId);
+}
+
+export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
+  const tasks = loadTasks();
+  if (tasks.some((t) => t.taskId === task.taskId)) return;
+
+  tasks.unshift({ ...task, dismissed: false });
+  saveTasks(tasks.slice(0, MAX_TRACKED_TASKS));
+}
+
 export function untrackTask(taskId: string): void {
-  const tasks = getTrackedTasks().filter((t) => t.taskId !== taskId);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-  } catch {
-    // Ignore errors
+  saveTasks(loadTasks().filter((t) => t.taskId !== taskId));
+}
+
+export function dismissTask(taskId: string): void {
+  const tasks = loadTasks();
+  const task = tasks.find((t) => t.taskId === taskId);
+  if (task) {
+    task.dismissed = true;
+    saveTasks(tasks);
   }
 }
 
-/**
- * Clear all tracked tasks for a server
- */
+export function dismissTasksForServer(serverId: string, taskIds: string[]): void {
+  const idsToDissmiss = new Set(taskIds);
+  const tasks = loadTasks();
+  for (const task of tasks) {
+    if (task.serverId === serverId && idsToDissmiss.has(task.taskId)) {
+      task.dismissed = true;
+    }
+  }
+  saveTasks(tasks);
+}
+
+export function getDismissedTaskIds(serverId: string): Set<string> {
+  return new Set(
+    loadTasks()
+      .filter((t) => t.serverId === serverId && t.dismissed)
+      .map((t) => t.taskId)
+  );
+}
+
 export function clearTrackedTasksForServer(serverId: string): void {
-  const tasks = getTrackedTasks().filter((t) => t.serverId !== serverId);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-  } catch {
-    // Ignore errors
-  }
+  saveTasks(loadTasks().filter((t) => t.serverId !== serverId));
 }
 
-/**
- * Clear all tracked tasks
- */
 export function clearAllTrackedTasks(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // Ignore errors
-  }
-}
-
-/**
- * Update status history for a task when its status changes
- */
-export function updateTaskStatusHistory(
-  taskId: string,
-  newStatus: Task["status"],
-  statusMessage?: string,
-): void {
-  const tasks = getTrackedTasks();
-  const task = tasks.find((t) => t.taskId === taskId);
-
-  if (!task) return;
-
-  // Initialize statusHistory if not present (for backward compatibility)
-  if (!task.statusHistory) {
-    task.statusHistory = [
-      {
-        status: "working",
-        timestamp: task.createdAt,
-      },
-    ];
-  }
-
-  // Only add if status actually changed
-  const lastEntry = task.statusHistory[task.statusHistory.length - 1];
-  if (lastEntry?.status !== newStatus) {
-    task.statusHistory.push({
-      status: newStatus,
-      timestamp: new Date().toISOString(),
-      statusMessage,
-    });
-
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    } catch {
-      // Ignore errors
-    }
-  }
-}
-
-/**
- * Get a tracked task by ID
- */
-export function getTrackedTaskById(taskId: string): TrackedTask | undefined {
-  return getTrackedTasks().find((t) => t.taskId === taskId);
-}
-
-/**
- * Get dismissed task IDs for a server
- */
-export function getDismissedTaskIds(serverId: string): Set<string> {
-  try {
-    const data = localStorage.getItem(DISMISSED_STORAGE_KEY);
-    const dismissed: Record<string, string[]> = data ? JSON.parse(data) : {};
-    return new Set(dismissed[serverId] || []);
-  } catch {
-    return new Set();
-  }
-}
-
-/**
- * Dismiss tasks for a server (they won't show after refresh)
- */
-export function dismissTasksForServer(
-  serverId: string,
-  taskIds: string[],
-): void {
-  try {
-    const data = localStorage.getItem(DISMISSED_STORAGE_KEY);
-    const dismissed: Record<string, string[]> = data ? JSON.parse(data) : {};
-    const existing = new Set(dismissed[serverId] || []);
-    taskIds.forEach((id) => existing.add(id));
-    dismissed[serverId] = Array.from(existing);
-    localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(dismissed));
-  } catch {
-    // Ignore errors
-  }
-}
-
-/**
- * Clear dismissed tasks for a server (allow them to show again)
- */
-export function clearDismissedTasksForServer(serverId: string): void {
-  try {
-    const data = localStorage.getItem(DISMISSED_STORAGE_KEY);
-    const dismissed: Record<string, string[]> = data ? JSON.parse(data) : {};
-    delete dismissed[serverId];
-    localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(dismissed));
   } catch {
     // Ignore errors
   }

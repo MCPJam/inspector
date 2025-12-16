@@ -387,13 +387,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         toolName,
         primitiveType: "tool",
         primitiveName: toolName,
-        statusHistory: [
-          {
-            status: task.status,
-            timestamp: task.createdAt,
-            statusMessage: task.statusMessage,
-          },
-        ],
       });
 
       logger.info("Background task created", {

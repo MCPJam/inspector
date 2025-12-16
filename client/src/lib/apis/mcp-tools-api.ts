@@ -4,6 +4,7 @@ import type {
   ElicitResult,
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import type { MCPTask, TaskOptions } from "@/sdk";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
@@ -12,20 +13,10 @@ export type ListToolsResultWithMetadata = ListToolsResult & {
 
 export type ToolServerMap = Record<string, string>;
 
-export type TaskOptions = {
-  ttl?: number;
-};
+export type { TaskOptions };
 
-// Task data returned in CreateTaskResult (MCP Tasks spec 2025-11-25)
-export interface TaskData {
-  taskId: string;
-  status: "working" | "input_required" | "completed" | "failed" | "cancelled";
-  statusMessage?: string;
-  createdAt: string;
-  lastUpdatedAt: string;
-  ttl: number | null;
-  pollInterval?: number;
-}
+// Re-export SDK type for task data
+export type TaskData = MCPTask;
 
 export type ToolExecutionResponse =
   | {
