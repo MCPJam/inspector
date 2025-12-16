@@ -102,7 +102,10 @@ tasks.post("/cancel", async (c) => {
     // Check if server supports cancel operation before attempting
     if (!c.mcpClientManager.supportsTasksCancel(serverId)) {
       return c.json(
-        { error: "Server does not support task cancellation (tasks.cancel capability not declared)" },
+        {
+          error:
+            "Server does not support task cancellation (tasks.cancel capability not declared)",
+        },
         400,
       );
     }

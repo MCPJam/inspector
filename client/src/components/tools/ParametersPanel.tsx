@@ -96,11 +96,15 @@ export function ParametersPanel({
                       min={0}
                       defaultValue={taskTtl ?? 0}
                       key={`ttl-req-${taskTtl}`}
-                      onBlur={(e) => onTaskTtlChange(parseInt(e.target.value) || 0)}
+                      onBlur={(e) =>
+                        onTaskTtlChange(parseInt(e.target.value) || 0)
+                      }
                       className="w-20 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       title="TTL in milliseconds (0 = no expiration)"
                     />
-                    <span className="text-[10px] text-muted-foreground">ms TTL</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ms TTL
+                    </span>
                   </div>
                 )}
               </div>
@@ -120,7 +124,9 @@ export function ParametersPanel({
                     onChange={(e) => onExecuteAsTaskChange(e.target.checked)}
                     className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
                   />
-                  <Clock className={`h-3 w-3 ${serverSupportsTaskToolCalls === false ? "text-amber-500" : ""}`} />
+                  <Clock
+                    className={`h-3 w-3 ${serverSupportsTaskToolCalls === false ? "text-amber-500" : ""}`}
+                  />
                   <span>Task</span>
                 </label>
                 {/* TTL input - show when task execution is enabled */}
@@ -131,11 +137,15 @@ export function ParametersPanel({
                       min={0}
                       defaultValue={taskTtl ?? 0}
                       key={`ttl-opt-${taskTtl}`}
-                      onBlur={(e) => onTaskTtlChange(parseInt(e.target.value) || 0)}
+                      onBlur={(e) =>
+                        onTaskTtlChange(parseInt(e.target.value) || 0)
+                      }
                       className="w-20 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       title="TTL in milliseconds (0 = no expiration)"
                     />
-                    <span className="text-[10px] text-muted-foreground">ms TTL</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ms TTL
+                    </span>
                   </div>
                 )}
               </div>

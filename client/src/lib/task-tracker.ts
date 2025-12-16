@@ -68,7 +68,10 @@ export function dismissTask(taskId: string): void {
   }
 }
 
-export function dismissTasksForServer(serverId: string, taskIds: string[]): void {
+export function dismissTasksForServer(
+  serverId: string,
+  taskIds: string[],
+): void {
   const idsToDissmiss = new Set(taskIds);
   const tasks = loadTasks();
   for (const task of tasks) {
@@ -83,7 +86,7 @@ export function getDismissedTaskIds(serverId: string): Set<string> {
   return new Set(
     loadTasks()
       .filter((t) => t.serverId === serverId && t.dismissed)
-      .map((t) => t.taskId)
+      .map((t) => t.taskId),
   );
 }
 

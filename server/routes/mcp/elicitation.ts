@@ -40,24 +40,28 @@ export function initElicitationCallback(manager: MCPClientManager): void {
   if (registeredManagers.has(manager)) return;
 
   // Per MCP Tasks spec (2025-11-25), elicitations related to a task include relatedTaskId
-  manager.setElicitationCallback(({ requestId, message, schema, relatedTaskId }) => {
-    return new Promise<ElicitResult>((resolve, reject) => {
-      try {
-        manager.getPendingElicitations().set(requestId, { resolve, reject });
-      } catch (err) {
-        logger.error("[elicitation] Failed to store pending elicitation", { error: err });
-      }
-      broadcastElicitation({
-        type: "elicitation_request",
-        requestId,
-        message,
-        schema,
-        timestamp: new Date().toISOString(),
-        // Include related task ID if this elicitation is associated with a task
-        relatedTaskId,
+  manager.setElicitationCallback(
+    ({ requestId, message, schema, relatedTaskId }) => {
+      return new Promise<ElicitResult>((resolve, reject) => {
+        try {
+          manager.getPendingElicitations().set(requestId, { resolve, reject });
+        } catch (err) {
+          logger.error("[elicitation] Failed to store pending elicitation", {
+            error: err,
+          });
+        }
+        broadcastElicitation({
+          type: "elicitation_request",
+          requestId,
+          message,
+          schema,
+          timestamp: new Date().toISOString(),
+          // Include related task ID if this elicitation is associated with a task
+          relatedTaskId,
+        });
       });
-    });
-  });
+    },
+  );
   registeredManagers.add(manager);
 }
 

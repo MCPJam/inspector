@@ -91,5 +91,7 @@ export function formatElapsedTime(startTime: string): string {
 }
 
 export function isTerminalStatus(status: Task["status"]): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
 }

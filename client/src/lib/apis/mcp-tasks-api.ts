@@ -116,7 +116,9 @@ export async function getTaskCapabilities(
   } catch {}
 
   if (!res.ok) {
-    throw new Error(body?.error || `Get task capabilities failed (${res.status})`);
+    throw new Error(
+      body?.error || `Get task capabilities failed (${res.status})`,
+    );
   }
   return body as TaskCapabilities;
 }
@@ -201,7 +203,9 @@ export async function respondToTaskElicitation(
   } catch {}
 
   if (!res.ok) {
-    throw new Error(body?.error || `Respond to elicitation failed (${res.status})`);
+    throw new Error(
+      body?.error || `Respond to elicitation failed (${res.status})`,
+    );
   }
   return body as { ok: boolean };
 }

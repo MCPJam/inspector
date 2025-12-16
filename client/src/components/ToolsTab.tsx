@@ -143,7 +143,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [executeAsTask, setExecuteAsTask] = useState(false);
   const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
-  const [taskCapabilities, setTaskCapabilities] = useState<TaskCapabilities | null>(null);
+  const [taskCapabilities, setTaskCapabilities] =
+    useState<TaskCapabilities | null>(null);
   // TTL for task execution (milliseconds, 0 = no expiration)
   const [taskTtl, setTaskTtl] = useState<number>(0);
   const serverKey = useMemo(() => {
@@ -164,7 +165,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   // Check if the selected tool requires task execution
   // Per MCP Tasks spec: execution.taskSupport can be "required", "optional", or "forbidden"
-  const selectedToolTaskSupport = useMemo((): "required" | "optional" | "forbidden" => {
+  const selectedToolTaskSupport = useMemo(():
+    | "required"
+    | "optional"
+    | "forbidden" => {
     if (!selectedTool || !tools[selectedTool]) return "forbidden";
     const tool = tools[selectedTool];
     const execution = (tool as any).execution;
@@ -190,7 +194,8 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
   // Per spec: clients MUST NOT use task augmentation if server doesn't declare capability
-  const serverSupportsTaskToolCalls = taskCapabilities?.supportsToolCalls ?? false;
+  const serverSupportsTaskToolCalls =
+    taskCapabilities?.supportsToolCalls ?? false;
 
   useEffect(() => {
     if (!serverConfig || !serverName) {
@@ -441,7 +446,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       // Pass task options if executing as background task (MCP Tasks spec 2025-11-25)
       // Use task execution only if: server supports tasks AND (user checked option OR tool requires it)
       // Per spec: clients MUST NOT use task augmentation without server capability
-      const shouldUseTask = serverSupportsTaskToolCalls && (executeAsTask || selectedToolTaskSupport === "required");
+      const shouldUseTask =
+        serverSupportsTaskToolCalls &&
+        (executeAsTask || selectedToolTaskSupport === "required");
       // Per MCP spec: ttl is optional. Only include if user specified a non-zero value.
       // 0 could be misinterpreted by servers, so we use undefined to let server decide.
       const taskOptions: TaskOptions | undefined = shouldUseTask
@@ -634,9 +641,22 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 onFieldChange={updateFieldValue}
                 // Only show task execution option if server supports tasks and tool allows it
                 // Per MCP spec: clients MUST NOT use task augmentation without server capability
-                executeAsTask={serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden" ? executeAsTask : undefined}
-                onExecuteAsTaskChange={serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden" ? setExecuteAsTask : undefined}
-                taskRequired={serverSupportsTaskToolCalls && selectedToolTaskSupport === "required"}
+                executeAsTask={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport !== "forbidden"
+                    ? executeAsTask
+                    : undefined
+                }
+                onExecuteAsTaskChange={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport !== "forbidden"
+                    ? setExecuteAsTask
+                    : undefined
+                }
+                taskRequired={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport === "required"
+                }
                 // MCP Tasks spec 2025-11-25: TTL configuration
                 taskTtl={taskTtl}
                 onTaskTtlChange={setTaskTtl}

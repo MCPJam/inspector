@@ -78,7 +78,13 @@ export function createHonoApp() {
           message,
         });
       },
-      progressHandler: ({ serverId, progressToken, progress, total, message }) => {
+      progressHandler: ({
+        serverId,
+        progressToken,
+        progress,
+        total,
+        message,
+      }) => {
         // Store progress for UI access using the real progressToken from the notification
         progressStore.publish({
           serverId,
