@@ -46,8 +46,8 @@ export function useTaskElicitation(enabled: boolean = true) {
               : current
           );
         }
-      } catch (err) {
-        console.debug("[useTaskElicitation] Failed to parse SSE message:", err);
+      } catch {
+        // Silently ignore malformed SSE messages
       }
     };
 

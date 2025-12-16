@@ -14,6 +14,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolResultSchema,
+  CreateTaskResultSchema,
   ElicitRequestSchema,
   ResourceListChangedNotificationSchema,
   ResourceUpdatedNotificationSchema,
@@ -627,25 +628,18 @@ export class MCPClientManager {
             task: taskValue,
           },
         },
-        CallToolResultSchema,
+        CreateTaskResultSchema,
         mergedOptions,
       );
 
-      // Check if result contains task info (CreateTaskResult format)
-      // Per MCP spec, CreateTaskResult contains task object with taskId and status
-      const anyResult = result as any;
-      if (anyResult?.task?.taskId && anyResult?.task?.status) {
-        return {
-          task: anyResult.task,
-          _meta: {
-            "io.modelcontextprotocol/model-immediate-response":
-              `Task ${anyResult.task.taskId} created with status: ${anyResult.task.status}`,
-          },
-        };
-      }
-
-      // Return the result as-is if no task was created
-      return result;
+      // Per MCP Tasks spec, CreateTaskResult contains task object with taskId and status
+      return {
+        task: result.task,
+        _meta: {
+          "io.modelcontextprotocol/model-immediate-response":
+            `Task ${result.task.taskId} created with status: ${result.task.status}`,
+        },
+      };
     }
 
     // Regular tool call (no task augmentation)
