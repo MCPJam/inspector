@@ -45,13 +45,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
@@ -260,6 +253,10 @@ export function PlaygroundMain({
   );
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [devicePopoverOpen, setDevicePopoverOpen] = useState(false);
+  const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
+  const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
+  const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
 
   // Custom viewport from store
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
@@ -607,7 +604,7 @@ export function PlaygroundMain({
           {showChatGPTControls && (
             <>
               {/* Device type selector with custom dimensions */}
-              <Popover>
+              <Popover open={devicePopoverOpen} onOpenChange={setDevicePopoverOpen}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger asChild>
@@ -645,7 +642,10 @@ export function PlaygroundMain({
                       return (
                         <button
                           key={type}
-                          onClick={() => onDeviceTypeChange?.(type)}
+                          onClick={() => {
+                            onDeviceTypeChange?.(type);
+                            setDevicePopoverOpen(false);
+                          }}
                           className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
                             isSelected ? "bg-accent text-accent-foreground" : ""
                           }`}
@@ -731,79 +731,94 @@ export function PlaygroundMain({
               </Popover>
 
               {/* Locale selector */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <Select value={locale} onValueChange={onLocaleChange}>
-                      <SelectTrigger
+              <Popover open={localePopoverOpen} onOpenChange={setLocalePopoverOpen}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
                         size="sm"
-                        className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                        className="h-7 px-2 text-xs gap-1.5"
                       >
                         <Globe className="h-3.5 w-3.5" />
-                        <SelectValue>{locale}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {LOCALE_OPTIONS.map((option) => (
-                          <SelectItem key={option.code} value={option.code}>
-                            <span className="flex items-center gap-2">
-                              <span>{option.label}</span>
-                              <span className="text-muted-foreground text-[10px]">
-                                {option.code}
-                              </span>
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                        <span>{locale}</span>
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Locale</p>
+                  </TooltipContent>
+                </Tooltip>
+                <PopoverContent className="w-48 p-2" align="start">
+                  <div className="space-y-1">
+                    {LOCALE_OPTIONS.map((option) => (
+                      <button
+                        key={option.code}
+                        onClick={() => {
+                          onLocaleChange?.(option.code);
+                          setLocalePopoverOpen(false);
+                        }}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                          locale === option.code
+                            ? "bg-accent text-accent-foreground"
+                            : ""
+                        }`}
+                      >
+                        <span>{option.label}</span>
+                        <span className="text-muted-foreground text-[10px] ml-auto">
+                          {option.code}
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-medium">Locale</p>
-                </TooltipContent>
-              </Tooltip>
+                </PopoverContent>
+              </Popover>
 
               {/* CSP mode selector - uses protocol-aware store */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <Select
-                      value={activeCspMode}
-                      onValueChange={(v) => setActiveCspMode(v as CspMode)}
-                    >
-                      <SelectTrigger
+              <Popover open={cspPopoverOpen} onOpenChange={setCspPopoverOpen}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
                         size="sm"
-                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                        className="h-7 px-2 text-xs gap-1.5"
                       >
                         <Shield className="h-3.5 w-3.5" />
-                        <SelectValue>
-                          {
-                            CSP_MODE_OPTIONS.find(
-                              (o) => o.mode === activeCspMode,
-                            )?.label
-                          }
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CSP_MODE_OPTIONS.map((option) => (
-                          <SelectItem key={option.mode} value={option.mode}>
-                            <span className="flex items-center gap-2">
-                              <span className="font-medium">
-                                {option.label}
-                              </span>
-                              <span className="text-muted-foreground text-[10px]">
-                                {option.description}
-                              </span>
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                        <span>
+                          {CSP_MODE_OPTIONS.find((o) => o.mode === activeCspMode)?.label}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">CSP</p>
+                  </TooltipContent>
+                </Tooltip>
+                <PopoverContent className="w-56 p-2" align="start">
+                  <div className="space-y-1">
+                    {CSP_MODE_OPTIONS.map((option) => (
+                      <button
+                        key={option.mode}
+                        onClick={() => {
+                          setActiveCspMode(option.mode);
+                          setCspPopoverOpen(false);
+                        }}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                          activeCspMode === option.mode
+                            ? "bg-accent text-accent-foreground"
+                            : ""
+                        }`}
+                      >
+                        <span className="font-medium">{option.label}</span>
+                        <span className="text-muted-foreground text-[10px] ml-auto">
+                          {option.description}
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-medium">CSP</p>
-                </TooltipContent>
-              </Tooltip>
+                </PopoverContent>
+              </Popover>
 
               {/* Capabilities toggles */}
               <div className="flex items-center gap-0.5">
@@ -867,7 +882,7 @@ export function PlaygroundMain({
           {showMCPAppsControls && (
             <>
               {/* Device type selector with custom dimensions */}
-              <Popover>
+              <Popover open={devicePopoverOpen} onOpenChange={setDevicePopoverOpen}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger asChild>
@@ -905,7 +920,10 @@ export function PlaygroundMain({
                       return (
                         <button
                           key={type}
-                          onClick={() => onDeviceTypeChange?.(type)}
+                          onClick={() => {
+                            onDeviceTypeChange?.(type);
+                            setDevicePopoverOpen(false);
+                          }}
                           className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
                             isSelected ? "bg-accent text-accent-foreground" : ""
                           }`}
@@ -991,114 +1009,140 @@ export function PlaygroundMain({
               </Popover>
 
               {/* Locale selector */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <Select value={locale} onValueChange={onLocaleChange}>
-                      <SelectTrigger
+              <Popover open={localePopoverOpen} onOpenChange={setLocalePopoverOpen}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
                         size="sm"
-                        className="h-7 w-auto min-w-[70px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                        className="h-7 px-2 text-xs gap-1.5"
                       >
                         <Globe className="h-3.5 w-3.5" />
-                        <SelectValue>{locale}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {LOCALE_OPTIONS.map((option) => (
-                          <SelectItem key={option.code} value={option.code}>
-                            <span className="flex items-center gap-2">
-                              <span>{option.label}</span>
-                              <span className="text-muted-foreground text-[10px]">
-                                {option.code}
-                              </span>
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                        <span>{locale}</span>
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Locale</p>
+                  </TooltipContent>
+                </Tooltip>
+                <PopoverContent className="w-48 p-2" align="start">
+                  <div className="space-y-1">
+                    {LOCALE_OPTIONS.map((option) => (
+                      <button
+                        key={option.code}
+                        onClick={() => {
+                          onLocaleChange?.(option.code);
+                          setLocalePopoverOpen(false);
+                        }}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                          locale === option.code
+                            ? "bg-accent text-accent-foreground"
+                            : ""
+                        }`}
+                      >
+                        <span>{option.label}</span>
+                        <span className="text-muted-foreground text-[10px] ml-auto">
+                          {option.code}
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-medium">Locale</p>
-                </TooltipContent>
-              </Tooltip>
+                </PopoverContent>
+              </Popover>
 
               {/* Timezone selector (SEP-1865) */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <Select value={timeZone} onValueChange={onTimeZoneChange}>
-                      <SelectTrigger
+              <Popover open={timezonePopoverOpen} onOpenChange={setTimezonePopoverOpen}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
                         size="sm"
-                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                        className="h-7 px-2 text-xs gap-1.5"
                       >
                         <Clock className="h-3.5 w-3.5" />
-                        <SelectValue>
-                          {TIMEZONE_OPTIONS.find((o) => o.zone === timeZone)
-                            ?.label || timeZone}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TIMEZONE_OPTIONS.map((option) => (
-                          <SelectItem key={option.zone} value={option.zone}>
-                            <span className="flex items-center gap-2">
-                              <span>{option.label}</span>
-                              <span className="text-muted-foreground text-[10px]">
-                                {option.offset}
-                              </span>
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                        <span>
+                          {TIMEZONE_OPTIONS.find((o) => o.zone === timeZone)?.label || timeZone}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">Timezone</p>
+                  </TooltipContent>
+                </Tooltip>
+                <PopoverContent className="w-56 p-2" align="start">
+                  <div className="space-y-1">
+                    {TIMEZONE_OPTIONS.map((option) => (
+                      <button
+                        key={option.zone}
+                        onClick={() => {
+                          onTimeZoneChange?.(option.zone);
+                          setTimezonePopoverOpen(false);
+                        }}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                          timeZone === option.zone
+                            ? "bg-accent text-accent-foreground"
+                            : ""
+                        }`}
+                      >
+                        <span>{option.label}</span>
+                        <span className="text-muted-foreground text-[10px] ml-auto">
+                          {option.offset}
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-medium">Timezone</p>
-                </TooltipContent>
-              </Tooltip>
+                </PopoverContent>
+              </Popover>
 
               {/* CSP mode selector */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div>
-                    <Select
-                      value={mcpAppsCspMode}
-                      onValueChange={(v) => setMcpAppsCspMode(v as CspMode)}
-                    >
-                      <SelectTrigger
+              <Popover open={cspPopoverOpen} onOpenChange={setCspPopoverOpen}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="ghost"
                         size="sm"
-                        className="h-7 w-auto min-w-[90px] text-xs border-none shadow-none bg-transparent hover:bg-accent"
+                        className="h-7 px-2 text-xs gap-1.5"
                       >
                         <Shield className="h-3.5 w-3.5" />
-                        <SelectValue>
-                          {
-                            CSP_MODE_OPTIONS.find(
-                              (o) => o.mode === mcpAppsCspMode,
-                            )?.label
-                          }
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CSP_MODE_OPTIONS.map((option) => (
-                          <SelectItem key={option.mode} value={option.mode}>
-                            <span className="flex items-center gap-2">
-                              <span className="font-medium">
-                                {option.label}
-                              </span>
-                              <span className="text-muted-foreground text-[10px]">
-                                {option.description}
-                              </span>
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                        <span>
+                          {CSP_MODE_OPTIONS.find((o) => o.mode === mcpAppsCspMode)?.label}
+                        </span>
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">CSP</p>
+                  </TooltipContent>
+                </Tooltip>
+                <PopoverContent className="w-56 p-2" align="start">
+                  <div className="space-y-1">
+                    {CSP_MODE_OPTIONS.map((option) => (
+                      <button
+                        key={option.mode}
+                        onClick={() => {
+                          setMcpAppsCspMode(option.mode);
+                          setCspPopoverOpen(false);
+                        }}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
+                          mcpAppsCspMode === option.mode
+                            ? "bg-accent text-accent-foreground"
+                            : ""
+                        }`}
+                      >
+                        <span className="font-medium">{option.label}</span>
+                        <span className="text-muted-foreground text-[10px] ml-auto">
+                          {option.description}
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-medium">CSP</p>
-                </TooltipContent>
-              </Tooltip>
+                </PopoverContent>
+              </Popover>
 
               {/* Capabilities toggles */}
               <div className="flex items-center gap-0.5">
