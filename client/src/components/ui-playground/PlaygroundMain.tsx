@@ -11,21 +11,10 @@
  * which manages PiP/fullscreen at the widget level.
  */
 
-import {
-  FormEvent,
-  KeyboardEvent,
-  useRef,
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-} from "react";
+import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
 import {
   ArrowDown,
-  ArrowUp,
   Braces,
-  ChevronDown,
-  ChevronUp,
   Loader2,
   Smartphone,
   Tablet,
@@ -75,12 +64,12 @@ import {
 } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { SafeAreaEditor } from "./SafeAreaEditor";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
+import { FullscreenChatOverlay } from "./FullscreenChatOverlay";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -239,24 +228,6 @@ function InvokingIndicator({
   );
 }
 
-function getMessagePreviewText(message: any): string {
-  const parts = Array.isArray(message?.parts) ? message.parts : [];
-  const texts = parts
-    .map((part: any) => {
-      if (!part || typeof part !== "object") return "";
-      if (part.type === "text" && typeof part.text === "string")
-        return part.text;
-      // Some providers may use slightly different shapes; keep this defensive.
-      if ("text" in part && typeof part.text === "string") return part.text;
-      return "";
-    })
-    .filter(Boolean);
-
-  if (texts.length > 0) return texts.join("\n").trim();
-  if (typeof message?.content === "string") return message.content.trim();
-  return "";
-}
-
 export function PlaygroundMain({
   serverName,
   onWidgetStateChange,
@@ -284,7 +255,6 @@ export function PlaygroundMain({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
-  const fullscreenChatBottomRef = useRef<HTMLDivElement>(null);
   const [devicePopoverOpen, setDevicePopoverOpen] = useState(false);
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
@@ -558,46 +528,6 @@ export function PlaygroundMain({
     if (!showFullscreenChatOverlay) setIsFullscreenChatOpen(false);
   }, [showFullscreenChatOverlay]);
 
-  useEffect(() => {
-    if (!showFullscreenChatOverlay || !isFullscreenChatOpen) return;
-    fullscreenChatBottomRef.current?.scrollIntoView({ block: "end" });
-  }, [
-    showFullscreenChatOverlay,
-    isFullscreenChatOpen,
-    messages.length,
-    isStreaming,
-    fullscreenChatBottomRef,
-  ]);
-
-  const canSendFullscreenChat =
-    status === "ready" && !submitBlocked && input.trim().length > 0;
-
-  const handleFullscreenSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!canSendFullscreenChat) return;
-    setIsFullscreenChatOpen(true);
-    sendMessage({ text: input });
-    setInput("");
-    setMcpPromptResults([]);
-  };
-
-  const handleFullscreenTextareaKeyDown = (
-    event: KeyboardEvent<HTMLTextAreaElement>,
-  ) => {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.nativeEvent.isComposing
-    ) {
-      event.preventDefault();
-      if (!canSendFullscreenChat) return;
-      setIsFullscreenChatOpen(true);
-      sendMessage({ text: input });
-      setInput("");
-      setMcpPromptResults([]);
-    }
-  };
-
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
@@ -678,139 +608,26 @@ export function PlaygroundMain({
 
       {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
       {showFullscreenChatOverlay && (
-        <div
-          className={cn(
-            "pointer-events-none",
-            isWidgetFullTakeover
-              ? "absolute inset-x-0 bottom-0 z-30"
-              : "fixed inset-x-0 bottom-0 z-50",
-          )}
-          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-        >
-          <div className="pointer-events-auto mx-auto w-full max-w-3xl px-4 pb-4">
-            <div className="relative">
-              {/* Floating collapse/expand button */}
-              <button
-                type="button"
-                aria-label={
-                  isFullscreenChatOpen ? "Collapse chat" : "Expand chat"
-                }
-                className={cn(
-                  "absolute left-1/2 -translate-x-1/2 z-10 transition-all duration-200",
-                  isFullscreenChatOpen ? "-top-11" : "-top-9",
-                  "inline-flex h-8 w-8 items-center justify-center rounded-full",
-                  "border border-border/40 bg-background/95 shadow-sm backdrop-blur-md",
-                  "text-muted-foreground hover:text-foreground hover:bg-background hover:border-border/60",
-                )}
-                onClick={() => setIsFullscreenChatOpen((v) => !v)}
-              >
-                {isFullscreenChatOpen ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronUp className="h-4 w-4" />
-                )}
-              </button>
-
-              {/* Collapsible message history */}
-              {isFullscreenChatOpen && (
-                <div className="mb-4 rounded-3xl border border-border/40 bg-background/95 shadow-2xl backdrop-blur-xl">
-                  <div className="max-h-[45vh] overflow-y-auto px-4 py-3 space-y-3">
-                    {messages
-                      .filter((m) => !m.id?.startsWith("widget-state-"))
-                      .filter(
-                        (m) => m.role === "user" || m.role === "assistant",
-                      )
-                      .map((m, idx) => {
-                        const text = getMessagePreviewText(m);
-                        if (!text) return null;
-                        const isUser = m.role === "user";
-                        return (
-                          <div
-                            key={m.id ?? `${m.role}-${idx}`}
-                            className={cn(
-                              "flex w-full",
-                              isUser ? "justify-end" : "justify-start",
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-6 whitespace-pre-wrap",
-                                isUser
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-muted text-foreground",
-                              )}
-                            >
-                              {text}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    {(status === "submitted" ||
-                      status === "streaming" ||
-                      isStreaming) && (
-                      <div className="flex w-full justify-start">
-                        <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
-                          <span className="italic">
-                            Thinking
-                            <span className="inline-flex">
-                              <span className="animate-[blink_1.4s_ease-in-out_infinite]">
-                                .
-                              </span>
-                              <span className="animate-[blink_1.4s_ease-in-out_0.2s_infinite]">
-                                .
-                              </span>
-                              <span className="animate-[blink_1.4s_ease-in-out_0.4s_infinite]">
-                                .
-                              </span>
-                            </span>
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                    <div ref={fullscreenChatBottomRef} />
-                  </div>
-                </div>
-              )}
-
-              {/* Compact input form */}
-              <form
-                onSubmit={handleFullscreenSubmit}
-                className="rounded-full border border-border/40 bg-background/95 backdrop-blur-xl"
-              >
-                <div className="flex items-center gap-2 px-6 py-3">
-                  <TextareaAutosize
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={handleFullscreenTextareaKeyDown}
-                    placeholder={placeholder}
-                    disabled={inputDisabled}
-                    readOnly={inputDisabled}
-                    minRows={1}
-                    maxRows={3}
-                    className={cn(
-                      "w-full resize-none border-none bg-transparent px-0 py-0 min-h-0 text-sm leading-tight",
-                      "placeholder:text-muted-foreground/60 shadow-none",
-                      "focus-visible:ring-0 focus-visible:outline-none focus-visible:border-none",
-                    )}
-                  />
-                  <Button
-                    type="submit"
-                    size="icon"
-                    className={cn(
-                      "size-8 rounded-full shrink-0 transition-all",
-                      canSendFullscreenChat
-                        ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105"
-                        : "bg-muted text-muted-foreground cursor-not-allowed",
-                    )}
-                    disabled={!canSendFullscreenChat}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <FullscreenChatOverlay
+          messages={messages}
+          open={isFullscreenChatOpen}
+          onOpenChange={setIsFullscreenChatOpen}
+          input={input}
+          onInputChange={setInput}
+          placeholder={placeholder}
+          disabled={inputDisabled}
+          canSend={
+            status === "ready" && !submitBlocked && input.trim().length > 0
+          }
+          isThinking={
+            status === "submitted" || status === "streaming" || isStreaming
+          }
+          onSend={() => {
+            sendMessage({ text: input });
+            setInput("");
+            setMcpPromptResults([]);
+          }}
+        />
       )}
     </div>
   );
