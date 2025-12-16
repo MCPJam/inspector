@@ -94,8 +94,10 @@ export function TasksTab({
   const [loading, setLoading] = useState(false);
   const [fetchingTasks, setFetchingTasks] = useState(false);
   const [error, setError] = useState<string>("");
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  // Track if user explicitly disabled auto-refresh (to avoid re-enabling)
+  const userDisabledAutoRefresh = useRef(false);
   const [userPollInterval, setUserPollInterval] = useState<number>(() => {
     const stored = localStorage.getItem(POLL_INTERVAL_STORAGE_KEY);
     if (stored) {
@@ -120,6 +122,22 @@ export function TasksTab({
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
   }, [tasks, selectedTaskId]);
+
+  // Check if any task is in a non-terminal state (working, input_required, pending)
+  const hasActiveTasks = useMemo(() => {
+    return tasks.some((t) => !isTerminalStatus(t.status));
+  }, [tasks]);
+
+  // Auto-enable polling when there are active tasks, unless user explicitly disabled
+  useEffect(() => {
+    if (hasActiveTasks && !userDisabledAutoRefresh.current) {
+      setAutoRefresh(true);
+    } else if (!hasActiveTasks) {
+      setAutoRefresh(false);
+      // Reset user preference when all tasks complete
+      userDisabledAutoRefresh.current = false;
+    }
+  }, [hasActiveTasks]);
 
   // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
   // Calculate server-suggested poll interval from non-terminal tasks
@@ -518,7 +536,13 @@ export function TasksTab({
                           <Switch
                             id="auto-refresh"
                             checked={autoRefresh}
-                            onCheckedChange={setAutoRefresh}
+                            onCheckedChange={(checked) => {
+                              setAutoRefresh(checked);
+                              // Track if user explicitly disabled to avoid re-enabling
+                              if (!checked) {
+                                userDisabledAutoRefresh.current = true;
+                              }
+                            }}
                             className="scale-75"
                           />
                           <label
