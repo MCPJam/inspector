@@ -9,6 +9,47 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### Version 1.3.12
+
+#### Added
+
+- **MCP Tasks Support**
+  - Full implementation of MCP Tasks specification (2025-11-25)
+  - New Tasks tab for monitoring and managing background operations
+  - Task-augmented tool execution with TTL configuration
+  - Real-time progress tracking with determinate and indeterminate progress
+  - Task status monitoring (working, input_required, completed, failed, cancelled)
+  - Task cancellation support for compatible servers
+  - Elicitation handling for tasks requiring user input
+  - Local task tracking for servers without persistent task lists
+  - Auto-refresh with server-suggested poll intervals
+  - Task capabilities detection (tasks.requests.tools.call, tasks.list, tasks.cancel)
+
+- **SDK Enhancements**
+  - Upgraded `@modelcontextprotocol/sdk` to v1.25.0
+  - Extended `MCPClientManager` with task management methods
+  - Progress notification handling and storage
+  - Task-aware elicitation support with relatedTaskId metadata
+
+- **Server Infrastructure**
+  - New `/api/mcp/tasks` endpoints for task operations
+  - In-memory progress store with automatic cleanup
+  - Global elicitation callback for task-related requests
+  - Task result retrieval with proper metadata
+
+#### Improved
+
+- **Tool Execution**
+  - Optional background task execution for long-running operations
+  - Task requirement detection from tool metadata
+  - Deep linking to Tasks tab after task creation
+
+- **Progress Tracking**
+  - Inline progress components in task list
+  - Progress bar for determinate progress
+  - Indeterminate progress animation for unknown totals
+  - Elapsed time display for active tasks
+
 ### Version 1.1.0
 
 #### Improved
