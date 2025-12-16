@@ -45,7 +45,7 @@ export function initElicitationCallback(manager: MCPClientManager): void {
       try {
         manager.getPendingElicitations().set(requestId, { resolve, reject });
       } catch (err) {
-        console.error("[elicitation] Failed to store pending elicitation:", err);
+        logger.error("[elicitation] Failed to store pending elicitation", { error: err });
       }
       broadcastElicitation({
         type: "elicitation_request",
