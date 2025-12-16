@@ -1,7 +1,7 @@
 /**
  * Simple task tracker for MCP Tasks
  *
- * Since FastMCP doesn't persist tasks in tasks/list, we track
+ * Since servers don't persist tasks in tasks/list, we track
  * created tasks locally and poll their status via tasks/get.
  */
 
