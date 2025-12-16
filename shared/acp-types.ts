@@ -226,4 +226,3 @@ export type CheckoutResponseHeaders = {
   "idempotency-key": string;
   "request-id": string;
 };
-
