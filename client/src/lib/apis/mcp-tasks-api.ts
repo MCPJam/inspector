@@ -181,3 +181,36 @@ export async function getAllProgress(
   }
   return body.progress as ProgressEvent[];
 }
+
+// Elicitation request received via SSE for task-related elicitations
+export interface TaskElicitationRequest {
+  requestId: string;
+  message: string;
+  schema: unknown;
+  timestamp: string;
+  relatedTaskId?: string;
+}
+
+// Respond to a task-related elicitation via the global elicitation endpoint
+// Per MCP Tasks spec (2025-11-25): elicitations related to tasks include relatedTaskId
+export async function respondToTaskElicitation(
+  requestId: string,
+  action: "accept" | "decline" | "cancel",
+  content?: Record<string, unknown>,
+): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/mcp/elicitation/respond", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId, action, content }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    throw new Error(body?.error || `Respond to elicitation failed (${res.status})`);
+  }
+  return body as { ok: boolean };
+}

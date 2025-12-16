@@ -20,7 +20,6 @@ import {
   Square,
   Trash2,
   Clock,
-  CheckCircle,
   AlertCircle,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
@@ -56,6 +55,9 @@ import {
   PRIMITIVE_TYPE_CONFIG,
   formatRelativeTime,
 } from "@/lib/task-utils";
+import { useTaskElicitation } from "@/hooks/use-task-elicitation";
+import { ElicitationDialog } from "./ElicitationDialog";
+import type { DialogElicitation } from "./ToolsTab";
 
 const POLL_INTERVAL_STORAGE_KEY = "mcp-inspector-tasks-poll-interval";
 const DEFAULT_POLL_INTERVAL = 3000;
@@ -113,6 +115,33 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
   }, [tasks, selectedTaskId]);
+
+  // Get task IDs that are in input_required status for elicitation filtering
+  const inputRequiredTaskIds = useMemo(() => {
+    return tasks.filter((t) => t.status === "input_required").map((t) => t.taskId);
+  }, [tasks]);
+
+  // Subscribe to task-related elicitations via SSE
+  // Per MCP Tasks spec (2025-11-25): when a task is in input_required status,
+  // the server sends elicitations with relatedTaskId in the metadata
+  // IMPORTANT: Keep SSE connection open whenever tab is active (not just when
+  // input_required tasks exist) to avoid race conditions where elicitation
+  // is sent before we detect the input_required status via polling
+  const {
+    elicitation: taskElicitation,
+    isResponding: elicitationResponding,
+    respond: respondToElicitation,
+  } = useTaskElicitation(undefined, isActive);
+
+  // Convert hook elicitation to DialogElicitation format for the dialog
+  const dialogElicitation: DialogElicitation | null = taskElicitation
+    ? {
+        requestId: taskElicitation.requestId,
+        message: taskElicitation.message,
+        schema: taskElicitation.schema as Record<string, unknown> | undefined,
+        timestamp: taskElicitation.timestamp,
+      }
+    : null;
 
   // Use user-configured poll interval (persisted in localStorage)
   const pollInterval = userPollInterval;
@@ -201,6 +230,25 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
       setFetchingTasks(false);
     }
   }, [serverName]);
+
+  // Handle elicitation response from the dialog
+  const handleElicitationResponse = useCallback(
+    async (
+      action: "accept" | "decline" | "cancel",
+      parameters?: Record<string, unknown>,
+    ) => {
+      try {
+        await respondToElicitation(action, parameters);
+        // Refresh tasks to get updated status after responding
+        await fetchTasks();
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to respond to elicitation",
+        );
+      }
+    },
+    [respondToElicitation, fetchTasks],
+  );
 
   const fetchTaskResult = useCallback(
     async (taskId: string) => {
@@ -633,6 +681,88 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                         </AccordionItem>
                       </Accordion>
                     </div>
+
+                    {/* Task Result in Details Panel */}
+                    <div className="flex-1 overflow-hidden flex flex-col">
+                      <div className="px-6 py-3 border-b border-border bg-background">
+                        <h3 className="text-xs font-semibold text-foreground">
+                          {selectedTask.status === "input_required" ? "Pending Request" : "Task Result"}
+                        </h3>
+                      </div>
+                      <ScrollArea className="flex-1">
+                        <div className="p-4">
+                          {loading ? (
+                            <div className="flex flex-col items-center justify-center py-8 text-center">
+                              <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
+                              <p className="text-xs text-muted-foreground">
+                                Fetching result...
+                              </p>
+                            </div>
+                          ) : selectedTask.status === "input_required" ? (
+                            pendingRequest ? (
+                              <JsonView
+                                src={pendingRequest as object}
+                                dark={true}
+                                theme="atom"
+                                enableClipboard={true}
+                                displaySize={false}
+                                collapseStringsAfterLength={100}
+                                style={{
+                                  fontSize: "12px",
+                                  fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                  backgroundColor: "hsl(var(--background))",
+                                  padding: "0",
+                                  borderRadius: "0",
+                                  border: "none",
+                                }}
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center py-8 text-center">
+                                <AlertCircle className="h-4 w-4 text-yellow-500 mb-2" />
+                                <p className="text-xs text-muted-foreground">
+                                  Waiting for input from client
+                                </p>
+                              </div>
+                            )
+                          ) : selectedTask.status === "completed" || selectedTask.status === "failed" ? (
+                            taskResult !== null ? (
+                              <JsonView
+                                src={taskResult as object}
+                                dark={true}
+                                theme="atom"
+                                enableClipboard={true}
+                                displaySize={false}
+                                collapseStringsAfterLength={100}
+                                style={{
+                                  fontSize: "12px",
+                                  fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                  backgroundColor: "hsl(var(--background))",
+                                  padding: "0",
+                                  borderRadius: "0",
+                                  border: "none",
+                                }}
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center py-8 text-center">
+                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
+                                <p className="text-xs text-muted-foreground">
+                                  Loading result...
+                                </p>
+                              </div>
+                            )
+                          ) : (
+                            <div className="flex flex-col items-center justify-center py-8 text-center">
+                              <TaskStatusIcon status={selectedTask.status} />
+                              <p className="text-xs text-muted-foreground mt-2">
+                                {selectedTask.status === "working"
+                                  ? "Result available when task completes"
+                                  : "No result available"}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
                   </>
                 ) : (
                   <div className="h-full flex items-center justify-center">
@@ -656,196 +786,68 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
 
         <ResizableHandle withHandle />
 
-        {/* Bottom Panel - JSON-RPC Logger and Result */}
+        {/* Bottom Panel - JSON-RPC Logger and Task Status */}
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={40} minSize={10}>
+            <ResizablePanel defaultSize={50} minSize={20}>
               <LoggerView serverIds={serverName ? [serverName] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={60} minSize={30}>
-              <div className="h-full flex flex-col border-t border-border bg-background break-all">
+            <ResizablePanel defaultSize={50} minSize={20}>
+              <div className="h-full flex flex-col border-t border-border bg-background">
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-border">
                   <h2 className="text-xs font-semibold text-foreground">
-                    Task Result
+                    Task Status
                   </h2>
                 </div>
 
                 {/* Content */}
                 <div className="flex-1 overflow-hidden">
-                  {error ? (
+                  <ScrollArea className="h-full">
                     <div className="p-4">
-                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                        {error}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="p-4">
-                          {loading ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold">
-                                Fetching task result...
-                              </p>
-                            </div>
-                          ) : !selectedTask ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <ListTodo className="h-4 w-4 text-muted-foreground" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                No task selected
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                Select a task to view its result
-                              </p>
-                            </div>
-                          ) : selectedTask.status === "input_required" ? (
-                            // Show pending request for input_required status
-                            pendingRequest ? (
-                              <div className="space-y-3">
-                                <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded text-yellow-700 dark:text-yellow-400 text-xs">
-                                  <p className="font-semibold mb-1">Input Required</p>
-                                  <p>The server is waiting for input to continue this task.</p>
-                                </div>
-                                <div className="text-xs text-muted-foreground mb-2">
-                                  Pending Request:
-                                </div>
-                                <JsonView
-                                  src={pendingRequest as object}
-                                  dark={true}
-                                  theme="atom"
-                                  enableClipboard={true}
-                                  displaySize={false}
-                                  collapseStringsAfterLength={100}
-                                  style={{
-                                    fontSize: "12px",
-                                    fontFamily:
-                                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                    backgroundColor: "hsl(var(--background))",
-                                    padding: "0",
-                                    borderRadius: "0",
-                                    border: "none",
-                                  }}
-                                />
-                              </div>
-                            ) : (
-                              <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-10 h-10 bg-yellow-500/10 rounded-full flex items-center justify-center mb-3">
-                                  <AlertCircle className="h-4 w-4 text-yellow-500" />
-                                </div>
-                                <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                  Waiting for Input
-                                </p>
-                                <p className="text-xs text-muted-foreground/70">
-                                  {loading
-                                    ? "Fetching pending request..."
-                                    : "The task is waiting for input from the client"}
-                                </p>
-                              </div>
-                            )
-                          ) : selectedTask.status === "failed" ? (
-                            // Show error result for failed tasks
-                            taskResult === null ? (
-                              <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-10 h-10 bg-destructive/10 rounded-full flex items-center justify-center mb-3">
-                                  <TaskStatusIcon status={selectedTask.status} />
-                                </div>
-                                <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                  Task failed
-                                </p>
-                                <p className="text-xs text-muted-foreground/70">
-                                  Loading error details...
-                                </p>
-                              </div>
-                            ) : (
-                              <div className="space-y-3">
-                                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs">
-                                  <p className="font-semibold mb-1">Task Failed</p>
-                                  <p>The task encountered an error during execution.</p>
-                                </div>
-                                <div className="text-xs text-muted-foreground mb-2">
-                                  Error Details:
-                                </div>
-                                <JsonView
-                                  src={taskResult as object}
-                                  dark={true}
-                                  theme="atom"
-                                  enableClipboard={true}
-                                  displaySize={false}
-                                  collapseStringsAfterLength={100}
-                                  style={{
-                                    fontSize: "12px",
-                                    fontFamily:
-                                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                    backgroundColor: "hsl(var(--background))",
-                                    padding: "0",
-                                    borderRadius: "0",
-                                    border: "none",
-                                  }}
-                                />
-                              </div>
-                            )
-                          ) : selectedTask.status !== "completed" ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <TaskStatusIcon status={selectedTask.status} />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                Task {selectedTask.status}
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                {selectedTask.status === "working"
-                                  ? "Result will be available when task completes"
-                                  : "No result available for this task status"}
-                              </p>
-                            </div>
-                          ) : taskResult === null ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <CheckCircle className="h-4 w-4 text-green-500" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                Task completed
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                Loading result...
-                              </p>
-                            </div>
-                          ) : (
-                            <JsonView
-                              src={taskResult as object}
-                              dark={true}
-                              theme="atom"
-                              enableClipboard={true}
-                              displaySize={false}
-                              collapseStringsAfterLength={100}
-                              style={{
-                                fontSize: "12px",
-                                fontFamily:
-                                  "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                backgroundColor: "hsl(var(--background))",
-                                padding: "0",
-                                borderRadius: "0",
-                                border: "none",
-                              }}
-                            />
-                          )}
+                      {!selectedTask ? (
+                        <div className="flex flex-col items-center justify-center py-8 text-center">
+                          <ListTodo className="h-4 w-4 text-muted-foreground mb-2" />
+                          <p className="text-xs text-muted-foreground">
+                            Select a task to view its status
+                          </p>
                         </div>
-                      </ScrollArea>
+                      ) : (
+                        <JsonView
+                          src={selectedTask as object}
+                          dark={true}
+                          theme="atom"
+                          enableClipboard={true}
+                          displaySize={false}
+                          collapseStringsAfterLength={100}
+                          style={{
+                            fontSize: "12px",
+                            fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                            backgroundColor: "hsl(var(--background))",
+                            padding: "0",
+                            borderRadius: "0",
+                            border: "none",
+                          }}
+                        />
+                      )}
                     </div>
-                  )}
+                  </ScrollArea>
                 </div>
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      {/* Elicitation Dialog for tasks in input_required status */}
+      {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
+      {/* elicitation requests with relatedTaskId in the metadata */}
+      <ElicitationDialog
+        elicitationRequest={dialogElicitation}
+        onResponse={handleElicitationResponse}
+        loading={elicitationResponding}
+      />
     </div>
   );
 }
