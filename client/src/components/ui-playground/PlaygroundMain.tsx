@@ -604,7 +604,10 @@ export function PlaygroundMain({
           {showChatGPTControls && (
             <>
               {/* Device type selector with custom dimensions */}
-              <Popover open={devicePopoverOpen} onOpenChange={setDevicePopoverOpen}>
+              <Popover
+                open={devicePopoverOpen}
+                onOpenChange={setDevicePopoverOpen}
+              >
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger asChild>
@@ -731,7 +734,10 @@ export function PlaygroundMain({
               </Popover>
 
               {/* Locale selector */}
-              <Popover open={localePopoverOpen} onOpenChange={setLocalePopoverOpen}>
+              <Popover
+                open={localePopoverOpen}
+                onOpenChange={setLocalePopoverOpen}
+              >
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger asChild>
@@ -786,7 +792,11 @@ export function PlaygroundMain({
                       >
                         <Shield className="h-3.5 w-3.5" />
                         <span>
-                          {CSP_MODE_OPTIONS.find((o) => o.mode === activeCspMode)?.label}
+                          {
+                            CSP_MODE_OPTIONS.find(
+                              (o) => o.mode === activeCspMode,
+                            )?.label
+                          }
                         </span>
                       </Button>
                     </PopoverTrigger>
@@ -882,7 +892,10 @@ export function PlaygroundMain({
           {showMCPAppsControls && (
             <>
               {/* Device type selector with custom dimensions */}
-              <Popover open={devicePopoverOpen} onOpenChange={setDevicePopoverOpen}>
+              <Popover
+                open={devicePopoverOpen}
+                onOpenChange={setDevicePopoverOpen}
+              >
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger asChild>
@@ -1009,7 +1022,10 @@ export function PlaygroundMain({
               </Popover>
 
               {/* Locale selector */}
-              <Popover open={localePopoverOpen} onOpenChange={setLocalePopoverOpen}>
+              <Popover
+                open={localePopoverOpen}
+                onOpenChange={setLocalePopoverOpen}
+              >
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger asChild>
@@ -1053,7 +1069,10 @@ export function PlaygroundMain({
               </Popover>
 
               {/* Timezone selector (SEP-1865) */}
-              <Popover open={timezonePopoverOpen} onOpenChange={setTimezonePopoverOpen}>
+              <Popover
+                open={timezonePopoverOpen}
+                onOpenChange={setTimezonePopoverOpen}
+              >
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger asChild>
@@ -1064,7 +1083,8 @@ export function PlaygroundMain({
                       >
                         <Clock className="h-3.5 w-3.5" />
                         <span>
-                          {TIMEZONE_OPTIONS.find((o) => o.zone === timeZone)?.label || timeZone}
+                          {TIMEZONE_OPTIONS.find((o) => o.zone === timeZone)
+                            ?.label || timeZone}
                         </span>
                       </Button>
                     </PopoverTrigger>
@@ -1110,7 +1130,11 @@ export function PlaygroundMain({
                       >
                         <Shield className="h-3.5 w-3.5" />
                         <span>
-                          {CSP_MODE_OPTIONS.find((o) => o.mode === mcpAppsCspMode)?.label}
+                          {
+                            CSP_MODE_OPTIONS.find(
+                              (o) => o.mode === mcpAppsCspMode,
+                            )?.label
+                          }
                         </span>
                       </Button>
                     </PopoverTrigger>
