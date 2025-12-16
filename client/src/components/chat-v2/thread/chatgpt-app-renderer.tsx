@@ -1223,7 +1223,7 @@ export function ChatGPTAppRenderer({
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
       }
       // Desktop fullscreen: breaks out to viewport
-      return "fixed inset-0 z-50 w-full h-full bg-background flex flex-col";
+      return "fixed inset-0 z-40 w-full h-full bg-background flex flex-col";
     }
 
     // PiP modes
@@ -1261,7 +1261,7 @@ export function ChatGPTAppRenderer({
 
       {/* Breakout fullscreen: full header with navigation */}
       {isFullscreen && !isContainedFullscreenMode && (
-        <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-50 shrink-0">
+        <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigateWidget("back")}
