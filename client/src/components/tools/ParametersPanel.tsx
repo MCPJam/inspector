@@ -94,9 +94,10 @@ export function ParametersPanel({
                     <Input
                       type="number"
                       min={0}
-                      value={taskTtl ?? 0}
-                      onChange={(e) => onTaskTtlChange(parseInt(e.target.value) || 0)}
-                      className="w-20 h-6 text-[10px] px-1.5"
+                      defaultValue={taskTtl ?? 0}
+                      key={`ttl-req-${taskTtl}`}
+                      onBlur={(e) => onTaskTtlChange(parseInt(e.target.value) || 0)}
+                      className="w-20 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       title="TTL in milliseconds (0 = no expiration)"
                     />
                     <span className="text-[10px] text-muted-foreground">ms TTL</span>
@@ -128,9 +129,10 @@ export function ParametersPanel({
                     <Input
                       type="number"
                       min={0}
-                      value={taskTtl ?? 0}
-                      onChange={(e) => onTaskTtlChange(parseInt(e.target.value) || 0)}
-                      className="w-20 h-6 text-[10px] px-1.5"
+                      defaultValue={taskTtl ?? 0}
+                      key={`ttl-opt-${taskTtl}`}
+                      onBlur={(e) => onTaskTtlChange(parseInt(e.target.value) || 0)}
+                      className="w-20 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       title="TTL in milliseconds (0 = no expiration)"
                     />
                     <span className="text-[10px] text-muted-foreground">ms TTL</span>

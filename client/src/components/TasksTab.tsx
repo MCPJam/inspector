@@ -43,11 +43,7 @@ import { Switch } from "./ui/switch";
 import { Input } from "./ui/input";
 import { Progress } from "./ui/progress";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
-import {
-  STATUS_CONFIG,
-  PRIMITIVE_TYPE_CONFIG,
-  formatRelativeTime,
-} from "@/lib/task-utils";
+import { STATUS_CONFIG, formatRelativeTime } from "@/lib/task-utils";
 import { useTaskElicitation } from "@/hooks/use-task-elicitation";
 import { ElicitationDialog } from "./ElicitationDialog";
 import type { DialogElicitation } from "./ToolsTab";
@@ -414,9 +410,10 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                         type="number"
                         min={500}
                         step={500}
-                        value={userPollInterval}
-                        onChange={(e) => handlePollIntervalChange(e.target.value)}
-                        className="h-6 w-16 text-[10px] px-1.5 text-center"
+                        defaultValue={userPollInterval}
+                        key={`poll-${userPollInterval}`}
+                        onBlur={(e) => handlePollIntervalChange(e.target.value)}
+                        className="h-6 w-16 text-[10px] px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         title="Poll interval in milliseconds"
                       />
                       <span className="text-[10px] text-muted-foreground">ms</span>
@@ -487,15 +484,10 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                         <div className="space-y-1">
                           {tasks.map((task) => {
                             const trackedTask = getTrackedTaskById(task.taskId);
-                            const primitiveType =
-                              trackedTask?.primitiveType || "tool";
                             const primitiveName =
                               trackedTask?.primitiveName ||
                               trackedTask?.toolName ||
                               task.taskId.substring(0, 12);
-                            const primitiveConfig =
-                              PRIMITIVE_TYPE_CONFIG[primitiveType];
-                            const PrimitiveIcon = primitiveConfig.icon;
 
                             return (
                               <div
@@ -512,31 +504,14 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                                     <TaskStatusIcon status={task.status} />
                                   </div>
                                   <div className="flex-1 min-w-0">
-                                    {/* Primary: Primitive type badge + Name */}
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <Badge
-                                        variant="outline"
-                                        className={`text-[10px] ${primitiveConfig.color} gap-1 px-1.5`}
-                                      >
-                                        <PrimitiveIcon className="h-3 w-3" />
-                                        {primitiveConfig.label}
-                                      </Badge>
-                                      <span className="font-medium text-xs text-foreground truncate">
-                                        {primitiveName}
-                                      </span>
-                                    </div>
-                                    {/* Secondary: Status badge + Relative time */}
-                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                      <Badge
-                                        variant="outline"
-                                        className={`text-[10px] ${STATUS_CONFIG[task.status].bgColor} ${STATUS_CONFIG[task.status].color} border-0`}
-                                      >
-                                        {task.status}
-                                      </Badge>
-                                      <span className="text-[10px]">
-                                        {formatRelativeTime(task.createdAt)}
-                                      </span>
-                                    </div>
+                                    {/* Primary: Name */}
+                                    <span className="font-medium text-xs text-foreground truncate block mb-1">
+                                      {primitiveName}
+                                    </span>
+                                    {/* Secondary: Relative time */}
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {formatRelativeTime(task.createdAt)}
+                                    </span>
                                     {/* Status message */}
                                     {task.statusMessage && (
                                       <p className="text-[10px] mt-1.5 line-clamp-1 leading-relaxed text-muted-foreground">
@@ -572,32 +547,28 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                 {selectedTask ? (
                   <>
                     {/* Header */}
-                    <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <TaskStatusIcon status={selectedTask.status} />
-                          <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                            {selectedTask.taskId}
-                          </code>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${STATUS_CONFIG[selectedTask.status].bgColor} ${STATUS_CONFIG[selectedTask.status].color} border-0`}
-                          >
-                            {selectedTask.status}
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
+                      <div className="flex items-center gap-3">
+                        <TaskStatusIcon status={selectedTask.status} />
+                        <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
+                          {selectedTask.taskId}
+                        </code>
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${STATUS_CONFIG[selectedTask.status].bgColor} ${STATUS_CONFIG[selectedTask.status].color} border-0`}
+                        >
+                          {selectedTask.status}
+                        </Badge>
+                        {selectedTask.ttl !== null && (
+                          <Badge variant="outline" className="text-xs">
+                            TTL: {selectedTask.ttl}ms
                           </Badge>
-                          {selectedTask.ttl !== null && (
-                            <Badge variant="outline" className="text-xs">
-                              TTL: {selectedTask.ttl}ms
-                            </Badge>
-                          )}
-                          {selectedTask.pollInterval && (
-                            <Badge variant="outline" className="text-xs">
-                              Poll: {selectedTask.pollInterval}ms
-                            </Badge>
-                          )}
-                        </div>
+                        )}
+                        {selectedTask.pollInterval && (
+                          <Badge variant="outline" className="text-xs">
+                            Poll: {selectedTask.pollInterval}ms
+                          </Badge>
+                        )}
                       </div>
                       {!isTerminalStatus(selectedTask.status) && (
                         <Button
@@ -703,7 +674,7 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
                               />
                             ) : (
                               <div className="flex flex-col items-center justify-center py-8 text-center">
-                                <AlertCircle className="h-4 w-4 text-yellow-500 mb-2" />
+                                <AlertCircle className="h-4 w-4 text-warning mb-2" />
                                 <p className="text-xs text-muted-foreground">
                                   Waiting for input from client
                                 </p>

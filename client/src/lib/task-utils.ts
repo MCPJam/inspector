@@ -24,32 +24,32 @@ export interface StatusConfig {
 export const STATUS_CONFIG: Record<Task["status"], StatusConfig> = {
   working: {
     icon: Loader2,
-    color: "text-blue-500",
-    bgColor: "bg-blue-500/10",
+    color: "text-info",
+    bgColor: "bg-info/10",
     animate: true,
   },
   input_required: {
     icon: AlertCircle,
-    color: "text-yellow-500",
-    bgColor: "bg-yellow-500/10",
+    color: "text-warning",
+    bgColor: "bg-warning/10",
     animate: false,
   },
   completed: {
     icon: CheckCircle,
-    color: "text-green-500",
-    bgColor: "bg-green-500/10",
+    color: "text-success",
+    bgColor: "bg-success/10",
     animate: false,
   },
   failed: {
     icon: XCircle,
-    color: "text-red-500",
-    bgColor: "bg-red-500/10",
+    color: "text-destructive",
+    bgColor: "bg-destructive/10",
     animate: false,
   },
   cancelled: {
     icon: Slash,
-    color: "text-gray-500",
-    bgColor: "bg-gray-500/10",
+    color: "text-muted-foreground",
+    bgColor: "bg-muted",
     animate: false,
   },
 };
@@ -59,9 +59,9 @@ export const PRIMITIVE_TYPE_CONFIG: Record<
   PrimitiveType,
   { icon: LucideIcon; label: string; color: string }
 > = {
-  tool: { icon: Wrench, label: "Tool", color: "text-blue-500" },
-  prompt: { icon: MessageSquare, label: "Prompt", color: "text-purple-500" },
-  resource: { icon: FileText, label: "Resource", color: "text-emerald-500" },
+  tool: { icon: Wrench, label: "Tool", color: "text-info" },
+  prompt: { icon: MessageSquare, label: "Prompt", color: "text-primary" },
+  resource: { icon: FileText, label: "Resource", color: "text-success" },
 };
 
 export function formatRelativeTime(isoString: string): string {
