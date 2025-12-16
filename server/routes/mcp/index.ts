@@ -20,6 +20,7 @@ import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
+import tasks from "./tasks";
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -102,5 +103,8 @@ mcp.route("/tunnels", tunnelsRoute);
 
 // Logging level endpoint - configure per-server logging verbosity
 mcp.route("/log-level", logLevel);
+
+// Tasks endpoints - MCP Tasks experimental feature (spec 2025-11-25)
+mcp.route("/tasks", tasks);
 
 export default mcp;

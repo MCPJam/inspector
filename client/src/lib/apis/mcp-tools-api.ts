@@ -4,6 +4,7 @@ import type {
   ElicitResult,
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import type { MCPTask, TaskOptions } from "@/sdk";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
@@ -11,6 +12,11 @@ export type ListToolsResultWithMetadata = ListToolsResult & {
 };
 
 export type ToolServerMap = Record<string, string>;
+
+export type { TaskOptions };
+
+// Re-export SDK type for task data
+export type TaskData = MCPTask;
 
 export type ToolExecutionResponse =
   | {
@@ -23,6 +29,13 @@ export type ToolExecutionResponse =
       requestId: string;
       request: ElicitRequest["params"];
       timestamp: string;
+    }
+  | {
+      status: "task_created";
+      task: TaskData;
+      // Optional string for LLM hosts to return as immediate tool result while task executes
+      // Per MCP Tasks spec (2025-11-25): io.modelcontextprotocol/model-immediate-response in _meta
+      modelImmediateResponse?: string;
     }
   | {
       error: string;
@@ -52,11 +65,12 @@ export async function executeToolApi(
   serverId: string,
   toolName: string,
   parameters: Record<string, unknown>,
+  taskOptions?: TaskOptions,
 ): Promise<ToolExecutionResponse> {
   const res = await fetch("/api/mcp/tools/execute", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, toolName, parameters }),
+    body: JSON.stringify({ serverId, toolName, parameters, taskOptions }),
   });
   let body: any = null;
   try {
@@ -67,6 +81,9 @@ export async function executeToolApi(
     const message = body?.error || `Execute tool failed (${res.status})`;
     return { error: message } as ToolExecutionResponse;
   }
+
+  // Server now returns { status: "task_created", task: { taskId, ... } } for task-augmented requests
+  // per MCP Tasks spec (2025-11-25)
   return body as ToolExecutionResponse;
 }
 

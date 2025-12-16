@@ -38,7 +38,13 @@ import {
   listTools,
   respondToElicitationApi,
   type ToolExecutionResponse,
+  type TaskOptions,
 } from "@/lib/apis/mcp-tools-api";
+import {
+  getTaskCapabilities,
+  type TaskCapabilities,
+} from "@/lib/apis/mcp-tasks-api";
+import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig } from "@/sdk";
@@ -134,6 +140,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     title: string;
     description?: string;
   }>({ title: "" });
+  const [executeAsTask, setExecuteAsTask] = useState(false);
+  const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
+  // Task capabilities from server (MCP Tasks spec 2025-11-25)
+  const [taskCapabilities, setTaskCapabilities] =
+    useState<TaskCapabilities | null>(null);
+  // TTL for task execution (milliseconds, 0 = no expiration)
+  const [taskTtl, setTaskTtl] = useState<number>(0);
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -150,6 +163,40 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     }
   }, [serverConfig]);
 
+  // Check if the selected tool requires task execution
+  // Per MCP Tasks spec: execution.taskSupport can be "required", "optional", or "forbidden"
+  const selectedToolTaskSupport = useMemo(():
+    | "required"
+    | "optional"
+    | "forbidden" => {
+    if (!selectedTool || !tools[selectedTool]) return "forbidden";
+    const tool = tools[selectedTool];
+    const execution = (tool as any).execution;
+
+    // Check standard spec format: execution.taskSupport
+    const taskSupport = execution?.taskSupport;
+    if (taskSupport === "required" || taskSupport === "optional") {
+      return taskSupport;
+    }
+    if (taskSupport === "forbidden") {
+      return "forbidden";
+    }
+
+    const taskMode = execution?.task;
+    if (taskMode === "always" || taskMode === "required") return "required";
+    if (taskMode === "optional") return "optional";
+    if (taskMode === "never" || taskMode === "forbidden") return "forbidden";
+
+    // Per MCP spec: if execution.taskSupport is not present, treat as "forbidden"
+    // Clients MUST NOT attempt to invoke the tool as a task
+    return "forbidden";
+  }, [selectedTool, tools]);
+
+  // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
+  // Per spec: clients MUST NOT use task augmentation if server doesn't declare capability
+  const serverSupportsTaskToolCalls =
+    taskCapabilities?.supportsToolCalls ?? false;
+
   useEffect(() => {
     if (!serverConfig || !serverName) {
       setTools({});
@@ -162,10 +209,34 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setUnstructuredValidationResult("not_applicable");
       setError("");
       setActiveElicitation(null);
+      setTaskCapabilities(null);
       return;
     }
     void fetchTools();
+    // Fetch task capabilities for this server (MCP Tasks spec 2025-11-25)
+    void fetchTaskCapabilities();
   }, [serverConfig, serverName]);
+
+  // Fetch task capabilities for the server
+  const fetchTaskCapabilities = async () => {
+    if (!serverName) return;
+    try {
+      const capabilities = await getTaskCapabilities(serverName);
+      setTaskCapabilities(capabilities);
+      logger.info("Task capabilities fetched", {
+        serverId: serverName,
+        supportsToolCalls: capabilities.supportsToolCalls,
+        supportsList: capabilities.supportsList,
+        supportsCancel: capabilities.supportsCancel,
+      });
+    } catch (err) {
+      // Server may not support tasks - this is fine, just log it
+      logger.debug("Could not fetch task capabilities", {
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+      setTaskCapabilities(null);
+    }
+  };
 
   useEffect(() => {
     if (!serverConfig) return;
@@ -308,6 +379,37 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       return;
     }
 
+    // Handle task creation response (MCP Tasks spec 2025-11-25)
+    if ("status" in response && response.status === "task_created") {
+      const { task, modelImmediateResponse } = response;
+      setCreatedTaskId(task.taskId);
+
+      // Track the task locally so it appears in the Tasks tab
+      trackTask({
+        taskId: task.taskId,
+        serverId: serverName,
+        createdAt: task.createdAt,
+        toolName,
+        primitiveType: "tool",
+        primitiveName: toolName,
+      });
+
+      logger.info("Background task created", {
+        toolName,
+        taskId: task.taskId,
+        status: task.status,
+        ttl: task.ttl,
+        pollInterval: task.pollInterval,
+        duration: Date.now() - startedAt,
+        // Per MCP Tasks spec: optional string for LLM hosts to return to model immediately
+        modelImmediateResponse: modelImmediateResponse || undefined,
+      });
+
+      // Navigate to Tasks tab to monitor the task
+      window.location.hash = "tasks";
+      return;
+    }
+
     if ("error" in response && response.error) {
       setError(response.error);
     }
@@ -330,6 +432,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setShowStructured(false);
     setValidationErrors(undefined);
     setUnstructuredValidationResult("not_applicable");
+    setCreatedTaskId(null);
 
     const executionStartTime = Date.now();
     const toolCallId = `tool-${executionStartTime}`;
@@ -340,7 +443,24 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setLastToolName(selectedTool);
       setLastToolParameters(params);
 
-      const response = await executeToolApi(serverName, selectedTool, params);
+      // Pass task options if executing as background task (MCP Tasks spec 2025-11-25)
+      // Use task execution only if: server supports tasks AND (user checked option OR tool requires it)
+      // Per spec: clients MUST NOT use task augmentation without server capability
+      const shouldUseTask =
+        serverSupportsTaskToolCalls &&
+        (executeAsTask || selectedToolTaskSupport === "required");
+      // Per MCP spec: ttl is optional. Only include if user specified a non-zero value.
+      // 0 could be misinterpreted by servers, so we use undefined to let server decide.
+      const taskOptions: TaskOptions | undefined = shouldUseTask
+        ? { ttl: taskTtl > 0 ? taskTtl : undefined }
+        : undefined;
+
+      const response = await executeToolApi(
+        serverName,
+        selectedTool,
+        params,
+        taskOptions,
+      );
       handleExecutionResponse(response, selectedTool, executionStartTime);
     } catch (err) {
       console.error("executeTool", err);
@@ -519,6 +639,28 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 onExecute={executeTool}
                 onSave={handleSaveCurrent}
                 onFieldChange={updateFieldValue}
+                // Only show task execution option if server supports tasks and tool allows it
+                // Per MCP spec: clients MUST NOT use task augmentation without server capability
+                executeAsTask={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport !== "forbidden"
+                    ? executeAsTask
+                    : undefined
+                }
+                onExecuteAsTaskChange={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport !== "forbidden"
+                    ? setExecuteAsTask
+                    : undefined
+                }
+                taskRequired={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport === "required"
+                }
+                // MCP Tasks spec 2025-11-25: TTL configuration
+                taskTtl={taskTtl}
+                onTaskTtlChange={setTaskTtl}
+                serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
               />
             ) : (
               <ResizablePanel defaultSize={70} minSize={50}>
