@@ -372,9 +372,8 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
           if (pendingInputRequestTaskIdRef.current === currentTaskId) {
             setPendingRequest(result);
           }
-        } catch (err) {
-          // This may block waiting for input, which is expected behavior
-          console.debug("tasks/result for input_required:", err);
+        } catch {
+          // May block waiting for input - expected behavior per MCP Tasks spec
         } finally {
           // Only clear loading if this is still the active request
           if (pendingInputRequestTaskIdRef.current === currentTaskId) {
