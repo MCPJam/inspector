@@ -1,6 +1,8 @@
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
+import { CheckoutSession } from "./acp-types";
+
 export {};
 
 type DeviceCapabilities = {
@@ -59,11 +61,13 @@ type OpenAIAPI = {
   view: { mode: string; params: Record<string, any> };
   widgetState: any;
   _pendingCalls?: Map<number, PendingCall>;
+  _pendingCheckoutCalls?: Map<number, PendingCall>;
   _callId: number;
   setWidgetState(state: any): void;
   callTool(toolName: string, args?: Record<string, any>): Promise<any>;
   sendFollowUpMessage(opts: any): void;
   sendFollowupTurn(message: any): void;
+  requestCheckout(session: CheckoutSession): Promise<any>;
   requestDisplayMode(options?: { mode?: string; maxHeight?: number | null }): {
     mode: string;
   };
@@ -314,7 +318,9 @@ const clampNumber = (value: unknown): number | null => {
     },
     view: { mode: viewMode, params: viewParams },
     widgetState: null,
-    ...(useMapPendingCalls ? { _pendingCalls: new Map() } : {}),
+    ...(useMapPendingCalls
+      ? { _pendingCalls: new Map(), _pendingCheckoutCalls: new Map() }
+      : {}),
     _callId: 0,
 
     setWidgetState(state: any) {
@@ -416,6 +422,49 @@ const clampNumber = (value: unknown): number | null => {
       return this.sendFollowUpMessage(
         typeof message === "string" ? message : message?.prompt || "",
       );
+    },
+
+    requestCheckout(session: CheckoutSession) {
+      const callId = ++this._callId;
+
+      if (useMapPendingCalls) {
+        return new Promise((resolve, reject) => {
+          this._pendingCheckoutCalls.set(callId, { resolve, reject });
+          window.parent.postMessage(
+            { type: "openai:requestCheckout", toolId, callId, session },
+            "*",
+          );
+          setTimeout(() => {
+            if (this._pendingCheckoutCalls.has(callId)) {
+              this._pendingCheckoutCalls.delete(callId);
+              reject(new Error("Checkout timeout"));
+            }
+          }, 30000);
+        });
+      }
+
+      return new Promise((resolve, reject) => {
+        const handler = (event: MessageEvent<any>) => {
+          if (
+            event.data?.type === "openai:requestCheckout:response" &&
+            event.data.callId === callId
+          ) {
+            window.removeEventListener("message", handler);
+            event.data.error
+              ? reject(new Error(event.data.error))
+              : resolve(event.data.result);
+          }
+        };
+        window.addEventListener("message", handler);
+        window.parent.postMessage(
+          { type: "openai:requestCheckout", callId, session, toolId },
+          "*",
+        );
+        setTimeout(() => {
+          window.removeEventListener("message", handler);
+          reject(new Error("Checkout timeout"));
+        }, 30000);
+      });
     },
 
     requestDisplayMode(options: any = {}) {
@@ -538,6 +587,15 @@ const clampNumber = (value: unknown): number | null => {
         const pending = window.openai._pendingCalls?.get(callId);
         if (pending) {
           window.openai._pendingCalls?.delete(callId);
+          error ? pending.reject(new Error(error)) : pending.resolve(result);
+        }
+        break;
+      }
+      case "openai:requestCheckout:response": {
+        if (!useMapPendingCalls) break;
+        const pending = window.openai._pendingCheckoutCalls?.get(callId);
+        if (pending) {
+          window.openai._pendingCheckoutCalls?.delete(callId);
           error ? pending.reject(new Error(error)) : pending.resolve(result);
         }
         break;
