@@ -34,7 +34,9 @@ import {
   getTaskResult,
   cancelTask,
   getLatestProgress,
+  getTaskCapabilities,
   type ProgressEvent,
+  type TaskCapabilities,
 } from "@/lib/apis/mcp-tasks-api";
 import {
   getTrackedTasksForServer,
@@ -111,6 +113,9 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
     return DEFAULT_POLL_INTERVAL;
   });
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
+  // Task capabilities from server (MCP Tasks spec 2025-11-25)
+  // undefined = not yet fetched, null = server doesn't support, object = loaded
+  const [taskCapabilities, setTaskCapabilities] = useState<TaskCapabilities | null | undefined>(undefined);
 
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
@@ -176,9 +181,16 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
       // Get dismissed task IDs to filter them out
       const dismissedIds = getDismissedTaskIds(serverName);
 
-      // Get tasks from server (may be empty for servers like FastMCP)
-      const serverResult = await listTasks(serverName);
-      const serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
+      // Per MCP Tasks spec (2025-11-25): clients SHOULD only call tasks/list
+      // if the server declares tasks.list capability
+      let serverResult: { tasks: Task[] } = { tasks: [] };
+      let serverTaskIds = new Set<string>();
+
+      if (taskCapabilities?.supportsList) {
+        // Server supports tasks/list - fetch from server
+        serverResult = await listTasks(serverName);
+        serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
+      }
 
       // Get locally tracked tasks and fetch their current status
       const trackedTasks = getTrackedTasksForServer(serverName);
@@ -229,7 +241,7 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
     } finally {
       setFetchingTasks(false);
     }
-  }, [serverName]);
+  }, [serverName, taskCapabilities]);
 
   // Handle elicitation response from the dialog
   const handleElicitationResponse = useCallback(
@@ -288,15 +300,40 @@ export function TasksTab({ serverConfig, serverName, isActive = true }: TasksTab
     }
   }, [serverName, selectedTaskId, fetchTasks]);
 
-  // Fetch tasks on mount and when server changes (only when tab is active)
+  // Fetch task capabilities when server changes
+  // Per MCP Tasks spec (2025-11-25): clients SHOULD check capabilities before using task features
   useEffect(() => {
-    if (serverConfig && serverName && isActive) {
+    if (!serverConfig || !serverName) {
+      setTaskCapabilities(undefined);
+      return;
+    }
+
+    // Reset to undefined while fetching
+    setTaskCapabilities(undefined);
+
+    const fetchCapabilities = async () => {
+      try {
+        const capabilities = await getTaskCapabilities(serverName);
+        setTaskCapabilities(capabilities);
+      } catch {
+        // Server may not support tasks - set to null (vs undefined = loading)
+        setTaskCapabilities(null);
+      }
+    };
+
+    fetchCapabilities();
+  }, [serverConfig, serverName]);
+
+  // Fetch tasks on mount and when server changes (only when tab is active)
+  // Wait for capabilities to be fetched first (undefined = still loading)
+  useEffect(() => {
+    if (serverConfig && serverName && isActive && taskCapabilities !== undefined) {
       setTasks([]);
       setSelectedTaskId("");
       setTaskResult(null);
       fetchTasks();
     }
-  }, [serverConfig, serverName, fetchTasks, isActive]);
+  }, [serverConfig, serverName, fetchTasks, isActive, taskCapabilities]);
 
   // Auto-refresh logic - uses user-configured pollInterval (persisted in localStorage)
   // Only poll when tab is active

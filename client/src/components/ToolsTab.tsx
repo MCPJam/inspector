@@ -164,7 +164,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   // Check if the selected tool requires task execution
   // Per MCP Tasks spec: execution.taskSupport can be "required", "optional", or "forbidden"
-  // FastMCP uses execution.task with values "always", "optional", "never"
   const selectedToolTaskSupport = useMemo((): "required" | "optional" | "forbidden" => {
     if (!selectedTool || !tools[selectedTool]) return "forbidden";
     const tool = tools[selectedTool];
@@ -179,8 +178,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       return "forbidden";
     }
 
-    // Check FastMCP format: execution.task ("always", "optional", "never")
-    // Also handle if FastMCP uses standard values ("required", "forbidden")
     const taskMode = execution?.task;
     if (taskMode === "always" || taskMode === "required") return "required";
     if (taskMode === "optional") return "optional";

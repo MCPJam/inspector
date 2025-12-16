@@ -308,7 +308,6 @@ tools.post("/execute", async (c) => {
         });
       }
 
-      // Some servers (e.g., FastMCP) embed task info in _meta
       // Check for task info in _meta["modelcontextprotocol.io/task"] or _meta["io.modelcontextprotocol/related-task"]
       const metaTask = result?._meta?.["modelcontextprotocol.io/task"]
         || result?._meta?.["io.modelcontextprotocol/related-task"];
