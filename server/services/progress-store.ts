@@ -18,8 +18,6 @@ class ProgressStore {
   private readonly emitter = new EventEmitter();
   // Map: serverId -> Map<progressToken, ProgressEvent>
   private readonly store = new Map<string, Map<string | number, ProgressEvent>>();
-  // Track which progressToken maps to which taskId (if known)
-  private readonly tokenToTask = new Map<string, string>(); // "serverId:token" -> taskId
 
   /**
    * Store a progress update
@@ -32,22 +30,6 @@ class ProgressStore {
     }
     serverProgress.set(event.progressToken, event);
     this.emitter.emit("progress", event);
-  }
-
-  /**
-   * Associate a progressToken with a taskId for later lookup
-   */
-  associateTokenWithTask(serverId: string, progressToken: string | number, taskId: string): void {
-    const key = `${serverId}:${progressToken}`;
-    this.tokenToTask.set(key, taskId);
-  }
-
-  /**
-   * Get the taskId associated with a progressToken
-   */
-  getTaskIdForToken(serverId: string, progressToken: string | number): string | undefined {
-    const key = `${serverId}:${progressToken}`;
-    return this.tokenToTask.get(key);
   }
 
   /**
@@ -81,8 +63,6 @@ class ProgressStore {
    */
   clearProgress(serverId: string, progressToken: string | number): void {
     this.store.get(serverId)?.delete(progressToken);
-    const key = `${serverId}:${progressToken}`;
-    this.tokenToTask.delete(key);
   }
 
   /**
@@ -90,12 +70,6 @@ class ProgressStore {
    */
   clearAllProgress(serverId: string): void {
     this.store.delete(serverId);
-    // Clean up token-to-task mappings for this server
-    for (const key of this.tokenToTask.keys()) {
-      if (key.startsWith(`${serverId}:`)) {
-        this.tokenToTask.delete(key);
-      }
-    }
   }
 
   /**

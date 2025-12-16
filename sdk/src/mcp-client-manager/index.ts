@@ -596,27 +596,28 @@ export class MCPClientManager {
     // Check if task mode is requested
     // Per MCP SDK: tools with execution.taskSupport="required" will throw in callTool()
     // The UI should detect this and force taskOptions to be provided
-    // Must use client.experimental.tasks.callToolStream() for task-augmented calls
     const useTaskStream = taskOptions !== undefined;
 
     if (useTaskStream) {
-      // Use experimental tasks API for task-augmented tool calls
-      // Per MCP Tasks spec (2025-11-25), this enables background task execution
+      // Use task-augmented tool call per MCP Tasks spec (2025-11-25)
+      // The task field MUST be in params, not in request options
       const taskValue = taskOptions?.ttl !== undefined ? { ttl: taskOptions.ttl } : {};
 
-      const requestOptions = {
-        ...mergedOptions,
-        task: taskValue,
-      };
-
-      // Send the task-augmented request directly
+      // Per MCP Tasks spec: task field goes in params alongside name/arguments
+      // {
+      //   "method": "tools/call",
+      //   "params": { "name": "...", "arguments": {...}, "task": { "ttl": 60000 } }
+      // }
       const result = await client.request(
         {
           method: "tools/call",
-          params: callParams,
+          params: {
+            ...callParams,
+            task: taskValue,
+          },
         },
         CallToolResultSchema,
-        requestOptions,
+        mergedOptions,
       );
 
       // Check if result contains task info (CreateTaskResult format)
