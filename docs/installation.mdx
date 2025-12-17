@@ -24,6 +24,23 @@ docker run -p 6274:6274 mcpjam/mcp-inspector
 
 The application will be available at **`http://127.0.0.1:6274`**.
 
+### Docker with Arguments
+
+You can pass command-line arguments to the Docker container:
+
+```bash
+# Launch with STDIO server
+docker run -p 6274:6274 -- npx -y @modelcontextprotocol/server-everything
+
+# Launch with HTTP server
+docker run --rm -p 6274:6274 mcpjam/mcp-inspector -- \
+  --url http://host.docker.internal:8080/mcp \
+  --name "HTTP Server" \
+  --tab tools
+```
+
+For more information check out our docs on [Launch from Code](https://docs.mcpjam.com/inspector/launch-from-code)
+
 <Warning>
 **Important for macOS/Windows users:**
 
