@@ -40,6 +40,7 @@ export function PartSwitch({
   toolServerMap,
   onWidgetStateChange,
   pipWidgetId,
+  fullscreenWidgetId,
   onRequestPip,
   onExitPip,
   onRequestFullscreen,
@@ -54,6 +55,7 @@ export function PartSwitch({
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
   pipWidgetId: string | null;
+  fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
@@ -101,6 +103,8 @@ export function PartSwitch({
             part={toolPart}
             uiType={uiType}
             displayMode={displayMode}
+            pipWidgetId={pipWidgetId}
+            fullscreenWidgetId={fullscreenWidgetId}
             onDisplayModeChange={onDisplayModeChange}
             onRequestFullscreen={onRequestFullscreen}
             onExitFullscreen={onExitFullscreen}
@@ -122,6 +126,7 @@ export function PartSwitch({
             }
             onWidgetStateChange={onWidgetStateChange}
             pipWidgetId={pipWidgetId}
+            fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
             displayMode={displayMode}
@@ -162,6 +167,8 @@ export function PartSwitch({
             part={toolPart}
             uiType={uiType}
             displayMode={displayMode}
+            pipWidgetId={pipWidgetId}
+            fullscreenWidgetId={fullscreenWidgetId}
             onDisplayModeChange={onDisplayModeChange}
             onRequestFullscreen={onRequestFullscreen}
             onExitFullscreen={onExitFullscreen}
@@ -182,6 +189,7 @@ export function PartSwitch({
             }
             onWidgetStateChange={onWidgetStateChange}
             pipWidgetId={pipWidgetId}
+            fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
             onRequestFullscreen={onRequestFullscreen}

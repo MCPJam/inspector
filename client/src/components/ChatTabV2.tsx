@@ -506,11 +506,14 @@ export function ChatTabV2({
                         sendMessage({ text })
                       }
                       model={selectedModel}
-                      isLoading={status === "submitted"}
+                      isLoading={status === "submitted" || status === "streaming"}
                       toolsMetadata={toolsMetadata}
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}
                       onFullscreenChange={setIsWidgetFullscreen}
+                      enableFullscreenChatOverlay
+                      fullscreenChatPlaceholder={placeholder}
+                      fullscreenChatDisabled={inputDisabled}
                     />
                     {errorMessage && (
                       <div className="px-4 pb-4 pt-4">
