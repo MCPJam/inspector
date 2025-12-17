@@ -619,9 +619,7 @@ export function PlaygroundMain({
           canSend={
             status === "ready" && !submitBlocked && input.trim().length > 0
           }
-          isThinking={
-            status === "submitted" || status === "streaming" || isStreaming
-          }
+          isThinking={status === "submitted"}
           onSend={() => {
             sendMessage({ text: input });
             setInput("");
