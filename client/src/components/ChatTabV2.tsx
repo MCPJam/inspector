@@ -506,7 +506,7 @@ export function ChatTabV2({
                         sendMessage({ text })
                       }
                       model={selectedModel}
-                      isLoading={status === "submitted" || status === "streaming"}
+                      isLoading={status === "submitted"}
                       toolsMetadata={toolsMetadata}
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}

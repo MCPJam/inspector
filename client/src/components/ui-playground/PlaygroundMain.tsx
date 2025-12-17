@@ -562,7 +562,7 @@ export function PlaygroundMain({
                 messages={messages}
                 sendFollowUpMessage={handleSendFollowUp}
                 model={selectedModel}
-                isLoading={status === "submitted" || status === "streaming"}
+                isLoading={status === "submitted"}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={handleWidgetStateChange}
