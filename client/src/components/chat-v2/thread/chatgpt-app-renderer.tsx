@@ -92,6 +92,11 @@ function handleOAuthChallenge(wwwAuth: string, toolName: string): void {
   }
 }
 
+interface ServerInfo {
+  name: string;
+  iconUrl?: string;
+}
+
 interface ChatGPTAppRendererProps {
   serverId: string;
   toolCallId?: string;
@@ -110,6 +115,8 @@ interface ChatGPTAppRendererProps {
   pipWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
+  /** Server info for checkout display */
+  serverInfo?: ServerInfo | null;
   /** Controlled display mode - when provided, component uses this instead of internal state */
   displayMode?: DisplayMode;
   /** Callback when display mode changes - required when displayMode is controlled */
@@ -447,6 +454,7 @@ export function ChatGPTAppRenderer({
   pipWidgetId,
   onRequestPip,
   onExitPip,
+  serverInfo,
   displayMode: displayModeProp,
   onDisplayModeChange,
   onRequestFullscreen,
@@ -1385,6 +1393,7 @@ export function ChatGPTAppRenderer({
         checkoutSession={checkoutSession}
         checkoutCallId={checkoutCallId}
         onRespond={respondToCheckout}
+        serverInfo={serverInfo ?? { name: serverId }}
         onCallTool={onCallTool}
       />
     </div>

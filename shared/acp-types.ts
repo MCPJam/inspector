@@ -25,6 +25,7 @@ export type Address = {
   state?: string;
   postal_code: string;
   country: string;
+  phone?: string;
 };
 
 // ============================================================================
