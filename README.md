@@ -50,7 +50,7 @@ npx @mcpjam/inspector@latest
 [![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg?style=for-the-badge&logo=node.js)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5+-blue.svg?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 
-## Install via NPM
+## Install MCPJam
 
 We recommend starting MCPJam inspector via `npx`:
 
@@ -58,10 +58,16 @@ We recommend starting MCPJam inspector via `npx`:
 npx @mcpjam/inspector@latest
 ```
 
-We also have a Mac and Windows desktop app:
+We have a Mac and Windows desktop app:
 
 - [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
 - [Install Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe)
+
+Run MCPJam using Docker:
+
+```bash
+docker run -p 6274:6274 mcpjam/mcp-inspector
+```
 
 # Key features
 
