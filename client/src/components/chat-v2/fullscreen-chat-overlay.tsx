@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef } from "react";
 
 import type { UIMessage } from "@ai-sdk/react";
 import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
+import { StickToBottom } from "use-stick-to-bottom";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
