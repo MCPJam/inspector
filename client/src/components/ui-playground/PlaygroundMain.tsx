@@ -69,6 +69,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
+import { useSharedAppState } from "@/state/app-state-context";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -285,10 +286,13 @@ export function PlaygroundMain({
     setThemeMode(newTheme);
   }, [themeMode, setThemeMode]);
 
-  // Single server for playground
+  const { servers } = useSharedAppState();
   const selectedServers = useMemo(
-    () => (serverName ? [serverName] : []),
-    [serverName],
+    () =>
+      serverName && servers[serverName]?.connectionStatus === "connected"
+        ? [serverName]
+        : [],
+    [serverName, servers],
   );
 
   // Use shared chat session hook
