@@ -33,6 +33,8 @@ export function ToolPart({
   part,
   uiType,
   displayMode,
+  pipWidgetId,
+  fullscreenWidgetId,
   onDisplayModeChange,
   onRequestFullscreen,
   onExitFullscreen,
@@ -42,6 +44,8 @@ export function ToolPart({
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   uiType?: UIType | null;
   displayMode?: DisplayMode;
+  pipWidgetId?: string | null;
+  fullscreenWidgetId?: string | null;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
@@ -125,10 +129,13 @@ export function ToolPart({
 
   const handleDisplayModeChange = (mode: DisplayMode) => {
     if (toolCallId) {
+      const exitPipTarget = pipWidgetId ?? toolCallId;
+      const exitFullscreenTarget = fullscreenWidgetId ?? toolCallId;
+
       if (displayMode === "fullscreen" && mode !== "fullscreen") {
-        onExitFullscreen?.(toolCallId);
+        onExitFullscreen?.(exitFullscreenTarget);
       } else if (displayMode === "pip" && mode !== "pip") {
-        onExitPip?.(toolCallId);
+        onExitPip?.(exitPipTarget);
       }
 
       if (mode === "fullscreen") {

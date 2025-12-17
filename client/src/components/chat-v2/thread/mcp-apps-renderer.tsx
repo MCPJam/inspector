@@ -56,6 +56,7 @@ interface MCPAppsRendererProps {
   ) => Promise<unknown>;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   pipWidgetId?: string | null;
+  fullscreenWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
   /** Controlled display mode - when provided, component uses this instead of internal state */
@@ -87,6 +88,7 @@ export function MCPAppsRenderer({
   onSendFollowUp,
   onCallTool,
   pipWidgetId,
+  fullscreenWidgetId,
   onExitPip,
   displayMode: displayModeProp,
   onDisplayModeChange,
@@ -178,6 +180,13 @@ export function MCPAppsRenderer({
     isPlaygroundActive ? playgroundDisplayMode : "inline",
   );
   const displayMode = isControlled ? displayModeProp : internalDisplayMode;
+  const effectiveDisplayMode = useMemo<DisplayMode>(() => {
+    if (!isControlled) return displayMode;
+    if (displayMode === "fullscreen" && fullscreenWidgetId === toolCallId)
+      return "fullscreen";
+    if (displayMode === "pip" && pipWidgetId === toolCallId) return "pip";
+    return "inline";
+  }, [displayMode, fullscreenWidgetId, isControlled, pipWidgetId, toolCallId]);
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
       if (isControlled) {
@@ -342,7 +351,7 @@ export function MCPAppsRenderer({
       widgetState: null, // MCP Apps don't have widget state in the same way
       globals: {
         theme: themeMode,
-        displayMode,
+        displayMode: effectiveDisplayMode,
         maxHeight,
         locale,
         timeZone,
@@ -355,7 +364,7 @@ export function MCPAppsRenderer({
     toolName,
     setWidgetDebugInfo,
     themeMode,
-    displayMode,
+    effectiveDisplayMode,
     maxHeight,
     locale,
     timeZone,
@@ -367,7 +376,7 @@ export function MCPAppsRenderer({
   useEffect(() => {
     setWidgetGlobals(toolCallId, {
       theme: themeMode,
-      displayMode,
+      displayMode: effectiveDisplayMode,
       maxHeight,
       locale,
       timeZone,
@@ -377,7 +386,7 @@ export function MCPAppsRenderer({
   }, [
     toolCallId,
     themeMode,
-    displayMode,
+    effectiveDisplayMode,
     maxHeight,
     locale,
     timeZone,
@@ -510,7 +519,7 @@ export function MCPAppsRenderer({
               hostInfo: { name: "mcpjam-inspector", version: __APP_VERSION__ },
               hostContext: {
                 theme: themeMode,
-                displayMode,
+                displayMode: effectiveDisplayMode,
                 availableDisplayModes: ["inline", "pip", "fullscreen"],
                 viewport: {
                   width: viewportWidth,
@@ -649,7 +658,7 @@ export function MCPAppsRenderer({
           case "ui/notifications/size-change": {
             // Support both for backwards compatibility
             // Skip resize in fullscreen/pip modes (they use 100% height)
-            if (displayMode !== "inline") break;
+            if (effectiveDisplayMode !== "inline") break;
 
             const sizeParams = params as { height?: number };
             const iframe = sandboxRef.current?.getIframeElement();
@@ -685,7 +694,7 @@ export function MCPAppsRenderer({
     },
     [
       themeMode,
-      displayMode,
+      effectiveDisplayMode,
       locale,
       timeZone,
       platform,
@@ -733,7 +742,7 @@ export function MCPAppsRenderer({
 
     const currentContext = {
       theme: themeMode,
-      displayMode,
+      displayMode: effectiveDisplayMode,
       locale,
       timeZone,
       platform,
@@ -755,8 +764,8 @@ export function MCPAppsRenderer({
     if (prevHostContextRef.current.theme !== themeMode) {
       changedFields.theme = themeMode;
     }
-    if (prevHostContextRef.current.displayMode !== displayMode) {
-      changedFields.displayMode = displayMode;
+    if (prevHostContextRef.current.displayMode !== effectiveDisplayMode) {
+      changedFields.displayMode = effectiveDisplayMode;
     }
     if (prevHostContextRef.current.locale !== locale) {
       changedFields.locale = locale;
@@ -805,7 +814,7 @@ export function MCPAppsRenderer({
     }
   }, [
     themeMode,
-    displayMode,
+    effectiveDisplayMode,
     locale,
     timeZone,
     platform,
@@ -843,9 +852,8 @@ export function MCPAppsRenderer({
     );
   }
 
-  const isPip =
-    displayMode === "pip" && (isControlled || pipWidgetId === toolCallId);
-  const isFullscreen = displayMode === "fullscreen";
+  const isPip = effectiveDisplayMode === "pip";
+  const isFullscreen = effectiveDisplayMode === "fullscreen";
 
   let containerClassName = "mt-3 space-y-2 relative group";
   if (isFullscreen) {

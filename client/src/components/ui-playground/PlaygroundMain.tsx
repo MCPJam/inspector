@@ -69,7 +69,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
-import { FullscreenChatOverlay } from "./FullscreenChatOverlay";
+import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -562,7 +562,7 @@ export function PlaygroundMain({
                 messages={messages}
                 sendFollowUpMessage={handleSendFollowUp}
                 model={selectedModel}
-                isLoading={status === "submitted"}
+                isLoading={status === "submitted" || status === "streaming"}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={handleWidgetStateChange}
