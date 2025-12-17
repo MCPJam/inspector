@@ -122,7 +122,7 @@ function MessageList({
   if (!open) return null;
 
   return (
-    <div className="mb-4 rounded-3xl border border-border/40 bg-background/95 shadow-2xl backdrop-blur-xl">
+    <div className="mb-4 overflow-hidden rounded-3xl border border-border/40 bg-background/95 shadow-2xl backdrop-blur-xl">
       <div className="max-h-[45vh] overflow-y-auto px-4 py-3 space-y-3">
         {visibleMessages.map((m, idx) => {
           const text = getMessagePreviewText(m);
