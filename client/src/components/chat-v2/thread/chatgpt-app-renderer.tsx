@@ -487,7 +487,8 @@ export function ChatGPTAppRenderer({
       fullscreenWidgetId === resolvedToolCallId
     )
       return "fullscreen";
-    if (displayMode === "pip" && pipWidgetId === resolvedToolCallId) return "pip";
+    if (displayMode === "pip" && pipWidgetId === resolvedToolCallId)
+      return "pip";
     return "inline";
   }, [
     displayMode,
