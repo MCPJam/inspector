@@ -1385,6 +1385,7 @@ export function ChatGPTAppRenderer({
         checkoutSession={checkoutSession}
         checkoutCallId={checkoutCallId}
         onRespond={respondToCheckout}
+        onCallTool={onCallTool}
       />
     </div>
   );
