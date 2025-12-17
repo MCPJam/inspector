@@ -40,6 +40,7 @@ export type CheckoutSessionStatus =
 
 export type PaymentProvider = {
   provider: "stripe" | "adyen";
+  merchant_id?: string;
   supported_payment_methods: string[];
 };
 
@@ -105,7 +106,7 @@ export type Message = {
 };
 
 export type Link = {
-  type: "terms_of_service" | "privacy_policy" | "refund_policy" | "other";
+  type: "terms_of_use" | "terms_of_service" | "privacy_policy" | "refund_policy" | "other";
   text: string;
   url: string;
 };
@@ -116,6 +117,7 @@ export type CheckoutSession = {
   payment_provider: PaymentProvider;
   status: CheckoutSessionStatus;
   currency: string; // ISO 4217 standard, lowercase
+  payment_mode?: "live" | "test";
   line_items: LineItem[];
   fulfillment_address?: Address;
   fulfillment_options: FulfillmentOption[];
