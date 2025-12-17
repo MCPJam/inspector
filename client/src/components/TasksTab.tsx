@@ -707,7 +707,7 @@ export function TasksTab({
                         )}
                         {selectedTask.pollInterval && (
                           <Badge variant="outline" className="text-xs">
-                            Poll: {selectedTask.pollInterval}ms
+                            Poll interval: {selectedTask.pollInterval}ms
                           </Badge>
                         )}
                       </div>
