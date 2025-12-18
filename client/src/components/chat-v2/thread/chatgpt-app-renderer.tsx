@@ -112,6 +112,7 @@ interface ChatGPTAppRendererProps {
   ) => Promise<any>;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
   pipWidgetId?: string | null;
+  fullscreenWidgetId?: string | null;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
   /** Server info for checkout display */
@@ -451,6 +452,7 @@ export function ChatGPTAppRenderer({
   onCallTool,
   onWidgetStateChange,
   pipWidgetId,
+  fullscreenWidgetId,
   onRequestPip,
   onExitPip,
   serverInfo,
@@ -485,6 +487,23 @@ export function ChatGPTAppRenderer({
   const [internalDisplayMode, setInternalDisplayMode] =
     useState<DisplayMode>("inline");
   const displayMode = isControlled ? displayModeProp : internalDisplayMode;
+  const effectiveDisplayMode = useMemo<DisplayMode>(() => {
+    if (!isControlled) return displayMode;
+    if (
+      displayMode === "fullscreen" &&
+      fullscreenWidgetId === resolvedToolCallId
+    )
+      return "fullscreen";
+    if (displayMode === "pip" && pipWidgetId === resolvedToolCallId)
+      return "pip";
+    return "inline";
+  }, [
+    displayMode,
+    fullscreenWidgetId,
+    isControlled,
+    pipWidgetId,
+    resolvedToolCallId,
+  ]);
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
       if (isControlled) {
@@ -570,10 +589,8 @@ export function ChatGPTAppRenderer({
     [resolvedToolCallId, setWidgetCsp],
   );
 
-  const isFullscreen = displayMode === "fullscreen";
-  const isPip =
-    displayMode === "pip" &&
-    (isControlled || pipWidgetId === resolvedToolCallId);
+  const isFullscreen = effectiveDisplayMode === "fullscreen";
+  const isPip = effectiveDisplayMode === "pip";
   const allowAutoResize = !isFullscreen && !isPip;
   const {
     widgetUrl,
@@ -637,13 +654,19 @@ export function ChatGPTAppRenderer({
 
   const iframeHeight = useMemo(() => {
     if (isFullscreen) return "100%";
-    if (displayMode === "pip") {
+    if (effectiveDisplayMode === "pip") {
       // In mobile playground mode, PiP should be fullscreen (100% height)
       if (isMobilePlaygroundMode && isPip) return "100%";
       return isPip ? "400px" : `${appliedHeight}px`;
     }
     return `${appliedHeight}px`;
-  }, [appliedHeight, displayMode, isFullscreen, isPip, isMobilePlaygroundMode]);
+  }, [
+    appliedHeight,
+    effectiveDisplayMode,
+    isFullscreen,
+    isPip,
+    isMobilePlaygroundMode,
+  ]);
 
   const modalWidgetUrl = useMemo(() => {
     if (!widgetUrl || !modalOpen) return null;
@@ -667,7 +690,7 @@ export function ChatGPTAppRenderer({
       widgetState: null,
       globals: {
         theme: themeMode,
-        displayMode,
+        displayMode: effectiveDisplayMode,
         maxHeight: maxHeight ?? undefined,
         locale,
         safeArea: { insets: safeAreaInsets },
@@ -682,7 +705,7 @@ export function ChatGPTAppRenderer({
     toolName,
     setWidgetDebugInfo,
     themeMode,
-    displayMode,
+    effectiveDisplayMode,
     maxHeight,
     locale,
     deviceType,
@@ -693,10 +716,16 @@ export function ChatGPTAppRenderer({
   useEffect(() => {
     setWidgetGlobals(resolvedToolCallId, {
       theme: themeMode,
-      displayMode,
+      displayMode: effectiveDisplayMode,
       maxHeight: maxHeight ?? undefined,
     });
-  }, [resolvedToolCallId, themeMode, displayMode, maxHeight, setWidgetGlobals]);
+  }, [
+    resolvedToolCallId,
+    themeMode,
+    effectiveDisplayMode,
+    maxHeight,
+    setWidgetGlobals,
+  ]);
 
   useEffect(() => {
     lastAppliedHeightRef.current = 0;
@@ -705,7 +734,7 @@ export function ChatGPTAppRenderer({
     setCanGoForward(false);
     if (!widgetUrl) return;
     setContentHeight(320);
-    if (displayMode === "inline") {
+    if (effectiveDisplayMode === "inline") {
       const baseHeight =
         typeof maxHeight === "number" && Number.isFinite(maxHeight)
           ? Math.min(320, maxHeight)
@@ -717,18 +746,18 @@ export function ChatGPTAppRenderer({
   // When returning to inline, ask the widget to re-measure so backend-driven
   // resize logic publishes the fresh height.
   useEffect(() => {
-    if (!widgetUrl || displayMode !== "inline" || !isReady) return;
+    if (!widgetUrl || effectiveDisplayMode !== "inline" || !isReady) return;
     sandboxRef.current?.postMessage({ type: "openai:requestResize" });
-  }, [widgetUrl, displayMode, isReady]);
+  }, [widgetUrl, effectiveDisplayMode, isReady]);
 
   // When returning from pip/fullscreen to inline, push the latest measured
   // height back into the iframe so it reflects current content.
   useEffect(() => {
-    if (displayMode !== "inline") return;
+    if (effectiveDisplayMode !== "inline") return;
     if (!Number.isFinite(appliedHeight) || appliedHeight <= 0) return;
     lastAppliedHeightRef.current = Math.round(appliedHeight);
     sandboxRef.current?.setHeight?.(appliedHeight);
-  }, [appliedHeight, displayMode]);
+  }, [appliedHeight, effectiveDisplayMode]);
 
   const postToWidget = useCallback(
     (data: unknown, targetModal?: boolean) => {
@@ -1134,7 +1163,7 @@ export function ChatGPTAppRenderer({
     if (!isReady) return;
     const globals: Record<string, unknown> = {
       theme: themeMode,
-      displayMode,
+      displayMode: effectiveDisplayMode,
       locale,
       safeArea: { insets: safeAreaInsets },
       userAgent: {
@@ -1149,7 +1178,7 @@ export function ChatGPTAppRenderer({
   }, [
     themeMode,
     maxHeight,
-    displayMode,
+    effectiveDisplayMode,
     locale,
     deviceType,
     capabilities,
@@ -1230,7 +1259,7 @@ export function ChatGPTAppRenderer({
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
       }
       // Desktop fullscreen: breaks out to viewport
-      return "fixed inset-0 z-50 w-full h-full bg-background flex flex-col";
+      return "fixed inset-0 z-40 w-full h-full bg-background flex flex-col";
     }
 
     // PiP modes
@@ -1268,7 +1297,7 @@ export function ChatGPTAppRenderer({
 
       {/* Breakout fullscreen: full header with navigation */}
       {isFullscreen && !isContainedFullscreenMode && (
-        <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-50 shrink-0">
+        <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
           <div className="flex items-center gap-2">
             <button
               onClick={() => navigateWidget("back")}
@@ -1355,7 +1384,7 @@ export function ChatGPTAppRenderer({
           // Remove max-height in fullscreen to allow flex-1 to control size
           // In mobile playground mode, PiP should not be constrained by 90vh
           maxHeight:
-            displayMode === "pip" && !isMobilePlaygroundMode
+            effectiveDisplayMode === "pip" && !isMobilePlaygroundMode
               ? "90vh"
               : undefined,
         }}

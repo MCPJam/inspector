@@ -18,6 +18,7 @@ export function MessageView({
   toolServerMap,
   onWidgetStateChange,
   pipWidgetId,
+  fullscreenWidgetId,
   onRequestPip,
   onExitPip,
   onRequestFullscreen,
@@ -32,6 +33,7 @@ export function MessageView({
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
   pipWidgetId: string | null;
+  fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
   onExitPip: (toolCallId: string) => void;
   onRequestFullscreen: (toolCallId: string) => void;
@@ -58,6 +60,7 @@ export function MessageView({
             toolServerMap={toolServerMap}
             onWidgetStateChange={onWidgetStateChange}
             pipWidgetId={pipWidgetId}
+            fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
             onRequestFullscreen={onRequestFullscreen}
@@ -98,6 +101,7 @@ export function MessageView({
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={onWidgetStateChange}
                 pipWidgetId={pipWidgetId}
+                fullscreenWidgetId={fullscreenWidgetId}
                 onRequestPip={onRequestPip}
                 onExitPip={onExitPip}
                 onRequestFullscreen={onRequestFullscreen}
