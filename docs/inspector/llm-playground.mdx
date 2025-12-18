@@ -277,3 +277,44 @@ When a widget is in fullscreen mode, a navigation header appears at the top with
 - **Close button** - Exit fullscreen mode
 
 The navigation buttons mirror the widget's internal history state, allowing you to navigate multi-page widgets without leaving fullscreen mode.
+
+## Commerce and checkout testing
+
+The playground includes a full checkout flow emulator for testing Agent Commerce Protocol (ACP) implementations. When an MCP tool returns a checkout session, Inspector displays a ChatGPT-style checkout dialog with:
+
+- **Payment method entry** - Add and save test payment cards
+- **Fulfillment selection** - Choose shipping or digital delivery options
+- **Order totals** - View line items, taxes, and final amounts
+- **Alternative payment methods** - Test Apple Pay and Google Pay flows
+
+### Test cards
+
+The checkout dialog includes developer tools with quick-fill test cards for simulating different payment scenarios:
+
+- **Success** (4242 4242 4242 4242) - Payment succeeds
+- **Decline** (4000 0000 0000 0002) - Generic card decline
+- **Insufficient** (4000 0000 0000 9995) - Insufficient funds error
+- **3DS** (4000 0000 0000 3155) - Requires 3D Secure authentication
+- **Expired** (4000 0000 0000 0069) - Expired card error
+- **Error** (4000 0000 0000 0119) - Processing error
+
+Use any expiry date in the future (e.g., 12/29) and any 3-digit CVC.
+
+### Error simulation
+
+Test infrastructure failures using the error scenario selector in dev tools:
+
+- **Normal** - Use card behavior
+- **Timeout** - Simulate 10-second network timeout
+- **500 Error** - Simulate server error response
+- **Slow** - Add 5-second processing delay
+
+### MCP tool integration
+
+The checkout dialog automatically calls these MCP tools when available:
+
+- `complete_checkout` - Process payment and complete the order
+- `update_checkout` - Update fulfillment options or line items
+- `cancel_checkout` - Cancel the checkout session
+
+This allows you to test your commerce implementation end-to-end without leaving the playground.
