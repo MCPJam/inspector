@@ -142,9 +142,9 @@ const QUICK_FILL_CARDS = [
   },
   {
     key: "3ds",
-    label: "3DS",
+    label: "",
     number: TEST_CARDS.requires_3ds.number,
-    icon: "3D",
+    icon: "3DS",
   },
   {
     key: "expired",
@@ -1272,8 +1272,11 @@ export function CheckoutDialog({
                   </div>
                   {/* Address line 2 */}
                   <div className="relative border-b border-gray-200">
+                    <label className="absolute left-3 top-2 text-xs text-gray-500">
+                      Address line 2
+                    </label>
                     <Input
-                      placeholder="Address line 2"
+                      placeholder=""
                       value={billingAddress.line2 || ""}
                       onChange={(e) =>
                         setBillingAddress((prev) => ({
@@ -1281,7 +1284,7 @@ export function CheckoutDialog({
                           line2: e.target.value,
                         }))
                       }
-                      className="h-12 border-0 rounded-none text-base text-gray-500 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+                      className="h-14 pt-5 border-0 rounded-none text-base focus-visible:ring-0 focus-visible:ring-offset-0"
                       autoComplete="address-line2"
                     />
                   </div>
