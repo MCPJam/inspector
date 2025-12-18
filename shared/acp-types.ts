@@ -25,6 +25,7 @@ export type Address = {
   state?: string;
   postal_code: string;
   country: string;
+  phone?: string;
 };
 
 // ============================================================================
@@ -35,11 +36,11 @@ export type CheckoutSessionStatus =
   | "not_ready_for_payment"
   | "ready_for_payment"
   | "completed"
-  | "canceled"
-  | "in_progress";
+  | "canceled";
 
 export type PaymentProvider = {
   provider: "stripe" | "adyen";
+  merchant_id?: string;
   supported_payment_methods: string[];
 };
 
@@ -99,13 +100,34 @@ export type FulfillmentOption =
   | FulfillmentOptionShipping
   | FulfillmentOptionDigital;
 
+export type MessageType = "info" | "error" | "warning";
+
+export type MessageErrorCode =
+  | "missing"
+  | "invalid"
+  | "out_of_stock"
+  | "payment_declined"
+  | "requires_sign_in"
+  | "requires_3ds";
+
 export type Message = {
-  type: "info" | "error" | "warning";
+  type: MessageType;
   text: string;
+  /** JSONPath reference for field-specific messages (e.g., $.line_items[1]) */
+  param?: string;
+  /** Error code for error messages */
+  code?: MessageErrorCode;
+  /** Content type for rendering */
+  content_type?: "plain" | "markdown";
 };
 
 export type Link = {
-  type: "terms_of_service" | "privacy_policy" | "refund_policy" | "other";
+  type:
+    | "terms_of_use"
+    | "terms_of_service"
+    | "privacy_policy"
+    | "refund_policy"
+    | "other";
   text: string;
   url: string;
 };
@@ -116,6 +138,7 @@ export type CheckoutSession = {
   payment_provider: PaymentProvider;
   status: CheckoutSessionStatus;
   currency: string; // ISO 4217 standard, lowercase
+  payment_mode?: "live" | "test";
   line_items: LineItem[];
   fulfillment_address?: Address;
   fulfillment_options: FulfillmentOption[];
@@ -196,6 +219,7 @@ export type Refund = {
 export type EventData = {
   type: "order";
   checkout_session_id: string;
+  order_id: string;
   permalink_url: string;
   status: OrderStatus;
   refunds: Refund[];
@@ -203,6 +227,7 @@ export type EventData = {
 
 export type WebhookEvent = {
   type: WebhookEventType;
+  timestamp?: string;
   data: EventData;
 };
 
