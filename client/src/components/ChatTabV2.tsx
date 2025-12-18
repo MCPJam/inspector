@@ -511,6 +511,9 @@ export function ChatTabV2({
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}
                       onFullscreenChange={setIsWidgetFullscreen}
+                      enableFullscreenChatOverlay
+                      fullscreenChatPlaceholder={placeholder}
+                      fullscreenChatDisabled={inputDisabled}
                     />
                     {errorMessage && (
                       <div className="px-4 pb-4 pt-4">

@@ -69,6 +69,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
+import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
@@ -254,6 +255,7 @@ export function PlaygroundMain({
   );
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [devicePopoverOpen, setDevicePopoverOpen] = useState(false);
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
@@ -449,6 +451,9 @@ export function PlaygroundMain({
       status === "ready" &&
       !submitBlocked
     ) {
+      if (displayMode === "fullscreen" && isWidgetFullscreen) {
+        setIsFullscreenChatOpen(true);
+      }
       posthog.capture("app_builder_send_message", {
         location: "app_builder_tab",
         platform: detectPlatform(),
@@ -517,9 +522,19 @@ export function PlaygroundMain({
   const isWidgetFullTakeover =
     isMobileFullTakeover || isTabletFullscreenTakeover;
 
+  const showFullscreenChatOverlay =
+    displayMode === "fullscreen" &&
+    isWidgetFullscreen &&
+    deviceType === "desktop" &&
+    !isWidgetFullTakeover;
+
+  useEffect(() => {
+    if (!showFullscreenChatOverlay) setIsFullscreenChatOpen(false);
+  }, [showFullscreenChatOverlay]);
+
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
         // Empty state - centered welcome message
         <div className="flex-1 flex items-center justify-center overflow-y-auto overflow-x-hidden px-4 min-h-0">
@@ -582,7 +597,7 @@ export function PlaygroundMain({
       )}
 
       {/* Single ChatInput that persists - hidden when widget takes over */}
-      {!isWidgetFullTakeover && (
+      {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
         <div
           className={cn(
             "flex-shrink-0",
@@ -593,6 +608,28 @@ export function PlaygroundMain({
         >
           <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
         </div>
+      )}
+
+      {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
+      {showFullscreenChatOverlay && (
+        <FullscreenChatOverlay
+          messages={messages}
+          open={isFullscreenChatOpen}
+          onOpenChange={setIsFullscreenChatOpen}
+          input={input}
+          onInputChange={setInput}
+          placeholder={placeholder}
+          disabled={inputDisabled}
+          canSend={
+            status === "ready" && !submitBlocked && input.trim().length > 0
+          }
+          isThinking={status === "submitted"}
+          onSend={() => {
+            sendMessage({ text: input });
+            setInput("");
+            setMcpPromptResults([]);
+          }}
+        />
       )}
     </div>
   );
@@ -1286,7 +1323,7 @@ export function PlaygroundMain({
       {/* Device frame container */}
       <div className="flex-1 flex items-center justify-center p-4 min-h-0 overflow-auto">
         <div
-          className="bg-background border border-border rounded-xl shadow-lg flex flex-col overflow-hidden"
+          className="relative bg-background border border-border rounded-xl shadow-lg flex flex-col overflow-hidden"
           style={{
             width: deviceConfig.width,
             maxWidth: "100%",
