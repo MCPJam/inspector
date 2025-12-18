@@ -1,6 +1,6 @@
 ARG NODE_VERSION=20
 
-FROM node:${NODE_VERSION}-alpine as base
+FROM node:${NODE_VERSION}-alpine AS base
 
 WORKDIR /usr/src/app
 
@@ -59,7 +59,7 @@ RUN npm run build:client
 ################################################################################
 # Create a new stage to run the application with minimal runtime dependencies
 # where the necessary files are copied from the build stage.
-FROM base as final
+FROM base AS final
 
 # Use production node environment by default.
 ENV NODE_ENV production
@@ -84,4 +84,4 @@ COPY --from=build /usr/src/app/.env.production ./.env.production
 EXPOSE 6274
 
 # Run the application.
-CMD npm start
+ENTRYPOINT ["npm", "start"]
