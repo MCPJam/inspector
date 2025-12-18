@@ -277,3 +277,18 @@ When a widget is in fullscreen mode, a navigation header appears at the top with
 - **Close button** - Exit fullscreen mode
 
 The navigation buttons mirror the widget's internal history state, allowing you to navigate multi-page widgets without leaving fullscreen mode.
+
+### Fullscreen chat overlay
+
+When viewing widgets in fullscreen mode on desktop, a chat overlay appears at the bottom of the screen, allowing you to continue your conversation without exiting fullscreen. The overlay includes:
+
+- **Collapsible message history** - Click the chevron button to expand/collapse the conversation thread
+- **Message bubbles** - User messages appear on the right, assistant messages on the left
+- **Thinking indicator** - Shows when the LLM is processing your request
+- **Chat input** - Send messages while staying in fullscreen mode
+
+The overlay automatically filters out widget state messages and tool execution details, showing only text-based conversation. This lets you interact with fullscreen apps while maintaining context with the AI assistant.
+
+<Note>
+  The fullscreen chat overlay is only available in the Chat tab on desktop devices. The UI Playground and mobile views use the standard chat interface.
+</Note>
