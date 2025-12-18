@@ -116,6 +116,7 @@ export type WizardStepKey = (typeof WIZARD_STEPS)[number]["key"];
 export const API_ENDPOINTS = {
   EVALS_RUN: "/api/mcp/evals/run",
   EVALS_GENERATE_TESTS: "/api/mcp/evals/generate-tests",
+  EVALS_GENERATE_NEGATIVE_TESTS: "/api/mcp/evals/generate-negative-tests",
   EVALS_RUN_TEST_CASE: "/api/mcp/evals/run-test-case",
   LIST_TOOLS: "/api/mcp/list-tools",
 } as const;

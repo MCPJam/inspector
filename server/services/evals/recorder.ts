@@ -16,7 +16,11 @@ export type SuiteRunRecorder = {
       provider: string;
       model: string;
       runs?: number;
-      expectedToolCalls: string[];
+      expectedToolCalls: Array<{
+        toolName: string;
+        arguments: Record<string, any>;
+      }>;
+      isNegativeTest?: boolean; // When true, test passes if NO tools are called
       advancedConfig?: Record<string, unknown>;
     };
     iterationNumber: number;

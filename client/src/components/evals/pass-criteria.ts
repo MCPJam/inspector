@@ -80,6 +80,12 @@ export function computeIterationPassed(
   iteration: EvalIteration,
   criteria?: PassCriteria,
 ): boolean {
+  // Handle negative tests: pass if NO tools were called
+  if (iteration.testCaseSnapshot?.isNegativeTest) {
+    const actual = iteration.actualToolCalls || [];
+    return actual.length === 0;
+  }
+
   if (!iteration.testCaseSnapshot?.expectedToolCalls) {
     return true; // No expectations = pass
   }

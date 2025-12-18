@@ -25,11 +25,25 @@ export type EvaluationResult = {
 export const evaluateResults = (
   expectedToolCalls: ToolCall[],
   toolsCalled: ToolCall[],
+  isNegativeTest?: boolean,
 ): EvaluationResult => {
   const normalizedExpected = Array.isArray(expectedToolCalls)
     ? expectedToolCalls
     : [];
   const normalizedCalled = Array.isArray(toolsCalled) ? toolsCalled : [];
+
+  // Handle negative tests: pass if NO tools were called
+  if (isNegativeTest) {
+    const passed = normalizedCalled.length === 0;
+    return {
+      expectedToolCalls: normalizedExpected,
+      toolsCalled: normalizedCalled,
+      missing: [],
+      unexpected: normalizedCalled, // All called tools are "unexpected" for negative tests
+      argumentMismatches: [],
+      passed,
+    };
+  }
 
   // Find missing tool calls (expected but not called)
   const missing = normalizedExpected.filter(
