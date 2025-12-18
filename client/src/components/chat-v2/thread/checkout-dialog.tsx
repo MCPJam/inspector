@@ -1,11 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import {
-  Dialog,
-  DialogContent,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { formatMinorAmount } from "@/lib/currency";
@@ -33,21 +29,67 @@ import type {
 // Test Card Definitions (for simulating payment scenarios)
 // ============================================================================
 
-type PaymentErrorCode = "payment_declined" | "requires_3ds" | "processing_error";
+type PaymentErrorCode =
+  | "payment_declined"
+  | "requires_3ds"
+  | "processing_error";
 
 interface TestCardBehavior {
-  behavior: "success" | "decline" | "insufficient_funds" | "expired" | "3ds" | "processing_error";
+  behavior:
+    | "success"
+    | "decline"
+    | "insufficient_funds"
+    | "expired"
+    | "3ds"
+    | "processing_error";
   errorCode?: PaymentErrorCode;
   errorMessage?: string;
 }
 
-const TEST_CARDS: Record<string, { number: string; behavior: TestCardBehavior }> = {
+const TEST_CARDS: Record<
+  string,
+  { number: string; behavior: TestCardBehavior }
+> = {
   success: { number: "4242424242424242", behavior: { behavior: "success" } },
-  decline_generic: { number: "4000000000000002", behavior: { behavior: "decline", errorCode: "payment_declined", errorMessage: "Your card was declined." } },
-  decline_insufficient: { number: "4000000000009995", behavior: { behavior: "insufficient_funds", errorCode: "payment_declined", errorMessage: "Insufficient funds." } },
-  decline_expired: { number: "4000000000000069", behavior: { behavior: "expired", errorCode: "payment_declined", errorMessage: "Card has expired." } },
-  requires_3ds: { number: "4000000000003155", behavior: { behavior: "3ds", errorCode: "requires_3ds", errorMessage: "3D Secure required." } },
-  processing_error: { number: "4000000000000119", behavior: { behavior: "processing_error", errorMessage: "Processing error occurred." } },
+  decline_generic: {
+    number: "4000000000000002",
+    behavior: {
+      behavior: "decline",
+      errorCode: "payment_declined",
+      errorMessage: "Your card was declined.",
+    },
+  },
+  decline_insufficient: {
+    number: "4000000000009995",
+    behavior: {
+      behavior: "insufficient_funds",
+      errorCode: "payment_declined",
+      errorMessage: "Insufficient funds.",
+    },
+  },
+  decline_expired: {
+    number: "4000000000000069",
+    behavior: {
+      behavior: "expired",
+      errorCode: "payment_declined",
+      errorMessage: "Card has expired.",
+    },
+  },
+  requires_3ds: {
+    number: "4000000000003155",
+    behavior: {
+      behavior: "3ds",
+      errorCode: "requires_3ds",
+      errorMessage: "3D Secure required.",
+    },
+  },
+  processing_error: {
+    number: "4000000000000119",
+    behavior: {
+      behavior: "processing_error",
+      errorMessage: "Processing error occurred.",
+    },
+  },
 };
 
 function getTestCardBehavior(cardNumber: string): TestCardBehavior | null {
@@ -62,9 +104,16 @@ function getTestCardBehavior(cardNumber: string): TestCardBehavior | null {
 // Error Scenarios (Infrastructure/Transport failures)
 // ============================================================================
 
-type ErrorScenario = "none" | "network_timeout" | "server_error" | "slow_response";
+type ErrorScenario =
+  | "none"
+  | "network_timeout"
+  | "server_error"
+  | "slow_response";
 
-const ERROR_SCENARIOS: Record<ErrorScenario, { label: string; description: string }> = {
+const ERROR_SCENARIOS: Record<
+  ErrorScenario,
+  { label: string; description: string }
+> = {
   none: { label: "Normal", description: "Use card behavior" },
   network_timeout: { label: "Timeout", description: "10s network timeout" },
   server_error: { label: "500 Error", description: "Server error" },
@@ -73,12 +122,42 @@ const ERROR_SCENARIOS: Record<ErrorScenario, { label: string; description: strin
 
 // Quick-fill test cards for compact UI
 const QUICK_FILL_CARDS = [
-  { key: "success", label: "Success", number: TEST_CARDS.success.number, icon: "✓" },
-  { key: "decline", label: "Decline", number: TEST_CARDS.decline_generic.number, icon: "✗" },
-  { key: "insufficient", label: "Insufficient", number: TEST_CARDS.decline_insufficient.number, icon: "$" },
-  { key: "3ds", label: "3DS", number: TEST_CARDS.requires_3ds.number, icon: "3D" },
-  { key: "expired", label: "Expired", number: TEST_CARDS.decline_expired.number, icon: "⏱" },
-  { key: "error", label: "Error", number: TEST_CARDS.processing_error.number, icon: "⚠" },
+  {
+    key: "success",
+    label: "Success",
+    number: TEST_CARDS.success.number,
+    icon: "✓",
+  },
+  {
+    key: "decline",
+    label: "Decline",
+    number: TEST_CARDS.decline_generic.number,
+    icon: "✗",
+  },
+  {
+    key: "insufficient",
+    label: "Insufficient",
+    number: TEST_CARDS.decline_insufficient.number,
+    icon: "$",
+  },
+  {
+    key: "3ds",
+    label: "3DS",
+    number: TEST_CARDS.requires_3ds.number,
+    icon: "3D",
+  },
+  {
+    key: "expired",
+    label: "Expired",
+    number: TEST_CARDS.decline_expired.number,
+    icon: "⏱",
+  },
+  {
+    key: "error",
+    label: "Error",
+    number: TEST_CARDS.processing_error.number,
+    icon: "⚠",
+  },
 ] as const;
 
 type CheckoutStep =
@@ -106,7 +185,7 @@ interface CheckoutDialogProps {
   onCallTool?: (
     toolName: string,
     params: Record<string, unknown>,
-    meta?: Record<string, unknown>
+    meta?: Record<string, unknown>,
   ) => Promise<unknown>;
 }
 
@@ -141,7 +220,13 @@ function formatDeliveryWindow(earliest: string, latest: string): string {
 }
 
 // Apple Pay button styled like ChatGPT
-function ApplePayButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+function ApplePayButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
@@ -149,7 +234,7 @@ function ApplePayButton({ onClick, disabled }: { onClick: () => void; disabled?:
       className="w-full h-11 bg-black hover:bg-black/90 disabled:bg-black/50 text-white rounded-full flex items-center justify-center gap-1.5 transition-colors"
     >
       <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current">
-        <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+        <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z" />
       </svg>
       <span className="font-medium">Pay</span>
     </button>
@@ -157,7 +242,13 @@ function ApplePayButton({ onClick, disabled }: { onClick: () => void; disabled?:
 }
 
 // Google Pay button styled like ChatGPT
-function GooglePayButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+function GooglePayButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
@@ -165,10 +256,22 @@ function GooglePayButton({ onClick, disabled }: { onClick: () => void; disabled?
       className="w-full h-11 bg-white hover:bg-gray-50 disabled:bg-gray-100 border border-gray-300 rounded-full flex items-center justify-center gap-1.5 transition-colors"
     >
       <svg viewBox="0 0 24 24" className="h-5 w-5">
-        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+        <path
+          fill="#4285F4"
+          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+        />
+        <path
+          fill="#34A853"
+          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+        />
+        <path
+          fill="#FBBC05"
+          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+        />
+        <path
+          fill="#EA4335"
+          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+        />
       </svg>
       <span className="font-medium text-gray-700">Pay</span>
     </button>
@@ -219,14 +322,20 @@ function FulfillmentOptionCard({
             </span>
           </div>
           {option.subtitle && (
-            <div className="text-sm text-gray-500 mt-0.5">{option.subtitle}</div>
+            <div className="text-sm text-gray-500 mt-0.5">
+              {option.subtitle}
+            </div>
           )}
           {isShipping && "carrier_info" in option && (
             <div className="text-sm text-gray-500 mt-1">
               <span>{option.carrier_info}</span>
               {option.earliest_delivery_time && option.latest_delivery_time && (
                 <span className="ml-2">
-                  Est. {formatDeliveryWindow(option.earliest_delivery_time, option.latest_delivery_time)}
+                  Est.{" "}
+                  {formatDeliveryWindow(
+                    option.earliest_delivery_time,
+                    option.latest_delivery_time,
+                  )}
                 </span>
               )}
             </div>
@@ -260,9 +369,8 @@ export function CheckoutDialog({
     useState<CompleteCheckoutSessionResponse | null>(null);
 
   // Session state (can be updated)
-  const [checkoutSession, setCheckoutSession] = useState<CheckoutSession | null>(
-    initialSession
-  );
+  const [checkoutSession, setCheckoutSession] =
+    useState<CheckoutSession | null>(initialSession);
   const [selectedFulfillmentId, setSelectedFulfillmentId] = useState<
     string | null
   >(null);
@@ -353,7 +461,14 @@ export function CheckoutDialog({
       resetForm();
       onOpenChange(false);
     }
-  }, [checkoutSession, checkoutCallId, onCallTool, onRespond, resetForm, onOpenChange]);
+  }, [
+    checkoutSession,
+    checkoutCallId,
+    onCallTool,
+    onRespond,
+    resetForm,
+    onOpenChange,
+  ]);
 
   // Handle update checkout via MCP tool (e.g., when fulfillment changes)
   const handleUpdateCheckout = useCallback(
@@ -401,7 +516,7 @@ export function CheckoutDialog({
         return false;
       }
     },
-    [checkoutSession, onCallTool]
+    [checkoutSession, onCallTool],
   );
 
   // Reset form when checkout session changes
@@ -417,7 +532,9 @@ export function CheckoutDialog({
       if (!newOpen) {
         if (
           checkoutCallId != null &&
-          (step === "payment" || step === "card_entry" || step === "fulfillment")
+          (step === "payment" ||
+            step === "card_entry" ||
+            step === "fulfillment")
         ) {
           onRespond({ error: "Checkout canceled" });
         }
@@ -425,7 +542,7 @@ export function CheckoutDialog({
       }
       onOpenChange(newOpen);
     },
-    [checkoutCallId, step, onRespond, onOpenChange, resetForm]
+    [checkoutCallId, step, onRespond, onOpenChange, resetForm],
   );
 
   // Determine if we need fulfillment selection
@@ -450,12 +567,12 @@ export function CheckoutDialog({
     // If we have a selected fulfillment option, update the fulfillment cost
     if (selectedFulfillmentId && checkoutSession.fulfillment_options) {
       const selectedOption = checkoutSession.fulfillment_options.find(
-        (o) => o.id === selectedFulfillmentId
+        (o) => o.id === selectedFulfillmentId,
       );
       if (selectedOption) {
         // Update fulfillment total
         const fulfillmentIdx = baseTotals.findIndex(
-          (t) => t.type === "fulfillment"
+          (t) => t.type === "fulfillment",
         );
         if (fulfillmentIdx >= 0) {
           baseTotals[fulfillmentIdx] = {
@@ -468,7 +585,12 @@ export function CheckoutDialog({
         const totalIdx = baseTotals.findIndex((t) => t.type === "total");
         if (totalIdx >= 0) {
           const nonTotalSum = baseTotals
-            .filter((t) => t.type !== "total" && t.type !== "items_discount" && t.type !== "discount")
+            .filter(
+              (t) =>
+                t.type !== "total" &&
+                t.type !== "items_discount" &&
+                t.type !== "discount",
+            )
             .reduce((sum, t) => sum + t.amount, 0);
           const discountSum = baseTotals
             .filter((t) => t.type === "items_discount" || t.type === "discount")
@@ -488,10 +610,6 @@ export function CheckoutDialog({
     return calculatedTotals?.find((t) => t.type === "total")?.amount ?? 0;
   }, [calculatedTotals]);
 
-  // Get display info - prefer serverInfo, fallback to merchant info from checkout session
-  const displayName = serverInfo?.name || checkoutSession?.merchant?.name || "Merchant";
-  const displayIcon = serverInfo?.iconUrl || checkoutSession?.merchant?.logo_url;
-
   const handleFulfillmentSelected = useCallback(async () => {
     if (!selectedFulfillmentId) {
       setErrorMessage("Please select a shipping method");
@@ -510,14 +628,22 @@ export function CheckoutDialog({
     }
 
     setStep("payment");
-  }, [selectedFulfillmentId, onCallTool, checkoutSession, handleUpdateCheckout]);
+  }, [
+    selectedFulfillmentId,
+    onCallTool,
+    checkoutSession,
+    handleUpdateCheckout,
+  ]);
 
-  const handleQuickFill = useCallback((cardNum: string) => {
-    setCardNumber(formatCardNumber(cardNum));
-    setExpiry("12/29");
-    setCvc("123");
-    if (!cardholderName) setCardholderName("Test User");
-  }, [cardholderName]);
+  const handleQuickFill = useCallback(
+    (cardNum: string) => {
+      setCardNumber(formatCardNumber(cardNum));
+      setExpiry("12/29");
+      setCvc("123");
+      if (!cardholderName) setCardholderName("Test User");
+    },
+    [cardholderName],
+  );
 
   const handleSaveCard = useCallback(() => {
     const rawCardNumber = cardNumber.replace(/\s/g, "");
@@ -610,7 +736,9 @@ export function CheckoutDialog({
     const paymentData: PaymentData = {
       token: mockToken,
       provider,
-      billing_address: hasBillingAddress ? (billingAddress as Address) : undefined,
+      billing_address: hasBillingAddress
+        ? (billingAddress as Address)
+        : undefined,
     };
 
     // Check test card behavior
@@ -672,7 +800,7 @@ export function CheckoutDialog({
         // Check for direct response format
         if (resultObj?.checkout_session && resultObj?.order) {
           setCompletedOrder(
-            resultObj as unknown as CompleteCheckoutSessionResponse
+            resultObj as unknown as CompleteCheckoutSessionResponse,
           );
           setStep("success");
           return;
@@ -744,8 +872,12 @@ export function CheckoutDialog({
   }, []);
 
   // Get links from session
-  const termsLink = checkoutSession?.links?.find((l) => l.type === "terms_of_service");
-  const privacyLink = checkoutSession?.links?.find((l) => l.type === "privacy_policy");
+  const termsLink = checkoutSession?.links?.find(
+    (l) => l.type === "terms_of_service",
+  );
+  const privacyLink = checkoutSession?.links?.find(
+    (l) => l.type === "privacy_policy",
+  );
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -755,18 +887,7 @@ export function CheckoutDialog({
           <div className="flex flex-col">
             {/* Merchant Header */}
             <div className="flex items-center gap-3 p-6 pb-4">
-              {displayIcon ? (
-                <img
-                  src={displayIcon}
-                  alt={displayName}
-                  className="w-12 h-12 rounded-xl object-cover"
-                />
-              ) : (
-                <div className="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-xl">
-                  🛒
-                </div>
-              )}
-              <span className="text-xl font-semibold">{displayName}</span>
+              <span className="text-xl font-semibold">Payment</span>
             </div>
 
             {/* Payment Method */}
@@ -778,7 +899,11 @@ export function CheckoutDialog({
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-6 bg-gradient-to-r from-blue-600 to-blue-700 rounded flex items-center justify-center">
                     <span className="text-white text-xs font-bold">
-                      {savedCard?.brand === "Visa" ? "VISA" : savedCard?.brand === "Mastercard" ? "MC" : "💳"}
+                      {savedCard?.brand === "Visa"
+                        ? "VISA"
+                        : savedCard?.brand === "Mastercard"
+                          ? "MC"
+                          : "💳"}
                     </span>
                   </div>
                   {savedCard ? (
@@ -821,7 +946,7 @@ export function CheckoutDialog({
                     Updating...
                   </>
                 ) : (
-                  `Pay ${displayName}`
+                  `Pay`
                 )}
               </Button>
             </div>
@@ -850,7 +975,11 @@ export function CheckoutDialog({
                 onClick={() => setShowDevTools(!showDevTools)}
                 className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
               >
-                {showDevTools ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                {showDevTools ? (
+                  <ChevronUp className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
                 Dev Tools
               </button>
             </div>
@@ -860,7 +989,9 @@ export function CheckoutDialog({
               <div className="px-6 pb-4 space-y-3">
                 <div className="rounded-lg bg-gray-50 p-3 space-y-3">
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-gray-600">Quick fill test card:</div>
+                    <div className="text-xs font-medium text-gray-600">
+                      Quick fill test card:
+                    </div>
                     <div className="grid grid-cols-3 gap-1.5">
                       {QUICK_FILL_CARDS.map((card) => (
                         <button
@@ -870,8 +1001,12 @@ export function CheckoutDialog({
                             // Auto-save the card
                             let brand = "Card";
                             if (card.number.startsWith("4")) brand = "Visa";
-                            else if (card.number.startsWith("5")) brand = "Mastercard";
-                            setSavedCard({ last4: card.number.slice(-4), brand });
+                            else if (card.number.startsWith("5"))
+                              brand = "Mastercard";
+                            setSavedCard({
+                              last4: card.number.slice(-4),
+                              brand,
+                            });
                           }}
                           className={`px-2 py-1.5 text-xs rounded-md border transition-colors ${
                             savedCard?.last4 === card.number.slice(-4)
@@ -886,19 +1021,26 @@ export function CheckoutDialog({
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <div className="text-xs font-medium text-gray-600">Simulate error:</div>
+                    <div className="text-xs font-medium text-gray-600">
+                      Simulate error:
+                    </div>
                     <select
                       value={errorScenario}
-                      onChange={(e) => setErrorScenario(e.target.value as ErrorScenario)}
+                      onChange={(e) =>
+                        setErrorScenario(e.target.value as ErrorScenario)
+                      }
                       className="w-full text-xs px-3 py-2 rounded-md border border-gray-200 bg-white"
                     >
-                      {(Object.entries(ERROR_SCENARIOS) as [ErrorScenario, { label: string; description: string }][]).map(
-                        ([key, { label, description }]) => (
-                          <option key={key} value={key}>
-                            {label} - {description}
-                          </option>
-                        )
-                      )}
+                      {(
+                        Object.entries(ERROR_SCENARIOS) as [
+                          ErrorScenario,
+                          { label: string; description: string },
+                        ][]
+                      ).map(([key, { label, description }]) => (
+                        <option key={key} value={key}>
+                          {label} - {description}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <button
@@ -927,15 +1069,25 @@ export function CheckoutDialog({
               <p className="text-xs text-gray-500">
                 By clicking Pay, you agree to the{" "}
                 {termsLink ? (
-                  <a href={termsLink.url} target="_blank" rel="noreferrer" className="underline">
+                  <a
+                    href={termsLink.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
                     Terms
                   </a>
                 ) : (
                   <span className="underline">Terms</span>
-                )}
-                {" "}and{" "}
+                )}{" "}
+                and{" "}
                 {privacyLink ? (
-                  <a href={privacyLink.url} target="_blank" rel="noreferrer" className="underline">
+                  <a
+                    href={privacyLink.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
                     Privacy Policy
                   </a>
                 ) : (
@@ -943,7 +1095,8 @@ export function CheckoutDialog({
                 )}
               </p>
               <p className="text-xs text-gray-400">
-                OpenAI does not process your order, collect payment, or handle fulfillment.
+                OpenAI does not process your order, collect payment, or handle
+                fulfillment.
               </p>
             </div>
           </div>
@@ -961,7 +1114,9 @@ export function CheckoutDialog({
                 >
                   <ChevronRight className="h-5 w-5 text-gray-900 rotate-180" />
                 </button>
-                <span className="text-lg font-semibold">Add payment method</span>
+                <span className="text-lg font-semibold">
+                  Add payment method
+                </span>
               </div>
             </div>
 
@@ -991,10 +1146,26 @@ export function CheckoutDialog({
                     />
                     {/* Card brand icons */}
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                      <img src="https://js.stripe.com/v3/fingerprinted/img/visa-729c05c240c4bdb47b03ac81d9945bfe.svg" alt="Visa" className="h-6" />
-                      <img src="https://js.stripe.com/v3/fingerprinted/img/mastercard-4d8844094130711885b5e41b28c9848f.svg" alt="Mastercard" className="h-6" />
-                      <img src="https://js.stripe.com/v3/fingerprinted/img/amex-a49b82f46c5cd6a96a6e418a6ca1717c.svg" alt="Amex" className="h-6" />
-                      <img src="https://js.stripe.com/v3/fingerprinted/img/discover-ac52cd46f89fa40a29a0bfb954e33173.svg" alt="Discover" className="h-6" />
+                      <img
+                        src="https://js.stripe.com/v3/fingerprinted/img/visa-729c05c240c4bdb47b03ac81d9945bfe.svg"
+                        alt="Visa"
+                        className="h-6"
+                      />
+                      <img
+                        src="https://js.stripe.com/v3/fingerprinted/img/mastercard-4d8844094130711885b5e41b28c9848f.svg"
+                        alt="Mastercard"
+                        className="h-6"
+                      />
+                      <img
+                        src="https://js.stripe.com/v3/fingerprinted/img/amex-a49b82f46c5cd6a96a6e418a6ca1717c.svg"
+                        alt="Amex"
+                        className="h-6"
+                      />
+                      <img
+                        src="https://js.stripe.com/v3/fingerprinted/img/discover-ac52cd46f89fa40a29a0bfb954e33173.svg"
+                        alt="Discover"
+                        className="h-6"
+                      />
                     </div>
                   </div>
 
@@ -1005,7 +1176,9 @@ export function CheckoutDialog({
                         id="expiry"
                         placeholder="Expiration date"
                         value={expiry}
-                        onChange={(e) => setExpiry(formatExpiry(e.target.value))}
+                        onChange={(e) =>
+                          setExpiry(formatExpiry(e.target.value))
+                        }
                         className="h-12 border-0 rounded-none bg-transparent font-mono text-base focus-visible:ring-0 focus-visible:ring-offset-0"
                         autoComplete="cc-exp"
                       />
@@ -1022,10 +1195,38 @@ export function CheckoutDialog({
                         autoComplete="cc-csc"
                       />
                       <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                        <svg viewBox="0 0 32 21" className="h-5 w-8 text-gray-400">
-                          <rect x="0" y="0" width="32" height="21" rx="3" fill="none" stroke="currentColor" strokeWidth="2"/>
-                          <rect x="20" y="4" width="8" height="5" rx="1" fill="currentColor" opacity="0.6"/>
-                          <text x="21" y="17" fontSize="7" fill="currentColor" fontFamily="monospace">123</text>
+                        <svg
+                          viewBox="0 0 32 21"
+                          className="h-5 w-8 text-gray-400"
+                        >
+                          <rect
+                            x="0"
+                            y="0"
+                            width="32"
+                            height="21"
+                            rx="3"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                          />
+                          <rect
+                            x="20"
+                            y="4"
+                            width="8"
+                            height="5"
+                            rx="1"
+                            fill="currentColor"
+                            opacity="0.6"
+                          />
+                          <text
+                            x="21"
+                            y="17"
+                            fontSize="7"
+                            fill="currentColor"
+                            fontFamily="monospace"
+                          >
+                            123
+                          </text>
                         </svg>
                       </div>
                     </div>
@@ -1039,7 +1240,9 @@ export function CheckoutDialog({
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
                   {/* Full name */}
                   <div className="relative border-b border-gray-200">
-                    <label className="absolute left-3 top-2 text-xs text-gray-500">Full name</label>
+                    <label className="absolute left-3 top-2 text-xs text-gray-500">
+                      Full name
+                    </label>
                     <Input
                       id="cardholderName"
                       placeholder=""
@@ -1051,7 +1254,9 @@ export function CheckoutDialog({
                   </div>
                   {/* Address line 1 */}
                   <div className="relative border-b border-gray-200">
-                    <label className="absolute left-3 top-2 text-xs text-gray-500">Address line 1</label>
+                    <label className="absolute left-3 top-2 text-xs text-gray-500">
+                      Address line 1
+                    </label>
                     <Input
                       placeholder=""
                       value={billingAddress.line1 || ""}
@@ -1082,7 +1287,9 @@ export function CheckoutDialog({
                   </div>
                   {/* City */}
                   <div className="relative border-b border-gray-200">
-                    <label className="absolute left-3 top-2 text-xs text-gray-500">City</label>
+                    <label className="absolute left-3 top-2 text-xs text-gray-500">
+                      City
+                    </label>
                     <Input
                       placeholder=""
                       value={billingAddress.city || ""}
@@ -1099,7 +1306,9 @@ export function CheckoutDialog({
                   {/* State + ZIP code row */}
                   <div className="flex border-b border-gray-200">
                     <div className="flex-1 relative border-r border-gray-200">
-                      <label className="absolute left-3 top-2 text-xs text-gray-500">State</label>
+                      <label className="absolute left-3 top-2 text-xs text-gray-500">
+                        State
+                      </label>
                       <Input
                         placeholder=""
                         value={billingAddress.state || ""}
@@ -1114,7 +1323,9 @@ export function CheckoutDialog({
                       />
                     </div>
                     <div className="flex-1 relative">
-                      <label className="absolute left-3 top-2 text-xs text-gray-500">ZIP code</label>
+                      <label className="absolute left-3 top-2 text-xs text-gray-500">
+                        ZIP code
+                      </label>
                       <Input
                         placeholder=""
                         value={billingAddress.postal_code || ""}
@@ -1131,7 +1342,9 @@ export function CheckoutDialog({
                   </div>
                   {/* Phone number */}
                   <div className="relative">
-                    <label className="absolute left-3 top-2 text-xs text-gray-500">Phone number</label>
+                    <label className="absolute left-3 top-2 text-xs text-gray-500">
+                      Phone number
+                    </label>
                     <div className="flex items-center h-14 pt-3">
                       <div className="flex items-center gap-1 pl-3 pr-2 text-gray-600">
                         <span className="text-sm">🇺🇸</span>
@@ -1157,7 +1370,9 @@ export function CheckoutDialog({
 
               {/* Test cards quick fill - dev tools */}
               <div className="rounded-lg bg-amber-50 border border-amber-100 p-3">
-                <div className="text-xs font-medium text-amber-700 mb-2">Quick fill test card:</div>
+                <div className="text-xs font-medium text-amber-700 mb-2">
+                  Quick fill test card:
+                </div>
                 <div className="flex flex-wrap gap-1.5">
                   {QUICK_FILL_CARDS.slice(0, 4).map((card) => (
                     <button
@@ -1256,7 +1471,9 @@ export function CheckoutDialog({
         {step === "processing" && (
           <div className="flex flex-col items-center justify-center py-16 px-6">
             <Loader2 className="h-10 w-10 animate-spin text-gray-400 mb-4" />
-            <div className="text-lg font-medium text-gray-900">Processing payment...</div>
+            <div className="text-lg font-medium text-gray-900">
+              Processing payment...
+            </div>
             <div className="text-sm text-gray-500 mt-1">
               {onCallTool ? "Completing checkout..." : "Please wait..."}
             </div>
@@ -1269,7 +1486,9 @@ export function CheckoutDialog({
             <div className="rounded-full bg-green-100 p-4 mb-4">
               <CheckCircle2 className="h-10 w-10 text-green-600" />
             </div>
-            <div className="text-xl font-semibold text-gray-900 mb-1">Payment successful</div>
+            <div className="text-xl font-semibold text-gray-900 mb-1">
+              Payment successful
+            </div>
             <div className="text-sm text-gray-500 mb-6">
               Order #{completedOrder.order.id.slice(-8)}
             </div>
@@ -1288,9 +1507,14 @@ export function CheckoutDialog({
             <div className="rounded-full bg-red-100 p-4 mb-4">
               <AlertCircle className="h-10 w-10 text-red-600" />
             </div>
-            <div className="text-xl font-semibold text-gray-900 mb-1">Payment failed</div>
+            <div className="text-xl font-semibold text-gray-900 mb-1">
+              Payment failed
+            </div>
             {errorCode && (
-              <Badge variant="outline" className="mb-2 text-xs bg-red-50 border-red-200 text-red-600">
+              <Badge
+                variant="outline"
+                className="mb-2 text-xs bg-red-50 border-red-200 text-red-600"
+              >
                 {errorCode}
               </Badge>
             )}

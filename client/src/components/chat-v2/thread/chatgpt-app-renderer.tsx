@@ -11,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { X, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
