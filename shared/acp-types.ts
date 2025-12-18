@@ -122,7 +122,12 @@ export type Message = {
 };
 
 export type Link = {
-  type: "terms_of_use" | "terms_of_service" | "privacy_policy" | "refund_policy" | "other";
+  type:
+    | "terms_of_use"
+    | "terms_of_service"
+    | "privacy_policy"
+    | "refund_policy"
+    | "other";
   text: string;
   url: string;
 };
