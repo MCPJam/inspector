@@ -381,9 +381,9 @@ await mcpClientManager.disconnectAllServers();
 
 <ResponseField
   name="executeTool"
-  type="(serverId: string, toolName: string, args: Record<string, unknown>, options?) => Promise<CallToolResult>"
+  type="(serverId: string, toolName: string, args: Record<string, unknown>, options?, taskOptions?) => Promise<CallToolResult | CreateTaskResult>"
 >
-  Execute a tool on a specific server.
+  Execute a tool on a specific server. Pass `taskOptions` to execute as a background task. Returns `CreateTaskResult` with task info if executed as task, otherwise returns `CallToolResult`.
 </ResponseField>
 
 <ResponseField
@@ -462,6 +462,64 @@ Options:
   type="(serverId: string, params: { name: string, arguments?: Record<string, string> }, options?) => Promise<GetPromptResult>"
 >
   Get a prompt with optional arguments.
+</ResponseField>
+
+### Tasks
+
+<ResponseField
+  name="listTasks"
+  type="(serverId: string, cursor?, options?) => Promise<ListTasksResult>"
+>
+  List all tasks for a server. Returns empty list if server doesn't support `tasks/list`.
+</ResponseField>
+
+<ResponseField
+  name="getTask"
+  type="(serverId: string, taskId: string, options?) => Promise<Task>"
+>
+  Get current status of a specific task.
+</ResponseField>
+
+<ResponseField
+  name="getTaskResult"
+  type="(serverId: string, taskId: string, options?) => Promise<unknown>"
+>
+  Get the result of a completed task. Returns the underlying operation result (e.g., CallToolResult for tool calls).
+</ResponseField>
+
+<ResponseField
+  name="cancelTask"
+  type="(serverId: string, taskId: string, options?) => Promise<Task>"
+>
+  Cancel a running task. Only available if server supports `tasks/cancel` capability.
+</ResponseField>
+
+<ResponseField
+  name="getServerCapabilities"
+  type="(serverId: string) => ServerCapabilities | undefined"
+>
+  Get server capabilities to check task support.
+</ResponseField>
+
+<ResponseField
+  name="supportsTasksForToolCalls"
+  type="(serverId: string) => boolean"
+>
+  Check if server supports task-augmented tool calls (`tasks.requests.tools.call` capability).
+</ResponseField>
+
+<ResponseField
+  name="supportsTasksList"
+  type="(serverId: string) => boolean"
+>
+  Check if server supports `tasks/list` operation.
+</ResponseField>
+
+<ResponseField
+  name="supportsTasksCancel"
+  type="(serverId: string) => boolean"
+>
+  Check if server supports `tasks/cancel` operation.
 </ResponseField>
 
 ### Notifications
@@ -673,6 +731,38 @@ const manager = new MCPClientManager(
 }
 );
 
+```
+</CodeGroup>
+
+### Example 6: Background Task Execution
+
+<CodeGroup>
+```typescript Task Execution
+// Check if server supports tasks
+if (manager.supportsTasksForToolCalls("myserver")) {
+  // Execute tool as background task with 60 second TTL
+  const result = await manager.executeTool(
+    "myserver",
+    "long_running_operation",
+    { input: "data" },
+    undefined, // options
+    { ttl: 60000 } // taskOptions
+  );
+
+  if ("task" in result) {
+    console.log("Task created:", result.task.taskId);
+    
+    // Poll for task status
+    const task = await manager.getTask("myserver", result.task.taskId);
+    console.log("Task status:", task.status);
+    
+    // Get result when completed
+    if (task.status === "completed") {
+      const taskResult = await manager.getTaskResult("myserver", result.task.taskId);
+      console.log("Task result:", taskResult);
+    }
+  }
+}
 ```
 </CodeGroup>
 

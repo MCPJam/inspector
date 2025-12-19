@@ -22,6 +22,20 @@ Test your MCP server's implementation of tools, prompts, and resources. You can 
 - View tool params
 - Trigger a tool with params
 - Support for elicitation
+- Execute tools as background tasks
+
+### Background task execution
+
+Tools can be executed as background tasks, allowing long-running operations to complete without blocking your workflow:
+
+1. Check the **Task** checkbox when configuring tool parameters
+2. (Optional) Set a **TTL** (time-to-live) in milliseconds
+3. Click **Execute** to create the background task
+4. Monitor progress in the [Tasks tab](/inspector/tasks)
+
+<Note>
+  Some tools require task execution (marked with "Task required"). Task execution is only available if the server supports the `tasks.requests.tools.call` capability.
+</Note>
 
 ### Save requests
 
