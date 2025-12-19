@@ -726,6 +726,86 @@ The playground store (`ui-playground-store.ts`) maintains these settings and pro
 
 Widgets can use these values to adapt their layout and interactions for different device contexts. For example, disabling hover-based tooltips on touch devices or adjusting padding for safe area insets.
 
+### Fullscreen Chat Overlay
+
+As of PR #1103, the Chat tab supports a fullscreen chat overlay that allows users to continue conversations while viewing fullscreen widgets on desktop. This feature is implemented in `client/src/components/chat-v2/fullscreen-chat-overlay.tsx`.
+
+**Key Features:**
+
+- **Collapsible message history** - Toggle button expands/collapses the conversation thread
+- **Filtered messages** - Only shows user and assistant text messages, hiding widget state and tool execution details
+- **Thinking indicator** - Animated dots show when the LLM is processing
+- **Persistent input** - Chat input remains accessible at the bottom of the screen
+- **Auto-scroll** - Message list automatically scrolls to the latest message when expanded
+
+**Implementation:**
+
+The overlay is conditionally rendered in `thread.tsx` when:
+1. `enableFullscreenChatOverlay` prop is true (enabled in Chat tab)
+2. A widget is currently in fullscreen mode (`fullscreenWidgetId !== null`)
+3. Device type is desktop (not mobile/tablet)
+
+```typescript
+// client/src/components/chat-v2/thread.tsx
+const showFullscreenChatOverlay =
+  enableFullscreenChatOverlay && fullscreenWidgetId !== null;
+
+{showFullscreenChatOverlay && (
+  <FullscreenChatOverlay
+    messages={messages}
+    open={isFullscreenChatOpen}
+    onOpenChange={setIsFullscreenChatOpen}
+    input={fullscreenChatInput}
+    onInputChange={setFullscreenChatInput}
+    placeholder={fullscreenChatPlaceholder}
+    disabled={fullscreenChatDisabled}
+    canSend={canSendFullscreenChat}
+    isThinking={isLoading}
+    onSend={() => {
+      const text = fullscreenChatInput;
+      setIsFullscreenChatOpen(true);
+      setFullscreenChatInput("");
+      sendFollowUpMessage(text);
+    }}
+  />
+)}
+```
+
+**Message Filtering:**
+
+The overlay filters messages to show only conversational content:
+
+```typescript
+// client/src/components/chat-v2/fullscreen-chat-overlay.tsx
+const visibleMessages = useMemo(
+  () =>
+    messages
+      .filter((m) => !m.id?.startsWith("widget-state-"))
+      .filter((m) => m.role === "user" || m.role === "assistant"),
+  [messages],
+);
+```
+
+**UI Components:**
+
+- `ToggleButton` - Chevron button to expand/collapse the overlay
+- `MessageList` - Scrollable container with message bubbles
+- `MessageBubble` - Individual message with role-based styling
+- `ThinkingRow` - Animated thinking indicator
+- `Composer` - Text input with send button
+
+**Styling:**
+
+The overlay uses a glassmorphic design with backdrop blur and semi-transparent backgrounds:
+- Fixed positioning at bottom of viewport with z-index 50
+- Rounded corners and border styling
+- Smooth transitions for expand/collapse animations
+- Safe area insets for mobile devices
+
+**Availability:**
+
+The fullscreen chat overlay is only enabled in the Chat tab (`ChatTabV2.tsx`). The UI Playground uses the standard chat interface to avoid conflicts with device emulation controls.
+
 ### Server Instructions Integration
 
 As of PR #948, MCP server instructions are automatically included in the chat context as system messages. This enables the LLM to understand server-specific guidance and capabilities.
