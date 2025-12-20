@@ -146,8 +146,11 @@ export function TestCaseListSidebar({
                     isTestSelected && "bg-accent font-medium",
                   )}
                 >
-                  <div className="flex-1 min-w-0 text-left">
-                    <div className="truncate">{testCase.title}</div>
+                  <div className="flex-1 min-w-0 text-left flex items-center gap-1.5">
+                    <span className="truncate">{testCase.title}</span>
+                    {testCase.isNegativeTest && (
+                      <span className="text-[10px] text-orange-500 shrink-0" title="Negative test">NEG</span>
+                    )}
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
