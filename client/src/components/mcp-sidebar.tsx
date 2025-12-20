@@ -47,6 +47,11 @@ const navigationSections = [
         url: "#app-builder",
         icon: Fish,
       },
+      {
+        title: "Test Cases",
+        url: "#evals",
+        icon: FlaskConical,
+      },
     ],
   },
   {
@@ -91,11 +96,6 @@ const navigationSections = [
         title: "Tracing",
         url: "#tracing",
         icon: Activity,
-      },
-      {
-        title: "Evals",
-        url: "#evals",
-        icon: FlaskConical,
       },
     ],
   },

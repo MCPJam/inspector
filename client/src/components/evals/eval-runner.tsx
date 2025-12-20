@@ -46,7 +46,8 @@ import { useSharedAppState } from "@/state/app-state-context";
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
   inline?: boolean;
-  onSuccess?: () => void;
+  onSuccess?: (suiteId?: string) => void;
+  preselectedServer?: string;
 }
 
 type StepKey = (typeof WIZARD_STEPS)[number]["key"];
@@ -98,13 +99,16 @@ export function EvalRunner({
   availableModels,
   inline = false,
   onSuccess,
+  preselectedServer,
 }: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingNegativeTests, setIsGeneratingNegativeTests] =
     useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
+  // Start at step 1 (model) if server is preselected, otherwise step 0 (servers)
+  const hasPreselectedServer = preselectedServer && preselectedServer !== "none";
+  const [currentStep, setCurrentStep] = useState(hasPreselectedServer ? 1 : 0);
   const [savedPreferences, setSavedPreferences] = useState<{
     servers: string[];
     modelIds: string[];
@@ -114,13 +118,20 @@ export function EvalRunner({
   const appState = useSharedAppState();
   const { getToken, hasToken } = useAiProviderKeys();
 
-  const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  // Initialize with preselected server if provided
+  const [selectedServers, setSelectedServers] = useState<string[]>(() => {
+    if (hasPreselectedServer) {
+      return [preselectedServer];
+    }
+    return [];
+  });
   const [selectedModels, setSelectedModels] = useState<ModelDefinition[]>([]);
   const [testTemplates, setTestTemplates] = useState<TestTemplate[]>([
     buildBlankTestTemplate(),
   ]);
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
-  const [suiteName, setSuiteName] = useState("");
+  // Auto-name suite after server if preselected
+  const [suiteName, setSuiteName] = useState(hasPreselectedServer ? preselectedServer : "");
   const [suiteDescription, setSuiteDescription] = useState("");
   const [showNameError, setShowNameError] = useState(false);
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
@@ -174,6 +185,8 @@ export function EvalRunner({
 
   useEffect(() => {
     if (!savedPreferences) return;
+    // Don't restore server preferences if we have a preselected server
+    if (hasPreselectedServer) return;
 
     if (savedPreferences.servers?.length) {
       const filtered = savedPreferences.servers.filter((server) =>
@@ -183,7 +196,7 @@ export function EvalRunner({
         setSelectedServers(filtered);
       }
     }
-  }, [savedPreferences, connectedServerNames]);
+  }, [savedPreferences, connectedServerNames, hasPreselectedServer]);
 
   useEffect(() => {
     // Only restore preferences once on initial load
@@ -253,10 +266,11 @@ export function EvalRunner({
 
   useEffect(() => {
     if (!inline && !open) {
-      setCurrentStep(0);
+      // Reset to step 1 if preselected, otherwise step 0
+      setCurrentStep(hasPreselectedServer ? 1 : 0);
       setHasRestoredPreferences(false);
     }
-  }, [inline, open]);
+  }, [inline, open, hasPreselectedServer]);
 
   const validTestTemplates = useMemo(
     () => testTemplates.filter((template) => template.query.trim().length > 0),
