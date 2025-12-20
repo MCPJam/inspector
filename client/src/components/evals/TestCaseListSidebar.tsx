@@ -1,4 +1,4 @@
-import { Plus, MoreVertical, Copy, Trash2, BarChart3, Pencil } from "lucide-react";
+import { Plus, MoreVertical, Copy, Trash2, BarChart3, Pencil, Sparkles } from "lucide-react";
 import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,8 +20,10 @@ interface TestCaseListSidebarProps {
   onCreateTestCase: () => void;
   onDeleteTestCase: (testCaseId: string, testCaseTitle: string) => void;
   onDuplicateTestCase: (testCaseId: string) => void;
+  onGenerateTests?: () => void;
   deletingTestCaseId: string | null;
   duplicatingTestCaseId: string | null;
+  isGeneratingTests?: boolean;
   showingOverview: boolean;
   noServerSelected?: boolean;
 }
@@ -34,8 +36,10 @@ export function TestCaseListSidebar({
   onCreateTestCase,
   onDeleteTestCase,
   onDuplicateTestCase,
+  onGenerateTests,
   deletingTestCaseId,
   duplicatingTestCaseId,
+  isGeneratingTests,
   showingOverview,
   noServerSelected,
 }: TestCaseListSidebarProps) {
@@ -65,22 +69,43 @@ export function TestCaseListSidebar({
       {/* Header */}
       <div className="p-4 border-b flex items-center justify-between">
         <h2 className="text-sm font-semibold">Test Cases</h2>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            posthog.capture("create_test_case_button_clicked", {
-              location: "test_case_list_sidebar",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
-            });
-            onCreateTestCase();
-          }}
-          className="h-7 w-7 p-0"
-          title="Create new test case"
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {onGenerateTests && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                posthog.capture("generate_tests_button_clicked", {
+                  location: "test_case_list_sidebar",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                onGenerateTests();
+              }}
+              disabled={isGeneratingTests}
+              className="h-7 w-7 p-0"
+              title="Generate test cases with AI"
+            >
+              <Sparkles className={cn("h-4 w-4", isGeneratingTests && "animate-pulse")} />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              posthog.capture("create_test_case_button_clicked", {
+                location: "test_case_list_sidebar",
+                platform: detectPlatform(),
+                environment: detectEnvironment(),
+              });
+              onCreateTestCase();
+            }}
+            className="h-7 w-7 p-0"
+            title="Create new test case"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Results Overview Button */}
