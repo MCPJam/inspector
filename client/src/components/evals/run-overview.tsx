@@ -416,7 +416,7 @@ export function RunOverview({
                       <TooltipTrigger asChild>{runButton}</TooltipTrigger>
                       <TooltipContent>
                         <p className="text-xs">
-                          Run is inactive since testsuite schema changed
+                          Run is inactive since test cases were updated
                         </p>
                       </TooltipContent>
                     </Tooltip>

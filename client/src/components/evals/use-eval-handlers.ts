@@ -104,6 +104,8 @@ export function useEvalHandlers({
             model: modelConfig.model,
             provider: modelConfig.provider,
             expectedToolCalls: testCase.expectedToolCalls || [],
+            isNegativeTest: testCase.isNegativeTest,
+            scenario: testCase.scenario,
             advancedConfig: testCase.advancedConfig,
             testCaseId: testCase._id,
           });
@@ -171,6 +173,8 @@ export function useEvalHandlers({
               model: test.model,
               provider: test.provider,
               expectedToolCalls: test.expectedToolCalls,
+              isNegativeTest: test.isNegativeTest,
+              scenario: test.scenario,
               advancedConfig: test.advancedConfig,
             })),
             serverIds: suiteServers,
