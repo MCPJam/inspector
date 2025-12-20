@@ -571,6 +571,9 @@ function IterationRow({
             <span className="text-xs font-medium truncate">
               {testInfo?.title || "Iteration"}
             </span>
+            {testInfo?.isNegativeTest && (
+              <span className="text-[10px] text-orange-500 shrink-0" title="Negative test">NEG</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">

@@ -503,12 +503,17 @@ export function TestTemplateEditor({
                     className="px-0 py-0 text-lg font-semibold border-none focus:outline-none focus:ring-0 bg-transparent w-full"
                   />
                 ) : (
-                  <h2
-                    className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity"
-                    onClick={handleTitleClick}
-                  >
-                    {editForm?.title || currentTestCase.title}
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <h2
+                      className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity"
+                      onClick={handleTitleClick}
+                    >
+                      {editForm?.title || currentTestCase.title}
+                    </h2>
+                    {currentTestCase.isNegativeTest && (
+                      <span className="text-[10px] text-orange-500" title="Negative test">NEG</span>
+                    )}
+                  </div>
                 )}
               </div>
               <div className="flex items-center gap-3 shrink-0">
