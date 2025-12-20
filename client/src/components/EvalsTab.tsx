@@ -179,6 +179,13 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     [serverSuiteId, handlers.handleDuplicateTestCase],
   );
 
+  // Handle generate tests for current server's suite
+  const handleGenerateTests = useCallback(async () => {
+    if (serverSuiteId && selectedServer) {
+      await handlers.handleGenerateTests(serverSuiteId, [selectedServer]);
+    }
+  }, [serverSuiteId, selectedServer, handlers.handleGenerateTests]);
+
   // Loading state
   if (isLoading) {
     return (
@@ -254,8 +261,10 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
               onCreateTestCase={handleCreateTestCase}
               onDeleteTestCase={handlers.handleDeleteTestCase}
               onDuplicateTestCase={handleDuplicateTestCase}
+              onGenerateTests={serverSuiteId ? handleGenerateTests : undefined}
               deletingTestCaseId={handlers.deletingTestCaseId}
               duplicatingTestCaseId={handlers.duplicatingTestCaseId}
+              isGeneratingTests={handlers.isGeneratingTests}
               showingOverview={!selectedTestIdForSidebar && serverSuiteId !== null}
               noServerSelected={!isServerConnected}
             />

@@ -12,6 +12,7 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import type { useEvalMutations } from "./use-eval-mutations";
+import { API_ENDPOINTS } from "./constants";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -54,6 +55,7 @@ export function useEvalHandlers({
     id: string;
     title: string;
   } | null>(null);
+  const [isGeneratingTests, setIsGeneratingTests] = useState(false);
 
   // Query to get test cases for a suite
   const getTestCasesForRerun = useCallback(
@@ -552,6 +554,109 @@ export function useEvalHandlers({
     [duplicatingTestCaseId, mutations.duplicateTestCaseMutation],
   );
 
+  // Generate tests handler - calls API and creates test cases
+  const handleGenerateTests = useCallback(
+    async (suiteId: string, serverIds: string[]) => {
+      if (isGeneratingTests) return;
+
+      setIsGeneratingTests(true);
+
+      try {
+        const accessToken = await getAccessToken();
+
+        // Get existing test cases to extract models
+        const existingTestCases = await convex.query(
+          "testSuites:listTestCases" as any,
+          { suiteId },
+        );
+
+        // Extract unique models from existing test cases
+        let modelsToUse: Array<{ model: string; provider: string }> = [];
+        if (existingTestCases && Array.isArray(existingTestCases) && existingTestCases.length > 0) {
+          const uniqueModels = new Map<string, { model: string; provider: string }>();
+
+          for (const testCase of existingTestCases) {
+            if (testCase.models && Array.isArray(testCase.models)) {
+              for (const modelConfig of testCase.models) {
+                if (modelConfig.model && modelConfig.provider) {
+                  const key = `${modelConfig.provider}:${modelConfig.model}`;
+                  if (!uniqueModels.has(key)) {
+                    uniqueModels.set(key, {
+                      model: modelConfig.model,
+                      provider: modelConfig.provider,
+                    });
+                  }
+                }
+              }
+            }
+          }
+
+          modelsToUse = Array.from(uniqueModels.values());
+        }
+
+        // Call generate tests API
+        const response = await fetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serverIds,
+            convexAuthToken: accessToken,
+          }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to generate tests");
+        }
+
+        if (!result.tests || result.tests.length === 0) {
+          toast.info("No test cases were generated");
+          return;
+        }
+
+        // Create test cases for each generated test
+        let createdCount = 0;
+        for (const test of result.tests) {
+          try {
+            await mutations.createTestCaseMutation({
+              suiteId,
+              title: test.title || "Generated test",
+              query: test.query || "",
+              models: modelsToUse,
+              expectedToolCalls: test.expectedToolCalls || [],
+              runs: test.runs || 1,
+            });
+            createdCount++;
+          } catch (err) {
+            console.error("Failed to create test case:", err);
+          }
+        }
+
+        if (createdCount > 0) {
+          toast.success(`Generated ${createdCount} test case${createdCount > 1 ? "s" : ""}`);
+
+          // Track generation
+          posthog.capture("eval_tests_generated_from_sidebar", {
+            location: "test_case_list_sidebar",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            suite_id: suiteId,
+            generated_count: createdCount,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to generate tests:", error);
+        toast.error(
+          error instanceof Error ? error.message : "Failed to generate test cases",
+        );
+      } finally {
+        setIsGeneratingTests(false);
+      }
+    },
+    [isGeneratingTests, getAccessToken, convex, mutations.createTestCaseMutation],
+  );
+
   return {
     // Handlers
     handleRerun,
@@ -566,6 +671,7 @@ export function useEvalHandlers({
     handleDeleteTestCase,
     confirmDeleteTestCase,
     handleDuplicateTestCase,
+    handleGenerateTests,
     // States
     rerunningSuiteId,
     cancellingRunId,
@@ -581,5 +687,6 @@ export function useEvalHandlers({
     duplicatingTestCaseId,
     testCaseToDelete,
     setTestCaseToDelete,
+    isGeneratingTests,
   };
 }
