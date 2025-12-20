@@ -179,6 +179,11 @@ export function ReviewStep({
                   <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
                     {template.query}
                   </p>
+                  {template.expectedOutput && (
+                    <p className="mt-1 text-xs text-muted-foreground/80 italic">
+                      Expected: {template.expectedOutput}
+                    </p>
+                  )}
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                     <span>
                       {template.runs} run{template.runs === 1 ? "" : "s"}
