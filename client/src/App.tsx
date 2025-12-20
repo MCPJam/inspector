@@ -210,7 +210,8 @@ export default function App() {
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
-    activeTab === "app-builder";
+    activeTab === "app-builder" ||
+    activeTab === "evals";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -266,7 +267,9 @@ export default function App() {
               />
             </div>
           )}
-          {activeTab === "evals" && <EvalsTab />}
+          {activeTab === "evals" && (
+            <EvalsTab selectedServer={appState.selectedServer} />
+          )}
           {activeTab === "resources" && (
             <ResourcesTab
               serverConfig={selectedMCPConfig}
