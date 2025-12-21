@@ -3,6 +3,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { FlaskConical, Plus, AlertTriangle } from "lucide-react";
 import posthog from "posthog-js";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -177,6 +178,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
         suiteId = newSuite?._id;
       } catch (err) {
         console.error("Failed to create suite:", err);
+        toast.error("Failed to create test case. Please try again.");
         return;
       }
     }
@@ -213,6 +215,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
         suiteId = newSuite?._id;
       } catch (err) {
         console.error("Failed to create suite:", err);
+        toast.error("Failed to generate tests. Please try again.");
         return;
       }
     }
