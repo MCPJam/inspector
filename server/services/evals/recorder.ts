@@ -308,6 +308,7 @@ export const startSuiteRunWithRecorder = async ({
         provider: model.provider,
         runs: tc.runs || 1,
         expectedToolCalls: tc.expectedToolCalls || [],
+        isNegativeTest: tc.isNegativeTest,
         advancedConfig: tc.advancedConfig,
         testCaseId: tc._id,
       })),

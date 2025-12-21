@@ -32,7 +32,7 @@ import {
 } from "./types";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
-import { computeIterationPassed } from "./pass-criteria";
+import { computeIterationResult } from "./pass-criteria";
 import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
@@ -208,13 +208,11 @@ export function SuiteHeader({
     }
 
     // Calculate passed/failed counts using consistent computation
-    const passed = activeIterations.filter((iter) =>
-      computeIterationPassed(iter),
-    ).length;
-    const failed = activeIterations.filter(
-      (iter) => !computeIterationPassed(iter),
-    ).length;
-    const total = activeIterations.length;
+    // Only count completed iterations - exclude pending/cancelled
+    const iterationResults = activeIterations.map((iter) => computeIterationResult(iter));
+    const passed = iterationResults.filter((r) => r === "passed").length;
+    const failed = iterationResults.filter((r) => r === "failed").length;
+    const total = passed + failed; // Only count completed iterations for accuracy
 
     if (total === 0) {
       return null;
@@ -483,7 +481,7 @@ export function SuiteHeader({
                               <tspan
                                 x={viewBox.cx}
                                 y={viewBox.cy}
-                                className="fill-foreground text-xs font-bold"
+                                className="fill-foreground text-[10px] font-bold"
                               >
                                 {accuracyChartData.accuracy}%
                               </tspan>

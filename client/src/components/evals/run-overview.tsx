@@ -24,7 +24,7 @@ import {
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { AccuracyChart } from "./accuracy-chart";
 import { formatRunId, getIterationBorderColor } from "./helpers";
-import { computeIterationPassed } from "./pass-criteria";
+import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { toast } from "sonner";
 
@@ -313,13 +313,11 @@ export function RunOverview({
               const runIterations = allIterations.filter(
                 (iter) => iter.suiteRunId === run._id,
               );
-              const realTimePassed = runIterations.filter((i) =>
-                computeIterationPassed(i),
-              ).length;
-              const realTimeFailed = runIterations.filter(
-                (i) => !computeIterationPassed(i),
-              ).length;
-              const realTimeTotal = runIterations.length;
+              // Only count completed iterations - exclude pending/cancelled
+              const iterationResults = runIterations.map((i) => computeIterationResult(i));
+              const realTimePassed = iterationResults.filter((r) => r === "passed").length;
+              const realTimeFailed = iterationResults.filter((r) => r === "failed").length;
+              const realTimeTotal = realTimePassed + realTimeFailed;
               const totalTokens = runIterations.reduce(
                 (sum, iter) => sum + (iter.tokensUsed || 0),
                 0,
