@@ -368,7 +368,11 @@ const runIterationWithAiSdk = async ({
       }
     }
 
-    const evaluation = evaluateResults(expectedToolCalls, toolsCalled, test.isNegativeTest);
+    const evaluation = evaluateResults(
+      expectedToolCalls,
+      toolsCalled,
+      test.isNegativeTest,
+    );
 
     const usage: UsageTotals = {
       inputTokens: result.usage?.inputTokens,
@@ -682,7 +686,11 @@ const runIterationViaBackend = async ({
     }
   }
 
-  const evaluation = evaluateResults(expectedToolCalls, toolsCalled, test.isNegativeTest);
+  const evaluation = evaluateResults(
+    expectedToolCalls,
+    toolsCalled,
+    test.isNegativeTest,
+  );
 
   const finishParams = {
     iterationId,

@@ -133,7 +133,9 @@ export function TestTemplateEditor({
   >([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [isRunning, setIsRunning] = useState(false);
-  const [optimisticNegative, setOptimisticNegative] = useState<boolean | null>(null);
+  const [optimisticNegative, setOptimisticNegative] = useState<boolean | null>(
+    null,
+  );
   const [currentQuickRunResult, setCurrentQuickRunResult] = useState<
     any | null
   >(null);
@@ -293,7 +295,10 @@ export function TestTemplateEditor({
   // Check if expected tool calls are valid
   const areExpectedToolCallsValid = useMemo(() => {
     if (!editForm) return true; // Allow saving if form is not loaded yet
-    return validateExpectedToolCalls(editForm.expectedToolCalls || [], currentTestCase?.isNegativeTest);
+    return validateExpectedToolCalls(
+      editForm.expectedToolCalls || [],
+      currentTestCase?.isNegativeTest,
+    );
   }, [editForm, currentTestCase?.isNegativeTest]);
 
   // Separate save handler
@@ -301,7 +306,12 @@ export function TestTemplateEditor({
     if (!editForm || !currentTestCase) return;
 
     // Validate expected tool calls before saving (skip for negative tests)
-    if (!validateExpectedToolCalls(editForm.expectedToolCalls || [], currentTestCase.isNegativeTest)) {
+    if (
+      !validateExpectedToolCalls(
+        editForm.expectedToolCalls || [],
+        currentTestCase.isNegativeTest,
+      )
+    ) {
       toast.error(
         "Cannot save: All tool names must be specified and argument values cannot be empty.",
       );
@@ -558,11 +568,17 @@ export function TestTemplateEditor({
                 <TooltipTrigger asChild>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Switch
-                      checked={optimisticNegative ?? currentTestCase.isNegativeTest ?? false}
+                      checked={
+                        optimisticNegative ??
+                        currentTestCase.isNegativeTest ??
+                        false
+                      }
                       onCheckedChange={handleToggleNegative}
                       className="scale-75 data-[state=checked]:bg-orange-500"
                     />
-                    <span className={`text-[10px] ${(optimisticNegative ?? currentTestCase.isNegativeTest) ? 'text-orange-500' : 'text-muted-foreground'}`}>
+                    <span
+                      className={`text-[10px] ${(optimisticNegative ?? currentTestCase.isNegativeTest) ? "text-orange-500" : "text-muted-foreground"}`}
+                    >
                       NEG
                     </span>
                   </div>
@@ -677,7 +693,9 @@ export function TestTemplateEditor({
               <>
                 {/* Scenario field - shown for all tests */}
                 <div className="px-1 pt-2">
-                  <Label className="text-xs text-muted-foreground font-medium">Scenario</Label>
+                  <Label className="text-xs text-muted-foreground font-medium">
+                    Scenario
+                  </Label>
                   <p className="text-[10px] text-muted-foreground mb-1.5">
                     {currentTestCase?.isNegativeTest
                       ? "Describe the scenario where your app should not trigger"
@@ -689,15 +707,19 @@ export function TestTemplateEditor({
                       setEditForm({ ...editForm, scenario: e.target.value })
                     }
                     rows={2}
-                    placeholder={currentTestCase?.isNegativeTest
-                      ? "e.g., User asks about unrelated topic..."
-                      : "e.g., Check current time display..."}
+                    placeholder={
+                      currentTestCase?.isNegativeTest
+                        ? "e.g., User asks about unrelated topic..."
+                        : "e.g., Check current time display..."
+                    }
                     className="text-sm resize-none border-0 bg-muted/30 focus-visible:bg-muted/50 transition-colors px-3 py-2"
                   />
                 </div>
 
                 <div className="px-1 pt-3">
-                  <Label className="text-xs text-muted-foreground font-medium">User Prompt</Label>
+                  <Label className="text-xs text-muted-foreground font-medium">
+                    User Prompt
+                  </Label>
                   <p className="text-[10px] text-muted-foreground mb-1.5">
                     {currentTestCase?.isNegativeTest
                       ? "Example prompt where your app should not trigger"
@@ -718,7 +740,9 @@ export function TestTemplateEditor({
                 {!currentTestCase?.isNegativeTest && (
                   <>
                     <div className="px-1 pt-3">
-                      <Label className="text-xs text-muted-foreground font-medium">Tool Triggered</Label>
+                      <Label className="text-xs text-muted-foreground font-medium">
+                        Tool Triggered
+                      </Label>
                       <p className="text-[10px] text-muted-foreground mb-1.5">
                         Which tools should be called?
                       </p>
@@ -735,14 +759,20 @@ export function TestTemplateEditor({
                     </div>
 
                     <div className="px-1 pt-3">
-                      <Label className="text-xs text-muted-foreground font-medium">Expected Output</Label>
+                      <Label className="text-xs text-muted-foreground font-medium">
+                        Expected Output
+                      </Label>
                       <p className="text-[10px] text-muted-foreground mb-1.5">
-                        The output or experience we should expect to receive back from the MCP server
+                        The output or experience we should expect to receive
+                        back from the MCP server
                       </p>
                       <Textarea
                         value={editForm.expectedOutput || ""}
                         onChange={(e) =>
-                          setEditForm({ ...editForm, expectedOutput: e.target.value })
+                          setEditForm({
+                            ...editForm,
+                            expectedOutput: e.target.value,
+                          })
                         }
                         rows={2}
                         placeholder="e.g., Should return pokemon data with name, type, and stats..."

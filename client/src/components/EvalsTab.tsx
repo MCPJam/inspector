@@ -87,7 +87,8 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
   });
 
   // Check if selected server is valid and connected
-  const isServerConnected = selectedServer &&
+  const isServerConnected =
+    selectedServer &&
     selectedServer !== "none" &&
     appState.servers[selectedServer]?.connectionStatus === "connected";
 
@@ -152,16 +153,13 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
   }, [selectedSuite, suiteDetails, activeIterations]);
 
   // Handle eval run success - navigate to suite overview
-  const handleEvalRunSuccess = useCallback(
-    (suiteId?: string) => {
-      if (suiteId) {
-        navigateToEvalsRoute({ type: "suite-overview", suiteId });
-      } else {
-        navigateToEvalsRoute({ type: "list" });
-      }
-    },
-    [],
-  );
+  const handleEvalRunSuccess = useCallback((suiteId?: string) => {
+    if (suiteId) {
+      navigateToEvalsRoute({ type: "suite-overview", suiteId });
+    } else {
+      navigateToEvalsRoute({ type: "list" });
+    }
+  }, []);
 
   // Handle creating test case for current server's suite (creates suite if needed)
   const handleCreateTestCase = useCallback(async () => {
@@ -186,7 +184,13 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     if (suiteId) {
       await handlers.handleCreateTestCase(suiteId);
     }
-  }, [serverSuiteId, selectedServer, isServerConnected, mutations.createTestSuiteMutation, handlers.handleCreateTestCase]);
+  }, [
+    serverSuiteId,
+    selectedServer,
+    isServerConnected,
+    mutations.createTestSuiteMutation,
+    handlers.handleCreateTestCase,
+  ]);
 
   // Handle duplicate test case
   const handleDuplicateTestCase = useCallback(
@@ -223,7 +227,13 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     if (suiteId) {
       await handlers.handleGenerateTests(suiteId, [selectedServer]);
     }
-  }, [serverSuiteId, selectedServer, isServerConnected, mutations.createTestSuiteMutation, handlers.handleGenerateTests]);
+  }, [
+    serverSuiteId,
+    selectedServer,
+    isServerConnected,
+    mutations.createTestSuiteMutation,
+    handlers.handleGenerateTests,
+  ]);
 
   // Loading state
   if (isLoading) {
@@ -304,7 +314,9 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
               deletingTestCaseId={handlers.deletingTestCaseId}
               duplicatingTestCaseId={handlers.duplicatingTestCaseId}
               isGeneratingTests={handlers.isGeneratingTests}
-              showingOverview={!selectedTestIdForSidebar && serverSuiteId !== null}
+              showingOverview={
+                !selectedTestIdForSidebar && serverSuiteId !== null
+              }
               noServerSelected={!isServerConnected}
               suite={selectedSuite}
               onRerun={handlers.handleRerun}

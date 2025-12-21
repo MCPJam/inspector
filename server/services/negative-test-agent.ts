@@ -212,10 +212,13 @@ ${toolsContext}
     }
 
     if (validatedTests.length < NEGATIVE_TEST_CASE_COUNT) {
-      logger.warn("[negative-test-agent] LLM returned fewer negative tests than requested", {
-        requestedCount: NEGATIVE_TEST_CASE_COUNT,
-        returnedCount: validatedTests.length,
-      });
+      logger.warn(
+        "[negative-test-agent] LLM returned fewer negative tests than requested",
+        {
+          requestedCount: NEGATIVE_TEST_CASE_COUNT,
+          returnedCount: validatedTests.length,
+        },
+      );
     }
 
     return validatedTests;

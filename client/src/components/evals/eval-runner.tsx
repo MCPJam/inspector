@@ -107,7 +107,8 @@ export function EvalRunner({
   const [isGeneratingNegativeTests, setIsGeneratingNegativeTests] =
     useState(false);
   // Start at step 1 (model) if server is preselected, otherwise step 0 (servers)
-  const hasPreselectedServer = preselectedServer && preselectedServer !== "none";
+  const hasPreselectedServer =
+    preselectedServer && preselectedServer !== "none";
   const [currentStep, setCurrentStep] = useState(hasPreselectedServer ? 1 : 0);
   const [savedPreferences, setSavedPreferences] = useState<{
     servers: string[];
@@ -131,7 +132,9 @@ export function EvalRunner({
   ]);
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
   // Auto-name suite after server if preselected
-  const [suiteName, setSuiteName] = useState(hasPreselectedServer ? preselectedServer : "");
+  const [suiteName, setSuiteName] = useState(
+    hasPreselectedServer ? preselectedServer : "",
+  );
   const [suiteDescription, setSuiteDescription] = useState("");
   const [showNameError, setShowNameError] = useState(false);
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
@@ -466,14 +469,17 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
 
-      const response = await fetch(API_ENDPOINTS.EVALS_GENERATE_NEGATIVE_TESTS, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverIds: selectedServers,
-          convexAuthToken: accessToken,
-        }),
-      });
+      const response = await fetch(
+        API_ENDPOINTS.EVALS_GENERATE_NEGATIVE_TESTS,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serverIds: selectedServers,
+            convexAuthToken: accessToken,
+          }),
+        },
+      );
 
       const result = await response.json();
 

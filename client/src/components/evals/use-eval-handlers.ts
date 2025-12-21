@@ -147,9 +147,7 @@ export function useEvalHandlers({
       setRerunningSuiteId(suite._id);
 
       // Show toast immediately when user clicks rerun
-      toast.success(
-        "Run started successfully! Results will appear shortly.",
-      );
+      toast.success("Run started successfully! Results will appear shortly.");
 
       try {
         const accessToken = await getAccessToken();
@@ -579,8 +577,15 @@ export function useEvalHandlers({
 
         // Extract unique models from existing test cases
         let modelsToUse: Array<{ model: string; provider: string }> = [];
-        if (existingTestCases && Array.isArray(existingTestCases) && existingTestCases.length > 0) {
-          const uniqueModels = new Map<string, { model: string; provider: string }>();
+        if (
+          existingTestCases &&
+          Array.isArray(existingTestCases) &&
+          existingTestCases.length > 0
+        ) {
+          const uniqueModels = new Map<
+            string,
+            { model: string; provider: string }
+          >();
 
           for (const testCase of existingTestCases) {
             if (testCase.models && Array.isArray(testCase.models)) {
@@ -651,7 +656,9 @@ export function useEvalHandlers({
         }
 
         if (createdCount > 0) {
-          toast.success(`Generated ${createdCount} test case${createdCount > 1 ? "s" : ""}`);
+          toast.success(
+            `Generated ${createdCount} test case${createdCount > 1 ? "s" : ""}`,
+          );
 
           // Track generation
           posthog.capture("eval_tests_generated_from_sidebar", {
@@ -665,13 +672,20 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to generate tests:", error);
         toast.error(
-          error instanceof Error ? error.message : "Failed to generate test cases",
+          error instanceof Error
+            ? error.message
+            : "Failed to generate test cases",
         );
       } finally {
         setIsGeneratingTests(false);
       }
     },
-    [isGeneratingTests, getAccessToken, convex, mutations.createTestCaseMutation],
+    [
+      isGeneratingTests,
+      getAccessToken,
+      convex,
+      mutations.createTestCaseMutation,
+    ],
   );
 
   return {

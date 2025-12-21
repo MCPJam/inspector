@@ -63,9 +63,13 @@ export function TestCasesOverview({
       );
 
       // Only count completed iterations - exclude pending/cancelled
-      const iterationResults = caseIterations.map((iter) => computeIterationResult(iter));
+      const iterationResults = caseIterations.map((iter) =>
+        computeIterationResult(iter),
+      );
       const passed = iterationResults.filter((r) => r === "passed").length;
-      const total = iterationResults.filter((r) => r === "passed" || r === "failed").length;
+      const total = iterationResults.filter(
+        (r) => r === "passed" || r === "failed",
+      ).length;
       const avgAccuracy = total > 0 ? Math.round((passed / total) * 100) : 0;
 
       // Calculate average duration

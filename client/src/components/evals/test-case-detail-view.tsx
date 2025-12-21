@@ -69,9 +69,13 @@ export function TestCaseDetailView({
       const runIters = iterationsByRun.get(run._id);
       if (runIters && runIters.length > 0) {
         // Only count completed iterations - exclude pending/cancelled
-        const iterationResults = runIters.map((iter) => computeIterationResult(iter));
+        const iterationResults = runIters.map((iter) =>
+          computeIterationResult(iter),
+        );
         const passed = iterationResults.filter((r) => r === "passed").length;
-        const total = iterationResults.filter((r) => r === "passed" || r === "failed").length;
+        const total = iterationResults.filter(
+          (r) => r === "passed" || r === "failed",
+        ).length;
         const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
         data.push({

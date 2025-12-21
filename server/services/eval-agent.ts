@@ -286,8 +286,14 @@ ${toolsContext}
         query: tc.query || "",
         runs: typeof tc.runs === "number" ? tc.runs : 1,
         expectedToolCalls: normalizedToolCalls,
-        scenario: tc.scenario || (isNegativeTest ? "Negative test case" : "No scenario provided"),
-        expectedOutput: tc.expectedOutput || (isNegativeTest ? "AI responds without calling any tools" : "No expected output provided"),
+        scenario:
+          tc.scenario ||
+          (isNegativeTest ? "Negative test case" : "No scenario provided"),
+        expectedOutput:
+          tc.expectedOutput ||
+          (isNegativeTest
+            ? "AI responds without calling any tools"
+            : "No expected output provided"),
         isNegativeTest,
       };
     });

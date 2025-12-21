@@ -19,7 +19,10 @@ import {
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import { getIterationBorderColor } from "./helpers";
-import { computeIterationResult, computeIterationPassed } from "./pass-criteria";
+import {
+  computeIterationResult,
+  computeIterationPassed,
+} from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 
 interface RunDetailViewProps {
@@ -66,10 +69,21 @@ export function RunDetailView({
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
     if (caseGroupsForSelectedRun.length === 0) {
-      return selectedRunDetails.summary ?? { passed: 0, failed: 0, total: 0, passRate: 0 };
+      return (
+        selectedRunDetails.summary ?? {
+          passed: 0,
+          failed: 0,
+          total: 0,
+          passRate: 0,
+        }
+      );
     }
-    const passed = caseGroupsForSelectedRun.filter((i) => computeIterationPassed(i)).length;
-    const failed = caseGroupsForSelectedRun.filter((i) => !computeIterationPassed(i)).length;
+    const passed = caseGroupsForSelectedRun.filter((i) =>
+      computeIterationPassed(i),
+    ).length;
+    const failed = caseGroupsForSelectedRun.filter(
+      (i) => !computeIterationPassed(i),
+    ).length;
     const total = caseGroupsForSelectedRun.length;
     const passRate = total > 0 ? passed / total : 0;
     return { passed, failed, total, passRate };
@@ -310,7 +324,11 @@ export function RunDetailView({
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tick={{ fontSize: 10, angle: -45, textAnchor: "end" }}
+                            tick={{
+                              fontSize: 10,
+                              angle: -45,
+                              textAnchor: "end",
+                            }}
                             interval={0}
                             height={80}
                             tickFormatter={(value) => {
@@ -386,7 +404,11 @@ export function RunDetailView({
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tick={{ fontSize: 10, angle: -45, textAnchor: "end" }}
+                            tick={{
+                              fontSize: 10,
+                              angle: -45,
+                              textAnchor: "end",
+                            }}
                             interval={0}
                             height={80}
                             tickFormatter={(value) => {
@@ -555,7 +577,8 @@ function IterationRow({
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
   const durationMs =
     startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
-  const isPending = iteration.status === "pending" || iteration.status === "running";
+  const isPending =
+    iteration.status === "pending" || iteration.status === "running";
 
   const testInfo = iteration.testCaseSnapshot;
   const actualToolCalls = iteration.actualToolCalls || [];
@@ -588,7 +611,12 @@ function IterationRow({
               {testInfo?.title || "Iteration"}
             </span>
             {testInfo?.isNegativeTest && (
-              <span className="text-[10px] text-orange-500 shrink-0" title="Negative test">NEG</span>
+              <span
+                className="text-[10px] text-orange-500 shrink-0"
+                title="Negative test"
+              >
+                NEG
+              </span>
             )}
           </div>
         </div>

@@ -1,4 +1,13 @@
-import { Plus, MoreVertical, Copy, Trash2, BarChart3, Sparkles, RotateCw, Loader2 } from "lucide-react";
+import {
+  Plus,
+  MoreVertical,
+  Copy,
+  Trash2,
+  BarChart3,
+  Sparkles,
+  RotateCw,
+  Loader2,
+} from "lucide-react";
 import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
 import {
@@ -110,7 +119,9 @@ export function TestCaseListSidebar({
                   disabled={!canRerun || isRerunning || testCases.length === 0}
                   className="h-7 w-7 p-0"
                 >
-                  <RotateCw className={cn("h-4 w-4", isRerunning && "animate-spin")} />
+                  <RotateCw
+                    className={cn("h-4 w-4", isRerunning && "animate-spin")}
+                  />
                 </Button>
               </span>
             </TooltipTrigger>
@@ -143,12 +154,19 @@ export function TestCaseListSidebar({
                   disabled={isGeneratingTests || !onGenerateTests}
                   className="h-7 w-7 p-0"
                 >
-                  <Sparkles className={cn("h-4 w-4", isGeneratingTests && "animate-pulse")} />
+                  <Sparkles
+                    className={cn(
+                      "h-4 w-4",
+                      isGeneratingTests && "animate-pulse",
+                    )}
+                  />
                 </Button>
               </span>
             </TooltipTrigger>
             <TooltipContent>
-              {isGeneratingTests ? "Generating..." : "Generate test cases with AI"}
+              {isGeneratingTests
+                ? "Generating..."
+                : "Generate test cases with AI"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -231,7 +249,12 @@ export function TestCaseListSidebar({
                   <div className="flex-1 min-w-0 text-left flex items-center gap-1.5">
                     <span className="truncate">{testCase.title}</span>
                     {testCase.isNegativeTest && (
-                      <span className="text-[10px] text-orange-500 shrink-0" title="Negative test">NEG</span>
+                      <span
+                        className="text-[10px] text-orange-500 shrink-0"
+                        title="Negative test"
+                      >
+                        NEG
+                      </span>
                     )}
                   </div>
                   <DropdownMenu>

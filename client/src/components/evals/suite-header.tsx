@@ -209,7 +209,9 @@ export function SuiteHeader({
 
     // Calculate passed/failed counts using consistent computation
     // Only count completed iterations - exclude pending/cancelled
-    const iterationResults = activeIterations.map((iter) => computeIterationResult(iter));
+    const iterationResults = activeIterations.map((iter) =>
+      computeIterationResult(iter),
+    );
     const passed = iterationResults.filter((r) => r === "passed").length;
     const failed = iterationResults.filter((r) => r === "failed").length;
     const total = passed + failed; // Only count completed iterations for accuracy
@@ -421,282 +423,292 @@ export function SuiteHeader({
   return (
     <div className="flex items-center justify-between gap-4 mb-4">
       <div className="flex items-center gap-4 flex-1">
-          {isEditingName ? (
-            <input
-              type="text"
-              value={editedName}
-              onChange={(e) => setEditedName(e.target.value)}
-              onBlur={handleNameBlur}
-              onKeyDown={handleNameKeyDown}
-              autoFocus
-              className="px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          ) : (
-            <Button
-              variant="ghost"
-              onClick={handleNameClick}
-              className="px-3 py-2 h-auto text-lg font-semibold hover:bg-accent"
+        {isEditingName ? (
+          <input
+            type="text"
+            value={editedName}
+            onChange={(e) => setEditedName(e.target.value)}
+            onBlur={handleNameBlur}
+            onKeyDown={handleNameKeyDown}
+            autoFocus
+            className="px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+        ) : (
+          <Button
+            variant="ghost"
+            onClick={handleNameClick}
+            className="px-3 py-2 h-auto text-lg font-semibold hover:bg-accent"
+          >
+            {suite.name}
+          </Button>
+        )}
+        {/* Accuracy Chart */}
+        {accuracyChartData && accuracyChartData.donutData.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">
+              Accuracy:
+            </span>
+            <ChartContainer
+              config={{
+                passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
+                failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
+                pending: { label: "Pending", color: "hsl(45.4 93.4% 47.5%)" },
+                cancelled: {
+                  label: "Cancelled",
+                  color: "hsl(240 3.7% 15.9%)",
+                },
+              }}
+              className="h-12 w-12"
             >
-              {suite.name}
-            </Button>
-          )}
-          {/* Accuracy Chart */}
-          {accuracyChartData && accuracyChartData.donutData.length > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-foreground">
-                Accuracy:
-              </span>
-              <ChartContainer
-                config={{
-                  passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
-                  failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                  pending: { label: "Pending", color: "hsl(45.4 93.4% 47.5%)" },
-                  cancelled: {
-                    label: "Cancelled",
-                    color: "hsl(240 3.7% 15.9%)",
-                  },
-                }}
-                className="h-12 w-12"
-              >
-                <PieChart>
-                  <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                  <Pie
-                    data={accuracyChartData.donutData}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={15}
-                    outerRadius={22}
-                    strokeWidth={1}
-                  >
-                    <Label
-                      content={({ viewBox }) => {
-                        if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                          return (
-                            <text
+              <PieChart>
+                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                <Pie
+                  data={accuracyChartData.donutData}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={15}
+                  outerRadius={22}
+                  strokeWidth={1}
+                >
+                  <Label
+                    content={({ viewBox }) => {
+                      if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                        return (
+                          <text
+                            x={viewBox.cx}
+                            y={viewBox.cy}
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                          >
+                            <tspan
                               x={viewBox.cx}
                               y={viewBox.cy}
-                              textAnchor="middle"
-                              dominantBaseline="middle"
+                              className="fill-foreground text-[10px] font-bold"
                             >
-                              <tspan
-                                x={viewBox.cx}
-                                y={viewBox.cy}
-                                className="fill-foreground text-[10px] font-bold"
-                              >
-                                {accuracyChartData.accuracy}%
-                              </tspan>
-                            </text>
-                          );
-                        }
-                      }}
-                    />
-                  </Pie>
-                </PieChart>
-              </ChartContainer>
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Models picker - compact dropdown */}
-          {onUpdateModels && (
-            <DropdownMenu
-              open={isModelDropdownOpen}
-              onOpenChange={setIsModelDropdownOpen}
-            >
-              <DropdownMenuTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className={`gap-1.5 ${suiteModels.length === 0 ? "text-destructive border-destructive/50" : ""}`}
-                >
-                  Models
-                  <Badge
-                    variant={suiteModels.length === 0 ? "destructive" : "secondary"}
-                    className="px-1.5 py-0 text-[10px] min-w-[18px] justify-center"
-                  >
-                    {suiteModels.length}
-                  </Badge>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                side="bottom"
-                sideOffset={4}
-                className="w-[280px]"
-              >
-                {/* Current models */}
-                {suiteModels.length > 0 && (
-                  <>
-                    <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Active Models
-                    </div>
-                    {suiteModels.map((modelInfo) => (
-                      <div
-                        key={modelInfo.model}
-                        className="flex items-center justify-between px-2 py-1.5 text-sm"
-                      >
-                        <span className="truncate">{modelInfo.displayName}</span>
-                        <button
-                          onClick={() => handleDeleteModel(modelInfo.model)}
-                          className="ml-2 p-0.5 text-muted-foreground hover:text-destructive rounded"
-                          title="Remove model"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                    <div className="my-1 h-px bg-border" />
-                  </>
-                )}
-
-                {/* Add models - MCPJam Free */}
-                {mcpjamProviders.length > 0 && (
-                  <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    MCPJam Free Models
-                  </div>
-                )}
-                {mcpjamProviders.map(([provider, providerModels]) => {
-                  const mcpjamModels = providerModels.filter((m) =>
-                    isMCPJamProvidedModel(m.id),
-                  );
-                  const modelCount = mcpjamModels.length;
-                  return (
-                    <DropdownMenuSub key={`free-${provider}`}>
-                      <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                        <ProviderLogo provider={provider} />
-                        <div className="flex flex-col flex-1">
-                          <span className="font-medium capitalize">{provider}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {modelCount} model{modelCount !== 1 ? "s" : ""}
-                          </span>
-                        </div>
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent
-                        className="min-w-[200px] max-h-[200px] overflow-y-auto"
-                        avoidCollisions={true}
-                        collisionPadding={8}
-                      >
-                        {mcpjamModels.map((model) => {
-                          const isAdded = suiteModels.some((m) => m.model === model.id);
-                          return (
-                            <DropdownMenuItem
-                              key={model.id}
-                              onSelect={() => handleAddModel(model)}
-                              className="flex items-center gap-3 text-sm cursor-pointer"
-                              disabled={isAdded}
-                            >
-                              <div className="flex flex-col flex-1">
-                                <span className="font-medium">{model.name}</span>
-                              </div>
-                              {isAdded && (
-                                <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                              )}
-                            </DropdownMenuItem>
-                          );
-                        })}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  );
-                })}
-
-                {/* Divider between sections */}
-                {mcpjamProviders.length > 0 && userProviders.length > 0 && (
-                  <div className="my-1 h-px bg-muted/50" />
-                )}
-
-                {/* Add models - User providers */}
-                {userProviders.length > 0 && (
-                  <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Your Providers
-                  </div>
-                )}
-                {userProviders.map(([provider, providerModels]) => {
-                  const userModels = providerModels.filter(
-                    (m) => !isMCPJamProvidedModel(m.id),
-                  );
-                  const modelCount = userModels.length;
-                  return (
-                    <DropdownMenuSub key={`user-${provider}`}>
-                      <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                        <ProviderLogo provider={provider} />
-                        <div className="flex flex-col flex-1">
-                          <span className="font-medium capitalize">{provider}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {modelCount} model{modelCount !== 1 ? "s" : ""}
-                          </span>
-                        </div>
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent
-                        className="min-w-[200px] max-h-[200px] overflow-y-auto"
-                        avoidCollisions={true}
-                        collisionPadding={8}
-                      >
-                        {userModels.map((model) => {
-                          const isAdded = suiteModels.some((m) => m.model === model.id);
-                          return (
-                            <DropdownMenuItem
-                              key={model.id}
-                              onSelect={() => handleAddModel(model)}
-                              className="flex items-center gap-3 text-sm cursor-pointer"
-                              disabled={isAdded}
-                            >
-                              <div className="flex flex-col flex-1">
-                                <span className="font-medium">{model.name}</span>
-                              </div>
-                              {isAdded && (
-                                <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
-                              )}
-                            </DropdownMenuItem>
-                          );
-                        })}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  );
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-
-          {/* Action buttons */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onRerun(suite)}
-                  disabled={!canRerun || isRerunning}
-                  className="gap-2"
-                >
-                  <RotateCw
-                    className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                              {accuracyChartData.accuracy}%
+                            </tspan>
+                          </text>
+                        );
+                      }
+                    }}
                   />
-                  Run
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {!canRerun
-                ? `Connect the following servers: ${missingServers.join(", ")}`
-                : "Run all tests"}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
+                </Pie>
+              </PieChart>
+            </ChartContainer>
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {/* Models picker - compact dropdown */}
+        {onUpdateModels && (
+          <DropdownMenu
+            open={isModelDropdownOpen}
+            onOpenChange={setIsModelDropdownOpen}
+          >
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                className={`gap-1.5 ${suiteModels.length === 0 ? "text-destructive border-destructive/50" : ""}`}
+              >
+                Models
+                <Badge
+                  variant={
+                    suiteModels.length === 0 ? "destructive" : "secondary"
+                  }
+                  className="px-1.5 py-0 text-[10px] min-w-[18px] justify-center"
+                >
+                  {suiteModels.length}
+                </Badge>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              side="bottom"
+              sideOffset={4}
+              className="w-[280px]"
+            >
+              {/* Current models */}
+              {suiteModels.length > 0 && (
+                <>
+                  <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Active Models
+                  </div>
+                  {suiteModels.map((modelInfo) => (
+                    <div
+                      key={modelInfo.model}
+                      className="flex items-center justify-between px-2 py-1.5 text-sm"
+                    >
+                      <span className="truncate">{modelInfo.displayName}</span>
+                      <button
+                        onClick={() => handleDeleteModel(modelInfo.model)}
+                        className="ml-2 p-0.5 text-muted-foreground hover:text-destructive rounded"
+                        title="Remove model"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <div className="my-1 h-px bg-border" />
+                </>
+              )}
+
+              {/* Add models - MCPJam Free */}
+              {mcpjamProviders.length > 0 && (
+                <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  MCPJam Free Models
+                </div>
+              )}
+              {mcpjamProviders.map(([provider, providerModels]) => {
+                const mcpjamModels = providerModels.filter((m) =>
+                  isMCPJamProvidedModel(m.id),
+                );
+                const modelCount = mcpjamModels.length;
+                return (
+                  <DropdownMenuSub key={`free-${provider}`}>
+                    <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
+                      <ProviderLogo provider={provider} />
+                      <div className="flex flex-col flex-1">
+                        <span className="font-medium capitalize">
+                          {provider}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {modelCount} model{modelCount !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent
+                      className="min-w-[200px] max-h-[200px] overflow-y-auto"
+                      avoidCollisions={true}
+                      collisionPadding={8}
+                    >
+                      {mcpjamModels.map((model) => {
+                        const isAdded = suiteModels.some(
+                          (m) => m.model === model.id,
+                        );
+                        return (
+                          <DropdownMenuItem
+                            key={model.id}
+                            onSelect={() => handleAddModel(model)}
+                            className="flex items-center gap-3 text-sm cursor-pointer"
+                            disabled={isAdded}
+                          >
+                            <div className="flex flex-col flex-1">
+                              <span className="font-medium">{model.name}</span>
+                            </div>
+                            {isAdded && (
+                              <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                            )}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                );
+              })}
+
+              {/* Divider between sections */}
+              {mcpjamProviders.length > 0 && userProviders.length > 0 && (
+                <div className="my-1 h-px bg-muted/50" />
+              )}
+
+              {/* Add models - User providers */}
+              {userProviders.length > 0 && (
+                <div className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Your Providers
+                </div>
+              )}
+              {userProviders.map(([provider, providerModels]) => {
+                const userModels = providerModels.filter(
+                  (m) => !isMCPJamProvidedModel(m.id),
+                );
+                const modelCount = userModels.length;
+                return (
+                  <DropdownMenuSub key={`user-${provider}`}>
+                    <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
+                      <ProviderLogo provider={provider} />
+                      <div className="flex flex-col flex-1">
+                        <span className="font-medium capitalize">
+                          {provider}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {modelCount} model{modelCount !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent
+                      className="min-w-[200px] max-h-[200px] overflow-y-auto"
+                      avoidCollisions={true}
+                      collisionPadding={8}
+                    >
+                      {userModels.map((model) => {
+                        const isAdded = suiteModels.some(
+                          (m) => m.model === model.id,
+                        );
+                        return (
+                          <DropdownMenuItem
+                            key={model.id}
+                            onSelect={() => handleAddModel(model)}
+                            className="flex items-center gap-3 text-sm cursor-pointer"
+                            disabled={isAdded}
+                          >
+                            <div className="flex flex-col flex-1">
+                              <span className="font-medium">{model.name}</span>
+                            </div>
+                            {isAdded && (
+                              <div className="ml-auto w-2 h-2 bg-primary rounded-full" />
+                            )}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
+        {/* Action buttons */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => onDelete(suite)}
-                disabled={isDeleting}
+                onClick={() => onRerun(suite)}
+                disabled={!canRerun || isRerunning}
                 className="gap-2"
               >
-                <Trash2 className="h-4 w-4" />
-                {isDeleting ? "Deleting..." : "Delete"}
+                <RotateCw
+                  className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                />
+                Run
               </Button>
-            </TooltipTrigger>
-            <TooltipContent>Delete this test suite</TooltipContent>
-          </Tooltip>
-        </div>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {!canRerun
+              ? `Connect the following servers: ${missingServers.join(", ")}`
+              : "Run all tests"}
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onDelete(suite)}
+              disabled={isDeleting}
+              className="gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              {isDeleting ? "Deleting..." : "Delete"}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Delete this test suite</TooltipContent>
+        </Tooltip>
+      </div>
     </div>
   );
 }
