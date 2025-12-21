@@ -4,7 +4,7 @@
  * Displays searchable list of available tools
  */
 
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, AlertTriangle } from "lucide-react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { SearchInput } from "../ui/search-input";
 
@@ -50,12 +50,19 @@ export function ToolList({
             <p className="text-xs text-muted-foreground">Loading tools...</p>
           </div>
         ) : filteredToolNames.length === 0 ? (
-          <div className="text-center py-8">
+          <div className="text-center py-8 space-y-4">
             <p className="text-xs text-muted-foreground">
               {toolNames.length === 0
-                ? "No tools found"
+                ? "No tools found. Try refreshing and make sure the server is running."
                 : "No tools match your search"}
             </p>
+            <div className="bg-muted/30 rounded-md p-3 mx-4 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-muted-foreground">
+                Only tools that render MCP Apps and ChatGPT app widgets are
+                shown
+              </p>
+            </div>
           </div>
         ) : (
           <div className="space-y-0.5">
