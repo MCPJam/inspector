@@ -8,6 +8,9 @@ export type EvalSuiteConfigTest = {
     toolName: string;
     arguments: Record<string, any>;
   }>;
+  isNegativeTest?: boolean; // When true, test passes if NO tools are called
+  scenario?: string; // Description of why app should NOT trigger (negative tests only)
+  expectedOutput?: string; // The output or experience expected from the MCP server
   advancedConfig?: Record<string, unknown>;
   testCaseId?: string;
 };
@@ -45,6 +48,9 @@ export type EvalCase = {
     toolName: string;
     arguments: Record<string, any>;
   }>;
+  isNegativeTest?: boolean; // When true, test passes if NO tools are called
+  scenario?: string; // Description of why app should NOT trigger (negative tests only)
+  expectedOutput?: string; // The output or experience expected from the MCP server
   advancedConfig?: Record<string, unknown>;
   lastMessageRun?: string | null;
   _creationTime?: number; // Convex auto field
@@ -63,6 +69,9 @@ export type EvalIteration = {
       toolName: string;
       arguments: Record<string, any>;
     }>;
+    isNegativeTest?: boolean; // When true, test passes if NO tools are called
+    scenario?: string; // Description of why app should NOT trigger (negative tests only)
+    expectedOutput?: string; // The output or experience expected from the MCP server
     advancedConfig?: Record<string, unknown>;
   };
   suiteRunId?: string;

@@ -1,3 +1,4 @@
+import { ShieldX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -147,23 +148,58 @@ export function ReviewStep({
             </p>
             <div className="mt-3 space-y-3">
               {validTestTemplates.map((template, index) => (
-                <div key={index} className="rounded-md border bg-muted/30 p-3">
-                  <p className="text-sm font-semibold text-foreground">
-                    {template.title}
-                  </p>
+                <div
+                  key={index}
+                  className={cn(
+                    "rounded-md border p-3",
+                    template.isNegativeTest
+                      ? "bg-orange-50/5 border-orange-500/30"
+                      : "bg-muted/30",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    {template.isNegativeTest && (
+                      <Badge
+                        variant="outline"
+                        className="bg-orange-500/10 text-orange-600 border-orange-500/30 text-xs"
+                      >
+                        <ShieldX className="h-3 w-3 mr-1" />
+                        Negative
+                      </Badge>
+                    )}
+                    <p className="text-sm font-semibold text-foreground">
+                      {template.title}
+                    </p>
+                  </div>
+                  {template.isNegativeTest && template.scenario && (
+                    <p className="mt-1 text-xs text-orange-600/80 italic">
+                      Scenario: {template.scenario}
+                    </p>
+                  )}
                   <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
                     {template.query}
                   </p>
+                  {template.expectedOutput && (
+                    <p className="mt-1 text-xs text-muted-foreground/80 italic">
+                      Expected: {template.expectedOutput}
+                    </p>
+                  )}
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                     <span>
                       {template.runs} run{template.runs === 1 ? "" : "s"}
                     </span>
-                    {template.expectedToolCalls.length > 0 && (
-                      <span>
-                        Tools:{" "}
-                        {template.expectedToolCalls
-                          .map((tc) => tc.toolName)
-                          .join(", ")}
+                    {!template.isNegativeTest &&
+                      template.expectedToolCalls.length > 0 && (
+                        <span>
+                          Tools:{" "}
+                          {template.expectedToolCalls
+                            .map((tc) => tc.toolName)
+                            .join(", ")}
+                        </span>
+                      )}
+                    {template.isNegativeTest && (
+                      <span className="text-orange-600">
+                        Expected: No tools triggered
                       </span>
                     )}
                   </div>

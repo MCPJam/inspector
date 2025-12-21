@@ -70,7 +70,7 @@ export const UI_CONFIG = {
 // Border colors for iteration results
 export const BORDER_COLORS = {
   [RESULT_STATUS.PASSED]: "bg-success/50",
-  [RESULT_STATUS.FAILED]: "bg-destructive/50",
+  [RESULT_STATUS.FAILED]: "bg-red-500/50",
   [RESULT_STATUS.CANCELLED]: "bg-muted",
   [RESULT_STATUS.PENDING]: "bg-warning/50",
 } as const;
@@ -116,6 +116,7 @@ export type WizardStepKey = (typeof WIZARD_STEPS)[number]["key"];
 export const API_ENDPOINTS = {
   EVALS_RUN: "/api/mcp/evals/run",
   EVALS_GENERATE_TESTS: "/api/mcp/evals/generate-tests",
+  EVALS_GENERATE_NEGATIVE_TESTS: "/api/mcp/evals/generate-negative-tests",
   EVALS_RUN_TEST_CASE: "/api/mcp/evals/run-test-case",
   LIST_TOOLS: "/api/mcp/list-tools",
 } as const;

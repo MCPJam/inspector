@@ -9,7 +9,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { computeIterationPassed } from "./pass-criteria";
+import { computeIterationResult } from "./pass-criteria";
 import { getIterationBorderColor, formatRunId } from "./helpers";
 import { IterationDetails } from "./iteration-details";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
@@ -68,10 +68,14 @@ export function TestCaseDetailView({
 
       const runIters = iterationsByRun.get(run._id);
       if (runIters && runIters.length > 0) {
-        const passed = runIters.filter((iter) =>
-          computeIterationPassed(iter),
+        // Only count completed iterations - exclude pending/cancelled
+        const iterationResults = runIters.map((iter) =>
+          computeIterationResult(iter),
+        );
+        const passed = iterationResults.filter((r) => r === "passed").length;
+        const total = iterationResults.filter(
+          (r) => r === "passed" || r === "failed",
         ).length;
-        const total = runIters.length;
         const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
         data.push({
@@ -109,6 +113,12 @@ export function TestCaseDetailView({
       const snapshot = iteration.testCaseSnapshot;
       if (!snapshot) return;
 
+      // Only count completed iterations - exclude pending/cancelled
+      const result = computeIterationResult(iteration);
+      if (result !== "passed" && result !== "failed") {
+        return; // Skip pending/cancelled iterations
+      }
+
       const key = `${snapshot.provider}/${snapshot.model}`;
 
       if (!modelMap.has(key)) {
@@ -124,7 +134,7 @@ export function TestCaseDetailView({
       const stats = modelMap.get(key)!;
       stats.total += 1;
 
-      if (computeIterationPassed(iteration)) {
+      if (result === "passed") {
         stats.passed += 1;
       } else {
         stats.failed += 1;

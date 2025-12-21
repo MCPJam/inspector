@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { X, Loader2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +19,10 @@ import {
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import { getIterationBorderColor } from "./helpers";
+import {
+  computeIterationResult,
+  computeIterationPassed,
+} from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 
 interface RunDetailViewProps {
@@ -62,6 +66,29 @@ export function RunDetailView({
 }: RunDetailViewProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
+  // Compute accurate pass/fail stats using the same logic as suite-header
+  const computedStats = useMemo(() => {
+    if (caseGroupsForSelectedRun.length === 0) {
+      return (
+        selectedRunDetails.summary ?? {
+          passed: 0,
+          failed: 0,
+          total: 0,
+          passRate: 0,
+        }
+      );
+    }
+    const passed = caseGroupsForSelectedRun.filter((i) =>
+      computeIterationPassed(i),
+    ).length;
+    const failed = caseGroupsForSelectedRun.filter(
+      (i) => !computeIterationPassed(i),
+    ).length;
+    const total = caseGroupsForSelectedRun.length;
+    const passRate = total > 0 ? passed / total : 0;
+    return { passed, failed, total, passRate };
+  }, [caseGroupsForSelectedRun, selectedRunDetails.summary]);
+
   return (
     <div className="relative">
       {/* Run Metrics and Chart */}
@@ -72,27 +99,27 @@ export function RunDetailView({
             <div className="space-y-0.5">
               <div className="text-xs text-muted-foreground">Accuracy</div>
               <div className="text-sm font-semibold">
-                {selectedRunDetails.summary
-                  ? `${Math.round(selectedRunDetails.summary.passRate * 100)}%`
+                {computedStats.total > 0
+                  ? `${Math.round(computedStats.passRate * 100)}%`
                   : "—"}
               </div>
             </div>
             <div className="space-y-0.5">
               <div className="text-xs text-muted-foreground">Passed</div>
               <div className="text-sm font-semibold">
-                {selectedRunDetails.summary?.passed.toLocaleString() ?? "—"}
+                {computedStats.passed.toLocaleString()}
               </div>
             </div>
             <div className="space-y-0.5">
               <div className="text-xs text-muted-foreground">Failed</div>
               <div className="text-sm font-semibold">
-                {selectedRunDetails.summary?.failed.toLocaleString() ?? "—"}
+                {computedStats.failed.toLocaleString()}
               </div>
             </div>
             <div className="space-y-0.5">
               <div className="text-xs text-muted-foreground">Total</div>
               <div className="text-sm font-semibold">
-                {selectedRunDetails.summary?.total.toLocaleString() ?? "—"}
+                {computedStats.total.toLocaleString()}
               </div>
             </div>
             <div className="space-y-0.5">
@@ -280,7 +307,7 @@ export function RunDetailView({
                             color: "var(--chart-1)",
                           },
                         }}
-                        className="aspect-auto h-48 w-full"
+                        className="aspect-auto h-64 w-full"
                       >
                         <BarChart
                           data={selectedRunChartData.durationData}
@@ -297,12 +324,16 @@ export function RunDetailView({
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tick={{ fontSize: 11 }}
+                            tick={{
+                              fontSize: 10,
+                              angle: -45,
+                              textAnchor: "end",
+                            }}
                             interval={0}
-                            height={40}
+                            height={80}
                             tickFormatter={(value) => {
-                              if (value.length > 15) {
-                                return value.substring(0, 12) + "...";
+                              if (value.length > 20) {
+                                return value.substring(0, 17) + "...";
                               }
                               return value;
                             }}
@@ -356,7 +387,7 @@ export function RunDetailView({
                             color: "var(--chart-2)",
                           },
                         }}
-                        className="aspect-auto h-48 w-full"
+                        className="aspect-auto h-64 w-full"
                       >
                         <BarChart
                           data={selectedRunChartData.tokensData}
@@ -373,12 +404,16 @@ export function RunDetailView({
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tick={{ fontSize: 11 }}
+                            tick={{
+                              fontSize: 10,
+                              angle: -45,
+                              textAnchor: "end",
+                            }}
                             interval={0}
-                            height={40}
+                            height={80}
                             tickFormatter={(value) => {
-                              if (value.length > 15) {
-                                return value.substring(0, 12) + "...";
+                              if (value.length > 20) {
+                                return value.substring(0, 17) + "...";
                               }
                               return value;
                             }}
@@ -429,8 +464,8 @@ export function RunDetailView({
                       <ChartContainer
                         config={{
                           passRate: {
-                            label: "Pass Rate",
-                            color: "oklch(0.25 0 0)",
+                            label: "Accuracy",
+                            color: "var(--chart-1)",
                           },
                         }}
                         className="aspect-auto h-48 w-full"
@@ -542,17 +577,21 @@ function IterationRow({
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
   const durationMs =
     startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
-  const isPending = iteration.result === "pending";
+  const isPending =
+    iteration.status === "pending" || iteration.status === "running";
 
   const testInfo = iteration.testCaseSnapshot;
   const actualToolCalls = iteration.actualToolCalls || [];
   const modelName = testInfo?.model || "—";
 
+  // Recompute pass/fail to ensure consistency with charts/aggregations
+  const computedResult = computeIterationResult(iteration);
+
   return (
     <div className={`relative ${isPending ? "opacity-60" : ""}`}>
       <div
         className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(
-          iteration.result,
+          computedResult,
         )}`}
       />
       <button
@@ -571,6 +610,14 @@ function IterationRow({
             <span className="text-xs font-medium truncate">
               {testInfo?.title || "Iteration"}
             </span>
+            {testInfo?.isNegativeTest && (
+              <span
+                className="text-[10px] text-orange-500 shrink-0"
+                title="Negative test"
+              >
+                NEG
+              </span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">

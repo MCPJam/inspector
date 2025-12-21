@@ -242,6 +242,9 @@ export function SuiteIterationsView({
           runs={runs}
           allIterations={allIterations}
           aggregate={aggregate}
+          testCases={cases}
+          availableModels={availableModels}
+          onUpdateModels={handleUpdateTests}
         />
       </div>
 

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { computeIterationPassed } from "./pass-criteria";
+import { computeIterationResult } from "./pass-criteria";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
 import {
   ChartContainer,
@@ -62,10 +62,14 @@ export function TestCasesOverview({
           (!iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId)),
       );
 
-      const passed = caseIterations.filter((iter) =>
-        computeIterationPassed(iter),
+      // Only count completed iterations - exclude pending/cancelled
+      const iterationResults = caseIterations.map((iter) =>
+        computeIterationResult(iter),
+      );
+      const passed = iterationResults.filter((r) => r === "passed").length;
+      const total = iterationResults.filter(
+        (r) => r === "passed" || r === "failed",
       ).length;
-      const total = caseIterations.length;
       const avgAccuracy = total > 0 ? Math.round((passed / total) * 100) : 0;
 
       // Calculate average duration

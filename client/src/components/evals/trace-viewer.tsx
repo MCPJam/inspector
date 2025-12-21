@@ -12,6 +12,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogo } from "@/lib/provider-logos";
 import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
 import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
+import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps-renderer";
 
 interface ContentPart {
   type: string;
@@ -387,9 +388,13 @@ function CombinedToolPart({
     toolResult?.output !== undefined && toolResult?.output !== null;
   const isError = toolResult?.isError === true;
 
-  // Check if this tool has OpenAI App metadata
+  // Check if this tool has OpenAI App or MCP Apps metadata
   const toolMetadata = toolName ? toolsMetadata[toolName] : undefined;
   const hasOpenAIApp = !!toolMetadata?.["openai/outputTemplate"];
+  const hasMCPApp = !!toolMetadata?.["ui/resourceUri"];
+  const mcpAppsResourceUri = toolMetadata?.["ui/resourceUri"] as
+    | string
+    | undefined;
   const serverId = toolName
     ? getToolServerId(toolName, toolServerMap)
     : undefined;
@@ -500,8 +505,34 @@ function CombinedToolPart({
         </div>
       )}
 
+      {/* Render MCP Apps widget if available (SEP-1865) */}
+      {hasMCPApp &&
+        serverId &&
+        mcpAppsResourceUri &&
+        hasOutput &&
+        !isError &&
+        (() => {
+          return (
+            <MCPAppsRenderer
+              serverId={serverId}
+              toolCallId={
+                toolCall?.toolCallId ?? `evals-${toolName}-${Date.now()}`
+              }
+              toolName={toolName}
+              toolState="output-available"
+              toolInput={toolCall?.input}
+              toolOutput={unwrappedOutput}
+              resourceUri={mcpAppsResourceUri}
+              toolMetadata={toolMetadata}
+              onSendFollowUp={undefined}
+              onCallTool={undefined}
+            />
+          );
+        })()}
+
       {/* Render OpenAI App widget if available */}
       {hasOpenAIApp &&
+        !hasMCPApp &&
         serverId &&
         hasOutput &&
         !isError &&

@@ -1,8 +1,9 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useMemo, useCallback, useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { FlaskConical, Plus, AlertTriangle } from "lucide-react";
 import posthog from "posthog-js";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -16,14 +17,18 @@ import { useChat } from "@/hooks/use-chat";
 import { aggregateSuite } from "./evals/helpers";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import { EvalRunner } from "./evals/eval-runner";
-import { SuiteListSidebar } from "./evals/SuiteListSidebar";
+import { TestCaseListSidebar } from "./evals/TestCaseListSidebar";
 import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
 
-export function EvalsTab() {
+interface EvalsTabProps {
+  selectedServer?: string;
+}
+
+export function EvalsTab({ selectedServer }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
 
@@ -49,35 +54,6 @@ export function EvalsTab() {
   const selectedTestIdForSidebar =
     route.type === "test-edit" ? route.testId : null;
 
-  // Track expanded suites
-  const [expandedSuites, setExpandedSuites] = useState<Set<string>>(() => {
-    const initial = new Set<string>();
-    if (selectedSuiteId) {
-      initial.add(selectedSuiteId);
-    }
-    return initial;
-  });
-
-  // Auto-expand the currently selected suite
-  useEffect(() => {
-    if (selectedSuiteId) {
-      setExpandedSuites((prev) => new Set(prev).add(selectedSuiteId));
-    }
-  }, [selectedSuiteId]);
-
-  // Toggle expanded state for a specific suite
-  const toggleSuiteExpanded = useCallback((suiteId: string) => {
-    setExpandedSuites((prev) => {
-      const next = new Set(prev);
-      if (next.has(suiteId)) {
-        next.delete(suiteId);
-      } else {
-        next.add(suiteId);
-      }
-      return next;
-    });
-  }, []);
-
   // Get available models for eval runner
   const { availableModels } = useChat({
     systemPrompt: "",
@@ -102,31 +78,48 @@ export function EvalsTab() {
   // Initialize mutations
   const mutations = useEvalMutations();
 
-  // Initialize queries
-  const queries = useEvalQueries({
+  // First query to get overview (sortedSuites) - doesn't need specific suite selected
+  const overviewQueries = useEvalQueries({
     isAuthenticated,
     user,
-    selectedSuiteId,
-    deletingSuiteId: null, // We'll get this from handlers
+    selectedSuiteId: null,
+    deletingSuiteId: null,
   });
 
-  // Initialize handlers
+  // Check if selected server is valid and connected
+  const isServerConnected =
+    selectedServer &&
+    selectedServer !== "none" &&
+    appState.servers[selectedServer]?.connectionStatus === "connected";
+
+  // Find suite for selected server from overview
+  const serverSuiteEntry = useMemo(() => {
+    if (!isServerConnected) return null;
+    return overviewQueries.sortedSuites.find(
+      (entry) => entry.suite.environment?.servers?.[0] === selectedServer,
+    );
+  }, [overviewQueries.sortedSuites, selectedServer, isServerConnected]);
+
+  const serverSuite = serverSuiteEntry?.suite ?? null;
+  const serverSuiteId = serverSuite?._id ?? null;
+
+  // Initialize handlers with server suite
   const handlers = useEvalHandlers({
     mutations,
-    selectedSuiteEntry: queries.selectedSuiteEntry,
-    selectedSuiteId,
+    selectedSuiteEntry: serverSuiteEntry ?? null,
+    selectedSuiteId: serverSuiteId,
     selectedTestId,
   });
 
-  // Update queries with deletingSuiteId from handlers
+  // Main queries with serverSuiteId for details
   const queriesWithDeleteState = useEvalQueries({
     isAuthenticated,
     user,
-    selectedSuiteId,
+    selectedSuiteId: serverSuiteId,
     deletingSuiteId: handlers.deletingSuiteId,
   });
 
-  // Use final queries with delete state
+  // Use queries for rendering
   const {
     selectedSuite,
     suiteDetails,
@@ -159,22 +152,88 @@ export function EvalsTab() {
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
 
-  // Handle eval run success - navigate back to list view
-  const handleEvalRunSuccess = useCallback(() => {
-    navigateToEvalsRoute({ type: "list" });
+  // Handle eval run success - navigate to suite overview
+  const handleEvalRunSuccess = useCallback((suiteId?: string) => {
+    if (suiteId) {
+      navigateToEvalsRoute({ type: "suite-overview", suiteId });
+    } else {
+      navigateToEvalsRoute({ type: "list" });
+    }
   }, []);
 
-  // Handle creating test case with suite expansion
-  const handleCreateTestCaseWithExpansion = useCallback(
-    async (suiteId: string) => {
-      const testCaseId = await handlers.handleCreateTestCase(suiteId);
-      if (testCaseId) {
-        // Ensure suite is expanded
-        setExpandedSuites((prev) => new Set(prev).add(suiteId));
+  // Handle creating test case for current server's suite (creates suite if needed)
+  const handleCreateTestCase = useCallback(async () => {
+    let suiteId = serverSuiteId;
+
+    // Create suite if it doesn't exist
+    if (!suiteId && selectedServer && isServerConnected) {
+      try {
+        const newSuite = await mutations.createTestSuiteMutation({
+          name: selectedServer,
+          description: `Test suite for ${selectedServer}`,
+          environment: { servers: [selectedServer] },
+        });
+        suiteId = newSuite?._id;
+      } catch (err) {
+        console.error("Failed to create suite:", err);
+        toast.error("Failed to create test case. Please try again.");
+        return;
+      }
+    }
+
+    if (suiteId) {
+      await handlers.handleCreateTestCase(suiteId);
+    }
+  }, [
+    serverSuiteId,
+    selectedServer,
+    isServerConnected,
+    mutations.createTestSuiteMutation,
+    handlers.handleCreateTestCase,
+  ]);
+
+  // Handle duplicate test case
+  const handleDuplicateTestCase = useCallback(
+    (testCaseId: string) => {
+      if (serverSuiteId) {
+        handlers.handleDuplicateTestCase(testCaseId, serverSuiteId);
       }
     },
-    [handlers.handleCreateTestCase],
+    [serverSuiteId, handlers.handleDuplicateTestCase],
   );
+
+  // Handle generate tests for current server's suite (creates suite if needed)
+  const handleGenerateTests = useCallback(async () => {
+    if (!selectedServer || !isServerConnected) return;
+
+    let suiteId = serverSuiteId;
+
+    // Create suite if it doesn't exist
+    if (!suiteId) {
+      try {
+        const newSuite = await mutations.createTestSuiteMutation({
+          name: selectedServer,
+          description: `Test suite for ${selectedServer}`,
+          environment: { servers: [selectedServer] },
+        });
+        suiteId = newSuite?._id;
+      } catch (err) {
+        console.error("Failed to create suite:", err);
+        toast.error("Failed to generate tests. Please try again.");
+        return;
+      }
+    }
+
+    if (suiteId) {
+      await handlers.handleGenerateTests(suiteId, [selectedServer]);
+    }
+  }, [
+    serverSuiteId,
+    selectedServer,
+    isServerConnected,
+    mutations.createTestSuiteMutation,
+    handlers.handleGenerateTests,
+  ]);
 
   // Loading state
   if (isLoading) {
@@ -228,6 +287,7 @@ export function EvalsTab() {
             availableModels={availableModels}
             inline={true}
             onSuccess={handleEvalRunSuccess}
+            preselectedServer={selectedServer}
           />
         </div>
       ) : (
@@ -242,26 +302,25 @@ export function EvalsTab() {
             maxSize={40}
             className="border-r bg-muted/30 flex flex-col"
           >
-            <SuiteListSidebar
-              sortedSuites={sortedSuites}
-              isOverviewLoading={isOverviewLoading}
-              selectedSuiteId={selectedSuiteId}
-              selectedTestIdForSidebar={selectedTestIdForSidebar}
-              expandedSuites={expandedSuites}
-              onToggleSuiteExpanded={toggleSuiteExpanded}
-              onRerun={handlers.handleRerun}
-              onCancelRun={handlers.handleCancelRun}
-              onDelete={handlers.handleDelete}
-              onDuplicate={handlers.handleDuplicateSuite}
-              onCreateTestCase={handleCreateTestCaseWithExpansion}
+            <TestCaseListSidebar
+              testCases={suiteDetails?.testCases || []}
+              suiteId={serverSuiteId}
+              selectedTestId={selectedTestIdForSidebar}
+              isLoading={isSuiteDetailsLoading}
+              onCreateTestCase={handleCreateTestCase}
               onDeleteTestCase={handlers.handleDeleteTestCase}
-              onDuplicateTestCase={handlers.handleDuplicateTestCase}
-              rerunningSuiteId={handlers.rerunningSuiteId}
-              cancellingRunId={handlers.cancellingRunId}
-              deletingSuiteId={handlers.deletingSuiteId}
-              duplicatingSuiteId={handlers.duplicatingSuiteId}
+              onDuplicateTestCase={handleDuplicateTestCase}
+              onGenerateTests={handleGenerateTests}
               deletingTestCaseId={handlers.deletingTestCaseId}
               duplicatingTestCaseId={handlers.duplicatingTestCaseId}
+              isGeneratingTests={handlers.isGeneratingTests}
+              showingOverview={
+                !selectedTestIdForSidebar && serverSuiteId !== null
+              }
+              noServerSelected={!isServerConnected}
+              suite={selectedSuite}
+              onRerun={handlers.handleRerun}
+              rerunningSuiteId={handlers.rerunningSuiteId}
               connectedServerNames={connectedServerNames}
             />
           </ResizablePanel>
@@ -273,36 +332,34 @@ export function EvalsTab() {
             defaultSize={80}
             className="flex flex-col overflow-hidden"
           >
-            {!selectedSuiteId ? (
+            {!isServerConnected ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center max-w-md mx-auto p-8">
                   <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
                     <FlaskConical className="h-10 w-10 text-muted-foreground" />
                   </div>
                   <h2 className="text-2xl font-semibold text-foreground mb-2">
-                    Select a test suite
+                    Select a server
                   </h2>
                   <p className="text-sm text-muted-foreground mb-6">
-                    Choose a test suite from the sidebar to view its runs, test
-                    cases, and performance metrics.
+                    Choose a server from the tabs above to view and manage its
+                    test cases.
                   </p>
-                  {sortedSuites.length === 0 && (
-                    <Button
-                      onClick={() => {
-                        posthog.capture("create_new_run_button_clicked", {
-                          location: "evals_tab",
-                          platform: detectPlatform(),
-                          environment: detectEnvironment(),
-                        });
-                        navigateToEvalsRoute({ type: "create" });
-                      }}
-                      className="gap-2"
-                      size="sm"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Create your first test suite
-                    </Button>
-                  )}
+                </div>
+              </div>
+            ) : !serverSuite ? (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center max-w-md mx-auto p-8">
+                  <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
+                    <FlaskConical className="h-10 w-10 text-muted-foreground" />
+                  </div>
+                  <h2 className="text-2xl font-semibold text-foreground mb-2">
+                    No test cases yet
+                  </h2>
+                  <p className="text-sm text-muted-foreground mb-6">
+                    Create your first test case for "{selectedServer}" to start
+                    evaluating your MCP server.
+                  </p>
                 </div>
               </div>
             ) : isSuiteDetailsLoading ? (
@@ -310,7 +367,7 @@ export function EvalsTab() {
                 <div className="text-center">
                   <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
                   <p className="mt-4 text-muted-foreground">
-                    Loading suite details...
+                    Loading test cases...
                   </p>
                 </div>
               </div>
@@ -337,28 +394,6 @@ export function EvalsTab() {
                   availableModels={availableModels}
                   route={route}
                 />
-              </div>
-            ) : selectedSuiteId && !isSuiteDetailsLoading ? (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center max-w-md mx-auto p-8">
-                  <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
-                    <AlertTriangle className="h-10 w-10 text-muted-foreground" />
-                  </div>
-                  <h2 className="text-2xl font-semibold text-foreground mb-2">
-                    Suite not found
-                  </h2>
-                  <p className="text-sm text-muted-foreground mb-6">
-                    The test suite you're looking for doesn't exist or may have
-                    been deleted.
-                  </p>
-                  <Button
-                    onClick={() => navigateToEvalsRoute({ type: "list" })}
-                    variant="outline"
-                    size="sm"
-                  >
-                    Back to test suites
-                  </Button>
-                </div>
               </div>
             ) : null}
           </ResizablePanel>

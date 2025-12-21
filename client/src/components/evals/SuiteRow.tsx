@@ -173,7 +173,7 @@ export function SuiteRow({
           <TooltipContent>
             {!canRerun
               ? `Connect the following servers: ${missingServers.join(", ")}`
-              : "Rerun evaluation"}
+              : "Run all tests"}
           </TooltipContent>
         </Tooltip>
       </div>
