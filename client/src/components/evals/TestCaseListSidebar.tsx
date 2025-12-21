@@ -1,4 +1,4 @@
-import { Plus, MoreVertical, Copy, Trash2, BarChart3, Sparkles, RotateCw } from "lucide-react";
+import { Plus, MoreVertical, Copy, Trash2, BarChart3, Sparkles, RotateCw, Loader2 } from "lucide-react";
 import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
 import {
@@ -121,7 +121,7 @@ export function TestCaseListSidebar({
                   ? `Connect the following servers: ${missingServers.join(", ")}`
                   : isRerunning
                     ? "Running..."
-                    : "Rerun all tests"}
+                    : "Run all tests"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -194,6 +194,11 @@ export function TestCaseListSidebar({
         {isLoading ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
             Loading test cases...
+          </div>
+        ) : isGeneratingTests ? (
+          <div className="p-4 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            <span>Generating test cases...</span>
           </div>
         ) : testCases.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
