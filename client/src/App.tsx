@@ -258,7 +258,6 @@ export default function App() {
               onRemove={handleRemoveServer}
             />
           )}
-
           {activeTab === "tools" && (
             <div className="h-full overflow-hidden">
               <ToolsTab

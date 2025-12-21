@@ -1,10 +1,9 @@
 import { useMemo, useCallback, useEffect } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { FlaskConical, Plus, AlertTriangle } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import posthog from "posthog-js";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   ResizablePanelGroup,
@@ -34,16 +33,6 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
 
   // Use route-based navigation
   const route = useEvalsRoute();
-
-  // Derive state from route
-  const selectedSuiteId =
-    route.type === "suite-overview" ||
-    route.type === "run-detail" ||
-    route.type === "test-detail" ||
-    route.type === "test-edit" ||
-    route.type === "suite-edit"
-      ? route.suiteId
-      : null;
 
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
@@ -126,7 +115,6 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     sortedIterations,
     runsForSelectedSuite,
     activeIterations,
-    sortedSuites,
     isOverviewLoading,
     isSuiteDetailsLoading,
     isSuiteRunsLoading,
@@ -297,7 +285,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
         >
           {/* Left Sidebar */}
           <ResizablePanel
-            defaultSize={20}
+            defaultSize={30}
             minSize={15}
             maxSize={40}
             className="border-r bg-muted/30 flex flex-col"
@@ -318,6 +306,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
                 !selectedTestIdForSidebar && serverSuiteId !== null
               }
               noServerSelected={!isServerConnected}
+              selectedServer={selectedServer}
               suite={selectedSuite}
               onRerun={handlers.handleRerun}
               rerunningSuiteId={handlers.rerunningSuiteId}
@@ -329,7 +318,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
 
           {/* Main Content Area */}
           <ResizablePanel
-            defaultSize={80}
+            defaultSize={70}
             className="flex flex-col overflow-hidden"
           >
             {!isServerConnected ? (

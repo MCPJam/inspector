@@ -983,7 +983,7 @@ export class MCPClientManager {
     // Also check experimental.tasks for servers using experimental namespace
     return Boolean(
       caps?.tasks?.requests?.tools?.call ||
-      caps?.experimental?.tasks?.requests?.tools?.call,
+        caps?.experimental?.tasks?.requests?.tools?.call,
     );
   }
 
