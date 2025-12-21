@@ -22,6 +22,22 @@ export type EvaluationResult = {
   passed: boolean;
 };
 
+/**
+ * Check if expected arguments are satisfied by actual arguments.
+ * Only checks keys present in expected - actual may have additional keys.
+ */
+const argumentsMatch = (
+  expectedArgs: Record<string, any>,
+  actualArgs: Record<string, any>,
+): boolean => {
+  for (const [key, value] of Object.entries(expectedArgs)) {
+    if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export const evaluateResults = (
   expectedToolCalls: ToolCall[],
   toolsCalled: ToolCall[],
@@ -39,64 +55,89 @@ export const evaluateResults = (
       expectedToolCalls: normalizedExpected,
       toolsCalled: normalizedCalled,
       missing: [],
-      unexpected: normalizedCalled, // All called tools are "unexpected" for negative tests
+      unexpected: normalizedCalled,
       argumentMismatches: [],
       passed,
     };
   }
 
-  // Find missing tool calls (expected but not called)
-  const missing = normalizedExpected.filter(
-    (expected) =>
-      !normalizedCalled.some((called) => called.toolName === expected.toolName),
-  );
+  // Track which actual calls have been matched to prevent reuse
+  const matchedActualIndices = new Set<number>();
+  // Track which expected calls found a match (by index)
+  const matchedExpectedIndices = new Set<number>();
 
-  // Find unexpected tool calls (called but not expected)
-  const unexpected = normalizedCalled.filter(
-    (called) =>
-      !normalizedExpected.some(
-        (expected) => expected.toolName === called.toolName,
-      ),
-  );
-
-  // Check argument mismatches for tools that were called
   const argumentMismatches: Array<{
     toolName: string;
     expectedArgs: Record<string, any>;
     actualArgs: Record<string, any>;
   }> = [];
 
-  for (const expected of normalizedExpected) {
-    const actual = normalizedCalled.find(
-      (c) => c.toolName === expected.toolName,
-    );
-    if (actual) {
-      // Check if arguments match (only if expected has arguments specified)
-      const expectedArgs = expected.arguments || {};
+  // Pass 1: Match expected calls to actual calls with matching toolName AND arguments
+  for (let ei = 0; ei < normalizedExpected.length; ei++) {
+    const expected = normalizedExpected[ei];
+    const expectedArgs = expected.arguments || {};
+
+    for (let ai = 0; ai < normalizedCalled.length; ai++) {
+      if (matchedActualIndices.has(ai)) continue;
+
+      const actual = normalizedCalled[ai];
+      if (actual.toolName !== expected.toolName) continue;
+
       const actualArgs = actual.arguments || {};
 
-      // Only check if expected arguments were specified
-      if (Object.keys(expectedArgs).length > 0) {
-        let mismatch = false;
-
-        // Check if all expected arguments match
-        for (const [key, value] of Object.entries(expectedArgs)) {
-          if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
-            mismatch = true;
-            break;
-          }
-        }
-
-        if (mismatch) {
-          argumentMismatches.push({
-            toolName: expected.toolName,
-            expectedArgs,
-            actualArgs,
-          });
-        }
+      // Check if arguments match (empty expected args always match)
+      if (
+        Object.keys(expectedArgs).length === 0 ||
+        argumentsMatch(expectedArgs, actualArgs)
+      ) {
+        matchedActualIndices.add(ai);
+        matchedExpectedIndices.add(ei);
+        break;
       }
     }
   }
+
+  // Pass 2: For unmatched expected calls, try to match by toolName only
+  // These will be recorded as argument mismatches
+  for (let ei = 0; ei < normalizedExpected.length; ei++) {
+    if (matchedExpectedIndices.has(ei)) continue;
+
+    const expected = normalizedExpected[ei];
+    const expectedArgs = expected.arguments || {};
+
+    for (let ai = 0; ai < normalizedCalled.length; ai++) {
+      if (matchedActualIndices.has(ai)) continue;
+
+      const actual = normalizedCalled[ai];
+      if (actual.toolName !== expected.toolName) continue;
+
+      const actualArgs = actual.arguments || {};
+
+      // Found a toolName match but arguments don't match
+      matchedActualIndices.add(ai);
+      matchedExpectedIndices.add(ei);
+
+      // Only record mismatch if expected had arguments specified
+      if (Object.keys(expectedArgs).length > 0) {
+        argumentMismatches.push({
+          toolName: expected.toolName,
+          expectedArgs,
+          actualArgs,
+        });
+      }
+      break;
+    }
+  }
+
+  // Missing: expected calls that found no match at all
+  const missing = normalizedExpected.filter(
+    (_, idx) => !matchedExpectedIndices.has(idx),
+  );
+
+  // Unexpected: actual calls that were never matched
+  const unexpected = normalizedCalled.filter(
+    (_, idx) => !matchedActualIndices.has(idx),
+  );
 
   const passed = missing.length === 0 && argumentMismatches.length === 0;
 

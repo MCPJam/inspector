@@ -70,7 +70,7 @@ export const UI_CONFIG = {
 // Border colors for iteration results
 export const BORDER_COLORS = {
   [RESULT_STATUS.PASSED]: "bg-success/50",
-  [RESULT_STATUS.FAILED]: "bg-destructive/50",
+  [RESULT_STATUS.FAILED]: "bg-red-500/50",
   [RESULT_STATUS.CANCELLED]: "bg-muted",
   [RESULT_STATUS.PENDING]: "bg-warning/50",
 } as const;

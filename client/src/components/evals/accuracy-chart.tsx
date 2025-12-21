@@ -44,7 +44,7 @@ export function AccuracyChart({
     <ChartContainer
       config={{
         passRate: {
-          label: "Pass rate",
+          label: "Accuracy",
           color: "var(--chart-1)",
         },
       }}

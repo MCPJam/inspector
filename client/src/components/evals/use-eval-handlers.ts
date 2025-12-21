@@ -148,7 +148,7 @@ export function useEvalHandlers({
 
       // Show toast immediately when user clicks rerun
       toast.success(
-        "Eval run started successfully! Results will appear shortly.",
+        "Run started successfully! Results will appear shortly.",
       );
 
       try {
@@ -418,6 +418,13 @@ export function useEvalHandlers({
           modelsToUse = Array.from(uniqueModels.values());
         }
 
+        // Default to Haiku 4.5 if no models configured
+        if (modelsToUse.length === 0) {
+          modelsToUse = [
+            { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+          ];
+        }
+
         const testCaseId = await mutations.createTestCaseMutation({
           suiteId: suiteId,
           title: "Untitled test case",
@@ -594,6 +601,13 @@ export function useEvalHandlers({
           modelsToUse = Array.from(uniqueModels.values());
         }
 
+        // Default to Haiku 4.5 if no models configured
+        if (modelsToUse.length === 0) {
+          modelsToUse = [
+            { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
+          ];
+        }
+
         // Call generate tests API
         const response = await fetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
           method: "POST",
@@ -626,6 +640,9 @@ export function useEvalHandlers({
               models: modelsToUse,
               expectedToolCalls: test.expectedToolCalls || [],
               runs: test.runs || 1,
+              isNegativeTest: test.isNegativeTest || false,
+              scenario: test.scenario,
+              expectedOutput: test.expectedOutput,
             });
             createdCount++;
           } catch (err) {

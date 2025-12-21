@@ -33,19 +33,19 @@ const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating realist
 The Model Context Protocol enables AI assistants to securely access external data and tools. MCP servers expose tools, resources, and prompts that AI models can use to accomplish user tasks. Your test cases should reflect real-world usage patterns where users ask an AI assistant to perform tasks, and the assistant uses MCP tools to fulfill those requests.
 
 **Your Task:**
-Generate 10 test cases total:
+Generate 8 test cases total:
 - 5 normal test cases (where tools SHOULD be triggered)
-- 5 negative test cases (where tools should NOT be triggered)
+- 3 negative test cases (where tools should NOT be triggered)
 
 **Normal Test Case Distribution (5 tests):**
 - **2 EASY tests** (single tool): Simple, straightforward tasks using one tool
 - **2 MEDIUM tests** (2+ tools): Multi-step workflows requiring 2-3 tools in sequence or parallel
 - **1 HARD test** (3+ tools): Complex scenarios requiring 3+ tools, conditional logic, or cross-server operations
 
-**Negative Test Cases (5 tests):**
+**Negative Test Cases (3 tests):**
 Negative test cases are prompts where the AI assistant should NOT use any tools. These help ensure the AI doesn't incorrectly trigger tools when they're not needed.
-- **2 Meta/documentation questions**: Ask about capabilities, documentation, or how tools work
-- **2 Similar keywords in non-actionable context**: Use words from tool descriptions but in casual conversation or unrelated contexts
+- **1 Meta/documentation question**: Ask about capabilities, documentation, or how tools work
+- **1 Similar keywords in non-actionable context**: Use words from tool descriptions but in casual conversation or unrelated contexts
 - **1 Ambiguous/incomplete request**: Vague requests that shouldn't trigger tools
 
 **Guidelines for Normal Tests:**
@@ -172,7 +172,7 @@ ${toolsList}`;
       ? `\n**IMPORTANT**: You have ${serverCount} servers available. Create at least 2 test cases that use tools from MULTIPLE servers to test cross-server workflows.`
       : "";
 
-  const userPrompt = `Generate 10 test cases for the following MCP server tools:
+  const userPrompt = `Generate 8 test cases for the following MCP server tools:
 
 ${toolsContext}
 
@@ -181,9 +181,9 @@ ${toolsContext}
 - ${totalTools} total tools${crossServerGuidance}
 
 **Remember:**
-1. Create exactly 10 tests:
+1. Create exactly 8 tests:
    - 5 normal tests: 2 EASY (1 tool), 2 MEDIUM (2-3 tools), 1 HARD (3+ tools)
-   - 5 negative tests: 2 meta/doc questions, 2 similar keywords non-actionable, 1 ambiguous
+   - 3 negative tests: 1 meta/doc question, 1 similar keywords non-actionable, 1 ambiguous
 2. Write realistic user queries that sound natural
 3. Include scenario and expectedOutput for ALL tests
 4. Use specific examples (dates, filenames, values) for normal tests

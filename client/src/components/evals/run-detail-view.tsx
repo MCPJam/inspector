@@ -429,7 +429,7 @@ export function RunDetailView({
                       <ChartContainer
                         config={{
                           passRate: {
-                            label: "Pass Rate",
+                            label: "Accuracy",
                             color: "oklch(0.25 0 0)",
                           },
                         }}
