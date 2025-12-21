@@ -48,12 +48,15 @@ Click "Show details" to expand additional server information:
 - **Instructions**: Server-provided instructions for AI assistants
 - **Documentation link**: Direct link to the server's documentation if available
 
-### OpenAI app metadata
+### Tool metadata and annotations
 
-Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indicator. Expanding these servers shows two tabs:
+The Server Info Modal includes a **Metadata** tab that displays tool-specific information when available:
 
-- **Info tab**: Standard server information and capabilities
-- **OpenAI Tool Metadata tab**: Detailed metadata for each tool including read/write permissions and widget configuration
+- **Tool metadata**: Read/write permissions, widget configuration, and other custom metadata fields
+- **Annotations**: MCP annotations attached to tools, displayed as formatted JSON
+- **OpenAI Apps SDK**: For servers using the OpenAI Apps SDK, view widget metadata including output templates
+
+This tab only appears when at least one tool has metadata or annotations defined.
 
 ## STDIO servers
 
