@@ -1,3 +1,4 @@
+import { matchToolCalls } from "@/shared/eval-matching";
 import { EvalIteration, EvalSuiteRun } from "./types";
 
 export type PassCriteriaType =
@@ -74,120 +75,37 @@ export function computeIterationResult(
 }
 
 /**
- * Check if expected arguments are satisfied by actual arguments.
- * Only checks keys present in expected - actual may have additional keys.
- */
-const argumentsMatch = (
-  expectedArgs: Record<string, unknown>,
-  actualArgs: Record<string, unknown>,
-): boolean => {
-  for (const [key, value] of Object.entries(expectedArgs)) {
-    if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
-      return false;
-    }
-  }
-  return true;
-};
-
-/**
  * Compute if an individual iteration passed based on its data.
- * Uses two-pass matching algorithm to handle multiple calls with the same tool name:
- * - Pass 1: Match expected calls to actual calls with matching toolName AND arguments
- * - Pass 2: For unmatched expected calls, try to match by toolName only (argument mismatches)
+ * Uses the shared two-pass matching algorithm from @/shared/eval-matching.
  */
 export function computeIterationPassed(
   iteration: EvalIteration,
   criteria?: PassCriteria,
 ): boolean {
   const actual = iteration.actualToolCalls || [];
+  const expected = iteration.testCaseSnapshot?.expectedToolCalls || [];
+  const isNegativeTest = iteration.testCaseSnapshot?.isNegativeTest;
 
-  // Handle negative tests: pass if NO tools were called
-  if (iteration.testCaseSnapshot?.isNegativeTest) {
-    return actual.length === 0;
+  // Use shared matching logic
+  const matchResult = matchToolCalls(expected, actual, isNegativeTest);
+
+  // For negative tests, the shared function handles everything
+  if (isNegativeTest) {
+    return matchResult.passed;
   }
 
-  // Positive test: must call at least one tool
-  if (actual.length === 0) {
-    return false;
-  }
-
-  if (!iteration.testCaseSnapshot?.expectedToolCalls) {
-    return true; // No specific expectations, but tools were called = pass
-  }
-
-  const expected = iteration.testCaseSnapshot.expectedToolCalls;
-
-  // No specific tool expectations, but tools were called = pass
-  if (expected.length === 0) {
+  // For positive tests with no expected calls but tools were called = pass
+  if (expected.length === 0 && actual.length > 0) {
     return true;
   }
 
-  // Track which actual calls have been matched to prevent reuse
-  const matchedActualIndices = new Set<number>();
-  // Track which expected calls found a match (by index)
-  const matchedExpectedIndices = new Set<number>();
-
-  const argumentMismatches: string[] = [];
-
-  // Pass 1: Match expected calls to actual calls with matching toolName AND arguments
-  for (let ei = 0; ei < expected.length; ei++) {
-    const exp = expected[ei];
-    const expectedArgs = exp.arguments || {};
-
-    for (let ai = 0; ai < actual.length; ai++) {
-      if (matchedActualIndices.has(ai)) continue;
-
-      const act = actual[ai];
-      if (act.toolName !== exp.toolName) continue;
-
-      const actualArgs = act.arguments || {};
-
-      // Check if arguments match (empty expected args always match)
-      if (
-        Object.keys(expectedArgs).length === 0 ||
-        argumentsMatch(expectedArgs, actualArgs)
-      ) {
-        matchedActualIndices.add(ai);
-        matchedExpectedIndices.add(ei);
-        break;
-      }
-    }
-  }
-
-  // Pass 2: For unmatched expected calls, try to match by toolName only
-  // These will be recorded as argument mismatches
-  for (let ei = 0; ei < expected.length; ei++) {
-    if (matchedExpectedIndices.has(ei)) continue;
-
-    const exp = expected[ei];
-    const expectedArgs = exp.arguments || {};
-
-    for (let ai = 0; ai < actual.length; ai++) {
-      if (matchedActualIndices.has(ai)) continue;
-
-      const act = actual[ai];
-      if (act.toolName !== exp.toolName) continue;
-
-      // Found a toolName match but arguments don't match
-      matchedActualIndices.add(ai);
-      matchedExpectedIndices.add(ei);
-
-      // Only record mismatch if expected had arguments specified
-      if (Object.keys(expectedArgs).length > 0) {
-        argumentMismatches.push(exp.toolName);
-      }
-      break;
-    }
-  }
-
-  // Missing: expected calls that found no match at all
-  const missing = expected.filter((_, idx) => !matchedExpectedIndices.has(idx));
-
-  // Apply tolerances
-  const effectiveMissing = criteria?.allowUnexpectedTools ? [] : missing;
+  // Apply tolerances from criteria
+  const effectiveMissing = criteria?.allowUnexpectedTools
+    ? []
+    : matchResult.missing;
   const effectiveMismatches = criteria?.ignoreArgumentMismatches
     ? []
-    : argumentMismatches;
+    : matchResult.argumentMismatches;
 
   return effectiveMissing.length === 0 && effectiveMismatches.length === 0;
 }
