@@ -385,7 +385,7 @@ export function SuiteHeader({
               <TooltipContent>
                 {!canRerun
                   ? `Connect the following servers: ${missingServers.join(", ")}`
-                  : "Rerun evaluation"}
+                  : "Run all tests"}
               </TooltipContent>
             </Tooltip>
           )}
@@ -671,14 +671,14 @@ export function SuiteHeader({
                   <RotateCw
                     className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
                   />
-                  Rerun
+                  Run
                 </Button>
               </span>
             </TooltipTrigger>
             <TooltipContent>
               {!canRerun
                 ? `Connect the following servers: ${missingServers.join(", ")}`
-                : "Rerun evaluation"}
+                : "Run all tests"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
