@@ -74,7 +74,26 @@ export function computeIterationResult(
 }
 
 /**
- * Compute if an individual iteration passed based on its data
+ * Check if expected arguments are satisfied by actual arguments.
+ * Only checks keys present in expected - actual may have additional keys.
+ */
+const argumentsMatch = (
+  expectedArgs: Record<string, unknown>,
+  actualArgs: Record<string, unknown>,
+): boolean => {
+  for (const [key, value] of Object.entries(expectedArgs)) {
+    if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+/**
+ * Compute if an individual iteration passed based on its data.
+ * Uses two-pass matching algorithm to handle multiple calls with the same tool name:
+ * - Pass 1: Match expected calls to actual calls with matching toolName AND arguments
+ * - Pass 2: For unmatched expected calls, try to match by toolName only (argument mismatches)
  */
 export function computeIterationPassed(
   iteration: EvalIteration,
@@ -103,39 +122,66 @@ export function computeIterationPassed(
     return true;
   }
 
-  // Find missing tool calls (expected but not called)
-  const missing = expected.filter(
-    (exp) => !actual.some((act) => act.toolName === exp.toolName),
-  );
+  // Track which actual calls have been matched to prevent reuse
+  const matchedActualIndices = new Set<number>();
+  // Track which expected calls found a match (by index)
+  const matchedExpectedIndices = new Set<number>();
 
-  // Find unexpected tool calls (called but not expected)
-  const unexpected = actual.filter(
-    (act) => !expected.some((exp) => exp.toolName === act.toolName),
-  );
-
-  // Check argument mismatches for tools that were called
   const argumentMismatches: string[] = [];
-  for (const exp of expected) {
-    const act = actual.find((a) => a.toolName === exp.toolName);
-    if (act) {
-      const expectedArgs = exp.arguments || {};
+
+  // Pass 1: Match expected calls to actual calls with matching toolName AND arguments
+  for (let ei = 0; ei < expected.length; ei++) {
+    const exp = expected[ei];
+    const expectedArgs = exp.arguments || {};
+
+    for (let ai = 0; ai < actual.length; ai++) {
+      if (matchedActualIndices.has(ai)) continue;
+
+      const act = actual[ai];
+      if (act.toolName !== exp.toolName) continue;
+
       const actualArgs = act.arguments || {};
 
-      // Only check if expected arguments were specified
-      if (Object.keys(expectedArgs).length > 0) {
-        let mismatch = false;
-        for (const [key, value] of Object.entries(expectedArgs)) {
-          if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
-            mismatch = true;
-            break;
-          }
-        }
-        if (mismatch) {
-          argumentMismatches.push(exp.toolName);
-        }
+      // Check if arguments match (empty expected args always match)
+      if (
+        Object.keys(expectedArgs).length === 0 ||
+        argumentsMatch(expectedArgs, actualArgs)
+      ) {
+        matchedActualIndices.add(ai);
+        matchedExpectedIndices.add(ei);
+        break;
       }
     }
   }
+
+  // Pass 2: For unmatched expected calls, try to match by toolName only
+  // These will be recorded as argument mismatches
+  for (let ei = 0; ei < expected.length; ei++) {
+    if (matchedExpectedIndices.has(ei)) continue;
+
+    const exp = expected[ei];
+    const expectedArgs = exp.arguments || {};
+
+    for (let ai = 0; ai < actual.length; ai++) {
+      if (matchedActualIndices.has(ai)) continue;
+
+      const act = actual[ai];
+      if (act.toolName !== exp.toolName) continue;
+
+      // Found a toolName match but arguments don't match
+      matchedActualIndices.add(ai);
+      matchedExpectedIndices.add(ei);
+
+      // Only record mismatch if expected had arguments specified
+      if (Object.keys(expectedArgs).length > 0) {
+        argumentMismatches.push(exp.toolName);
+      }
+      break;
+    }
+  }
+
+  // Missing: expected calls that found no match at all
+  const missing = expected.filter((_, idx) => !matchedExpectedIndices.has(idx));
 
   // Apply tolerances
   const effectiveMissing = criteria?.allowUnexpectedTools ? [] : missing;
@@ -157,11 +203,18 @@ export function evaluatePassCriteria(
   // Filter to only this run's iterations
   const runIterations = iterations.filter((it) => it.suiteRunId === run._id);
 
-  // Compute passed/failed for each iteration
-  const iterationsWithResults = runIterations.map((it) => ({
-    ...it,
-    passed: computeIterationPassed(it, criteria),
-  }));
+  // Compute passed/failed for each iteration (only completed ones)
+  const iterationsWithResults = runIterations
+    .map((it) => {
+      const result = computeIterationResult(it, criteria);
+      return {
+        ...it,
+        result,
+        passed: result === "passed",
+      };
+    })
+    // Only count completed iterations - exclude pending/cancelled
+    .filter((it) => it.result === "passed" || it.result === "failed");
 
   const totalCount = iterationsWithResults.length;
   const passedCount = iterationsWithResults.filter((it) => it.passed).length;

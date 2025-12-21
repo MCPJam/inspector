@@ -4,7 +4,7 @@ import { IterationDetails } from "./iteration-details";
 import type { EvalIteration, EvalCase } from "./types";
 import { formatDuration } from "./helpers";
 import { UI_CONFIG } from "./constants";
-import { computeIterationPassed } from "./pass-criteria";
+import { computeIterationResult } from "./pass-criteria";
 
 interface TestResultsPanelProps {
   iteration: EvalIteration | null;
@@ -23,10 +23,10 @@ export function TestResultsPanel({
 }: TestResultsPanelProps) {
   const hasResult = iteration !== null;
   // Recompute pass/fail to ensure consistency with charts/aggregations
-  const isPassed = iteration ? computeIterationPassed(iteration) : false;
-  const isFailed = hasResult && !isPassed && iteration?.status === "completed";
-  const isPending =
-    iteration?.status === "running" || iteration?.status === "pending";
+  const iterationResult = iteration ? computeIterationResult(iteration) : null;
+  const isPassed = iterationResult === "passed";
+  const isFailed = iterationResult === "failed";
+  const isPending = iterationResult === "pending";
   const modelName = iteration?.testCaseSnapshot?.model || "Unknown";
   const startedAt = iteration?.startedAt ?? iteration?.createdAt;
   const completedAt = iteration?.updatedAt ?? iteration?.createdAt;
