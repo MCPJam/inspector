@@ -1,4 +1,4 @@
-import { Plus, MoreVertical, Copy, Trash2, BarChart3, Pencil, Sparkles } from "lucide-react";
+import { Plus, MoreVertical, Copy, Trash2, BarChart3, Sparkles, RotateCw } from "lucide-react";
 import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,10 +7,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import type { EvalCase } from "./types";
+import type { EvalCase, EvalSuite } from "./types";
 
 interface TestCaseListSidebarProps {
   testCases: EvalCase[];
@@ -26,6 +31,11 @@ interface TestCaseListSidebarProps {
   isGeneratingTests?: boolean;
   showingOverview: boolean;
   noServerSelected?: boolean;
+  // Rerun props
+  suite?: EvalSuite | null;
+  onRerun?: (suite: EvalSuite) => void;
+  rerunningSuiteId?: string | null;
+  connectedServerNames?: Set<string>;
 }
 
 export function TestCaseListSidebar({
@@ -42,7 +52,18 @@ export function TestCaseListSidebar({
   isGeneratingTests,
   showingOverview,
   noServerSelected,
+  suite,
+  onRerun,
+  rerunningSuiteId,
+  connectedServerNames,
 }: TestCaseListSidebarProps) {
+  // Calculate rerun availability
+  const suiteServers = suite?.environment?.servers || [];
+  const missingServers = suiteServers.filter(
+    (server) => !connectedServerNames?.has(server),
+  );
+  const canRerun = missingServers.length === 0 && suite && onRerun;
+  const isRerunning = rerunningSuiteId === suite?._id;
   const handleNavigateToOverview = () => {
     if (suiteId) {
       navigateToEvalsRoute({ type: "suite-overview", suiteId });
@@ -70,6 +91,37 @@ export function TestCaseListSidebar({
       <div className="p-4 border-b flex items-center justify-between">
         <h2 className="text-sm font-semibold">Test Cases</h2>
         <div className="flex items-center gap-1">
+          {suite && onRerun && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      posthog.capture("rerun_suite_button_clicked", {
+                        location: "test_case_list_sidebar",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                      });
+                      onRerun(suite);
+                    }}
+                    disabled={!canRerun || isRerunning}
+                    className="h-7 w-7 p-0"
+                  >
+                    <RotateCw className={cn("h-4 w-4", isRerunning && "animate-spin")} />
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {!canRerun && missingServers.length > 0
+                  ? `Connect the following servers: ${missingServers.join(", ")}`
+                  : isRerunning
+                    ? "Running..."
+                    : "Rerun all tests"}
+              </TooltipContent>
+            </Tooltip>
+          )}
           {onGenerateTests && (
             <Button
               variant="ghost"
@@ -111,29 +163,15 @@ export function TestCaseListSidebar({
       {/* Results Overview Button */}
       {suiteId && (
         <div
+          onClick={handleNavigateToOverview}
           className={cn(
-            "group flex items-center gap-2 px-4 py-2.5 text-sm cursor-pointer transition-colors border-b",
+            "flex items-center gap-2 px-4 py-2.5 text-sm cursor-pointer transition-colors border-b",
             "hover:bg-accent/50",
             showingOverview && "bg-accent font-medium",
           )}
         >
-          <div
-            onClick={handleNavigateToOverview}
-            className="flex items-center gap-2 flex-1"
-          >
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            <span>Results & Runs</span>
-          </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              navigateToEvalsRoute({ type: "suite-edit", suiteId });
-            }}
-            className="shrink-0 p-1 hover:bg-accent rounded transition-colors opacity-0 group-hover:opacity-100"
-            title="Edit test suite settings"
-          >
-            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-          </button>
+          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          <span>Results & Runs</span>
         </div>
       )}
 

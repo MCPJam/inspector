@@ -267,6 +267,10 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
               isGeneratingTests={handlers.isGeneratingTests}
               showingOverview={!selectedTestIdForSidebar && serverSuiteId !== null}
               noServerSelected={!isServerConnected}
+              suite={selectedSuite}
+              onRerun={handlers.handleRerun}
+              rerunningSuiteId={handlers.rerunningSuiteId}
+              connectedServerNames={connectedServerNames}
             />
           </ResizablePanel>
 

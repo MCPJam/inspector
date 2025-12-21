@@ -193,7 +193,7 @@ export function getIterationBorderColor(result: string): string {
     case RESULT_STATUS.PASSED:
       return "bg-success/50";
     case RESULT_STATUS.FAILED:
-      return "bg-destructive/50";
+      return "bg-red-500/50";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted";
     case RESULT_STATUS.PENDING:

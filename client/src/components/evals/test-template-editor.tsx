@@ -14,6 +14,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Switch } from "@/components/ui/switch";
 import { ExpectedToolsEditor } from "./expected-tools-editor";
 import { TestResultsPanel } from "./test-results-panel";
 import {
@@ -471,6 +472,23 @@ export function TestTemplateEditor({
     }
   };
 
+  const handleToggleNegative = async () => {
+    if (!currentTestCase) return;
+
+    const newValue = !currentTestCase.isNegativeTest;
+    try {
+      await updateTestCaseMutation({
+        testCaseId: currentTestCase._id,
+        isNegativeTest: newValue,
+        // Clear expected tool calls when converting to negative test
+        ...(newValue && { expectedToolCalls: [] }),
+      });
+    } catch (error) {
+      console.error("Failed to toggle negative test:", error);
+      toast.error("Failed to update test type");
+    }
+  };
+
   // Use models from the test case (which come from the suite configuration)
   const modelOptions = useMemo(() => {
     if (!currentTestCase) return [];
@@ -519,19 +537,35 @@ export function TestTemplateEditor({
                     className="px-0 py-0 text-lg font-semibold border-none focus:outline-none focus:ring-0 bg-transparent w-full"
                   />
                 ) : (
-                  <div className="flex items-center gap-2">
-                    <h2
-                      className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity"
-                      onClick={handleTitleClick}
-                    >
-                      {editForm?.title || currentTestCase.title}
-                    </h2>
-                    {currentTestCase.isNegativeTest && (
-                      <span className="text-[10px] text-orange-500" title="Negative test">NEG</span>
-                    )}
-                  </div>
+                  <h2
+                    className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity truncate"
+                    onClick={handleTitleClick}
+                  >
+                    {editForm?.title || currentTestCase.title}
+                  </h2>
                 )}
               </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Switch
+                      checked={currentTestCase.isNegativeTest || false}
+                      onCheckedChange={handleToggleNegative}
+                      className="scale-75 data-[state=checked]:bg-orange-500"
+                    />
+                    <span className={`text-[10px] ${currentTestCase.isNegativeTest ? 'text-orange-500' : 'text-muted-foreground'}`}>
+                      NEG
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">
+                    {currentTestCase.isNegativeTest
+                      ? "Negative test: passes when NO tools are called"
+                      : "Click to mark as negative test"}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
               <div className="flex items-center gap-3 shrink-0">
                 <div className="flex items-center gap-2">
                   <Label className="text-xs text-muted-foreground">Runs:</Label>
