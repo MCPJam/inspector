@@ -5,7 +5,10 @@ import {
   computeIterationSummary,
   getTemplateKey,
 } from "./helpers";
-import { computeIterationResult, computeIterationPassed } from "./pass-criteria";
+import {
+  computeIterationResult,
+  computeIterationPassed,
+} from "./pass-criteria";
 import {
   EvalCase,
   EvalIteration,
@@ -71,9 +74,15 @@ export function useSuiteData(
           (iter) => iter.suiteRunId === run._id,
         );
         // Only count completed iterations - exclude pending/cancelled
-        const iterationResults = runIterations.map((i) => computeIterationResult(i));
-        const realTimePassed = iterationResults.filter((r) => r === "passed").length;
-        const realTimeTotal = iterationResults.filter((r) => r === "passed" || r === "failed").length;
+        const iterationResults = runIterations.map((i) =>
+          computeIterationResult(i),
+        );
+        const realTimePassed = iterationResults.filter(
+          (r) => r === "passed",
+        ).length;
+        const realTimeTotal = iterationResults.filter(
+          (r) => r === "passed" || r === "failed",
+        ).length;
 
         let passRate: number;
         if (realTimeTotal > 0) {

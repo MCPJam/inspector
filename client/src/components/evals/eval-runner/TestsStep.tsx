@@ -48,10 +48,7 @@ export function TestsStep({
     testTemplates.some((template) => template.query.trim().length > 0);
 
   const renderPositiveTestCard = (template: TestTemplate, index: number) => (
-    <div
-      key={index}
-      className="space-y-3 rounded-lg border bg-background p-4"
-    >
+    <div key={index} className="space-y-3 rounded-lg border bg-background p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col flex-1 space-y-2">
           <Label className="text-xs uppercase text-muted-foreground">

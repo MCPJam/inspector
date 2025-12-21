@@ -392,7 +392,9 @@ function CombinedToolPart({
   const toolMetadata = toolName ? toolsMetadata[toolName] : undefined;
   const hasOpenAIApp = !!toolMetadata?.["openai/outputTemplate"];
   const hasMCPApp = !!toolMetadata?.["ui/resourceUri"];
-  const mcpAppsResourceUri = toolMetadata?.["ui/resourceUri"] as string | undefined;
+  const mcpAppsResourceUri = toolMetadata?.["ui/resourceUri"] as
+    | string
+    | undefined;
   const serverId = toolName
     ? getToolServerId(toolName, toolServerMap)
     : undefined;
@@ -513,7 +515,9 @@ function CombinedToolPart({
           return (
             <MCPAppsRenderer
               serverId={serverId}
-              toolCallId={toolCall?.toolCallId ?? `evals-${toolName}-${Date.now()}`}
+              toolCallId={
+                toolCall?.toolCallId ?? `evals-${toolName}-${Date.now()}`
+              }
               toolName={toolName}
               toolState="output-available"
               toolInput={toolCall?.input}

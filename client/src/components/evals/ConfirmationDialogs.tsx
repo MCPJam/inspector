@@ -170,7 +170,9 @@ export function ConfirmationDialogs({
                 <Checkbox
                   id="dont-show-delete-test-case"
                   checked={dontShowAgain}
-                  onCheckedChange={(checked) => setDontShowAgain(checked === true)}
+                  onCheckedChange={(checked) =>
+                    setDontShowAgain(checked === true)
+                  }
                 />
                 <Label
                   htmlFor="dont-show-delete-test-case"
