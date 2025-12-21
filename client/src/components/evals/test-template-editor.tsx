@@ -133,6 +133,7 @@ export function TestTemplateEditor({
   >([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [isRunning, setIsRunning] = useState(false);
+  const [optimisticNegative, setOptimisticNegative] = useState<boolean | null>(null);
   const [currentQuickRunResult, setCurrentQuickRunResult] = useState<
     any | null
   >(null);
@@ -163,6 +164,8 @@ export function TestTemplateEditor({
   useEffect(() => {
     // Clear the result when switching test cases
     setCurrentQuickRunResult(null);
+    // Reset optimistic state when switching test cases
+    setOptimisticNegative(null);
   }, [selectedTestCaseId]);
 
   // Load lastMessageRun into currentQuickRunResult when it's available
@@ -476,6 +479,8 @@ export function TestTemplateEditor({
     if (!currentTestCase) return;
 
     const newValue = !currentTestCase.isNegativeTest;
+    // Optimistically update the UI immediately
+    setOptimisticNegative(newValue);
     try {
       await updateTestCaseMutation({
         testCaseId: currentTestCase._id,
@@ -483,9 +488,13 @@ export function TestTemplateEditor({
         // Clear expected tool calls when converting to negative test
         ...(newValue && { expectedToolCalls: [] }),
       });
+      // Clear optimistic state after server confirms (Convex query will take over)
+      setOptimisticNegative(null);
     } catch (error) {
       console.error("Failed to toggle negative test:", error);
       toast.error("Failed to update test type");
+      // Revert optimistic update on error
+      setOptimisticNegative(null);
     }
   };
 
@@ -549,40 +558,24 @@ export function TestTemplateEditor({
                 <TooltipTrigger asChild>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Switch
-                      checked={currentTestCase.isNegativeTest || false}
+                      checked={optimisticNegative ?? currentTestCase.isNegativeTest ?? false}
                       onCheckedChange={handleToggleNegative}
                       className="scale-75 data-[state=checked]:bg-orange-500"
                     />
-                    <span className={`text-[10px] ${currentTestCase.isNegativeTest ? 'text-orange-500' : 'text-muted-foreground'}`}>
+                    <span className={`text-[10px] ${(optimisticNegative ?? currentTestCase.isNegativeTest) ? 'text-orange-500' : 'text-muted-foreground'}`}>
                       NEG
                     </span>
                   </div>
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="text-xs">
-                    {currentTestCase.isNegativeTest
-                      ? "Negative test: passes when NO tools are called"
+                    {(optimisticNegative ?? currentTestCase.isNegativeTest)
+                      ? "Negative test: passes when no tools are called"
                       : "Click to mark as negative test"}
                   </p>
                 </TooltipContent>
               </Tooltip>
               <div className="flex items-center gap-3 shrink-0">
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground">Runs:</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={editForm?.runs || 1}
-                    onChange={(e) =>
-                      editForm &&
-                      setEditForm({
-                        ...editForm,
-                        runs: parseInt(e.target.value) || 1,
-                      })
-                    }
-                    className="h-7 w-16 text-xs border-0 bg-muted/50"
-                  />
-                </div>
                 <Select
                   value={selectedModel}
                   onValueChange={setSelectedModel}

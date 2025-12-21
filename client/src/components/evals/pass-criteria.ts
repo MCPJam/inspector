@@ -80,18 +80,28 @@ export function computeIterationPassed(
   iteration: EvalIteration,
   criteria?: PassCriteria,
 ): boolean {
+  const actual = iteration.actualToolCalls || [];
+
   // Handle negative tests: pass if NO tools were called
   if (iteration.testCaseSnapshot?.isNegativeTest) {
-    const actual = iteration.actualToolCalls || [];
     return actual.length === 0;
   }
 
+  // Positive test: must call at least one tool
+  if (actual.length === 0) {
+    return false;
+  }
+
   if (!iteration.testCaseSnapshot?.expectedToolCalls) {
-    return true; // No expectations = pass
+    return true; // No specific expectations, but tools were called = pass
   }
 
   const expected = iteration.testCaseSnapshot.expectedToolCalls;
-  const actual = iteration.actualToolCalls || [];
+
+  // No specific tool expectations, but tools were called = pass
+  if (expected.length === 0) {
+    return true;
+  }
 
   // Find missing tool calls (expected but not called)
   const missing = expected.filter(

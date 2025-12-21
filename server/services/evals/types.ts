@@ -61,6 +61,18 @@ export const evaluateResults = (
     };
   }
 
+  // Positive test: must call at least one tool
+  if (normalizedCalled.length === 0) {
+    return {
+      expectedToolCalls: normalizedExpected,
+      toolsCalled: normalizedCalled,
+      missing: normalizedExpected,
+      unexpected: [],
+      argumentMismatches: [],
+      passed: false,
+    };
+  }
+
   // Track which actual calls have been matched to prevent reuse
   const matchedActualIndices = new Set<number>();
   // Track which expected calls found a match (by index)
