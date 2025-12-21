@@ -19,6 +19,7 @@ import {
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import { getIterationBorderColor } from "./helpers";
+import { computeIterationPassed } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 
 interface RunDetailViewProps {
@@ -542,17 +543,24 @@ function IterationRow({
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
   const durationMs =
     startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
-  const isPending = iteration.result === "pending";
+  const isPending = iteration.status === "pending" || iteration.status === "running";
 
   const testInfo = iteration.testCaseSnapshot;
   const actualToolCalls = iteration.actualToolCalls || [];
   const modelName = testInfo?.model || "—";
 
+  // Recompute pass/fail to ensure consistency with charts/aggregations
+  const computedResult = isPending
+    ? "pending"
+    : computeIterationPassed(iteration)
+      ? "passed"
+      : "failed";
+
   return (
     <div className={`relative ${isPending ? "opacity-60" : ""}`}>
       <div
         className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(
-          iteration.result,
+          computedResult,
         )}`}
       />
       <button
