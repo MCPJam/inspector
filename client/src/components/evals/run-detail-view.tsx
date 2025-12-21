@@ -280,7 +280,7 @@ export function RunDetailView({
                             color: "var(--chart-1)",
                           },
                         }}
-                        className="aspect-auto h-48 w-full"
+                        className="aspect-auto h-64 w-full"
                       >
                         <BarChart
                           data={selectedRunChartData.durationData}
@@ -297,12 +297,12 @@ export function RunDetailView({
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tick={{ fontSize: 11 }}
+                            tick={{ fontSize: 10, angle: -45, textAnchor: "end" }}
                             interval={0}
-                            height={40}
+                            height={80}
                             tickFormatter={(value) => {
-                              if (value.length > 15) {
-                                return value.substring(0, 12) + "...";
+                              if (value.length > 20) {
+                                return value.substring(0, 17) + "...";
                               }
                               return value;
                             }}
@@ -356,7 +356,7 @@ export function RunDetailView({
                             color: "var(--chart-2)",
                           },
                         }}
-                        className="aspect-auto h-48 w-full"
+                        className="aspect-auto h-64 w-full"
                       >
                         <BarChart
                           data={selectedRunChartData.tokensData}
@@ -373,12 +373,12 @@ export function RunDetailView({
                             tickLine={false}
                             axisLine={false}
                             tickMargin={8}
-                            tick={{ fontSize: 11 }}
+                            tick={{ fontSize: 10, angle: -45, textAnchor: "end" }}
                             interval={0}
-                            height={40}
+                            height={80}
                             tickFormatter={(value) => {
-                              if (value.length > 15) {
-                                return value.substring(0, 12) + "...";
+                              if (value.length > 20) {
+                                return value.substring(0, 17) + "...";
                               }
                               return value;
                             }}
@@ -430,7 +430,7 @@ export function RunDetailView({
                         config={{
                           passRate: {
                             label: "Accuracy",
-                            color: "oklch(0.25 0 0)",
+                            color: "var(--chart-1)",
                           },
                         }}
                         className="aspect-auto h-48 w-full"
