@@ -162,12 +162,29 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     [],
   );
 
-  // Handle creating test case for current server's suite
+  // Handle creating test case for current server's suite (creates suite if needed)
   const handleCreateTestCase = useCallback(async () => {
-    if (serverSuiteId) {
-      await handlers.handleCreateTestCase(serverSuiteId);
+    let suiteId = serverSuiteId;
+
+    // Create suite if it doesn't exist
+    if (!suiteId && selectedServer && isServerConnected) {
+      try {
+        const newSuite = await mutations.createTestSuiteMutation({
+          name: selectedServer,
+          description: `Test suite for ${selectedServer}`,
+          environment: { servers: [selectedServer] },
+        });
+        suiteId = newSuite?._id;
+      } catch (err) {
+        console.error("Failed to create suite:", err);
+        return;
+      }
     }
-  }, [serverSuiteId, handlers.handleCreateTestCase]);
+
+    if (suiteId) {
+      await handlers.handleCreateTestCase(suiteId);
+    }
+  }, [serverSuiteId, selectedServer, isServerConnected, mutations.createTestSuiteMutation, handlers.handleCreateTestCase]);
 
   // Handle duplicate test case
   const handleDuplicateTestCase = useCallback(
@@ -179,12 +196,31 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     [serverSuiteId, handlers.handleDuplicateTestCase],
   );
 
-  // Handle generate tests for current server's suite
+  // Handle generate tests for current server's suite (creates suite if needed)
   const handleGenerateTests = useCallback(async () => {
-    if (serverSuiteId && selectedServer) {
-      await handlers.handleGenerateTests(serverSuiteId, [selectedServer]);
+    if (!selectedServer || !isServerConnected) return;
+
+    let suiteId = serverSuiteId;
+
+    // Create suite if it doesn't exist
+    if (!suiteId) {
+      try {
+        const newSuite = await mutations.createTestSuiteMutation({
+          name: selectedServer,
+          description: `Test suite for ${selectedServer}`,
+          environment: { servers: [selectedServer] },
+        });
+        suiteId = newSuite?._id;
+      } catch (err) {
+        console.error("Failed to create suite:", err);
+        return;
+      }
     }
-  }, [serverSuiteId, selectedServer, handlers.handleGenerateTests]);
+
+    if (suiteId) {
+      await handlers.handleGenerateTests(suiteId, [selectedServer]);
+    }
+  }, [serverSuiteId, selectedServer, isServerConnected, mutations.createTestSuiteMutation, handlers.handleGenerateTests]);
 
   // Loading state
   if (isLoading) {
@@ -261,7 +297,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
               onCreateTestCase={handleCreateTestCase}
               onDeleteTestCase={handlers.handleDeleteTestCase}
               onDuplicateTestCase={handleDuplicateTestCase}
-              onGenerateTests={serverSuiteId ? handleGenerateTests : undefined}
+              onGenerateTests={handleGenerateTests}
               deletingTestCaseId={handlers.deletingTestCaseId}
               duplicatingTestCaseId={handlers.duplicatingTestCaseId}
               isGeneratingTests={handlers.isGeneratingTests}
@@ -309,22 +345,6 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
                     Create your first test case for "{selectedServer}" to start
                     evaluating your MCP server.
                   </p>
-                  <Button
-                    onClick={() => {
-                      posthog.capture("create_first_test_case_clicked", {
-                        location: "evals_tab",
-                        server: selectedServer,
-                        platform: detectPlatform(),
-                        environment: detectEnvironment(),
-                      });
-                      navigateToEvalsRoute({ type: "create" });
-                    }}
-                    className="gap-2"
-                    size="sm"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Create first test case
-                  </Button>
                 </div>
               </div>
             ) : isSuiteDetailsLoading ? (

@@ -91,72 +91,86 @@ export function TestCaseListSidebar({
       <div className="p-4 border-b flex items-center justify-between">
         <h2 className="text-sm font-semibold">Test Cases</h2>
         <div className="flex items-center gap-1">
-          {suite && onRerun && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (suite && onRerun) {
                       posthog.capture("rerun_suite_button_clicked", {
                         location: "test_case_list_sidebar",
                         platform: detectPlatform(),
                         environment: detectEnvironment(),
                       });
                       onRerun(suite);
-                    }}
-                    disabled={!canRerun || isRerunning}
-                    className="h-7 w-7 p-0"
-                  >
-                    <RotateCw className={cn("h-4 w-4", isRerunning && "animate-spin")} />
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                {!canRerun && missingServers.length > 0
+                    }
+                  }}
+                  disabled={!canRerun || isRerunning || testCases.length === 0}
+                  className="h-7 w-7 p-0"
+                >
+                  <RotateCw className={cn("h-4 w-4", isRerunning && "animate-spin")} />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {testCases.length === 0
+                ? "Add test cases first"
+                : !canRerun && missingServers.length > 0
                   ? `Connect the following servers: ${missingServers.join(", ")}`
                   : isRerunning
                     ? "Running..."
                     : "Rerun all tests"}
-              </TooltipContent>
-            </Tooltip>
-          )}
-          {onGenerateTests && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                posthog.capture("generate_tests_button_clicked", {
-                  location: "test_case_list_sidebar",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
-                });
-                onGenerateTests();
-              }}
-              disabled={isGeneratingTests}
-              className="h-7 w-7 p-0"
-              title="Generate test cases with AI"
-            >
-              <Sparkles className={cn("h-4 w-4", isGeneratingTests && "animate-pulse")} />
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              posthog.capture("create_test_case_button_clicked", {
-                location: "test_case_list_sidebar",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              });
-              onCreateTestCase();
-            }}
-            className="h-7 w-7 p-0"
-            title="Create new test case"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (onGenerateTests) {
+                      posthog.capture("generate_tests_button_clicked", {
+                        location: "test_case_list_sidebar",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                      });
+                      onGenerateTests();
+                    }
+                  }}
+                  disabled={isGeneratingTests || !onGenerateTests}
+                  className="h-7 w-7 p-0"
+                >
+                  <Sparkles className={cn("h-4 w-4", isGeneratingTests && "animate-pulse")} />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {isGeneratingTests ? "Generating..." : "Generate test cases with AI"}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  posthog.capture("create_test_case_button_clicked", {
+                    location: "test_case_list_sidebar",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  onCreateTestCase();
+                }}
+                className="h-7 w-7 p-0"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Create new test case</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
