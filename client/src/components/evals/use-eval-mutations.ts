@@ -19,6 +19,9 @@ export function useEvalMutations() {
   const duplicateTestCaseMutation = useMutation(
     "testSuites:duplicateTestCase" as any,
   );
+  const createTestSuiteMutation = useMutation(
+    "testSuites:createTestSuite" as any,
+  );
 
   return {
     deleteSuiteMutation,
@@ -28,5 +31,6 @@ export function useEvalMutations() {
     createTestCaseMutation,
     deleteTestCaseMutation,
     duplicateTestCaseMutation,
+    createTestSuiteMutation,
   };
 }
