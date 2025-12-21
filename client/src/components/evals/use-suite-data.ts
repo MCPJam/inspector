@@ -5,7 +5,10 @@ import {
   computeIterationSummary,
   getTemplateKey,
 } from "./helpers";
-import { computeIterationPassed } from "./pass-criteria";
+import {
+  computeIterationResult,
+  computeIterationPassed,
+} from "./pass-criteria";
 import {
   EvalCase,
   EvalIteration,
@@ -70,10 +73,16 @@ export function useSuiteData(
         const runIterations = allIterations.filter(
           (iter) => iter.suiteRunId === run._id,
         );
-        const realTimePassed = runIterations.filter((i) =>
-          computeIterationPassed(i),
+        // Only count completed iterations - exclude pending/cancelled
+        const iterationResults = runIterations.map((i) =>
+          computeIterationResult(i),
+        );
+        const realTimePassed = iterationResults.filter(
+          (r) => r === "passed",
         ).length;
-        const realTimeTotal = runIterations.length;
+        const realTimeTotal = iterationResults.filter(
+          (r) => r === "passed" || r === "failed",
+        ).length;
 
         let passRate: number;
         if (realTimeTotal > 0) {
@@ -120,6 +129,12 @@ export function useSuiteData(
       const model = iteration.testCaseSnapshot?.model || "Unknown";
       const modelName = iteration.testCaseSnapshot?.model || "Unknown Model";
 
+      // Only count completed iterations - exclude pending/cancelled
+      const result = computeIterationResult(iteration);
+      if (result !== "passed" && result !== "failed") {
+        return; // Skip pending/cancelled iterations
+      }
+
       if (!modelMap.has(model)) {
         modelMap.set(model, { passed: 0, failed: 0, total: 0, modelName });
       }
@@ -127,8 +142,7 @@ export function useSuiteData(
       const stats = modelMap.get(model)!;
       stats.total += 1;
 
-      const passed = computeIterationPassed(iteration);
-      if (passed) {
+      if (result === "passed") {
         stats.passed += 1;
       } else {
         stats.failed += 1;
@@ -477,6 +491,12 @@ export function useRunDetailData(
       const model = iteration.testCaseSnapshot?.model || "Unknown";
       const modelName = iteration.testCaseSnapshot?.model || "Unknown Model";
 
+      // Only count completed iterations - exclude pending/cancelled
+      const result = computeIterationResult(iteration);
+      if (result !== "passed" && result !== "failed") {
+        return; // Skip pending/cancelled iterations
+      }
+
       if (!modelMap.has(model)) {
         modelMap.set(model, { passed: 0, failed: 0, total: 0, modelName });
       }
@@ -484,8 +504,7 @@ export function useRunDetailData(
       const stats = modelMap.get(model)!;
       stats.total += 1;
 
-      const passed = computeIterationPassed(iteration);
-      if (passed) {
+      if (result === "passed") {
         stats.passed += 1;
       } else {
         stats.failed += 1;
@@ -534,10 +553,11 @@ export function useRunDetailData(
 
       const test = testMap.get(testKey)!;
 
-      if (iteration.result === "passed") test.passed++;
-      else if (iteration.result === "failed") test.failed++;
-      else if (iteration.result === "pending") test.pending++;
+      // Use computeIterationPassed for accurate pass/fail with negative test support
+      if (iteration.result === "pending") test.pending++;
       else if (iteration.result === "cancelled") test.cancelled++;
+      else if (computeIterationPassed(iteration)) test.passed++;
+      else test.failed++;
 
       const startedAt = iteration.startedAt ?? iteration.createdAt;
       const completedAt = iteration.updatedAt ?? iteration.createdAt;

@@ -24,6 +24,7 @@ import {
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { AccuracyChart } from "./accuracy-chart";
 import { formatRunId, getIterationBorderColor } from "./helpers";
+import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { toast } from "sonner";
 
@@ -312,13 +313,17 @@ export function RunOverview({
               const runIterations = allIterations.filter(
                 (iter) => iter.suiteRunId === run._id,
               );
-              const realTimePassed = runIterations.filter(
-                (i) => i.result === "passed",
+              // Only count completed iterations - exclude pending/cancelled
+              const iterationResults = runIterations.map((i) =>
+                computeIterationResult(i),
+              );
+              const realTimePassed = iterationResults.filter(
+                (r) => r === "passed",
               ).length;
-              const realTimeFailed = runIterations.filter(
-                (i) => i.result === "failed",
+              const realTimeFailed = iterationResults.filter(
+                (r) => r === "failed",
               ).length;
-              const realTimeTotal = runIterations.length;
+              const realTimeTotal = realTimePassed + realTimeFailed;
               const totalTokens = runIterations.reduce(
                 (sum, iter) => sum + (iter.tokensUsed || 0),
                 0,
@@ -416,7 +421,7 @@ export function RunOverview({
                       <TooltipTrigger asChild>{runButton}</TooltipTrigger>
                       <TooltipContent>
                         <p className="text-xs">
-                          Run is inactive since testsuite schema changed
+                          Run is inactive since test cases were updated
                         </p>
                       </TooltipContent>
                     </Tooltip>

@@ -46,7 +46,8 @@ import { useSharedAppState } from "@/state/app-state-context";
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
   inline?: boolean;
-  onSuccess?: () => void;
+  onSuccess?: (suiteId?: string) => void;
+  preselectedServer?: string;
 }
 
 type StepKey = (typeof WIZARD_STEPS)[number]["key"];
@@ -56,6 +57,15 @@ const buildBlankTestTemplate = (): TestTemplate => ({
   query: "",
   runs: DEFAULTS.RUNS_PER_TEST,
   expectedToolCalls: [],
+});
+
+const buildBlankNegativeTestTemplate = (): TestTemplate => ({
+  title: ``,
+  query: "",
+  runs: DEFAULTS.RUNS_PER_TEST,
+  expectedToolCalls: [],
+  isNegativeTest: true,
+  scenario: "",
 });
 
 const validateExpectedToolCalls = (toolCalls: ExpectedToolCall[]): boolean => {
@@ -89,11 +99,17 @@ export function EvalRunner({
   availableModels,
   inline = false,
   onSuccess,
+  preselectedServer,
 }: EvalRunnerProps) {
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
+  const [isGeneratingNegativeTests, setIsGeneratingNegativeTests] =
+    useState(false);
+  // Start at step 1 (model) if server is preselected, otherwise step 0 (servers)
+  const hasPreselectedServer =
+    preselectedServer && preselectedServer !== "none";
+  const [currentStep, setCurrentStep] = useState(hasPreselectedServer ? 1 : 0);
   const [savedPreferences, setSavedPreferences] = useState<{
     servers: string[];
     modelIds: string[];
@@ -103,13 +119,22 @@ export function EvalRunner({
   const appState = useSharedAppState();
   const { getToken, hasToken } = useAiProviderKeys();
 
-  const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  // Initialize with preselected server if provided
+  const [selectedServers, setSelectedServers] = useState<string[]>(() => {
+    if (hasPreselectedServer) {
+      return [preselectedServer];
+    }
+    return [];
+  });
   const [selectedModels, setSelectedModels] = useState<ModelDefinition[]>([]);
   const [testTemplates, setTestTemplates] = useState<TestTemplate[]>([
     buildBlankTestTemplate(),
   ]);
   const [modelTab, setModelTab] = useState<"mcpjam" | "yours">("mcpjam");
-  const [suiteName, setSuiteName] = useState("");
+  // Auto-name suite after server if preselected
+  const [suiteName, setSuiteName] = useState(
+    hasPreselectedServer ? preselectedServer : "",
+  );
   const [suiteDescription, setSuiteDescription] = useState("");
   const [showNameError, setShowNameError] = useState(false);
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
@@ -163,6 +188,8 @@ export function EvalRunner({
 
   useEffect(() => {
     if (!savedPreferences) return;
+    // Don't restore server preferences if we have a preselected server
+    if (hasPreselectedServer) return;
 
     if (savedPreferences.servers?.length) {
       const filtered = savedPreferences.servers.filter((server) =>
@@ -172,7 +199,7 @@ export function EvalRunner({
         setSelectedServers(filtered);
       }
     }
-  }, [savedPreferences, connectedServerNames]);
+  }, [savedPreferences, connectedServerNames, hasPreselectedServer]);
 
   useEffect(() => {
     // Only restore preferences once on initial load
@@ -242,10 +269,11 @@ export function EvalRunner({
 
   useEffect(() => {
     if (!inline && !open) {
-      setCurrentStep(0);
+      // Reset to step 1 if preselected, otherwise step 0
+      setCurrentStep(hasPreselectedServer ? 1 : 0);
       setHasRestoredPreferences(false);
     }
-  }, [inline, open]);
+  }, [inline, open, hasPreselectedServer]);
 
   const validTestTemplates = useMemo(
     () => testTemplates.filter((template) => template.query.trim().length > 0),
@@ -259,15 +287,25 @@ export function EvalRunner({
       return isJam || hasToken(model.provider as keyof ProviderTokens);
     });
 
-    // Check if all valid test templates have valid expected tool calls
-    const allTestsHaveValidToolCalls = validTestTemplates.every((template) =>
-      validateExpectedToolCalls(template.expectedToolCalls),
-    );
+    // Check if all valid test templates are properly configured
+    // Positive tests need valid expected tool calls
+    // Negative tests need scenario and query
+    const allTestsAreValid = validTestTemplates.every((template) => {
+      if (template.isNegativeTest) {
+        // Negative tests need scenario and query
+        return (
+          template.query.trim().length > 0 &&
+          (template.scenario?.trim().length ?? 0) > 0
+        );
+      }
+      // Positive tests need valid expected tool calls
+      return validateExpectedToolCalls(template.expectedToolCalls);
+    });
 
     return {
       servers: selectedServers.length > 0,
       model: selectedModels.length > 0 && allModelsHaveCredentials,
-      tests: validTestTemplates.length > 0 && allTestsHaveValidToolCalls,
+      tests: validTestTemplates.length > 0 && allTestsAreValid,
     };
   }, [selectedServers, selectedModels, validTestTemplates, hasToken]);
 
@@ -315,6 +353,10 @@ export function EvalRunner({
 
   const handleAddTestTemplate = () => {
     setTestTemplates((prev) => [...prev, buildBlankTestTemplate()]);
+  };
+
+  const handleAddNegativeTestTemplate = () => {
+    setTestTemplates((prev) => [...prev, buildBlankNegativeTestTemplate()]);
   };
 
   const handleRemoveTestTemplate = (index: number) => {
@@ -404,6 +446,83 @@ export function EvalRunner({
     }
   };
 
+  const handleGenerateNegativeTests = async () => {
+    posthog.capture("eval_generate_negative_tests_button_clicked", {
+      location: "eval_runner",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      step: currentStep,
+    });
+
+    if (!isAuthenticated) {
+      toast.error("Please sign in to generate negative tests");
+      return;
+    }
+
+    if (selectedServers.length === 0) {
+      toast.error("Please select at least one server");
+      return;
+    }
+
+    setIsGeneratingNegativeTests(true);
+
+    try {
+      const accessToken = await getAccessToken();
+
+      const response = await fetch(
+        API_ENDPOINTS.EVALS_GENERATE_NEGATIVE_TESTS,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serverIds: selectedServers,
+            convexAuthToken: accessToken,
+          }),
+        },
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to generate negative tests");
+      }
+
+      if (result.tests && result.tests.length > 0) {
+        const generatedNegativeTemplates: TestTemplate[] = result.tests.map(
+          (test: {
+            title: string;
+            scenario: string;
+            query: string;
+            runs: number;
+          }) => ({
+            title: test.title || "Untitled Negative Test",
+            query: test.query || "",
+            runs: Number(test.runs) > 0 ? Number(test.runs) : 1,
+            expectedToolCalls: [],
+            isNegativeTest: true,
+            scenario: test.scenario || "",
+          }),
+        );
+
+        // Append to existing templates instead of replacing
+        setTestTemplates((prev) => [...prev, ...generatedNegativeTemplates]);
+        setCurrentStep(2);
+        toast.success(
+          `Generated ${generatedNegativeTemplates.length} negative test template(s).`,
+        );
+      }
+    } catch (error) {
+      console.error("Failed to generate negative tests:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to generate negative test cases",
+      );
+    } finally {
+      setIsGeneratingNegativeTests(false);
+    }
+  };
+
   const handleNext = () => {
     if (currentStep >= WIZARD_STEPS.length - 1) return;
     if (!canAdvance) return;
@@ -490,6 +609,8 @@ export function EvalRunner({
           model: model.id,
           provider: model.provider,
           expectedToolCalls: template.expectedToolCalls,
+          isNegativeTest: template.isNegativeTest,
+          scenario: template.scenario,
           testTemplateKey,
         }));
       });
@@ -586,8 +707,11 @@ export function EvalRunner({
               stepCompletion.servers && stepCompletion.model
             }
             isGenerating={isGenerating}
+            isGeneratingNegativeTests={isGeneratingNegativeTests}
             onGenerateTests={handleGenerateTests}
+            onGenerateNegativeTests={handleGenerateNegativeTests}
             onAddTestTemplate={handleAddTestTemplate}
+            onAddNegativeTestTemplate={handleAddNegativeTestTemplate}
             onRemoveTestTemplate={handleRemoveTestTemplate}
             onUpdateTestTemplate={handleUpdateTestTemplate}
           />
@@ -677,14 +801,25 @@ export function EvalRunner({
         : "Continue to next step";
     }
 
-    // Check if we're on the tests step and tool calls are invalid
+    // Check if we're on the tests step and test configurations are invalid
     if (currentStep === 2) {
       // Step 2 is the tests step
-      const hasInvalidToolCalls = validTestTemplates.some(
-        (template) => !validateExpectedToolCalls(template.expectedToolCalls),
+      const hasInvalidPositiveTests = validTestTemplates.some(
+        (template) =>
+          !template.isNegativeTest &&
+          !validateExpectedToolCalls(template.expectedToolCalls),
       );
-      if (hasInvalidToolCalls) {
+      const hasInvalidNegativeTests = validTestTemplates.some(
+        (template) =>
+          template.isNegativeTest &&
+          (!template.scenario?.trim() || !template.query.trim()),
+      );
+
+      if (hasInvalidPositiveTests) {
         return "All tool names must be specified and argument values cannot be empty";
+      }
+      if (hasInvalidNegativeTests) {
+        return "Negative tests require both a scenario description and user prompt";
       }
     }
 

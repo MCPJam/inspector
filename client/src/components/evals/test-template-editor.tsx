@@ -14,6 +14,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Switch } from "@/components/ui/switch";
 import { ExpectedToolsEditor } from "./expected-tools-editor";
 import { TestResultsPanel } from "./test-results-panel";
 import {
@@ -43,6 +44,9 @@ interface TestTemplate {
     toolName: string;
     arguments: Record<string, any>;
   }>;
+  isNegativeTest?: boolean;
+  scenario?: string;
+  expectedOutput?: string;
   advancedConfig?: Record<string, unknown>;
 }
 
@@ -57,8 +61,14 @@ const validateExpectedToolCalls = (
     toolName: string;
     arguments: Record<string, any>;
   }>,
+  isNegativeTest?: boolean,
 ): boolean => {
-  // Must have at least one tool call
+  // For negative tests, no tool calls are expected - always valid
+  if (isNegativeTest) {
+    return true;
+  }
+
+  // Must have at least one tool call for positive tests
   if (toolCalls.length === 0) {
     return false;
   }
@@ -123,6 +133,9 @@ export function TestTemplateEditor({
   >([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [isRunning, setIsRunning] = useState(false);
+  const [optimisticNegative, setOptimisticNegative] = useState<boolean | null>(
+    null,
+  );
   const [currentQuickRunResult, setCurrentQuickRunResult] = useState<
     any | null
   >(null);
@@ -153,6 +166,8 @@ export function TestTemplateEditor({
   useEffect(() => {
     // Clear the result when switching test cases
     setCurrentQuickRunResult(null);
+    // Reset optimistic state when switching test cases
+    setOptimisticNegative(null);
   }, [selectedTestCaseId]);
 
   // Load lastMessageRun into currentQuickRunResult when it's available
@@ -171,6 +186,9 @@ export function TestTemplateEditor({
         query: currentTestCase.query,
         runs: currentTestCase.runs,
         expectedToolCalls: currentTestCase.expectedToolCalls || [],
+        isNegativeTest: currentTestCase.isNegativeTest,
+        scenario: currentTestCase.scenario,
+        expectedOutput: currentTestCase.expectedOutput,
         advancedConfig: currentTestCase.advancedConfig,
       });
     }
@@ -268,22 +286,32 @@ export function TestTemplateEditor({
       editForm.query !== currentTestCase.query ||
       editForm.runs !== currentTestCase.runs ||
       normalizedExpectedToolCalls !== normalizedCurrentExpectedToolCalls ||
-      normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig
+      normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig ||
+      (editForm.scenario || "") !== (currentTestCase.scenario || "") ||
+      (editForm.expectedOutput || "") !== (currentTestCase.expectedOutput || "")
     );
   }, [editForm, currentTestCase]);
 
   // Check if expected tool calls are valid
   const areExpectedToolCallsValid = useMemo(() => {
     if (!editForm) return true; // Allow saving if form is not loaded yet
-    return validateExpectedToolCalls(editForm.expectedToolCalls || []);
-  }, [editForm]);
+    return validateExpectedToolCalls(
+      editForm.expectedToolCalls || [],
+      currentTestCase?.isNegativeTest,
+    );
+  }, [editForm, currentTestCase?.isNegativeTest]);
 
   // Separate save handler
   const handleSave = async () => {
     if (!editForm || !currentTestCase) return;
 
-    // Validate expected tool calls before saving
-    if (!validateExpectedToolCalls(editForm.expectedToolCalls || [])) {
+    // Validate expected tool calls before saving (skip for negative tests)
+    if (
+      !validateExpectedToolCalls(
+        editForm.expectedToolCalls || [],
+        currentTestCase.isNegativeTest,
+      )
+    ) {
       toast.error(
         "Cannot save: All tool names must be specified and argument values cannot be empty.",
       );
@@ -297,6 +325,8 @@ export function TestTemplateEditor({
         query: editForm.query,
         runs: editForm.runs,
         expectedToolCalls: editForm.expectedToolCalls,
+        scenario: editForm.scenario,
+        expectedOutput: editForm.expectedOutput,
         advancedConfig: editForm.advancedConfig,
       });
       toast.success("Changes saved");
@@ -455,6 +485,29 @@ export function TestTemplateEditor({
     }
   };
 
+  const handleToggleNegative = async () => {
+    if (!currentTestCase) return;
+
+    const newValue = !currentTestCase.isNegativeTest;
+    // Optimistically update the UI immediately
+    setOptimisticNegative(newValue);
+    try {
+      await updateTestCaseMutation({
+        testCaseId: currentTestCase._id,
+        isNegativeTest: newValue,
+        // Clear expected tool calls when converting to negative test
+        ...(newValue && { expectedToolCalls: [] }),
+      });
+      // Clear optimistic state after server confirms (Convex query will take over)
+      setOptimisticNegative(null);
+    } catch (error) {
+      console.error("Failed to toggle negative test:", error);
+      toast.error("Failed to update test type");
+      // Revert optimistic update on error
+      setOptimisticNegative(null);
+    }
+  };
+
   // Use models from the test case (which come from the suite configuration)
   const modelOptions = useMemo(() => {
     if (!currentTestCase) return [];
@@ -504,30 +557,41 @@ export function TestTemplateEditor({
                   />
                 ) : (
                   <h2
-                    className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity"
+                    className="text-lg font-semibold cursor-pointer hover:opacity-60 transition-opacity truncate"
                     onClick={handleTitleClick}
                   >
                     {editForm?.title || currentTestCase.title}
                   </h2>
                 )}
               </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Switch
+                      checked={
+                        optimisticNegative ??
+                        currentTestCase.isNegativeTest ??
+                        false
+                      }
+                      onCheckedChange={handleToggleNegative}
+                      className="scale-75 data-[state=checked]:bg-orange-500"
+                    />
+                    <span
+                      className={`text-[10px] ${(optimisticNegative ?? currentTestCase.isNegativeTest) ? "text-orange-500" : "text-muted-foreground"}`}
+                    >
+                      NEG
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">
+                    {(optimisticNegative ?? currentTestCase.isNegativeTest)
+                      ? "Negative test: passes when no tools are called"
+                      : "Click to mark as negative test"}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
               <div className="flex items-center gap-3 shrink-0">
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground">Runs:</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={editForm?.runs || 1}
-                    onChange={(e) =>
-                      editForm &&
-                      setEditForm({
-                        ...editForm,
-                        runs: parseInt(e.target.value) || 1,
-                      })
-                    }
-                    className="h-7 w-16 text-xs border-0 bg-muted/50"
-                  />
-                </div>
                 <Select
                   value={selectedModel}
                   onValueChange={setSelectedModel}
@@ -627,30 +691,96 @@ export function TestTemplateEditor({
             {/* Edit Content */}
             {editForm ? (
               <>
+                {/* Scenario field - shown for all tests */}
                 <div className="px-1 pt-2">
+                  <Label className="text-xs text-muted-foreground font-medium">
+                    Scenario
+                  </Label>
+                  <p className="text-[10px] text-muted-foreground mb-1.5">
+                    {currentTestCase?.isNegativeTest
+                      ? "Describe the scenario where your app should not trigger"
+                      : "Describe the use case to test"}
+                  </p>
+                  <Textarea
+                    value={editForm.scenario || ""}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, scenario: e.target.value })
+                    }
+                    rows={2}
+                    placeholder={
+                      currentTestCase?.isNegativeTest
+                        ? "e.g., User asks about unrelated topic..."
+                        : "e.g., Check current time display..."
+                    }
+                    className="text-sm resize-none border-0 bg-muted/30 focus-visible:bg-muted/50 transition-colors px-3 py-2"
+                  />
+                </div>
+
+                <div className="px-1 pt-3">
+                  <Label className="text-xs text-muted-foreground font-medium">
+                    User Prompt
+                  </Label>
+                  <p className="text-[10px] text-muted-foreground mb-1.5">
+                    {currentTestCase?.isNegativeTest
+                      ? "Example prompt where your app should not trigger"
+                      : "The exact prompt or interaction to begin the test"}
+                  </p>
                   <Textarea
                     value={editForm.query}
                     onChange={(e) =>
                       setEditForm({ ...editForm, query: e.target.value })
                     }
-                    rows={10}
+                    rows={4}
                     placeholder="Enter your test prompt here..."
                     className="font-mono text-sm resize-none border-0 bg-muted/30 focus-visible:bg-muted/50 transition-colors px-3 py-2.5"
                   />
                 </div>
 
-                <div className="px-1 pt-1">
-                  <ExpectedToolsEditor
-                    toolCalls={editForm.expectedToolCalls || []}
-                    onChange={(toolCalls) =>
-                      setEditForm({
-                        ...editForm,
-                        expectedToolCalls: toolCalls,
-                      })
-                    }
-                    availableTools={availableTools}
-                  />
-                </div>
+                {/* Tool Triggered and Expected Output - only for positive tests */}
+                {!currentTestCase?.isNegativeTest && (
+                  <>
+                    <div className="px-1 pt-3">
+                      <Label className="text-xs text-muted-foreground font-medium">
+                        Tool Triggered
+                      </Label>
+                      <p className="text-[10px] text-muted-foreground mb-1.5">
+                        Which tools should be called?
+                      </p>
+                      <ExpectedToolsEditor
+                        toolCalls={editForm.expectedToolCalls || []}
+                        onChange={(toolCalls) =>
+                          setEditForm({
+                            ...editForm,
+                            expectedToolCalls: toolCalls,
+                          })
+                        }
+                        availableTools={availableTools}
+                      />
+                    </div>
+
+                    <div className="px-1 pt-3">
+                      <Label className="text-xs text-muted-foreground font-medium">
+                        Expected Output
+                      </Label>
+                      <p className="text-[10px] text-muted-foreground mb-1.5">
+                        The output or experience we should expect to receive
+                        back from the MCP server
+                      </p>
+                      <Textarea
+                        value={editForm.expectedOutput || ""}
+                        onChange={(e) =>
+                          setEditForm({
+                            ...editForm,
+                            expectedOutput: e.target.value,
+                          })
+                        }
+                        rows={2}
+                        placeholder="e.g., Should return pokemon data with name, type, and stats..."
+                        className="text-sm resize-none border-0 bg-muted/30 focus-visible:bg-muted/50 transition-colors px-3 py-2"
+                      />
+                    </div>
+                  </>
+                )}
               </>
             ) : (
               <div className="py-8 text-center text-xs text-muted-foreground">

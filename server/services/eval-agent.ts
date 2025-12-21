@@ -22,6 +22,9 @@ export interface GeneratedTestCase {
     toolName: string;
     arguments: Record<string, any>;
   }>;
+  scenario: string; // Description of the use case being tested
+  expectedOutput: string; // The output or experience expected from the MCP server
+  isNegativeTest?: boolean; // When true, test passes if NO tools are called
 }
 
 const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating realistic test cases for MCP (Model Context Protocol) servers.
@@ -30,30 +33,47 @@ const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating realist
 The Model Context Protocol enables AI assistants to securely access external data and tools. MCP servers expose tools, resources, and prompts that AI models can use to accomplish user tasks. Your test cases should reflect real-world usage patterns where users ask an AI assistant to perform tasks, and the assistant uses MCP tools to fulfill those requests.
 
 **Your Task:**
-Generate 6 test cases with varying complexity levels that mimic how real users would interact with an AI assistant using these MCP tools.
+Generate 8 test cases total:
+- 5 normal test cases (where tools SHOULD be triggered)
+- 3 negative test cases (where tools should NOT be triggered)
 
-**Test Case Distribution:**
+**Normal Test Case Distribution (5 tests):**
 - **2 EASY tests** (single tool): Simple, straightforward tasks using one tool
 - **2 MEDIUM tests** (2+ tools): Multi-step workflows requiring 2-3 tools in sequence or parallel
-- **2 HARD tests** (3+ tools): Complex scenarios requiring 3+ tools, conditional logic, or cross-server operations
+- **1 HARD test** (3+ tools): Complex scenarios requiring 3+ tools, conditional logic, or cross-server operations
 
-**Guidelines:**
-1. **Realistic User Queries**: Write queries as if a real user is talking to an AI assistant (e.g., "Help me find all tasks due this week" not "Call the list_tasks tool")
+**Negative Test Cases (3 tests):**
+Negative test cases are prompts where the AI assistant should NOT use any tools. These help ensure the AI doesn't incorrectly trigger tools when they're not needed.
+- **1 Meta/documentation question**: Ask about capabilities, documentation, or how tools work
+- **1 Similar keywords in non-actionable context**: Use words from tool descriptions but in casual conversation or unrelated contexts
+- **1 Ambiguous/incomplete request**: Vague requests that shouldn't trigger tools
+
+**Guidelines for Normal Tests:**
+1. **Realistic User Queries**: Write queries as if a real user is talking to an AI assistant
 2. **Natural Workflows**: Chain tools together in logical sequences that solve real problems
 3. **Cross-Server Tests**: If multiple servers are available, create tests that use tools from different servers together
 4. **Specific Details**: Include concrete examples (dates, names, values) to make tests actionable
-5. **Test Titles**: Write clear, descriptive titles WITHOUT difficulty prefixes (e.g., "Read project configuration" not "EASY: Read project configuration")
+5. **Test Titles**: Write clear, descriptive titles WITHOUT difficulty prefixes
+
+**Guidelines for Negative Tests:**
+1. **Edge Cases**: Create prompts that test the boundary between triggering and not triggering tools
+2. **Similar Keywords**: Use words that appear in tool descriptions but in non-actionable contexts
+3. **Meta Questions**: Ask about capabilities, documentation, or how tools work (not using them)
+4. **Conversational**: Include casual conversation that mentions tool-related topics
 
 **Output Format (CRITICAL):**
 Respond with ONLY a valid JSON array. No explanations, no markdown code blocks, just the raw JSON array.
 
 Each test case must include:
-- title: Clear, descriptive title (no difficulty prefix)
+- title: Clear, descriptive title
 - query: Natural language user query
 - runs: Number of times to run (usually 1)
-- expectedToolCalls: Array of tool calls with toolName and arguments
+- scenario: Description of the use case (for normal tests) or why tools should NOT trigger (for negative tests)
+- expectedOutput: The output or experience expected from the MCP server (for normal tests) or expected AI behavior (for negative tests)
+- expectedToolCalls: Array of tool calls (empty [] for negative tests)
   - toolName: Name of the tool to call
-  - arguments: Object with expected arguments (can be empty {} if you don't want to validate specific values)
+  - arguments: Object with expected arguments (can be empty {})
+- isNegativeTest: Boolean, true for negative tests, false or omitted for normal tests
 
 Example:
 [
@@ -61,17 +81,22 @@ Example:
     "title": "Read project configuration",
     "query": "Show me the contents of config.json in the current project",
     "runs": 1,
+    "scenario": "User needs to view a configuration file to understand project settings",
+    "expectedOutput": "The contents of config.json displayed in a readable format",
     "expectedToolCalls": [
       {
         "toolName": "read_file",
         "arguments": {}
       }
-    ]
+    ],
+    "isNegativeTest": false
   },
   {
     "title": "Find and analyze recent tasks",
     "query": "Find all tasks created this week and summarize their status",
     "runs": 1,
+    "scenario": "User wants to review recent task activity for project management",
+    "expectedOutput": "A summary of tasks created this week with their current status",
     "expectedToolCalls": [
       {
         "toolName": "list_tasks",
@@ -81,26 +106,26 @@ Example:
         "toolName": "get_task_details",
         "arguments": {}
       }
-    ]
+    ],
+    "isNegativeTest": false
   },
   {
-    "title": "Cross-server project setup",
-    "query": "Create a new project folder, initialize a git repository, and create a task to track the project setup",
+    "title": "Documentation inquiry about search",
+    "query": "Can you explain what parameters the search tool accepts?",
     "runs": 1,
-    "expectedToolCalls": [
-      {
-        "toolName": "create_directory",
-        "arguments": {}
-      },
-      {
-        "toolName": "git_init",
-        "arguments": {}
-      },
-      {
-        "toolName": "create_task",
-        "arguments": {}
-      }
-    ]
+    "scenario": "User is asking about how the search feature works, not performing a search",
+    "expectedOutput": "AI provides documentation/explanation without calling any tools",
+    "expectedToolCalls": [],
+    "isNegativeTest": true
+  },
+  {
+    "title": "Casual mention of files",
+    "query": "I was reading about file systems yesterday. They're quite interesting!",
+    "runs": 1,
+    "scenario": "User is having a general conversation that mentions files but doesn't request file operations",
+    "expectedOutput": "AI engages in casual conversation without triggering file tools",
+    "expectedToolCalls": [],
+    "isNegativeTest": true
   }
 ]`;
 
@@ -147,7 +172,7 @@ ${toolsList}`;
       ? `\n**IMPORTANT**: You have ${serverCount} servers available. Create at least 2 test cases that use tools from MULTIPLE servers to test cross-server workflows.`
       : "";
 
-  const userPrompt = `Generate 6 test cases for the following MCP server tools:
+  const userPrompt = `Generate 8 test cases for the following MCP server tools:
 
 ${toolsContext}
 
@@ -156,11 +181,14 @@ ${toolsContext}
 - ${totalTools} total tools${crossServerGuidance}
 
 **Remember:**
-1. Create exactly 6 tests: 2 EASY (1 tool), 2 MEDIUM (2-3 tools), 2 HARD (3+ tools)
+1. Create exactly 8 tests:
+   - 5 normal tests: 2 EASY (1 tool), 2 MEDIUM (2-3 tools), 1 HARD (3+ tools)
+   - 3 negative tests: 1 meta/doc question, 1 similar keywords non-actionable, 1 ambiguous
 2. Write realistic user queries that sound natural
-3. Use specific examples (dates, filenames, values)
-4. Chain tools in logical sequences
-5. Respond with ONLY a JSON array - no other text or markdown`;
+3. Include scenario and expectedOutput for ALL tests
+4. Use specific examples (dates, filenames, values) for normal tests
+5. For negative tests, use keywords from tools but in non-actionable contexts
+6. Respond with ONLY a JSON array - no other text or markdown`;
 
   const messageHistory: ModelMessage[] = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
@@ -251,11 +279,22 @@ ${toolsContext}
           .filter((call: any) => call !== null);
       }
 
+      const isNegativeTest = tc.isNegativeTest === true;
+
       return {
         title: tc.title || "Untitled Test",
         query: tc.query || "",
         runs: typeof tc.runs === "number" ? tc.runs : 1,
         expectedToolCalls: normalizedToolCalls,
+        scenario:
+          tc.scenario ||
+          (isNegativeTest ? "Negative test case" : "No scenario provided"),
+        expectedOutput:
+          tc.expectedOutput ||
+          (isNegativeTest
+            ? "AI responds without calling any tools"
+            : "No expected output provided"),
+        isNegativeTest,
       };
     });
 

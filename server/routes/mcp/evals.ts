@@ -5,6 +5,10 @@ import {
   generateTestCases,
   type DiscoveredTool,
 } from "../../services/eval-agent";
+import {
+  generateNegativeTestCases,
+  convertToEvalTestCases,
+} from "../../services/negative-test-agent";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
 import type { MCPClientManager } from "@/sdk";
@@ -110,6 +114,8 @@ const RunEvalsRequestSchema = z.object({
           arguments: z.record(z.string(), z.any()),
         }),
       ),
+      isNegativeTest: z.boolean().optional(), // When true, test passes if NO tools are called
+      scenario: z.string().optional(), // Description of why app should NOT trigger (negative tests only)
       advancedConfig: z
         .object({
           system: z.string().optional(),
@@ -197,6 +203,8 @@ evals.post("/run", async (c) => {
         runs: number;
         models: Array<{ model: string; provider: string }>;
         expectedToolCalls: any[];
+        isNegativeTest?: boolean;
+        scenario?: string;
         judgeRequirement?: string;
         advancedConfig?: any;
       }
@@ -211,6 +219,8 @@ evals.post("/run", async (c) => {
           runs: test.runs,
           models: [],
           expectedToolCalls: test.expectedToolCalls,
+          isNegativeTest: test.isNegativeTest,
+          scenario: test.scenario,
           advancedConfig: test.advancedConfig,
         });
       }
@@ -278,6 +288,12 @@ evals.post("/run", async (c) => {
             JSON.stringify(
               normalizeForComparison(testCaseData.expectedToolCalls || []),
             );
+          const isNegativeTestChanged =
+            normalize(existingTestCase.isNegativeTest) !==
+            normalize(testCaseData.isNegativeTest);
+          const scenarioChanged =
+            normalize(existingTestCase.scenario) !==
+            normalize(testCaseData.scenario);
           const judgeRequirementChanged =
             normalize(existingTestCase.judgeRequirement) !==
             normalize(testCaseData.judgeRequirement);
@@ -291,6 +307,8 @@ evals.post("/run", async (c) => {
             modelsChanged ||
             runsChanged ||
             expectedToolCallsChanged ||
+            isNegativeTestChanged ||
+            scenarioChanged ||
             judgeRequirementChanged ||
             advancedConfigChanged;
 
@@ -301,6 +319,8 @@ evals.post("/run", async (c) => {
               models: testCaseData.models,
               runs: testCaseData.runs,
               expectedToolCalls: testCaseData.expectedToolCalls,
+              isNegativeTest: testCaseData.isNegativeTest,
+              scenario: testCaseData.scenario,
               advancedConfig: testCaseData.advancedConfig,
             });
           }
@@ -312,6 +332,8 @@ evals.post("/run", async (c) => {
             models: testCaseData.models,
             runs: testCaseData.runs,
             expectedToolCalls: testCaseData.expectedToolCalls,
+            isNegativeTest: testCaseData.isNegativeTest,
+            scenario: testCaseData.scenario,
             judgeRequirement: testCaseData.judgeRequirement,
             advancedConfig: testCaseData.advancedConfig,
           });
@@ -344,6 +366,8 @@ evals.post("/run", async (c) => {
           models: testCaseData.models,
           runs: testCaseData.runs,
           expectedToolCalls: testCaseData.expectedToolCalls,
+          isNegativeTest: testCaseData.isNegativeTest,
+          scenario: testCaseData.scenario,
           judgeRequirement: testCaseData.judgeRequirement,
           advancedConfig: testCaseData.advancedConfig,
         });
@@ -420,6 +444,7 @@ const RunTestCaseRequestSchema = z.object({
     .object({
       query: z.string().optional(),
       expectedToolCalls: z.array(z.any()).optional(),
+      isNegativeTest: z.boolean().optional(),
       runs: z.number().optional(),
     })
     .optional(),
@@ -489,6 +514,8 @@ evals.post("/run-test-case", async (c) => {
         testCaseOverrides?.expectedToolCalls ??
         testCase.expectedToolCalls ??
         [],
+      isNegativeTest:
+        testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
       advancedConfig: testCase.advancedConfig,
       testCaseId: testCase._id,
     };
@@ -646,6 +673,83 @@ evals.post("/generate-tests", async (c) => {
     });
   } catch (error) {
     logger.error("Error in /evals/generate-tests", error);
+    return c.json(
+      {
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+const GenerateNegativeTestsRequestSchema = z.object({
+  serverIds: z
+    .array(z.string())
+    .min(1, { message: "At least one server must be selected" }),
+  convexAuthToken: z.string(),
+});
+
+type GenerateNegativeTestsRequest = z.infer<
+  typeof GenerateNegativeTestsRequestSchema
+>;
+
+evals.post("/generate-negative-tests", async (c) => {
+  try {
+    const body = await c.req.json();
+
+    const validationResult = GenerateNegativeTestsRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const { serverIds, convexAuthToken } =
+      validationResult.data as GenerateNegativeTestsRequest;
+
+    const clientManager = c.mcpClientManager;
+    const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
+
+    const filteredTools = await collectToolsForServers(
+      clientManager,
+      resolvedServerIds,
+    );
+
+    if (filteredTools.length === 0) {
+      return c.json(
+        {
+          error: "No tools found for selected servers",
+        },
+        400,
+      );
+    }
+
+    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+    if (!convexHttpUrl) {
+      throw new Error("CONVEX_HTTP_URL is not set");
+    }
+
+    // Generate negative test cases using the agent
+    const negativeTestCases = await generateNegativeTestCases(
+      filteredTools,
+      convexHttpUrl,
+      convexAuthToken,
+    );
+
+    // Convert to eval test case format (with isNegativeTest: true)
+    const evalTests = convertToEvalTestCases(negativeTestCases);
+
+    return c.json({
+      success: true,
+      tests: negativeTestCases, // Return the raw negative test cases with scenario info
+      evalTests, // Also return in the format ready for the eval system
+    });
+  } catch (error) {
+    logger.error("Error in /evals/generate-negative-tests", error);
     return c.json(
       {
         error: error instanceof Error ? error.message : "Unknown error",

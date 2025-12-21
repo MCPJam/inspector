@@ -40,6 +40,7 @@ export type EvalTestCase = {
     toolName: string;
     arguments: Record<string, any>;
   }>;
+  isNegativeTest?: boolean; // When true, test passes if NO tools are called
   advancedConfig?: {
     system?: string;
     temperature?: number;
@@ -224,7 +225,7 @@ const runIterationWithAiSdk = async ({
       );
       if (currentRun?.status === "cancelled") {
         // Return empty result for cancelled iteration
-        return evaluateResults(test.expectedToolCalls, []);
+        return evaluateResults(test.expectedToolCalls, [], test.isNegativeTest);
       }
     } catch (error) {
       // If run not found, it was likely deleted - skip iteration
@@ -234,7 +235,7 @@ const runIterationWithAiSdk = async ({
         errorMessage.includes("not found") ||
         errorMessage.includes("unauthorized")
       ) {
-        return evaluateResults(test.expectedToolCalls, []);
+        return evaluateResults(test.expectedToolCalls, [], test.isNegativeTest);
       }
     }
   }
@@ -264,6 +265,7 @@ const runIterationWithAiSdk = async ({
       model: test.model,
       runs: test.runs,
       expectedToolCalls: test.expectedToolCalls,
+      isNegativeTest: test.isNegativeTest,
       advancedConfig: test.advancedConfig,
     },
     iterationNumber: runIndex + 1,
@@ -366,7 +368,11 @@ const runIterationWithAiSdk = async ({
       }
     }
 
-    const evaluation = evaluateResults(expectedToolCalls, toolsCalled);
+    const evaluation = evaluateResults(
+      expectedToolCalls,
+      toolsCalled,
+      test.isNegativeTest,
+    );
 
     const usage: UsageTotals = {
       inputTokens: result.usage?.inputTokens,
@@ -396,7 +402,7 @@ const runIterationWithAiSdk = async ({
     if (error instanceof Error && error.name === "AbortError") {
       logger.debug("[evals] iteration aborted due to cancellation");
       // Don't record anything for aborted iterations
-      return evaluateResults(expectedToolCalls, []);
+      return evaluateResults(expectedToolCalls, [], test.isNegativeTest);
     }
 
     logger.error("[evals] iteration failed", error);
@@ -438,7 +444,7 @@ const runIterationWithAiSdk = async ({
     } else {
       await finishIterationDirectly(convexClient, failParams);
     }
-    return evaluateResults(expectedToolCalls, []);
+    return evaluateResults(expectedToolCalls, [], test.isNegativeTest);
   }
 };
 
@@ -463,7 +469,7 @@ const runIterationViaBackend = async ({
       );
       if (currentRun?.status === "cancelled") {
         // Return empty result for cancelled iteration
-        return evaluateResults(test.expectedToolCalls, []);
+        return evaluateResults(test.expectedToolCalls, [], test.isNegativeTest);
       }
     } catch (error) {
       // If run not found, it was likely deleted - skip iteration
@@ -473,7 +479,7 @@ const runIterationViaBackend = async ({
         errorMessage.includes("not found") ||
         errorMessage.includes("unauthorized")
       ) {
-        return evaluateResults(test.expectedToolCalls, []);
+        return evaluateResults(test.expectedToolCalls, [], test.isNegativeTest);
       }
     }
   }
@@ -502,6 +508,7 @@ const runIterationViaBackend = async ({
       model: test.model,
       runs: test.runs,
       expectedToolCalls: test.expectedToolCalls,
+      isNegativeTest: test.isNegativeTest,
       advancedConfig: test.advancedConfig,
     },
     iterationNumber: runIndex + 1,
@@ -652,7 +659,7 @@ const runIterationViaBackend = async ({
       if (error instanceof Error && error.name === "AbortError") {
         logger.debug("[evals] backend iteration aborted due to cancellation");
         // Return empty result for aborted iterations
-        return evaluateResults(expectedToolCalls, []);
+        return evaluateResults(expectedToolCalls, [], test.isNegativeTest);
       }
 
       // Extract error message
@@ -679,7 +686,11 @@ const runIterationViaBackend = async ({
     }
   }
 
-  const evaluation = evaluateResults(expectedToolCalls, toolsCalled);
+  const evaluation = evaluateResults(
+    expectedToolCalls,
+    toolsCalled,
+    test.isNegativeTest,
+  );
 
   const finishParams = {
     iterationId,

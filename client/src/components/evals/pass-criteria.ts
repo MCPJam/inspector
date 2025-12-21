@@ -1,3 +1,4 @@
+import { matchToolCalls } from "@/shared/eval-matching";
 import { EvalIteration, EvalSuiteRun } from "./types";
 
 export type PassCriteriaType =
@@ -74,58 +75,37 @@ export function computeIterationResult(
 }
 
 /**
- * Compute if an individual iteration passed based on its data
+ * Compute if an individual iteration passed based on its data.
+ * Uses the shared two-pass matching algorithm from @/shared/eval-matching.
  */
 export function computeIterationPassed(
   iteration: EvalIteration,
   criteria?: PassCriteria,
 ): boolean {
-  if (!iteration.testCaseSnapshot?.expectedToolCalls) {
-    return true; // No expectations = pass
-  }
-
-  const expected = iteration.testCaseSnapshot.expectedToolCalls;
   const actual = iteration.actualToolCalls || [];
+  const expected = iteration.testCaseSnapshot?.expectedToolCalls || [];
+  const isNegativeTest = iteration.testCaseSnapshot?.isNegativeTest;
 
-  // Find missing tool calls (expected but not called)
-  const missing = expected.filter(
-    (exp) => !actual.some((act) => act.toolName === exp.toolName),
-  );
+  // Use shared matching logic
+  const matchResult = matchToolCalls(expected, actual, isNegativeTest);
 
-  // Find unexpected tool calls (called but not expected)
-  const unexpected = actual.filter(
-    (act) => !expected.some((exp) => exp.toolName === act.toolName),
-  );
-
-  // Check argument mismatches for tools that were called
-  const argumentMismatches: string[] = [];
-  for (const exp of expected) {
-    const act = actual.find((a) => a.toolName === exp.toolName);
-    if (act) {
-      const expectedArgs = exp.arguments || {};
-      const actualArgs = act.arguments || {};
-
-      // Only check if expected arguments were specified
-      if (Object.keys(expectedArgs).length > 0) {
-        let mismatch = false;
-        for (const [key, value] of Object.entries(expectedArgs)) {
-          if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
-            mismatch = true;
-            break;
-          }
-        }
-        if (mismatch) {
-          argumentMismatches.push(exp.toolName);
-        }
-      }
-    }
+  // For negative tests, the shared function handles everything
+  if (isNegativeTest) {
+    return matchResult.passed;
   }
 
-  // Apply tolerances
-  const effectiveMissing = criteria?.allowUnexpectedTools ? [] : missing;
+  // For positive tests with no expected calls but tools were called = pass
+  if (expected.length === 0 && actual.length > 0) {
+    return true;
+  }
+
+  // Apply tolerances from criteria
+  const effectiveMissing = criteria?.allowUnexpectedTools
+    ? []
+    : matchResult.missing;
   const effectiveMismatches = criteria?.ignoreArgumentMismatches
     ? []
-    : argumentMismatches;
+    : matchResult.argumentMismatches;
 
   return effectiveMissing.length === 0 && effectiveMismatches.length === 0;
 }
@@ -141,11 +121,18 @@ export function evaluatePassCriteria(
   // Filter to only this run's iterations
   const runIterations = iterations.filter((it) => it.suiteRunId === run._id);
 
-  // Compute passed/failed for each iteration
-  const iterationsWithResults = runIterations.map((it) => ({
-    ...it,
-    passed: computeIterationPassed(it, criteria),
-  }));
+  // Compute passed/failed for each iteration (only completed ones)
+  const iterationsWithResults = runIterations
+    .map((it) => {
+      const result = computeIterationResult(it, criteria);
+      return {
+        ...it,
+        result,
+        passed: result === "passed",
+      };
+    })
+    // Only count completed iterations - exclude pending/cancelled
+    .filter((it) => it.result === "passed" || it.result === "failed");
 
   const totalCount = iterationsWithResults.length;
   const passedCount = iterationsWithResults.filter((it) => it.passed).length;

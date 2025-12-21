@@ -1,10 +1,10 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { IterationDetails } from "./iteration-details";
 import type { EvalIteration, EvalCase } from "./types";
-import { formatTime, formatDuration } from "./helpers";
+import { formatDuration } from "./helpers";
+import { UI_CONFIG } from "./constants";
+import { computeIterationResult } from "./pass-criteria";
 
 interface TestResultsPanelProps {
   iteration: EvalIteration | null;
@@ -22,12 +22,16 @@ export function TestResultsPanel({
   serverNames = [],
 }: TestResultsPanelProps) {
   const hasResult = iteration !== null;
-  const isPassed = iteration?.result === "passed";
-  const isFailed = iteration?.result === "failed";
-  const isPending =
-    iteration?.status === "running" || iteration?.status === "pending";
+  // Recompute pass/fail to ensure consistency with charts/aggregations
+  const iterationResult = iteration ? computeIterationResult(iteration) : null;
+  const isPassed = iterationResult === "passed";
+  const isFailed = iterationResult === "failed";
+  const isPending = iterationResult === "pending";
   const modelName = iteration?.testCaseSnapshot?.model || "Unknown";
-  const provider = iteration?.testCaseSnapshot?.provider || "";
+  const startedAt = iteration?.startedAt ?? iteration?.createdAt;
+  const completedAt = iteration?.updatedAt ?? iteration?.createdAt;
+  const durationMs =
+    startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
 
   return (
     <div className="h-full flex flex-col bg-muted/20">
@@ -35,8 +39,18 @@ export function TestResultsPanel({
       {hasResult && !loading && (
         <div className="flex items-center justify-between px-3 py-2 border-b">
           <div className="flex items-center gap-3">
-            {isPassed && <CheckCircle2 className="h-5 w-5 text-success" />}
-            {isFailed && <XCircle className="h-5 w-5 text-destructive" />}
+            {isPassed && (
+              <CheckCircle2
+                className="h-5 w-5"
+                style={{ color: UI_CONFIG.CHART_COLORS.PASSED }}
+              />
+            )}
+            {isFailed && (
+              <XCircle
+                className="h-5 w-5"
+                style={{ color: UI_CONFIG.CHART_COLORS.FAILED }}
+              />
+            )}
             {isPending && (
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             )}
@@ -46,9 +60,7 @@ export function TestResultsPanel({
               </span>
               <span>{iteration.actualToolCalls?.length || 0} tools</span>
               <span>{iteration.tokensUsed?.toLocaleString() || 0} tokens</span>
-              {iteration.duration && (
-                <span>{formatDuration(iteration.duration)}</span>
-              )}
+              {durationMs !== null && <span>{formatDuration(durationMs)}</span>}
             </div>
           </div>
           {onClear && (
