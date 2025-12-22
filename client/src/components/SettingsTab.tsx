@@ -5,6 +5,7 @@ import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
 import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
 import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
+import { AzureOpenAIConfigDialog } from "./setting/AzureOpenAIConfigDialog";
 
 interface ProviderConfig {
   id: string;
@@ -30,6 +31,10 @@ export function SettingsTab() {
     setLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     setOpenRouterSelectedModels,
+    getAzureBaseUrl,
+    setAzureBaseUrl,
+    getAzureModelAlias,
+    setAzureModelAliasTokens,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -46,7 +51,10 @@ export function SettingsTab() {
   const [openRouterApiKeyInput, setOpenRouterApiKeyInput] = useState("");
   const [openRouterSelectedModelsInput, setOpenRouterSelectedModelsInput] =
     useState<string[]>([]);
-
+  const [azureDialogOpen, setAzureDialogOpen] = useState(false);
+  const [azureUrl, setAzureUrl] = useState("");
+  const [azureApiKey, setAzureApiKey] = useState("");
+  const [azureModelAlias, setAzureModelAlias] = useState("");
   const providerConfigs: ProviderConfig[] = [
     {
       id: "openai",
@@ -211,6 +219,31 @@ export function SettingsTab() {
     setOpenRouterSelectedModelsInput([]);
   };
 
+  const handleAzureEdit = () => {
+    setAzureUrl(getAzureBaseUrl());
+    setAzureApiKey(tokens.azure || "");
+    setAzureModelAlias(getAzureModelAlias());
+    setAzureDialogOpen(true);
+  };
+
+  const handleAzureSave = () => {
+    setAzureBaseUrl(azureUrl);
+    setToken("azure", azureApiKey);
+    setAzureModelAliasTokens(azureModelAlias);
+    setAzureDialogOpen(false);
+    setAzureUrl("");
+    setAzureApiKey("");
+    setAzureModelAlias("");
+  };
+
+  const handleAzureCancel = () => {
+    setAzureDialogOpen(false);
+    setAzureUrl("");
+    setAzureApiKey("");
+    setAzureModelAlias("");
+  };
+
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="container mx-auto p-6 max-w-6xl space-y-8">
@@ -240,6 +273,9 @@ export function SettingsTab() {
             onEditLiteLLM={handleLiteLLMEdit}
             openRouterSelectedModels={getOpenRouterSelectedModels()}
             onEditOpenRouter={handleOpenRouterEdit}
+            azureBaseUrl={getAzureBaseUrl()}
+            azureModelAlias={getAzureModelAlias()}
+            onEditAzure={handleAzureEdit}
           />
         </div>
 
@@ -276,6 +312,20 @@ export function SettingsTab() {
           onModelAliasChange={setLitellmModelAlias}
           onSave={handleLiteLLMSave}
           onCancel={handleLiteLLMCancel}
+        />
+
+        {/* Azure Configuration Dialog */}
+        <AzureOpenAIConfigDialog
+          open={azureDialogOpen}
+          onOpenChange={setAzureDialogOpen}
+          baseUrl={azureUrl}
+          apiKey={azureApiKey}
+          modelAlias={azureModelAlias}
+          onBaseUrlChange={setAzureUrl}
+          onApiKeyChange={setAzureApiKey}
+          onModelAliasChange={setAzureModelAlias}
+          onSave={handleAzureSave}
+          onCancel={handleAzureCancel}
         />
 
         {/* OpenRouter Configuration Dialog */}
