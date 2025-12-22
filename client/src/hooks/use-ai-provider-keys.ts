@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from "react";
 export interface ProviderTokens {
   anthropic: string;
   azure: string;
+  azureBaseUrl: string;
+  azureModelAlias: string;
   openai: string;
   deepseek: string;
   google: string;
@@ -32,6 +34,10 @@ export interface useAiProviderKeysReturn {
   setLiteLLMModelAlias: (alias: string) => void;
   getOpenRouterSelectedModels: () => string[];
   setOpenRouterSelectedModels: (models: string[]) => void;
+  getAzureBaseUrl: () => string;
+  setAzureBaseUrl: (url: string) => void;
+  getAzureModelAlias: () => string;
+  setAzureModelAlias: (alias: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
@@ -49,6 +55,8 @@ const defaultTokens: ProviderTokens = {
   litellm: "", // LiteLLM API key (optional, depends on proxy setup)
   litellmBaseUrl: "http://localhost:4000", // Default LiteLLM proxy URL
   litellmModelAlias: "", // Model name/alias to use with LiteLLM
+  azureBaseUrl: "",
+  azureModelAlias: "",
   openrouter: "",
   openRouterSelectedModels: [],
 };
@@ -170,6 +178,29 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
+  const getAzureBaseUrl = useCallback(() => {
+    return tokens.azureBaseUrl || defaultTokens.azureBaseUrl;
+  }, [tokens.azureBaseUrl]);
+
+  const setAzureBaseUrl = useCallback((url: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      azureBaseUrl: url,
+    }));
+  }, []);
+
+  const getAzureModelAlias = useCallback(() => {
+    return tokens.azureModelAlias || defaultTokens.azureModelAlias;
+  }, [tokens.azureModelAlias]);
+
+  const setAzureModelAlias = useCallback((alias: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      azureModelAlias: alias,
+    }));
+  }, []);
+
+
   const getOpenRouterSelectedModels = useCallback(() => {
     return (
       tokens.openRouterSelectedModels || defaultTokens.openRouterSelectedModels
@@ -198,5 +229,9 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     setLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     setOpenRouterSelectedModels,
+    getAzureBaseUrl,
+    setAzureBaseUrl,
+    getAzureModelAlias,
+    setAzureModelAlias,
   };
 }
