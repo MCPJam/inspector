@@ -64,7 +64,7 @@ export function AzureOpenAIConfigDialog({
               type="url"
               value={baseUrl}
               onChange={(e) => onBaseUrlChange(e.target.value)}
-              placeholder="https://RESOURCE_NAME.openai.azure.com/openai/v1/chat/completions?api-version=v1"
+              placeholder="https://RESOURCE_NAME.openai.azure.com/openai"
               className="mt-1"
             />
           </div>
@@ -78,7 +78,7 @@ export function AzureOpenAIConfigDialog({
               type="password"
               value={apiKey}
               onChange={(e) => onApiKeyChange(e.target.value)}
-              placeholder="sk-..."
+              placeholder="Open AI Key"
               className="mt-1"
             />
           </div>
