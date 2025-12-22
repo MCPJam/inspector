@@ -14,6 +14,7 @@ export const createLlmModel = (
   apiKey: string,
   ollamaBaseUrl?: string,
   litellmBaseUrl?: string,
+  azureBaseUrl?: string,
 ) => {
   if (!modelDefinition?.id || !modelDefinition?.provider) {
     throw new Error(
@@ -53,7 +54,7 @@ export const createLlmModel = (
     case "xai":
       return createXai({ apiKey })(modelDefinition.id);
     case "azure":
-      return createAzure({ apiKey })(modelDefinition.id);
+      return createAzure({ apiKey, baseURL: azureBaseUrl })(modelDefinition.id);
     default:
       throw new Error(
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
