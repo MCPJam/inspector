@@ -68,10 +68,8 @@ export function ServerInfoModal({
 
   // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
   const isOpenAIAppServer = isOpenAIApp(toolsData);
-
   // Has any widget metadata (either MCP App or OpenAI App)
   const hasWidgetMetadata = isMCPAppServer || isOpenAIAppServer;
-
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -388,13 +386,26 @@ export function ServerInfoModal({
             </TabsContent>
 
             <TabsContent value="metadata" className="space-y-4 mt-4">
-              {toolsData?.tools && toolsData.toolsMetadata ? (
+              {(toolsData?.tools ?? []).some(
+                (tool) =>
+                  (tool as any)?._meta ||
+                  toolsData?.toolsMetadata?.[tool.name] ||
+                  (Array.isArray((tool as any)?.annotations)
+                    ? (tool as any).annotations.length > 0
+                    : Boolean((tool as any)?.annotations)),
+              ) ? (
                 <div className="space-y-4">
-                  {toolsData.tools
-                    .filter((tool: any) => toolsData.toolsMetadata?.[tool.name])
+                  {(toolsData?.tools ?? [])
                     .map((tool: any) => {
-                      const metadata = toolsData.toolsMetadata?.[tool.name];
+                      const metadata =
+                        (tool as any)?._meta ??
+                        toolsData?.toolsMetadata?.[tool.name];
+                      const annotations = (tool as any)?.annotations;
+                      const hasAnnotations = Array.isArray(annotations)
+                        ? annotations.length > 0
+                        : Boolean(annotations);
 
+                      if (!metadata && !hasAnnotations) return null;
                       return (
                         <div
                           key={tool.name}
@@ -406,9 +417,9 @@ export function ServerInfoModal({
                                 <h4 className="font-medium text-sm">
                                   {tool.name}
                                 </h4>
-                                {metadata.write !== undefined && (
+                                {metadata?.write !== undefined && (
                                   <span className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded uppercase">
-                                    {metadata.write ? "WRITE" : "READ"}
+                                    {metadata?.write ? "WRITE" : "READ"}
                                   </span>
                                 )}
                               </div>
@@ -419,38 +430,54 @@ export function ServerInfoModal({
                           </div>
 
                           {/* Metadata Section */}
-                          <div className="pt-3 border-t border-border/50">
-                            <div className="text-xs text-muted-foreground font-medium mb-3">
-                              METADATA
+                          {metadata && (
+                            <div className="pt-3 border-t border-border/50">
+                              <div className="text-xs text-muted-foreground font-medium mb-3">
+                                METADATA
+                              </div>
+
+                              {Object.entries(metadata ?? {}).map(
+                                ([key, value]) => {
+                                  if (key === "write") return null;
+
+                                  return (
+                                    <div key={key} className="space-y-1 mt-2">
+                                      <div className="text-xs text-muted-foreground">
+                                        {key.replace(/([A-Z])/g, " $1").trim()}
+                                      </div>
+                                      <div
+                                        className={`text-xs rounded px-2 py-1 ${
+                                          typeof value === "string" &&
+                                          value.includes("://")
+                                            ? "font-mono bg-muted/50"
+                                            : "bg-muted/50"
+                                        }`}
+                                      >
+                                        {typeof value === "object"
+                                          ? JSON.stringify(value, null, 2)
+                                          : String(value)}
+                                      </div>
+                                    </div>
+                                  );
+                                },
+                              )}
                             </div>
+                          )}
 
-                            {Object.entries(metadata).map(([key, value]) => {
-                              if (key === "write") return null;
-
-                              return (
-                                <div key={key} className="space-y-1 mt-2">
-                                  <div className="text-xs text-muted-foreground">
-                                    {key.replace(/([A-Z])/g, " $1").trim()}
-                                  </div>
-                                  <div
-                                    className={`text-xs rounded px-2 py-1 ${
-                                      typeof value === "string" &&
-                                      value.includes("://")
-                                        ? "font-mono bg-muted/50"
-                                        : "bg-muted/50"
-                                    }`}
-                                  >
-                                    {typeof value === "object"
-                                      ? JSON.stringify(value, null, 2)
-                                      : String(value)}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          {hasAnnotations && (
+                            <div className="pt-3 border-t border-border/50">
+                              <div className="text-xs text-muted-foreground font-medium mb-3">
+                                ANNOTATIONS
+                              </div>
+                              <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto">
+                                {JSON.stringify(annotations, null, 2)}
+                              </pre>
+                            </div>
+                          )}
                         </div>
                       );
-                    })}
+                    })
+                    .filter(Boolean)}
                 </div>
               ) : (
                 <div className="text-sm text-muted-foreground text-center py-8">

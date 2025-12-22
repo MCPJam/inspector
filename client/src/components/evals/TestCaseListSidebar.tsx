@@ -40,6 +40,7 @@ interface TestCaseListSidebarProps {
   isGeneratingTests?: boolean;
   showingOverview: boolean;
   noServerSelected?: boolean;
+  selectedServer?: string;
   // Rerun props
   suite?: EvalSuite | null;
   onRerun?: (suite: EvalSuite) => void;
@@ -61,6 +62,7 @@ export function TestCaseListSidebar({
   isGeneratingTests,
   showingOverview,
   noServerSelected,
+  selectedServer,
   suite,
   onRerun,
   rerunningSuiteId,
@@ -87,7 +89,7 @@ export function TestCaseListSidebar({
         </div>
         <div className="flex-1 flex items-center justify-center p-4">
           <p className="text-xs text-muted-foreground text-center">
-            Select a server to view test cases
+            Select a server to view test cases.
           </p>
         </div>
       </>
@@ -98,7 +100,15 @@ export function TestCaseListSidebar({
     <>
       {/* Header */}
       <div className="p-4 border-b flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Test Cases</h2>
+        <h2 className="text-sm font-semibold">
+          Test Cases
+          {selectedServer && (
+            <span className="text-muted-foreground font-normal">
+              {" "}
+              [{selectedServer}]
+            </span>
+          )}
+        </h2>
         <div className="flex items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>

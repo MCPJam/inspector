@@ -42,6 +42,11 @@ const navigationSections = [
         url: "#chat-v2",
         icon: MessageCircle,
       },
+    ],
+  },
+  {
+    id: "mcp-apps",
+    items: [
       {
         title: "App Builder",
         url: "#app-builder",
