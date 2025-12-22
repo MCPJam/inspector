@@ -37,7 +37,7 @@ export interface useAiProviderKeysReturn {
   getAzureBaseUrl: () => string;
   setAzureBaseUrl: (url: string) => void;
   getAzureModelAlias: () => string;
-  setAzureModelAlias: (alias: string) => void;
+  setAzureModelAliasTokens: (alias: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
@@ -193,7 +193,7 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     return tokens.azureModelAlias || defaultTokens.azureModelAlias;
   }, [tokens.azureModelAlias]);
 
-  const setAzureModelAlias = useCallback((alias: string) => {
+  const setAzureModelAliasTokens = useCallback((alias: string) => {
     setTokens((prev) => ({
       ...prev,
       azureModelAlias: alias,
@@ -232,6 +232,6 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     getAzureBaseUrl,
     setAzureBaseUrl,
     getAzureModelAlias,
-    setAzureModelAlias,
+    setAzureModelAliasTokens,
   };
 }
