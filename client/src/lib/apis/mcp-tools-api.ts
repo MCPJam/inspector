@@ -104,7 +104,7 @@ export async function callTool(
     );
   }
 
-  return response.result;
+  return (response as { result: CallToolResult }).result;
 }
 
 export async function respondToElicitationApi(
