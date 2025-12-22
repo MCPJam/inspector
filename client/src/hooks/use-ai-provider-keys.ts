@@ -41,7 +41,7 @@ const STORAGE_KEY = "mcp-inspector-provider-tokens";
 
 const defaultTokens: ProviderTokens = {
   anthropic: "",
-  azure:"",
+  azure: "",
   openai: "",
   deepseek: "",
   google: "",
@@ -184,7 +184,6 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
       azureBaseUrl: url,
     }));
   }, []);
-
 
   const getOpenRouterSelectedModels = useCallback(() => {
     return (

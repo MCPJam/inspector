@@ -70,10 +70,7 @@ export function ProvidersTable({
         onEdit={onEditOpenRouter}
         onDelete={() => onDeleteProvider("openrouter")}
       />
-      <AzureOpenAITableRow
-        baseUrl={azureBaseUrl}
-        onEdit={onEditAzure}
-      />
+      <AzureOpenAITableRow baseUrl={azureBaseUrl} onEdit={onEditAzure} />
     </div>
   );
 }

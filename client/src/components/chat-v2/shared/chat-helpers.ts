@@ -25,7 +25,7 @@ export const getProviderLogoFromProvider = (
   switch (provider) {
     case "anthropic":
       return claudeLogo;
-    case "azure": 
+    case "azure":
       return azureLogo;
     case "openai":
       return openaiLogo;
@@ -101,7 +101,7 @@ export const getProviderColor = (provider: string) => {
       return "text-gray-600 dark:text-gray-400";
     case "xai":
       return "text-purple-600 dark:text-purple-400";
-    case "azure": 
+    case "azure":
       return "text-purple-600 dark:text-purple-400";
     case "litellm":
       return "bg-gradient-to-br from-blue-500 to-purple-600";

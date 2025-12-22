@@ -1,6 +1,6 @@
 import { ModelDefinition } from "@/shared/types";
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { createAzure } from '@ai-sdk/azure';
+import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";

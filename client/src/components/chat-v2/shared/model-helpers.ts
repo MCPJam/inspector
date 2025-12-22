@@ -70,7 +70,6 @@ export function buildAvailableModels(params: {
       }))
     : [];
 
-
   let models: ModelDefinition[] = cloud;
   if (isOllamaRunning && ollamaModels.length > 0)
     models = models.concat(ollamaModels);

@@ -227,7 +227,6 @@ export function SettingsTab() {
     setAzureApiKey("");
   };
 
-
   return (
     <div className="h-full overflow-y-auto">
       <div className="container mx-auto p-6 max-w-6xl space-y-8">
