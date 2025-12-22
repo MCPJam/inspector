@@ -16,6 +16,7 @@ import { isMCPApp, isOpenAIApp } from "@/lib/mcp-ui/mcp-apps-utils";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
+import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 interface ServerInfoModalProps {
   isOpen: boolean;
@@ -388,24 +389,17 @@ export function ServerInfoModal({
             <TabsContent value="metadata" className="space-y-4 mt-4">
               {(toolsData?.tools ?? []).some(
                 (tool) =>
-                  (tool as any)?._meta ||
-                  toolsData?.toolsMetadata?.[tool.name] ||
-                  (Array.isArray((tool as any)?.annotations)
-                    ? (tool as any).annotations.length > 0
-                    : Boolean((tool as any)?.annotations)),
+                  (tool as Tool)?._meta ||
+                  toolsData?.toolsMetadata?.[tool.name],
               ) ? (
                 <div className="space-y-4">
                   {(toolsData?.tools ?? [])
-                    .map((tool: any) => {
+                    .map((tool: Tool) => {
                       const metadata =
-                        (tool as any)?._meta ??
-                        toolsData?.toolsMetadata?.[tool.name];
-                      const annotations = (tool as any)?.annotations;
-                      const hasAnnotations = Array.isArray(annotations)
-                        ? annotations.length > 0
-                        : Boolean(annotations);
+                        tool._meta ?? toolsData?.toolsMetadata?.[tool.name];
+                      const annotations = tool.annotations;
 
-                      if (!metadata && !hasAnnotations) return null;
+                      if (!metadata) return null;
                       return (
                         <div
                           key={tool.name}
@@ -464,12 +458,12 @@ export function ServerInfoModal({
                             </div>
                           )}
 
-                          {hasAnnotations && (
+                          {annotations && (
                             <div className="pt-3 border-t border-border/50">
                               <div className="text-xs text-muted-foreground font-medium mb-3">
                                 ANNOTATIONS
                               </div>
-                              <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto">
+                              <pre className="text-[11px] font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto">
                                 {JSON.stringify(annotations, null, 2)}
                               </pre>
                             </div>
