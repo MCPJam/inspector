@@ -180,7 +180,7 @@ export function useChatSession({
     getOpenRouterSelectedModels,
     isOllamaRunning,
     ollamaModels,
-    getAzureBaseUrl
+    getAzureBaseUrl,
   ]);
 
   // Model selection with persistence

@@ -106,14 +106,11 @@ export function AzureOpenAIConfigDialog({
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button
-            onClick={onSave}
-            disabled={!baseUrl.trim()}
-          >
+          <Button onClick={onSave} disabled={!baseUrl.trim()}>
             Save Configuration
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    );
+  );
 }
