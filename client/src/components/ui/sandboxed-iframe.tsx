@@ -128,7 +128,10 @@ export const SandboxedIframe = forwardRef<
 
   const handleMessage = useCallback(
     (event: MessageEvent) => {
-      if (event.data?.source !== "react-devtools-bridge") {
+      if (
+        event.data?.source !== "react-devtools-bridge" &&
+        event.data?.method
+      ) {
         // Don't capture messages from react devtools
         posthog.capture("mcp_apps_message_received", {
           location: "sandboxed_iframe",
