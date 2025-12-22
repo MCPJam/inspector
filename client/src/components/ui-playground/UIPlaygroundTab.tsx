@@ -57,7 +57,6 @@ export function UIPlaygroundTab({
     displayMode,
     globals,
     isSidebarVisible,
-    selectedProtocol,
     setTools,
     setSelectedTool,
     setFormFields,

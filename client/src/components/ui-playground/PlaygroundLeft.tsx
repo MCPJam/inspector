@@ -79,6 +79,7 @@ export function PlaygroundLeft({
   onDeleteRequest,
   onClose,
 }: PlaygroundLeftProps) {
+  console.log("tools", tools);
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
 
