@@ -47,7 +47,6 @@ export function useChat(options: UseChatOptions = {}) {
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getAzureBaseUrl,
-    getAzureModelAlias,
   } = useAiProviderKeys();
   const posthog = usePostHog();
 
@@ -180,7 +179,7 @@ export function useChat(options: UseChatOptions = {}) {
       openrouter: Boolean(
         hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
       ),
-      azure: Boolean(getAzureBaseUrl() && getAzureModelAlias()),
+      azure: Boolean(getAzureBaseUrl()),
       meta: false,
     } as const;
 
@@ -225,22 +224,13 @@ export function useChat(options: UseChatOptions = {}) {
       });
     }
 
-    const azureModels: ModelDefinition[] = [];
-    if (providerHasKey.azure) {
-      const modelAliasString = getAzureModelAlias();
-      azureModels.push(...parseModelAliases(modelAliasString, "azure"));
-    }
-
-    // Combine all models: cloud + ollama + litellm + azure
+    // Combine all models: cloud + ollama + litellm
     let allModels = cloud;
     if (isOllamaRunning && ollamaModels.length > 0) {
       allModels = allModels.concat(ollamaModels);
     }
     if (litellmModels.length > 0) {
       allModels = allModels.concat(litellmModels);
-    }
-    if (azureModels.length > 0) {
-      allModels = allModels.concat(azureModels);
     }
     if (openRouterModels.length > 0) {
       allModels = allModels.concat(openRouterModels);
@@ -254,7 +244,6 @@ export function useChat(options: UseChatOptions = {}) {
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getAzureBaseUrl,
-    getAzureModelAlias,
   ]);
 
   const applySseEvent = useCallback(

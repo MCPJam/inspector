@@ -15,10 +15,8 @@ interface AzureOpenAIConfigDialogProps {
   onOpenChange: (open: boolean) => void;
   baseUrl: string;
   apiKey: string;
-  modelAlias: string;
   onBaseUrlChange: (value: string) => void;
   onApiKeyChange: (value: string) => void;
-  onModelAliasChange: (value: string) => void;
   onSave: () => void;
   onCancel: () => void;
 }
@@ -28,10 +26,8 @@ export function AzureOpenAIConfigDialog({
   onOpenChange,
   baseUrl,
   apiKey,
-  modelAlias,
   onBaseUrlChange,
   onApiKeyChange,
-  onModelAliasChange,
   onSave,
   onCancel,
 }: AzureOpenAIConfigDialogProps) {
@@ -87,24 +83,6 @@ export function AzureOpenAIConfigDialog({
             />
           </div>
 
-          <div>
-            <label htmlFor="azure-model" className="text-sm font-medium">
-              Model Aliases{" "}
-              <span className="text-muted-foreground">(comma-separated)</span>
-            </label>
-            <Input
-              id="azure-model"
-              type="text"
-              value={modelAlias}
-              onChange={(e) => onModelAliasChange(e.target.value)}
-              placeholder="gpt-4, gpt-5"
-              className="mt-1"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Enter multiple model aliases separated by commas.
-            </p>
-          </div>
-
           <div className="flex items-center gap-2 p-3 bg-info/10 rounded-lg">
             <ExternalLink className="w-4 h-4 text-info" />
             <span className="text-sm text-info">
@@ -130,7 +108,7 @@ export function AzureOpenAIConfigDialog({
           </Button>
           <Button
             onClick={onSave}
-            disabled={!baseUrl.trim() || !modelAlias.trim()}
+            disabled={!baseUrl.trim()}
           >
             Save Configuration
           </Button>

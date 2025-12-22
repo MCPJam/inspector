@@ -27,7 +27,6 @@ interface ProvidersTableProps {
   openRouterSelectedModels: string[];
   onEditOpenRouter: () => void;
   azureBaseUrl: string;
-  azureModelAlias: string;
   onEditAzure: () => void;
 }
 
@@ -44,7 +43,6 @@ export function ProvidersTable({
   openRouterSelectedModels,
   onEditOpenRouter,
   azureBaseUrl,
-  azureModelAlias,
   onEditAzure,
 }: ProvidersTableProps) {
   return (
@@ -74,7 +72,6 @@ export function ProvidersTable({
       />
       <AzureOpenAITableRow
         baseUrl={azureBaseUrl}
-        modelAlias={azureModelAlias}
         onEdit={onEditAzure}
       />
     </div>

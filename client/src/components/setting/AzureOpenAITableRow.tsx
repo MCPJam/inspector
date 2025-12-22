@@ -4,23 +4,14 @@ import { cn } from "@/lib/utils";
 
 interface AzureOpenAITableRowProps {
   baseUrl: string;
-  modelAlias: string;
   onEdit: () => void;
 }
 
 export function AzureOpenAITableRow({ 
   baseUrl, 
-  modelAlias, 
   onEdit }: AzureOpenAITableRowProps) {
-  const isConfigured = Boolean(baseUrl && modelAlias);
+  const isConfigured = Boolean(baseUrl);
 
-  // Count the number of models configured
-  const modelCount = modelAlias
-    ? modelAlias
-        .split(",")
-        .map((m) => m.trim())
-        .filter((m) => m.length > 0).length
-    : 0;
 
   return (
     <Card 
@@ -40,7 +31,7 @@ export function AzureOpenAITableRow({
             </h3>
             <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
               {isConfigured
-                ? `${modelCount} model${modelCount !== 1 ? "s" : ""} configured`
+                ? "Azure OpenAI configured"
                 : "Connect to your Azure OpenAI"}
             </p>
           </div>
