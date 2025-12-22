@@ -26,12 +26,10 @@ export function buildAvailableModels(params: {
   isOllamaRunning: boolean;
   ollamaModels: ModelDefinition[];
   getAzureBaseUrl: () => string;
-  getAzureModelAlias: () => string;
 }): ModelDefinition[] {
   const {
     hasToken,
     getAzureBaseUrl,
-    getAzureModelAlias,
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
@@ -46,7 +44,7 @@ export function buildAvailableModels(params: {
     google: hasToken("google"),
     mistral: hasToken("mistral"),
     xai: hasToken("xai"),
-    azure: Boolean(getAzureBaseUrl() && getAzureModelAlias()),
+    azure: Boolean(getAzureBaseUrl()),
     ollama: isOllamaRunning,
     litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
     openrouter: Boolean(
@@ -72,16 +70,12 @@ export function buildAvailableModels(params: {
       }))
     : [];
 
-  const azureModels: ModelDefinition[] = providerHasKey.azure
-    ? parseModelAliases(getAzureModelAlias(), "azure")
-    : [];
 
   let models: ModelDefinition[] = cloud;
   if (isOllamaRunning && ollamaModels.length > 0)
     models = models.concat(ollamaModels);
   if (litellmModels.length > 0) models = models.concat(litellmModels);
   if (openRouterModels.length > 0) models = models.concat(openRouterModels);
-  if (azureModels.length > 0) models = models.concat(azureModels);
   return models;
 }
 
