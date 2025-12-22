@@ -134,6 +134,8 @@ export function useChatSession({
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
+    getAzureBaseUrl,
+    getAzureModelAlias,
   } = useAiProviderKeys();
 
   // Local state
@@ -170,6 +172,8 @@ export function useChatSession({
       getOpenRouterSelectedModels,
       isOllamaRunning,
       ollamaModels,
+      getAzureBaseUrl,
+      getAzureModelAlias,
     });
   }, [
     hasToken,
