@@ -345,12 +345,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 128000,
   },
   {
-    id: Model.GPT_4_1,
-    name: "GPT-4-1",
-    provider: "azure",
-    contextLength: 1047576 
-  },
-  {
     id: Model.DEEPSEEK_CHAT,
     name: "DeepSeek Chat",
     provider: "deepseek",
