@@ -33,8 +33,6 @@ export function SettingsTab() {
     setOpenRouterSelectedModels,
     getAzureBaseUrl,
     setAzureBaseUrl,
-    getAzureModelAlias,
-    setAzureModelAliasTokens,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -54,7 +52,6 @@ export function SettingsTab() {
   const [azureDialogOpen, setAzureDialogOpen] = useState(false);
   const [azureUrl, setAzureUrl] = useState("");
   const [azureApiKey, setAzureApiKey] = useState("");
-  const [azureModelAlias, setAzureModelAlias] = useState("");
   const providerConfigs: ProviderConfig[] = [
     {
       id: "openai",
@@ -213,25 +210,21 @@ export function SettingsTab() {
   const handleAzureEdit = () => {
     setAzureUrl(getAzureBaseUrl());
     setAzureApiKey(tokens.azure || "");
-    setAzureModelAlias(getAzureModelAlias());
     setAzureDialogOpen(true);
   };
 
   const handleAzureSave = () => {
     setAzureBaseUrl(azureUrl);
     setToken("azure", azureApiKey);
-    setAzureModelAliasTokens(azureModelAlias);
     setAzureDialogOpen(false);
     setAzureUrl("");
     setAzureApiKey("");
-    setAzureModelAlias("");
   };
 
   const handleAzureCancel = () => {
     setAzureDialogOpen(false);
     setAzureUrl("");
     setAzureApiKey("");
-    setAzureModelAlias("");
   };
 
 
@@ -265,7 +258,6 @@ export function SettingsTab() {
             openRouterSelectedModels={getOpenRouterSelectedModels()}
             onEditOpenRouter={handleOpenRouterEdit}
             azureBaseUrl={getAzureBaseUrl()}
-            azureModelAlias={getAzureModelAlias()}
             onEditAzure={handleAzureEdit}
           />
         </div>
@@ -311,10 +303,8 @@ export function SettingsTab() {
           onOpenChange={setAzureDialogOpen}
           baseUrl={azureUrl}
           apiKey={azureApiKey}
-          modelAlias={azureModelAlias}
           onBaseUrlChange={setAzureUrl}
           onApiKeyChange={setAzureApiKey}
-          onModelAliasChange={setAzureModelAlias}
           onSave={handleAzureSave}
           onCancel={handleAzureCancel}
         />
