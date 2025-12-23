@@ -124,8 +124,7 @@ function isPortAvailable(port) {
   return new Promise((resolve) => {
     const server = createServer();
 
-    server.listen(port, () => {
-      // Port is available, close the server and resolve true
+    server.listen(port, "127.0.0.1", () => {
       server.close(() => {
         resolve(true);
       });
