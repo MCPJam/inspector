@@ -25,9 +25,11 @@ export function buildAvailableModels(params: {
   getOpenRouterSelectedModels: () => string[];
   isOllamaRunning: boolean;
   ollamaModels: ModelDefinition[];
+  getAzureBaseUrl: () => string;
 }): ModelDefinition[] {
   const {
     hasToken,
+    getAzureBaseUrl,
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
@@ -42,6 +44,7 @@ export function buildAvailableModels(params: {
     google: hasToken("google"),
     mistral: hasToken("mistral"),
     xai: hasToken("xai"),
+    azure: Boolean(getAzureBaseUrl()),
     ollama: isOllamaRunning,
     litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
     openrouter: Boolean(

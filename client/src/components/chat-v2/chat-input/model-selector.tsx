@@ -52,6 +52,8 @@ const groupModelsByProvider = (
 // Provider display names
 const getProviderDisplayName = (provider: ModelProvider): string => {
   switch (provider) {
+    case "azure":
+      return "Azure OpenAI";
     case "anthropic":
       return "Anthropic";
     case "openai":

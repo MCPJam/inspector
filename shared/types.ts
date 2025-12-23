@@ -98,6 +98,7 @@ export interface StreamingMessage {
 // Model definitions
 export type ModelProvider =
   | "anthropic"
+  | "azure"
   | "openai"
   | "ollama"
   | "deepseek"
@@ -525,6 +526,26 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "Grok 4 Fast Reasoning",
     provider: "xai",
     contextLength: 2000000,
+  },
+
+  // Azure Models
+  {
+    id: "azure/gpt-5.1",
+    name: "GPT-5.1 (Azure)",
+    provider: "azure",
+    contextLength: 400000,
+  },
+  {
+    id: "azure/gpt-5.1-codex",
+    name: "GPT-5.1 Codex (Azure)",
+    provider: "azure",
+    contextLength: 400000,
+  },
+  {
+    id: "azure/gpt-5.1-codex-mini",
+    name: "GPT-5.1 Codex Mini (Azure)",
+    provider: "azure",
+    contextLength: 400000,
   },
 ];
 

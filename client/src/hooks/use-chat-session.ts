@@ -134,6 +134,7 @@ export function useChatSession({
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
+    getAzureBaseUrl,
   } = useAiProviderKeys();
 
   // Local state
@@ -170,6 +171,7 @@ export function useChatSession({
       getOpenRouterSelectedModels,
       isOllamaRunning,
       ollamaModels,
+      getAzureBaseUrl,
     });
   }, [
     hasToken,
@@ -178,6 +180,7 @@ export function useChatSession({
     getOpenRouterSelectedModels,
     isOllamaRunning,
     ollamaModels,
+    getAzureBaseUrl,
   ]);
 
   // Model selection with persistence

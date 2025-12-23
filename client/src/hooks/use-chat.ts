@@ -46,6 +46,7 @@ export function useChat(options: UseChatOptions = {}) {
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
+    getAzureBaseUrl,
   } = useAiProviderKeys();
   const posthog = usePostHog();
 
@@ -178,6 +179,7 @@ export function useChat(options: UseChatOptions = {}) {
       openrouter: Boolean(
         hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
       ),
+      azure: Boolean(getAzureBaseUrl()),
       meta: false,
     } as const;
 
@@ -241,6 +243,7 @@ export function useChat(options: UseChatOptions = {}) {
     getLiteLLMBaseUrl,
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
+    getAzureBaseUrl,
   ]);
 
   const applySseEvent = useCallback(
@@ -463,6 +466,7 @@ export function useChat(options: UseChatOptions = {}) {
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
             litellmBaseUrl: getLiteLLMBaseUrl(),
+            azureBaseUrl: getAzureBaseUrl(),
             sendMessagesToBackend: routeThroughBackend,
             selectedServers,
           }),
@@ -540,6 +544,7 @@ export function useChat(options: UseChatOptions = {}) {
       applySseEvent,
       getOllamaBaseUrl,
       getLiteLLMBaseUrl,
+      getAzureBaseUrl,
       sendMessagesToBackend,
       getAccessToken,
       selectedServers,
