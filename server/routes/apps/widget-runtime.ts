@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
-import { CheckoutSession } from "./acp-types";
+import { CheckoutSession } from "@/shared/acp-types";
 
 export {};
 
