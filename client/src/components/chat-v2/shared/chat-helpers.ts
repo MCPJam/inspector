@@ -1,6 +1,7 @@
 import { ModelDefinition } from "@/shared/types.js";
 import { generateId, type UIMessage } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
+import azureLogo from "/azure_logo.png";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
 import deepseekLogo from "/deepseek_logo.svg";
@@ -24,6 +25,8 @@ export const getProviderLogoFromProvider = (
   switch (provider) {
     case "anthropic":
       return claudeLogo;
+    case "azure":
+      return azureLogo;
     case "openai":
       return openaiLogo;
     case "deepseek":
@@ -97,6 +100,8 @@ export const getProviderColor = (provider: string) => {
     case "ollama":
       return "text-gray-600 dark:text-gray-400";
     case "xai":
+      return "text-purple-600 dark:text-purple-400";
+    case "azure":
       return "text-purple-600 dark:text-purple-400";
     case "litellm":
       return "bg-gradient-to-br from-blue-500 to-purple-600";

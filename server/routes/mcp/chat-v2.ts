@@ -225,6 +225,7 @@ chatV2.post("/", async (c) => {
       apiKey ?? "",
       body.ollamaBaseUrl,
       body.litellmBaseUrl,
+      body.azureBaseUrl,
     );
 
     const result = streamText({

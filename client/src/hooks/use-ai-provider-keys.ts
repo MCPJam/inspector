@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 
 export interface ProviderTokens {
   anthropic: string;
+  azure: string;
+  azureBaseUrl: string;
   openai: string;
   deepseek: string;
   google: string;
@@ -31,12 +33,15 @@ export interface useAiProviderKeysReturn {
   setLiteLLMModelAlias: (alias: string) => void;
   getOpenRouterSelectedModels: () => string[];
   setOpenRouterSelectedModels: (models: string[]) => void;
+  getAzureBaseUrl: () => string;
+  setAzureBaseUrl: (url: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
 
 const defaultTokens: ProviderTokens = {
   anthropic: "",
+  azure: "",
   openai: "",
   deepseek: "",
   google: "",
@@ -47,6 +52,7 @@ const defaultTokens: ProviderTokens = {
   litellm: "", // LiteLLM API key (optional, depends on proxy setup)
   litellmBaseUrl: "http://localhost:4000", // Default LiteLLM proxy URL
   litellmModelAlias: "", // Model name/alias to use with LiteLLM
+  azureBaseUrl: "",
   openrouter: "",
   openRouterSelectedModels: [],
 };
@@ -168,6 +174,17 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
+  const getAzureBaseUrl = useCallback(() => {
+    return tokens.azureBaseUrl || defaultTokens.azureBaseUrl;
+  }, [tokens.azureBaseUrl]);
+
+  const setAzureBaseUrl = useCallback((url: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      azureBaseUrl: url,
+    }));
+  }, []);
+
   const getOpenRouterSelectedModels = useCallback(() => {
     return (
       tokens.openRouterSelectedModels || defaultTokens.openRouterSelectedModels
@@ -196,5 +213,7 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     setLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     setOpenRouterSelectedModels,
+    getAzureBaseUrl,
+    setAzureBaseUrl,
   };
 }
