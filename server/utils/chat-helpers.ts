@@ -1,5 +1,6 @@
 import { ModelDefinition } from "@/shared/types";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createMistral } from "@ai-sdk/mistral";
@@ -13,6 +14,7 @@ export const createLlmModel = (
   apiKey: string,
   ollamaBaseUrl?: string,
   litellmBaseUrl?: string,
+  azureBaseUrl?: string,
 ) => {
   if (!modelDefinition?.id || !modelDefinition?.provider) {
     throw new Error(
@@ -51,6 +53,8 @@ export const createLlmModel = (
       return createOpenRouter({ apiKey })(modelDefinition.id);
     case "xai":
       return createXai({ apiKey })(modelDefinition.id);
+    case "azure":
+      return createAzure({ apiKey, baseURL: azureBaseUrl })(modelDefinition.id);
     default:
       throw new Error(
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
