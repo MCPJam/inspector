@@ -89,6 +89,7 @@ export function MCPAppsRenderer({
   onCallTool,
   pipWidgetId,
   fullscreenWidgetId,
+  onRequestPip,
   onExitPip,
   displayMode: displayModeProp,
   onDisplayModeChange,
@@ -627,6 +628,34 @@ export function MCPAppsRenderer({
               onSendFollowUp(textContent);
             }
             sendResponse(id, {});
+            break;
+          }
+
+          case "ui/request-display-mode": {
+            const requestedMode =
+              (params as { mode?: DisplayMode })?.mode || "inline";
+            const isMobile = window.innerWidth < 768;
+            const actualMode: DisplayMode =
+              isMobile && requestedMode === "pip"
+                ? "fullscreen"
+                : requestedMode;
+
+            setDisplayMode(actualMode);
+
+            if (actualMode === "pip") {
+              onRequestPip?.(toolCallId);
+            } else if (
+              (actualMode === "inline" || actualMode === "fullscreen") &&
+              pipWidgetId === toolCallId
+            ) {
+              onExitPip?.(toolCallId);
+            }
+
+            sendResponse(id, { displayMode: actualMode });
+
+            sendNotification("ui/notifications/host-context-changed", {
+              displayMode: actualMode,
+            });
             break;
           }
 
