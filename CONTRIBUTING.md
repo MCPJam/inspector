@@ -58,7 +58,7 @@ npm run dev
 
 This runs:
 
-- **Client**: Vite dev server on `:3000`
+- **Client**: Vite dev server on `:5173`
 - **Server**: Hono dev server on `:3001`
 
 ### Electron Development
