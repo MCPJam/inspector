@@ -891,8 +891,7 @@ export function MCPAppsRenderer({
     isPlaygroundActive && playgroundDeviceType === "mobile";
   const isContainedFullscreenMode =
     isPlaygroundActive &&
-    (playgroundDeviceType === "mobile" ||
-      playgroundDeviceType === "tablet");
+    (playgroundDeviceType === "mobile" || playgroundDeviceType === "tablet");
 
   const containerClassName = (() => {
     if (isFullscreen) {
