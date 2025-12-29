@@ -634,7 +634,7 @@ export function MCPAppsRenderer({
           case "ui/request-display-mode": {
             const requestedMode =
               (params as { mode?: DisplayMode })?.mode || "inline";
-            const isMobile = window.innerWidth < 768;
+            const isMobile = viewportWidth < 768;
             const actualMode: DisplayMode =
               isMobile && requestedMode === "pip"
                 ? "fullscreen"
@@ -743,6 +743,10 @@ export function MCPAppsRenderer({
       sendNotification,
       addUiLog,
       addCspViolation,
+      setDisplayMode,
+      onRequestPip,
+      onExitPip,
+      pipWidgetId,
     ],
   );
 
