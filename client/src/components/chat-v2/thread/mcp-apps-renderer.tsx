@@ -887,22 +887,38 @@ export function MCPAppsRenderer({
 
   const isPip = effectiveDisplayMode === "pip";
   const isFullscreen = effectiveDisplayMode === "fullscreen";
+  const isMobilePlaygroundMode =
+    isPlaygroundActive && playgroundDeviceType === "mobile";
+  const isContainedFullscreenMode =
+    isPlaygroundActive &&
+    (playgroundDeviceType === "mobile" || playgroundDeviceType === "tablet");
 
-  let containerClassName = "mt-3 space-y-2 relative group";
-  if (isFullscreen) {
-    containerClassName =
-      "fixed inset-0 z-50 w-full h-full bg-background flex flex-col";
-  } else if (isPip) {
-    containerClassName = [
-      "fixed top-4 inset-x-0 z-40 w-full max-w-4xl mx-auto space-y-2",
-      "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
-      "shadow-xl border border-border/60 rounded-xl p-3",
-    ].join(" ");
-  }
+  const containerClassName = (() => {
+    if (isFullscreen) {
+      if (isContainedFullscreenMode) {
+        return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
+      }
+      return "fixed inset-0 z-40 w-full h-full bg-background flex flex-col";
+    }
+
+    if (isPip) {
+      if (isMobilePlaygroundMode) {
+        return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
+      }
+      return [
+        "fixed top-4 inset-x-0 z-40 w-full max-w-4xl mx-auto space-y-2",
+        "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
+        "shadow-xl border border-border/60 rounded-xl p-3",
+      ].join(" ");
+    }
+
+    return "mt-3 space-y-2 relative group";
+  })();
 
   return (
     <div className={containerClassName}>
-      {(isPip || isFullscreen) && (
+      {((isFullscreen && isContainedFullscreenMode) ||
+        (isPip && isMobilePlaygroundMode)) && (
         <button
           onClick={() => {
             setDisplayMode("inline");
@@ -911,13 +927,47 @@ export function MCPAppsRenderer({
             }
             // onExitFullscreen is called within setDisplayMode when leaving fullscreen
           }}
-          className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
           aria-label="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      )}
+
+      {isFullscreen && !isContainedFullscreenMode && (
+        <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
+          <div />
+          <div className="font-medium text-sm text-muted-foreground">
+            {toolName}
+          </div>
+          <button
+            onClick={() => {
+              setDisplayMode("inline");
+              if (pipWidgetId === toolCallId) {
+                onExitPip?.(toolCallId);
+              }
+            }}
+            className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Exit fullscreen"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
+      {isPip && !isMobilePlaygroundMode && (
+        <button
+          onClick={() => {
+            setDisplayMode("inline");
+            onExitPip?.(toolCallId);
+          }}
+          className="absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-background/80 hover:bg-background border border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          aria-label="Close PiP mode"
+          title="Close PiP mode"
         >
           <X className="w-4 h-4" />
         </button>
       )}
-
       {/* Uses SandboxedIframe for DRY double-iframe architecture */}
       <SandboxedIframe
         ref={sandboxRef}
@@ -927,7 +977,11 @@ export function MCPAppsRenderer({
         permissive={widgetPermissive}
         onMessage={handleMessage}
         title={`MCP App: ${toolName}`}
-        className="w-full border border-border/40 rounded-md bg-background"
+        className={`w-full bg-background overflow-hidden ${
+          isFullscreen
+            ? "flex-1 border-0 rounded-none"
+            : "border border-border/40 rounded-md"
+        }`}
         style={{
           height: isFullscreen ? "100%" : "400px",
         }}
