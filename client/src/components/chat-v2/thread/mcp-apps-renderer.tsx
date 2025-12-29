@@ -651,7 +651,7 @@ export function MCPAppsRenderer({
               onExitPip?.(toolCallId);
             }
 
-            sendResponse(id, { displayMode: actualMode });
+            sendResponse(id, { mode: actualMode });
 
             sendNotification("ui/notifications/host-context-changed", {
               displayMode: actualMode,
