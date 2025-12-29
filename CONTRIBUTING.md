@@ -44,6 +44,12 @@ npm install
 
 ## Development
 
+Copy the .env file :
+
+```bash
+cp .env.local .env.development
+```
+
 To run the client and server in development mode with hot-reloading, use:
 
 ```bash
