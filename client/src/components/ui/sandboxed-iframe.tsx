@@ -195,7 +195,7 @@ export const SandboxedIframe = forwardRef<
     <iframe
       ref={outerRef}
       src={sandboxProxyUrl}
-      sandbox="allow-scripts allow-same-origin"
+      sandbox={sandbox}
       title={title}
       className={className}
       style={style}
