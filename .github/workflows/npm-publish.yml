@@ -1,0 +1,63 @@
+name: NPM release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g., v1.0.0)"
+        required: false
+        type: string
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Clear npm cache and rebuild native modules
+        run: |
+          npm cache clean --force
+          rm -rf ~/.npm
+          rm -rf node_modules package-lock.json
+          rm -rf client/node_modules client/package-lock.json
+          rm -rf server/node_modules server/package-lock.json
+
+      - name: Install dependencies with fresh state
+        run: |
+          npm install --legacy-peer-deps --no-optional
+          npm run install:deps
+
+      - name: Rebuild native dependencies
+        run: |
+          cd server && npm rebuild esbuild
+          cd ../client && npm rebuild
+
+      - name: Build for npm
+        run: npm run build
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create success summary
+        run: |
+          echo "## ✅ NPM Package Published Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package:** [@mcpjam/inspector](https://www.npmjs.com/package/@mcpjam/inspector)" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ github.ref_name || inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install with: \`npm install @mcpjam/inspector\`" >> $GITHUB_STEP_SUMMARY

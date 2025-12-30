@@ -1,0 +1,23 @@
+services:
+  inspector:
+    build:
+      context: .
+    ports:
+      - 6274:6274
+    environment:
+      - NODE_ENV=production
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').request('http://localhost:6274/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).end()",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped

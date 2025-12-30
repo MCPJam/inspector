@@ -1,0 +1,125 @@
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., v1.0.0)"
+        required: false
+        type: string
+      create_release:
+        description: "Create GitHub release?"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  make-windows:
+    runs-on: windows-latest
+    env:
+      WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Clean dependencies
+        run: |
+          npm cache clean --force
+          if (Test-Path "node_modules") { Remove-Item "node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "package-lock.json") { Remove-Item "package-lock.json" -Force -ErrorAction SilentlyContinue }
+          if (Test-Path "client/node_modules") { Remove-Item "client/node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "client/package-lock.json") { Remove-Item "client/package-lock.json" -Force -ErrorAction SilentlyContinue }
+          if (Test-Path "server/node_modules") { Remove-Item "server/node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
+          if (Test-Path "server/package-lock.json") { Remove-Item "server/package-lock.json" -Force -ErrorAction SilentlyContinue }
+        shell: powershell
+
+      - name: Install dependencies fresh
+        run: |
+          npm install --legacy-peer-deps --no-optional
+          npm run install:deps
+          cd sdk
+          npm install --legacy-peer-deps
+          cd ..
+        shell: powershell
+
+      - name: Rebuild native modules for Windows
+        run: |
+          # Rebuild esbuild specifically to fix version mismatch
+          cd server
+          npm rebuild esbuild --verbose
+          cd ..
+          # Install Windows-specific binaries
+          npm i -D @rollup/rollup-win32-x64-msvc@^4
+          cd client
+          npm i lightningcss@^1 --save-dev
+        shell: powershell
+
+      - name: Restore code signing cert
+        if: env.WINDOWS_PFX_BASE64 != ''
+        shell: pwsh
+        run: |
+          $bytes = [System.Convert]::FromBase64String($env:WINDOWS_PFX_BASE64)
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\\codesign.pfx", $bytes)
+
+      - name: Build
+        run: npm run build
+        shell: powershell
+
+      - name: Make (Windows)
+        env:
+          WINDOWS_PFX_FILE: ${{ runner.temp }}\\codesign.pfx
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: npm run electron:make
+        shell: powershell
+
+      - name: Rename installer to consistent name
+        run: |
+          $setupFile = Get-ChildItem -Path "out\make" -Recurse -Name "*Setup.exe" | Select-Object -First 1
+          if ($setupFile) {
+            Copy-Item "out\make\$setupFile" "MCPJam-Inspector-Setup.exe"
+            echo "SETUP_PATH=MCPJam-Inspector-Setup.exe" >> $env:GITHUB_ENV
+          }
+        shell: powershell
+
+      - name: Upload build artifacts (if not creating release)
+        if: github.event_name == 'workflow_dispatch' && !inputs.create_release
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpjam-inspector-windows
+          path: |
+            out\make\**\*Setup.exe
+            out\make\**\RELEASES
+            out\make\**\*.nupkg
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.create_release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
+          name: Release ${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            ${{ env.SETUP_PATH }}
+            out\make\**\RELEASES
+            out\make\**\*.nupkg
+          body: |
+            ## Download for Windows
+            - **Windows Installer**: [MCPJam Inspector Setup.exe](https://github.com/MCPJam/inspector/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam-Inspector-Setup.exe)
+
+            The installer is code-signed and ready for installation on Windows.
+
+            ## Auto-generated release
+            This release was automatically built and signed by GitHub Actions.

@@ -1,0 +1,77 @@
+name: Prettier and Build Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  formatting:
+    runs-on: ubuntu-latest
+    name: Check Code Formatting
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: Check Prettier formatting
+        run: |
+          if ! npx prettier --check .; then
+            echo "❌ Code is not properly formatted!"
+            echo ""
+            echo "To fix this, run:"
+            echo "  npm run prettier-fix"
+            echo ""
+            echo "Then commit and push the changes."
+            exit 1
+          else
+            echo "✅ All files are properly formatted!"
+          fi
+
+  build:
+    runs-on: ubuntu-latest
+    name: Build and Test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          npm ci
+
+      - name: Build project
+        run: |
+          echo "🏗️ Building project..."
+          npm run build
+          echo "✅ Build completed successfully!"
+
+      - name: Test production start
+        run: |
+          echo "🧪 Testing production start..."
+          timeout 3s npm start || EXIT_CODE=$?
+          if [ $EXIT_CODE -eq 124 ]; then
+            echo "✅ Production server started successfully (timed out as expected)"
+            exit 0
+          elif [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Production server started successfully"
+            exit 0
+          else
+            echo "❌ Production server failed to start with exit code $EXIT_CODE"
+            exit 1
+          fi

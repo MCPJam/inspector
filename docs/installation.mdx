@@ -1,0 +1,162 @@
+---
+title: "Installation"
+description: "Here's a list of all ways to start MCPJam"
+icon: "terminal"
+---
+
+## Quick start
+
+Run the command in your terminal
+
+    ```bash
+    npx @mcpjam/inspector@latest
+    ```
+
+After installing the package, you should see a link to `localhost`. Open that link up to see the inspector.
+
+## Docker
+
+Run MCPJam Inspector using Docker:
+
+```bash
+docker run -p 6274:6274 mcpjam/mcp-inspector
+```
+
+The application will be available at **`http://127.0.0.1:6274`**.
+
+### Docker with Arguments
+
+You can pass command-line arguments to the Docker container:
+
+```bash
+# Launch with STDIO server
+docker run -p 6274:6274 -- npx -y @modelcontextprotocol/server-everything
+
+# Launch with HTTP server
+docker run --rm -p 6274:6274 mcpjam/mcp-inspector -- \
+  --url http://host.docker.internal:8080/mcp \
+  --name "HTTP Server" \
+  --tab tools
+```
+
+For more information check out our docs on [Launch from Code](https://docs.mcpjam.com/inspector/launch-from-code)
+
+<Warning>
+**Important for macOS/Windows users:**
+
+- Access the app via `http://127.0.0.1:6274` (not `localhost`)
+- When connecting to MCP servers on your host machine, use `http://host.docker.internal:PORT` instead of `http://127.0.0.1:PORT`
+
+Example:
+
+```bash
+# Your MCP server runs on host at: http://127.0.0.1:8080/mcp
+# In Docker, configure it as: http://host.docker.internal:8080/mcp
+```
+
+</Warning>
+
+## Start with STDIO server
+
+This will open the MCPJam inspector and connect to a STDIO using the commands you provided.
+
+<Tabs>
+  <Tab title="Python Server">
+    ```bash
+    # Starts MCPJam inspector with a FastMCP server
+    npx @mcpjam/inspector@latest uv run fastmcp run /path/to/your/server.py
+    ```
+  </Tab>
+  
+  <Tab title="Node.js Server">
+    ```bash
+    # NPX package
+    npx @mcpjam/inspector@latest npx -y your-mcp-package
+
+    # Direct Node.js execution
+    npx @mcpjam/inspector@latest node /path/to/your/server.js
+    ```
+
+  </Tab>
+</Tabs>
+
+<Info>
+  **Use Absolute Paths**: Always use absolute file paths (e.g.,
+  `/Users/yourname/project/server.py`) to avoid path resolution issues.
+</Info>
+
+## Start with custom port
+
+This will start the MCPJam inspector with a custom port number. The default port is `6274`.
+
+```bash
+npx @mcpjam/inspector@latest --port 4000
+```
+
+## Start with Ollama
+
+This will open the MCPJam inspector and start an Ollama model with the `ollama serve <model>` command. Make sure you have Ollama installed.
+
+```bash
+npx @mcpjam/inspector@latest --ollama llama3.2
+```
+
+## Start with Configuration File
+
+You can use a configuration file to connect to multiple MCP servers at once:
+
+```bash
+# Using npx directly
+npx @mcpjam/inspector@latest --config path/to/config.json --server myserver
+
+# If running from the repository
+npm run build
+npm start -- --config path/to/config.json --server myserver
+```
+
+<Info>
+  **Note**: When using `npm start`, you need the `--` separator to pass
+  arguments to the underlying script.
+</Info>
+
+Example configuration file structure:
+
+```json
+{
+  "mcpServers": {
+    "everything": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "env": {
+        "HELLO": "Hello MCP!"
+      }
+    },
+    "weather-server": {
+      "command": "python",
+      "args": ["weather_server.py"],
+      "env": {
+        "WEATHER_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+## Start with Verbose Logging
+
+Enable verbose HTTP request logging for debugging purposes. This is useful when troubleshooting connection issues with MCP servers.
+
+```bash
+npx @mcpjam/inspector@latest --verbose
+```
+
+Or use the short form:
+
+```bash
+npx @mcpjam/inspector@latest -v
+```
+
+<Info>
+  Verbose mode logs all HTTP requests made by the inspector, which can help
+  diagnose connectivity problems or inspect server communication.
+</Info>
