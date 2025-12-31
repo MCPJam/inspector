@@ -61,7 +61,7 @@ interface SandboxedIframeProps {
  * SandboxedIframe provides a secure double-iframe architecture per SEP-1865.
  *
  * Message flow:
- * 1. Proxy sends ui/notifications/sandbox-ready when loaded
+ * 1. Proxy sends ui/notifications/sandbox-proxy-ready when loaded
  * 2. Host sends ui/notifications/sandbox-resource-ready with HTML
  * 3. Guest UI initializes and communicates via JSON-RPC 2.0
  */
@@ -157,7 +157,7 @@ export const SandboxedIframe = forwardRef<
         (event.data as { jsonrpc?: string; method?: string }) || {};
       if (jsonrpc !== "2.0") return;
 
-      if (method === "ui/notifications/sandbox-ready") {
+      if (method === "ui/notifications/sandbox-proxy-ready") {
         setProxyReady(true);
         onProxyReady?.();
         return;
