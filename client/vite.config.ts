@@ -64,22 +64,40 @@ export default defineConfig({
     // Required for SEP-1865 different-origin sandbox proxy
     host: true,
     proxy: {
+      // Sandbox proxy routes need special handling to prevent Vite HMR injection
+      // Without this, Vite injects its HMR client into the HTML, causing full-reload
+      // messages to be sent to the iframe, which breaks the sandbox architecture
+      "/api/mcp/sandbox-proxy": {
+        target: "http://localhost:6274",
+        changeOrigin: true,
+        // selfHandleResponse prevents Vite from transforming the HTML response
+        selfHandleResponse: true,
+        configure: (proxy) => {
+          proxy.on("proxyRes", (proxyRes, req, res) => {
+            // Copy headers from proxy response
+            res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+            // Pipe the response directly without Vite transformation
+            proxyRes.pipe(res);
+          });
+        },
+      },
+      "/api/apps/chatgpt/sandbox-proxy": {
+        target: "http://localhost:6274",
+        changeOrigin: true,
+        selfHandleResponse: true,
+        configure: (proxy) => {
+          proxy.on("proxyRes", (proxyRes, req, res) => {
+            res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
+            proxyRes.pipe(res);
+          });
+        },
+      },
+      // General API proxy
       "/api": {
         target: "http://localhost:6274",
         changeOrigin: true,
         secure: false,
         ws: true,
-        configure: (proxy, _options) => {
-          proxy.on("error", (err, _req, _res) => {
-            // proxy error
-          });
-          proxy.on("proxyReq", (proxyReq, req, _res) => {
-            // proxy request
-          });
-          proxy.on("proxyRes", (_proxyRes, _req, _res) => {
-            // no-op
-          });
-        },
       },
       // Proxy WorkOS API calls during local dev to avoid browser CORS errors
       "/user_management": {
