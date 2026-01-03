@@ -234,7 +234,7 @@ export function ServerInfoModal({
                 title="MCP App"
               />
             )}
-            {isOpenAIAppServer && !isMCPAppServer && (
+            {isOpenAIAppServer && (
               <img
                 src="/openai_logo.png"
                 alt="OpenAI App"
