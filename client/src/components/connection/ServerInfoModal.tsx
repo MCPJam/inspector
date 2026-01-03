@@ -226,20 +226,20 @@ export function ServerInfoModal({
                 v{version}
               </span>
             )}
-            {isMCPAppServer && (
-              <img
-                src="/mcp.svg"
-                alt="MCP App"
-                className="h-5 w-5 flex-shrink-0 dark:invert"
-                title="MCP App"
-              />
-            )}
-            {isOpenAIAppServer && !isMCPAppServer && (
+            {isOpenAIAppServer && (
               <img
                 src="/openai_logo.png"
                 alt="OpenAI App"
                 className="h-5 w-5 flex-shrink-0"
                 title="OpenAI App"
+              />
+            )}
+            {isMCPAppServer && !isOpenAIAppServer && (
+              <img
+                src="/mcp.svg"
+                alt="MCP App"
+                className="h-5 w-5 flex-shrink-0 dark:invert"
+                title="MCP App"
               />
             )}
           </DialogTitle>

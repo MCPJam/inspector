@@ -393,20 +393,20 @@ export function ServerConnectionCard({
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
                   <span>{"View server info"}</span>
-                  {isMCPAppServer && (
-                    <img
-                      src="/mcp.svg"
-                      alt="MCP App"
-                      className="h-4 w-4 flex-shrink-0 dark:invert"
-                      title="MCP App"
-                    />
-                  )}
-                  {isOpenAIAppServer && !isMCPAppServer && (
+                  {isOpenAIAppServer && (
                     <img
                       src="/openai_logo.png"
                       alt="OpenAI App"
                       className="h-4 w-4 flex-shrink-0"
                       title="OpenAI App"
+                    />
+                  )}
+                  {isMCPAppServer && !isOpenAIAppServer && (
+                    <img
+                      src="/mcp.svg"
+                      alt="MCP App"
+                      className="h-4 w-4 flex-shrink-0 dark:invert"
+                      title="MCP App"
                     />
                   )}
                 </button>
