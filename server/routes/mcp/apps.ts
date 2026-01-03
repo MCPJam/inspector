@@ -88,7 +88,7 @@ apps.post("/widget/store", async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    logger.error("[MCP Apps] Error storing widget data", error, { toolId });
+    logger.error("[MCP Apps] Error storing widget data", error);
     return c.json(
       {
         success: false,
@@ -202,7 +202,7 @@ apps.get("/widget-content/:toolId", async (c) => {
       mimeTypeWarning,
     });
   } catch (error) {
-    logger.error("[MCP Apps] Error fetching resource", error, { resourceUri });
+    logger.error("[MCP Apps] Error fetching resource", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,

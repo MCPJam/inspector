@@ -230,6 +230,7 @@ export function MCPAppsRenderer({
     undefined,
   );
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
+  const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
   // SEP-1865 mimetype validation
   const [mimeTypeWarning, setMimeTypeWarning] = useState<string | null>(null);
@@ -286,16 +287,17 @@ export function MCPAppsRenderer({
               `Failed to fetch widget: ${contentResponse.statusText}`,
           );
         }
-
         const {
           html,
           csp,
           permissive,
           mimeTypeWarning: warning,
+          prefersBorder,
         } = await contentResponse.json();
         setWidgetHtml(html);
         setWidgetCsp(csp);
         setWidgetPermissive(permissive ?? false);
+        setPrefersBorder(prefersBorder ?? true);
         setLoadedCspMode(cspMode);
         setMimeTypeWarning(warning ?? null);
       } catch (err) {
@@ -980,7 +982,7 @@ export function MCPAppsRenderer({
         className={`w-full bg-background overflow-hidden ${
           isFullscreen
             ? "flex-1 border-0 rounded-none"
-            : "border border-border/40 rounded-md"
+            : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
         }`}
         style={{
           height: isFullscreen ? "100%" : "400px",
