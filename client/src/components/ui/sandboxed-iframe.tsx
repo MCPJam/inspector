@@ -115,6 +115,15 @@ export const SandboxedIframe = forwardRef<
     }
   }, [sandboxProxyUrl]);
 
+  const outerSandbox = useMemo(() => {
+    const tokens = new Set(sandbox.split(/\s+/));
+    let result = "allow-scripts allow-same-origin";
+    if (tokens.has("allow-forms")) {
+      result += " allow-forms";
+    }
+    return result;
+  }, [sandbox]);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -195,7 +204,7 @@ export const SandboxedIframe = forwardRef<
     <iframe
       ref={outerRef}
       src={sandboxProxyUrl}
-      sandbox="allow-scripts allow-same-origin"
+      sandbox={outerSandbox}
       title={title}
       className={className}
       style={style}
