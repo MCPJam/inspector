@@ -11,14 +11,14 @@ export function detectUIType(
   toolMeta: Record<string, unknown> | undefined,
   toolResult: unknown,
 ): UIType | null {
-  // 1. MCP Apps (SEP-1865): Check for ui/resourceUri metadata
-  if (toolMeta?.["ui/resourceUri"]) {
-    return UIType.MCP_APPS;
-  }
-
-  // 2. OpenAI SDK: Check for openai/outputTemplate metadata
+  // 1. OpenAI SDK: Check for openai/outputTemplate metadata
   if (toolMeta?.["openai/outputTemplate"]) {
     return UIType.OPENAI_SDK;
+  }
+
+  // 2. MCP Apps (SEP-1865): Check for ui/resourceUri metadata
+  if (toolMeta?.["ui/resourceUri"]) {
+    return UIType.MCP_APPS;
   }
 
   // 3. MCP-UI: Check for inline ui:// resource in result
