@@ -809,15 +809,14 @@ export function MCPAppsRenderer({
   }, [hostContext, isReady]);
 
   useEffect(() => {
-    if (!isReady) return;
+    if (!isReady || toolState !== "output-available") return;
     const bridge = bridgeRef.current;
-    if (!bridge || !toolInput) return;
+    if (!bridge || lastToolInputRef.current !== null) return;
 
-    const serialized = JSON.stringify(toolInput);
-    if (lastToolInputRef.current === serialized) return;
-    lastToolInputRef.current = serialized;
-    bridge.sendToolInput({ arguments: toolInput });
-  }, [isReady, toolInput]);
+    const resolvedToolInput = toolInput ?? {};
+    lastToolInputRef.current = JSON.stringify(resolvedToolInput);
+    bridge.sendToolInput({ arguments: resolvedToolInput });
+  }, [isReady, toolInput, toolState]);
 
   useEffect(() => {
     if (!isReady || toolState !== "output-available") return;
