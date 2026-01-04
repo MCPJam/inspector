@@ -118,6 +118,7 @@ export function PartSwitch({
             toolState={toolInfo.toolState}
             toolInput={toolInfo.input}
             toolOutput={toolInfo.output}
+            toolErrorText={toolInfo.errorText}
             resourceUri={uiResourceUri}
             toolMetadata={partToolMeta}
             onSendFollowUp={onSendFollowUp}
