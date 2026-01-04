@@ -27,6 +27,7 @@ type ToolInfo = {
   input: Record<string, unknown> | undefined;
   output: unknown;
   rawOutput: unknown;
+  errorText?: string;
 };
 
 export type McpResource = {
@@ -81,6 +82,7 @@ export function getToolInfo(
       input: part.input as Record<string, unknown>,
       output: part.output,
       rawOutput: part.output,
+      errorText: (part as { errorText?: string }).errorText,
     };
   }
   const toolPart = part as any;
@@ -92,6 +94,7 @@ export function getToolInfo(
     input: toolPart.input,
     output: toolPart.output?.value ?? rawOutput,
     rawOutput,
+    errorText: toolPart.errorText ?? toolPart.error,
   };
 }
 

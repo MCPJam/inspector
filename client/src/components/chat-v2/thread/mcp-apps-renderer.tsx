@@ -71,6 +71,7 @@ interface MCPAppsRendererProps {
   toolState?: ToolState;
   toolInput?: Record<string, unknown>;
   toolOutput?: unknown;
+  toolErrorText?: string;
   resourceUri: string;
   toolMetadata?: Record<string, unknown>;
   onSendFollowUp?: (text: string) => void;
@@ -157,6 +158,7 @@ export function MCPAppsRenderer({
   toolState,
   toolInput,
   toolOutput,
+  toolErrorText,
   resourceUri,
   toolMetadata,
   onSendFollowUp,
@@ -297,6 +299,14 @@ export function MCPAppsRenderer({
     return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].height;
   }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
 
+  const maxWidth = useMemo(() => {
+    if (!isPlaygroundActive) return 1200;
+    if (playgroundDeviceType === "custom") {
+      return customViewport.width;
+    }
+    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].width;
+  }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
+
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
@@ -315,7 +325,7 @@ export function MCPAppsRenderer({
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const lastToolInputRef = useRef<string | null>(null);
   const lastToolOutputRef = useRef<string | null>(null);
-  const lastToolCancelRef = useRef<string | null>(null);
+  const lastToolErrorRef = useRef<string | null>(null);
   const isReadyRef = useRef(false);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
@@ -449,6 +459,7 @@ export function MCPAppsRenderer({
         theme: themeMode,
         displayMode: effectiveDisplayMode,
         maxHeight,
+        maxWidth,
         locale,
         timeZone,
         deviceCapabilities,
@@ -462,6 +473,7 @@ export function MCPAppsRenderer({
     themeMode,
     effectiveDisplayMode,
     maxHeight,
+    maxWidth,
     locale,
     timeZone,
     deviceCapabilities,
@@ -474,6 +486,7 @@ export function MCPAppsRenderer({
       theme: themeMode,
       displayMode: effectiveDisplayMode,
       maxHeight,
+      maxWidth,
       locale,
       timeZone,
       deviceCapabilities,
@@ -484,6 +497,7 @@ export function MCPAppsRenderer({
     themeMode,
     effectiveDisplayMode,
     maxHeight,
+    maxWidth,
     locale,
     timeZone,
     deviceCapabilities,
@@ -500,6 +514,7 @@ export function MCPAppsRenderer({
         width: viewportWidth,
         height: viewportHeight,
         maxHeight,
+        maxWidth,
       },
       locale,
       timeZone,
@@ -527,6 +542,7 @@ export function MCPAppsRenderer({
       viewportWidth,
       viewportHeight,
       maxHeight,
+      maxWidth,
       locale,
       timeZone,
       platform,
@@ -834,22 +850,26 @@ export function MCPAppsRenderer({
     const bridge = bridgeRef.current;
     if (!bridge) return;
 
-    const reason =
-      toolOutput instanceof Error
+    const errorMessage =
+      toolErrorText ??
+      (toolOutput instanceof Error
         ? toolOutput.message
         : typeof toolOutput === "string"
           ? toolOutput
-          : "Tool execution failed";
+          : "Tool execution failed");
 
-    if (lastToolCancelRef.current === reason) return;
-    lastToolCancelRef.current = reason;
-    bridge.sendToolCancelled({ reason });
-  }, [isReady, toolOutput, toolState]);
+    if (lastToolErrorRef.current === errorMessage) return;
+    lastToolErrorRef.current = errorMessage;
+    bridge.sendToolResult({
+      content: [{ type: "text", text: errorMessage }],
+      isError: true,
+    });
+  }, [isReady, toolErrorText, toolOutput, toolState]);
 
   useEffect(() => {
     lastToolInputRef.current = null;
     lastToolOutputRef.current = null;
-    lastToolCancelRef.current = null;
+    lastToolErrorRef.current = null;
     setIframeSize({});
   }, [toolCallId]);
 
