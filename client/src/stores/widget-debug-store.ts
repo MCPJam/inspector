@@ -47,6 +47,7 @@ export interface WidgetGlobals {
   theme: "light" | "dark";
   displayMode: "inline" | "pip" | "fullscreen";
   maxHeight?: number;
+  maxWidth?: number;
   locale?: string;
   safeArea?: {
     insets: { top: number; bottom: number; left: number; right: number };
