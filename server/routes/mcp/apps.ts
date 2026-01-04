@@ -9,6 +9,7 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
+import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 const apps = new Hono();
 
@@ -16,7 +17,7 @@ const apps = new Hono();
  * SEP-1865 mandated mimetype for MCP Apps
  * @see https://github.com/anthropics/anthropic-cookbook/blob/main/misc/sep-1865-mcp-apps.md
  */
-const MCP_APPS_MIMETYPE = "text/html;profile=mcp-app";
+const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
 
 /**
  * CSP mode types - matches client-side CspMode type

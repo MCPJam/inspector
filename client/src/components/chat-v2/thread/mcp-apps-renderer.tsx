@@ -9,7 +9,7 @@
  * Uses SandboxedIframe for DRY double-iframe setup.
  */
 
-import { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useUIPlaygroundStore,
@@ -23,9 +23,26 @@ import {
 } from "@/components/ui/sandboxed-iframe";
 import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import {
+  AppBridge,
+  PostMessageTransport,
+  type McpUiHostContext,
+} from "@modelcontextprotocol/ext-apps/app-bridge";
+import type {
+  JSONRPCMessage,
+  MessageExtraInfo,
+  CallToolResult,
+} from "@modelcontextprotocol/sdk/types.js";
+import type {
+  Transport,
+  TransportSendOptions,
+} from "@modelcontextprotocol/sdk/shared/transport.js";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
+
+// Default input schema for tools without metadata
+const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
@@ -67,13 +84,63 @@ interface MCPAppsRendererProps {
   onExitFullscreen?: (toolCallId: string) => void;
 }
 
-interface JSONRPCMessage {
-  jsonrpc: "2.0";
-  id?: number | string;
-  method?: string;
-  params?: Record<string, unknown>;
-  result?: unknown;
-  error?: { code: number; message: string };
+class LoggingTransport implements Transport {
+  private inner: Transport;
+  private onSend?: (message: JSONRPCMessage) => void;
+  private onReceive?: (message: JSONRPCMessage) => void;
+  private _sessionId?: string;
+
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
+  setProtocolVersion?: (version: string) => void;
+
+  constructor(
+    inner: Transport,
+    handlers: {
+      onSend?: (message: JSONRPCMessage) => void;
+      onReceive?: (message: JSONRPCMessage) => void;
+    },
+  ) {
+    this.inner = inner;
+    this.onSend = handlers.onSend;
+    this.onReceive = handlers.onReceive;
+  }
+
+  get sessionId() {
+    return this._sessionId ?? this.inner.sessionId;
+  }
+
+  set sessionId(value: string | undefined) {
+    this._sessionId = value;
+    this.inner.sessionId = value;
+  }
+
+  async start() {
+    this.inner.onmessage = (message, extra) => {
+      this.onReceive?.(message);
+      this.onmessage?.(message, extra);
+    };
+    this.inner.onerror = (error) => {
+      this.onerror?.(error);
+    };
+    this.inner.onclose = () => {
+      this.onclose?.();
+    };
+    this.inner.setProtocolVersion = (version) => {
+      this.setProtocolVersion?.(version);
+    };
+    await this.inner.start();
+  }
+
+  async send(message: JSONRPCMessage, options?: TransportSendOptions) {
+    this.onSend?.(message);
+    await this.inner.send(message, options);
+  }
+
+  async close() {
+    await this.inner.close();
+  }
 }
 
 export function MCPAppsRenderer({
@@ -235,15 +302,23 @@ export function MCPAppsRenderer({
   // SEP-1865 mimetype validation
   const [mimeTypeWarning, setMimeTypeWarning] = useState<string | null>(null);
 
-  const pendingRequests = useRef<
-    Map<
-      number | string,
-      {
-        resolve: (value: unknown) => void;
-        reject: (error: Error) => void;
-      }
-    >
-  >(new Map());
+  const bridgeRef = useRef<AppBridge | null>(null);
+  const hostContextRef = useRef<McpUiHostContext | null>(null);
+  const lastToolInputRef = useRef<string | null>(null);
+  const lastToolOutputRef = useRef<string | null>(null);
+  const lastToolCancelRef = useRef<string | null>(null);
+  const isReadyRef = useRef(false);
+
+  const onSendFollowUpRef = useRef(onSendFollowUp);
+  const onCallToolRef = useRef(onCallTool);
+  const onRequestPipRef = useRef(onRequestPip);
+  const onExitPipRef = useRef(onExitPip);
+  const setDisplayModeRef = useRef(setDisplayMode);
+  const viewportWidthRef = useRef(viewportWidth);
+  const effectiveDisplayModeRef = useRef(effectiveDisplayMode);
+  const serverIdRef = useRef(serverId);
+  const toolCallIdRef = useRef(toolCallId);
+  const pipWidgetIdRef = useRef(pipWidgetId);
 
   // Fetch widget HTML when tool output is available or CSP mode changes
   useEffect(() => {
@@ -284,7 +359,7 @@ export function MCPAppsRenderer({
           const errorData = await contentResponse.json().catch(() => ({}));
           throw new Error(
             errorData.error ||
-              `Failed to fetch widget: ${contentResponse.statusText}`,
+            `Failed to fetch widget: ${contentResponse.statusText}`,
           );
         }
         const {
@@ -398,469 +473,385 @@ export function MCPAppsRenderer({
     setWidgetGlobals,
   ]);
 
-  // JSON-RPC helpers
-  const postMessage = useCallback(
-    (data: unknown) => {
-      // Log outgoing message
-      addUiLog({
-        widgetId: toolCallId,
-        serverId,
-        direction: "host-to-ui",
-        protocol: "mcp-apps",
-        method: extractMethod(data, "mcp-apps"),
-        message: data,
-      });
-      sandboxRef.current?.postMessage(data);
-    },
-    [addUiLog, toolCallId, serverId],
-  );
-
-  const sendNotification = useCallback(
-    (method: string, params: unknown) => {
-      postMessage({ jsonrpc: "2.0", method, params });
-    },
-    [postMessage],
-  );
-
-  const sendResponse = useCallback(
-    (
-      id: number | string,
-      result?: unknown,
-      error?: { code: number; message: string },
-    ) => {
-      postMessage({
-        jsonrpc: "2.0",
-        id,
-        ...(error ? { error } : { result: result ?? {} }),
-      });
-    },
-    [postMessage],
-  );
-
-  // Handle messages from guest UI (via SandboxedIframe)
-  const handleMessage = useCallback(
-    async (event: MessageEvent) => {
-      // Handle CSP violation messages (not JSON-RPC)
-      if (event.data?.type === "mcp-apps:csp-violation") {
-        const {
-          directive,
-          blockedUri,
-          sourceFile,
-          lineNumber,
-          columnNumber,
-          effectiveDirective,
-          timestamp,
-        } = event.data;
-
-        // Log incoming CSP violation
-        addUiLog({
-          widgetId: toolCallId,
-          serverId,
-          direction: "ui-to-host",
-          protocol: "mcp-apps",
-          method: "csp-violation",
-          message: event.data,
-        });
-
-        // Add violation to widget debug store for display in CSP panel
-        addCspViolation(toolCallId, {
-          directive,
-          effectiveDirective,
-          blockedUri,
-          sourceFile,
-          lineNumber,
-          columnNumber,
-          timestamp: timestamp || Date.now(),
-        });
-
-        // Also log to console for developers
-        console.warn(
-          `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
-          sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
-        );
-        return;
-      }
-
-      const { jsonrpc, id, method, params, result, error } =
-        event.data as JSONRPCMessage;
-
-      // Not a JSON-RPC message
-      if (jsonrpc !== "2.0") return;
-
-      // Log incoming message
-      addUiLog({
-        widgetId: toolCallId,
-        serverId,
-        direction: "ui-to-host",
-        protocol: "mcp-apps",
-        method: extractMethod(event.data, "mcp-apps"),
-        message: event.data,
-      });
-
-      // Handle responses to our requests
-      if (id !== undefined && !method) {
-        const pending = pendingRequests.current.get(id);
-        if (pending) {
-          pendingRequests.current.delete(id);
-          if (error) {
-            pending.reject(new Error(error.message || "Unknown error"));
-          } else {
-            pending.resolve(result);
-          }
-        }
-        return;
-      }
-
-      // Handle requests from guest UI
-      if (method && id !== undefined) {
-        switch (method) {
-          case "ui/initialize": {
-            // Respond with host context (per SEP-1865)
-            sendResponse(id, {
-              protocolVersion: "2025-11-25",
-              hostCapabilities: {},
-              hostInfo: { name: "mcpjam-inspector", version: __APP_VERSION__ },
-              hostContext: {
-                theme: themeMode,
-                displayMode: effectiveDisplayMode,
-                availableDisplayModes: ["inline", "pip", "fullscreen"],
-                viewport: {
-                  width: viewportWidth,
-                  height: viewportHeight,
-                  maxHeight,
-                },
-                locale,
-                timeZone,
-                platform,
-                userAgent: navigator.userAgent,
-                deviceCapabilities,
-                safeAreaInsets,
-                toolInfo: {
-                  id: toolCallId,
-                  tool: {
-                    name: toolName,
-                    inputSchema: (toolMetadata?.inputSchema as object) ?? {
-                      type: "object",
-                    },
-                    ...(toolMetadata?.description
-                      ? { description: toolMetadata.description }
-                      : {}),
-                  },
-                },
-              },
-            });
-            setIsReady(true);
-            break;
-          }
-
-          case "tools/call": {
-            if (!onCallTool) {
-              sendResponse(id, undefined, {
-                code: -32601,
-                message: "Tool calls not supported",
-              });
-              break;
-            }
-            try {
-              const callParams = params as {
-                name: string;
-                arguments?: Record<string, unknown>;
-              };
-              const result = await onCallTool(
-                callParams.name,
-                callParams.arguments || {},
-              );
-              sendResponse(id, result);
-            } catch (err) {
-              sendResponse(id, undefined, {
-                code: -32000,
-                message:
-                  err instanceof Error ? err.message : "Tool call failed",
-              });
-            }
-            break;
-          }
-
-          case "resources/read": {
-            try {
-              const readParams = params as { uri: string };
-              const response = await fetch(`/api/mcp/resources/read`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ serverId, uri: readParams.uri }),
-              });
-              const result = await response.json();
-              // API returns { content: { contents: [...] } }, SDK expects { contents: [...] }
-              sendResponse(id, result.content);
-            } catch (err) {
-              sendResponse(id, undefined, {
-                code: -32000,
-                message:
-                  err instanceof Error ? err.message : "Resource read failed",
-              });
-            }
-            break;
-          }
-
-          case "ui/open-link": {
-            const linkParams = params as { url?: string };
-            if (linkParams.url) {
-              window.open(linkParams.url, "_blank", "noopener,noreferrer");
-            }
-            sendResponse(id, {});
-            break;
-          }
-
-          case "ui/message": {
-            // SEP-1865 specifies: { role: "user", content: { type: "text", text: "..." } }
-            // SDK sends array:    { role: "user", content: [{ type: "text", text: "..." }] }
-            // Support both formats for compatibility
-            const messageParams = params as {
-              role?: string;
-              content?:
-                | { type: string; text?: string }
-                | Array<{ type: string; text?: string }>;
-            };
-            const textContent = Array.isArray(messageParams.content)
-              ? messageParams.content.find((c) => c.type === "text")?.text
-              : messageParams.content?.type === "text"
-                ? messageParams.content.text
-                : undefined;
-            if (onSendFollowUp && textContent) {
-              onSendFollowUp(textContent);
-            }
-            sendResponse(id, {});
-            break;
-          }
-
-          case "ui/request-display-mode": {
-            const requestedMode =
-              (params as { mode?: DisplayMode })?.mode || "inline";
-            const isMobile = viewportWidth < 768;
-            const actualMode: DisplayMode =
-              isMobile && requestedMode === "pip"
-                ? "fullscreen"
-                : requestedMode;
-
-            setDisplayMode(actualMode);
-
-            if (actualMode === "pip") {
-              onRequestPip?.(toolCallId);
-            } else if (
-              (actualMode === "inline" || actualMode === "fullscreen") &&
-              pipWidgetId === toolCallId
-            ) {
-              onExitPip?.(toolCallId);
-            }
-
-            sendResponse(id, { mode: actualMode });
-
-            sendNotification("ui/notifications/host-context-changed", {
-              displayMode: actualMode,
-            });
-            break;
-          }
-
-          default:
-            sendResponse(id, undefined, {
-              code: -32601,
-              message: `Method not found: ${method}`,
-            });
-        }
-        return;
-      }
-
-      // Handle notifications from guest UI
-      if (method && id === undefined) {
-        switch (method) {
-          case "ui/notifications/initialized":
-            // Guest UI finished initialization, send tool data
-            if (toolInput) {
-              sendNotification("ui/notifications/tool-input", {
-                arguments: toolInput,
-              });
-            }
-            if (toolOutput && toolState === "output-available") {
-              sendNotification("ui/notifications/tool-result", toolOutput);
-            }
-            break;
-
-          case "ui/notifications/size-changed": // SEP-1865 spec
-          case "ui/notifications/size-change": {
-            // Support both for backwards compatibility
-            // Skip resize in fullscreen/pip modes (they use 100% height)
-            if (effectiveDisplayMode !== "inline") break;
-
-            const sizeParams = params as { height?: number };
-            const iframe = sandboxRef.current?.getIframeElement();
-            if (!iframe) break;
-
-            let { height } = sizeParams;
-            if (height === undefined) break;
-
-            // Border-box compensation: add border thickness to prevent resize feedback loops
-            const style = getComputedStyle(iframe);
-            const isBorderBox = style.boxSizing === "border-box";
-
-            if (isBorderBox) {
-              height +=
-                parseFloat(style.borderTopWidth) +
-                parseFloat(style.borderBottomWidth);
-            }
-
-            // Animate height change smoothly using Web Animations API
-            const from: Keyframe = { height: `${iframe.offsetHeight}px` };
-            const to: Keyframe = { height: `${height}px` };
-            iframe.style.height = to.height as string;
-            iframe.animate([from, to], { duration: 300, easing: "ease-out" });
-
-            break;
-          }
-
-          case "notifications/message":
-            console.log("[MCP Apps] Guest log:", params);
-            break;
-        }
-      }
-    },
-    [
-      themeMode,
-      effectiveDisplayMode,
-      locale,
-      timeZone,
-      platform,
-      viewportWidth,
-      deviceCapabilities,
-      safeAreaInsets,
-      toolName,
-      toolMetadata,
-      onCallTool,
-      onSendFollowUp,
-      serverId,
-      toolCallId,
-      toolInput,
-      toolOutput,
-      toolState,
-      sendResponse,
-      sendNotification,
-      addUiLog,
-      addCspViolation,
-      setDisplayMode,
-      onRequestPip,
-      onExitPip,
-      pipWidgetId,
-    ],
-  );
-
-  // Track previous host context to send only changed fields (per SEP-1865)
-  const prevHostContextRef = useRef<{
-    theme: string;
-    displayMode: DisplayMode;
-    locale: string;
-    timeZone: string;
-    platform: "web" | "desktop" | "mobile";
-    viewportWidth: number;
-    viewportHeight: number;
-    maxHeight: number;
-    deviceCapabilities: { touch?: boolean; hover?: boolean };
-    safeAreaInsets: {
-      top: number;
-      right: number;
-      bottom: number;
-      left: number;
-    };
-  } | null>(null);
-
-  // Send host-context-changed notifications when any context field changes
-  useEffect(() => {
-    if (!isReady) return;
-
-    const currentContext = {
+  const hostContext = useMemo<McpUiHostContext>(
+    () => ({
       theme: themeMode,
       displayMode: effectiveDisplayMode,
-      locale,
-      timeZone,
-      platform,
-      viewportWidth,
-      viewportHeight,
-      maxHeight,
-      deviceCapabilities,
-      safeAreaInsets,
-    };
-
-    // Skip initial mount - context was already sent in initialize response
-    if (prevHostContextRef.current === null) {
-      prevHostContextRef.current = currentContext;
-      return;
-    }
-
-    // Build partial update with only changed fields (per SEP-1865 spec)
-    const changedFields: Record<string, unknown> = {};
-    if (prevHostContextRef.current.theme !== themeMode) {
-      changedFields.theme = themeMode;
-    }
-    if (prevHostContextRef.current.displayMode !== effectiveDisplayMode) {
-      changedFields.displayMode = effectiveDisplayMode;
-    }
-    if (prevHostContextRef.current.locale !== locale) {
-      changedFields.locale = locale;
-    }
-    if (prevHostContextRef.current.timeZone !== timeZone) {
-      changedFields.timeZone = timeZone;
-    }
-    if (prevHostContextRef.current.platform !== platform) {
-      changedFields.platform = platform;
-    }
-    // Send full viewport object when any viewport property changes
-    if (
-      prevHostContextRef.current.viewportWidth !== viewportWidth ||
-      prevHostContextRef.current.viewportHeight !== viewportHeight ||
-      prevHostContextRef.current.maxHeight !== maxHeight
-    ) {
-      changedFields.viewport = {
+      availableDisplayModes: ["inline", "pip", "fullscreen"],
+      viewport: {
         width: viewportWidth,
         height: viewportHeight,
         maxHeight,
-      };
-    }
-    // Compare deviceCapabilities (simple object with booleans)
-    const prevCaps = prevHostContextRef.current.deviceCapabilities;
-    if (
-      prevCaps.touch !== deviceCapabilities.touch ||
-      prevCaps.hover !== deviceCapabilities.hover
-    ) {
-      changedFields.deviceCapabilities = deviceCapabilities;
-    }
-    // Compare safeAreaInsets (simple object with numbers)
-    const prevInsets = prevHostContextRef.current.safeAreaInsets;
-    if (
-      prevInsets.top !== safeAreaInsets.top ||
-      prevInsets.right !== safeAreaInsets.right ||
-      prevInsets.bottom !== safeAreaInsets.bottom ||
-      prevInsets.left !== safeAreaInsets.left
-    ) {
-      changedFields.safeAreaInsets = safeAreaInsets;
-    }
+      },
+      locale,
+      timeZone,
+      platform,
+      userAgent: navigator.userAgent,
+      deviceCapabilities,
+      safeAreaInsets,
+      toolInfo: {
+        id: toolCallId,
+        tool: {
+          name: toolName,
+          inputSchema: (toolMetadata?.inputSchema as { type: "object"; properties?: Record<string, object>; required?: string[] }) ?? DEFAULT_INPUT_SCHEMA,
+          description: toolMetadata?.description as string | undefined,
+        },
+      },
+    }),
+    [
+      themeMode,
+      effectiveDisplayMode,
+      viewportWidth,
+      viewportHeight,
+      maxHeight,
+      locale,
+      timeZone,
+      platform,
+      deviceCapabilities,
+      safeAreaInsets,
+      toolCallId,
+      toolName,
+      toolMetadata,
+    ],
+  );
 
-    // Only send notification if something changed
-    if (Object.keys(changedFields).length > 0) {
-      prevHostContextRef.current = currentContext;
-      sendNotification("ui/notifications/host-context-changed", changedFields);
-    }
+  useEffect(() => {
+    hostContextRef.current = hostContext;
+  }, [hostContext]);
+
+  useEffect(() => {
+    onSendFollowUpRef.current = onSendFollowUp;
+    onCallToolRef.current = onCallTool;
+    onRequestPipRef.current = onRequestPip;
+    onExitPipRef.current = onExitPip;
+    setDisplayModeRef.current = setDisplayMode;
+    viewportWidthRef.current = viewportWidth;
+    effectiveDisplayModeRef.current = effectiveDisplayMode;
+    serverIdRef.current = serverId;
+    toolCallIdRef.current = toolCallId;
+    pipWidgetIdRef.current = pipWidgetId;
   }, [
-    themeMode,
-    effectiveDisplayMode,
-    locale,
-    timeZone,
-    platform,
+    onSendFollowUp,
+    onCallTool,
+    onRequestPip,
+    onExitPip,
+    setDisplayMode,
     viewportWidth,
-    viewportHeight,
-    maxHeight,
-    deviceCapabilities,
-    safeAreaInsets,
-    isReady,
-    sendNotification,
+    effectiveDisplayMode,
+    serverId,
+    toolCallId,
+    pipWidgetId,
   ]);
+
+  const registerBridgeHandlers = useCallback(
+    (bridge: AppBridge) => {
+      bridge.oninitialized = () => {
+        setIsReady(true);
+        isReadyRef.current = true;
+      };
+
+      bridge.onmessage = async ({ content }) => {
+        const textContent = content.find((item) => item.type === "text")?.text;
+        if (textContent) {
+          onSendFollowUpRef.current?.(textContent);
+        }
+        return {};
+      };
+
+      bridge.onopenlink = async ({ url }) => {
+        if (url) {
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
+        return {};
+      };
+
+      bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
+        if (!onCallToolRef.current) {
+          throw new Error("Tool calls not supported");
+        }
+        const result = await onCallToolRef.current(
+          name,
+          (args ?? {}) as Record<string, unknown>,
+        );
+        return result as CallToolResult;
+      };
+
+      bridge.onreadresource = async ({ uri }) => {
+        const response = await fetch(`/api/mcp/resources/read`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverId: serverIdRef.current, uri }),
+        });
+        if (!response.ok) {
+          throw new Error(`Resource read failed: ${response.statusText}`);
+        }
+        const result = await response.json();
+        return result.content;
+      };
+
+      bridge.onlistresources = async (params) => {
+        const response = await fetch(`/api/mcp/resources/list`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverId: serverIdRef.current, ...(params ?? {}) }),
+        });
+        if (!response.ok) {
+          throw new Error(`Resource list failed: ${response.statusText}`);
+        }
+        return response.json();
+      };
+
+      bridge.onlistresourcetemplates = async (params) => {
+        const response = await fetch(`/api/mcp/resource-templates/list`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverId: serverIdRef.current, ...(params ?? {}) }),
+        });
+        if (!response.ok) {
+          throw new Error(
+            `Resource template list failed: ${response.statusText}`,
+          );
+        }
+        return response.json();
+      };
+
+      bridge.onlistprompts = async (params) => {
+        const response = await fetch(`/api/mcp/prompts/list`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverId: serverIdRef.current, ...(params ?? {}) }),
+        });
+        if (!response.ok) {
+          throw new Error(`Prompt list failed: ${response.statusText}`);
+        }
+        return response.json();
+      };
+
+      bridge.onloggingmessage = ({ level, data, logger }) => {
+        const prefix = logger ? `[${logger}]` : "[MCP Apps]";
+        const message = `${prefix} ${level.toUpperCase()}:`;
+        if (level === "error" || level === "critical" || level === "alert") {
+          console.error(message, data);
+          return;
+        }
+        if (level === "warning") {
+          console.warn(message, data);
+          return;
+        }
+        console.info(message, data);
+      };
+
+      bridge.onsizechange = ({ width, height }) => {
+        if (effectiveDisplayModeRef.current !== "inline") return;
+        const iframe = sandboxRef.current?.getIframeElement();
+        if (!iframe || (height === undefined && width === undefined)) return;
+
+        const style = getComputedStyle(iframe);
+        const isBorderBox = style.boxSizing === "border-box";
+
+        const from: Keyframe = {};
+        const to: Keyframe = {};
+
+        if (width !== undefined) {
+          if (isBorderBox) {
+            width +=
+              parseFloat(style.borderLeftWidth) +
+              parseFloat(style.borderRightWidth);
+          }
+          from.minWidth = `${iframe.offsetWidth}px`;
+          iframe.style.minWidth = to.minWidth = `min(${width}px, 100%)`;
+        }
+
+        if (height !== undefined) {
+          if (isBorderBox) {
+            height +=
+              parseFloat(style.borderTopWidth) +
+              parseFloat(style.borderBottomWidth);
+          }
+          from.height = `${iframe.offsetHeight}px`;
+          iframe.style.height = to.height = `${height}px`;
+        }
+
+        iframe.animate([from, to], { duration: 300, easing: "ease-out" });
+      };
+
+      bridge.onrequestdisplaymode = async ({ mode }) => {
+        const requestedMode = mode ?? "inline";
+        const isMobile = viewportWidthRef.current < 768;
+        const actualMode: DisplayMode =
+          isMobile && requestedMode === "pip" ? "fullscreen" : requestedMode;
+
+        setDisplayModeRef.current(actualMode);
+
+        if (actualMode === "pip") {
+          onRequestPipRef.current?.(toolCallIdRef.current);
+        } else if (
+          (actualMode === "inline" || actualMode === "fullscreen") &&
+          pipWidgetIdRef.current === toolCallIdRef.current
+        ) {
+          onExitPipRef.current?.(toolCallIdRef.current);
+        }
+
+        return { mode: actualMode };
+      };
+    },
+    [setIsReady],
+  );
+
+  useEffect(() => {
+    if (!widgetHtml) return;
+    const iframe = sandboxRef.current?.getIframeElement();
+    if (!iframe?.contentWindow) return;
+
+    setIsReady(false);
+    isReadyRef.current = false;
+
+    const bridge = new AppBridge(
+      null,
+      { name: "mcpjam-inspector", version: __APP_VERSION__ },
+      {
+        openLinks: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+      },
+      { hostContext: hostContextRef.current ?? {} },
+    );
+
+    registerBridgeHandlers(bridge);
+    bridgeRef.current = bridge;
+
+    const transport = new LoggingTransport(
+      new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
+      {
+        onSend: (message) => {
+          addUiLog({
+            widgetId: toolCallId,
+            serverId,
+            direction: "host-to-ui",
+            protocol: "mcp-apps",
+            method: extractMethod(message, "mcp-apps"),
+            message,
+          });
+        },
+        onReceive: (message) => {
+          addUiLog({
+            widgetId: toolCallId,
+            serverId,
+            direction: "ui-to-host",
+            protocol: "mcp-apps",
+            method: extractMethod(message, "mcp-apps"),
+            message,
+          });
+        },
+      },
+    );
+
+    let isActive = true;
+    bridge.connect(transport).catch((error) => {
+      if (!isActive) return;
+      setLoadError(
+        error instanceof Error ? error.message : "Failed to connect MCP App",
+      );
+    });
+
+    return () => {
+      isActive = false;
+      bridgeRef.current = null;
+      if (isReadyRef.current) {
+        bridge.teardownResource({}).catch(() => { });
+      }
+      bridge.close().catch(() => { });
+    };
+  }, [addUiLog, serverId, toolCallId, widgetHtml, registerBridgeHandlers]);
+
+  useEffect(() => {
+    const bridge = bridgeRef.current;
+    if (!bridge || !isReady) return;
+    bridge.setHostContext(hostContext);
+  }, [hostContext, isReady]);
+
+  useEffect(() => {
+    if (!isReady) return;
+    const bridge = bridgeRef.current;
+    if (!bridge || !toolInput) return;
+
+    const serialized = JSON.stringify(toolInput);
+    if (lastToolInputRef.current === serialized) return;
+    lastToolInputRef.current = serialized;
+    bridge.sendToolInput({ arguments: toolInput });
+  }, [isReady, toolInput]);
+
+  useEffect(() => {
+    if (!isReady || toolState !== "output-available") return;
+    const bridge = bridgeRef.current;
+    if (!bridge || !toolOutput) return;
+
+    const serialized = JSON.stringify(toolOutput);
+    if (lastToolOutputRef.current === serialized) return;
+    lastToolOutputRef.current = serialized;
+    bridge.sendToolResult(toolOutput as CallToolResult);
+  }, [isReady, toolOutput, toolState]);
+
+  useEffect(() => {
+    if (!isReady || toolState !== "output-error") return;
+    const bridge = bridgeRef.current;
+    if (!bridge) return;
+
+    const reason =
+      toolOutput instanceof Error
+        ? toolOutput.message
+        : typeof toolOutput === "string"
+          ? toolOutput
+          : "Tool execution failed";
+
+    if (lastToolCancelRef.current === reason) return;
+    lastToolCancelRef.current = reason;
+    bridge.sendToolCancelled({ reason });
+  }, [isReady, toolOutput, toolState]);
+
+  useEffect(() => {
+    lastToolInputRef.current = null;
+    lastToolOutputRef.current = null;
+    lastToolCancelRef.current = null;
+  }, [toolCallId]);
+
+  const handleSandboxMessage = (event: MessageEvent) => {
+    if (event.data?.type !== "mcp-apps:csp-violation") return;
+    const {
+      directive,
+      blockedUri,
+      sourceFile,
+      lineNumber,
+      columnNumber,
+      effectiveDirective,
+      timestamp,
+    } = event.data;
+
+    addUiLog({
+      widgetId: toolCallId,
+      serverId,
+      direction: "ui-to-host",
+      protocol: "mcp-apps",
+      method: "csp-violation",
+      message: event.data,
+    });
+
+    addCspViolation(toolCallId, {
+      directive,
+      effectiveDirective,
+      blockedUri,
+      sourceFile,
+      lineNumber,
+      columnNumber,
+      timestamp: timestamp || Date.now(),
+    });
+
+    console.warn(
+      `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
+      sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
+    );
+  };
 
   // Loading states
   if (toolState !== "output-available") {
@@ -921,20 +912,20 @@ export function MCPAppsRenderer({
     <div className={containerClassName}>
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
-        <button
-          onClick={() => {
-            setDisplayMode("inline");
-            if (isPip) {
-              onExitPip?.(toolCallId);
-            }
-            // onExitFullscreen is called within setDisplayMode when leaving fullscreen
-          }}
-          className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
-          aria-label="Close"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      )}
+          <button
+            onClick={() => {
+              setDisplayMode("inline");
+              if (isPip) {
+                onExitPip?.(toolCallId);
+              }
+              // onExitFullscreen is called within setDisplayMode when leaving fullscreen
+            }}
+            className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
 
       {isFullscreen && !isContainedFullscreenMode && (
         <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
@@ -977,13 +968,12 @@ export function MCPAppsRenderer({
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
         csp={widgetCsp}
         permissive={widgetPermissive}
-        onMessage={handleMessage}
+        onMessage={handleSandboxMessage}
         title={`MCP App: ${toolName}`}
-        className={`w-full bg-background overflow-hidden ${
-          isFullscreen
+        className={`bg-background overflow-hidden ${isFullscreen
             ? "flex-1 border-0 rounded-none"
             : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
-        }`}
+          }`}
         style={{
           height: isFullscreen ? "100%" : "400px",
         }}
