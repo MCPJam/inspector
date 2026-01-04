@@ -9,7 +9,14 @@
  * Uses SandboxedIframe for DRY double-iframe setup.
  */
 
-import { useRef, useState, useEffect, useMemo, useCallback } from "react";
+import {
+  useRef,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  type CSSProperties,
+} from "react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useUIPlaygroundStore,
@@ -299,6 +306,10 @@ export function MCPAppsRenderer({
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
+  const [iframeSize, setIframeSize] = useState<{
+    width?: number;
+    height?: number;
+  }>({});
 
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
@@ -670,17 +681,12 @@ export function MCPAppsRenderer({
         const style = getComputedStyle(iframe);
         const isBorderBox = style.boxSizing === "border-box";
 
-        const from: Keyframe = {};
-        const to: Keyframe = {};
-
         if (width !== undefined) {
           if (isBorderBox) {
             width +=
               parseFloat(style.borderLeftWidth) +
               parseFloat(style.borderRightWidth);
           }
-          from.minWidth = `${iframe.offsetWidth}px`;
-          iframe.style.minWidth = to.minWidth = `min(${width}px, 100%)`;
         }
 
         if (height !== undefined) {
@@ -689,11 +695,21 @@ export function MCPAppsRenderer({
               parseFloat(style.borderTopWidth) +
               parseFloat(style.borderBottomWidth);
           }
-          from.height = `${iframe.offsetHeight}px`;
-          iframe.style.height = to.height = `${height}px`;
         }
 
-        iframe.animate([from, to], { duration: 300, easing: "ease-out" });
+        setIframeSize((current) => {
+          const next = { ...current };
+          if (typeof width === "number" && Number.isFinite(width)) {
+            next.width = width;
+          }
+          if (typeof height === "number" && Number.isFinite(height)) {
+            next.height = height;
+          }
+          if (next.width === current.width && next.height === current.height) {
+            return current;
+          }
+          return next;
+        });
       };
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
@@ -835,6 +851,7 @@ export function MCPAppsRenderer({
     lastToolInputRef.current = null;
     lastToolOutputRef.current = null;
     lastToolCancelRef.current = null;
+    setIframeSize({});
   }, [toolCallId]);
 
   const handleSandboxMessage = (event: MessageEvent) => {
@@ -920,7 +937,7 @@ export function MCPAppsRenderer({
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
       }
       return [
-        "fixed top-4 inset-x-0 z-40 w-full max-w-4xl mx-auto space-y-2",
+        "fixed top-4 left-1/2 -translate-x-1/2 z-40 w-fit min-w-[300px] max-w-[min(90vw,1200px)] space-y-2",
         "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
         "shadow-xl border border-border/60 rounded-xl p-3",
       ].join(" ");
@@ -928,6 +945,23 @@ export function MCPAppsRenderer({
 
     return "mt-3 space-y-2 relative group";
   })();
+
+  const iframeStyle: CSSProperties = {
+    height: isFullscreen
+      ? "100%"
+      : iframeSize.height !== undefined
+        ? `${iframeSize.height}px`
+        : "400px",
+    width: isFullscreen
+      ? "100%"
+      : iframeSize.width !== undefined
+        ? `min(${iframeSize.width}px, 100%)`
+        : "100%",
+    maxWidth: "100%",
+    transition: isFullscreen
+      ? undefined
+      : "height 300ms ease-out, width 300ms ease-out",
+  };
 
   return (
     <div className={containerClassName}>
@@ -996,9 +1030,7 @@ export function MCPAppsRenderer({
             ? "flex-1 border-0 rounded-none"
             : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
         }`}
-        style={{
-          height: isFullscreen ? "100%" : "400px",
-        }}
+        style={iframeStyle}
       />
 
       <div className="text-[11px] text-muted-foreground/70">
