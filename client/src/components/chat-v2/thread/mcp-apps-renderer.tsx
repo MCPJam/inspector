@@ -299,8 +299,6 @@ export function MCPAppsRenderer({
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
-  // SEP-1865 mimetype validation
-  const [mimeTypeWarning, setMimeTypeWarning] = useState<string | null>(null);
 
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
@@ -367,14 +365,23 @@ export function MCPAppsRenderer({
           csp,
           permissive,
           mimeTypeWarning: warning,
+          mimeTypeValid: valid,
           prefersBorder,
         } = await contentResponse.json();
+        
+        if (!valid) {
+          setLoadError(
+            warning ||
+            `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`,
+          );
+          return;
+        }
+        
         setWidgetHtml(html);
         setWidgetCsp(csp);
         setWidgetPermissive(permissive ?? false);
         setPrefersBorder(prefersBorder ?? true);
         setLoadedCspMode(cspMode);
-        setMimeTypeWarning(warning ?? null);
       } catch (err) {
         setLoadError(
           err instanceof Error ? err.message : "Failed to prepare widget",
@@ -981,11 +988,6 @@ export function MCPAppsRenderer({
 
       <div className="text-[11px] text-muted-foreground/70">
         MCP App: <code>{resourceUri}</code>
-        {mimeTypeWarning && (
-          <span className="ml-2 text-amber-600 dark:text-amber-500">
-            · {mimeTypeWarning}
-          </span>
-        )}
       </div>
     </div>
   );
