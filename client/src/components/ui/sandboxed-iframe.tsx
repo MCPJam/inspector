@@ -157,7 +157,7 @@ export const SandboxedIframe = forwardRef<
         (event.data as { jsonrpc?: string; method?: string }) || {};
       if (jsonrpc !== "2.0") return;
 
-      if (method === "ui/notifications/sandbox-ready") {
+      if (method === "ui/notifications/sandbox-proxy-ready") {
         setProxyReady(true);
         onProxyReady?.();
         return;
