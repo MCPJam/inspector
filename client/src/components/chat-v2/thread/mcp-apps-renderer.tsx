@@ -357,7 +357,7 @@ export function MCPAppsRenderer({
           const errorData = await contentResponse.json().catch(() => ({}));
           throw new Error(
             errorData.error ||
-            `Failed to fetch widget: ${contentResponse.statusText}`,
+              `Failed to fetch widget: ${contentResponse.statusText}`,
           );
         }
         const {
@@ -368,15 +368,15 @@ export function MCPAppsRenderer({
           mimeTypeValid: valid,
           prefersBorder,
         } = await contentResponse.json();
-        
+
         if (!valid) {
           setLoadError(
             warning ||
-            `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`,
+              `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`,
           );
           return;
         }
-        
+
         setWidgetHtml(html);
         setWidgetCsp(csp);
         setWidgetPermissive(permissive ?? false);
@@ -500,7 +500,12 @@ export function MCPAppsRenderer({
         id: toolCallId,
         tool: {
           name: toolName,
-          inputSchema: (toolMetadata?.inputSchema as { type: "object"; properties?: Record<string, object>; required?: string[] }) ?? DEFAULT_INPUT_SCHEMA,
+          inputSchema:
+            (toolMetadata?.inputSchema as {
+              type: "object";
+              properties?: Record<string, object>;
+              required?: string[];
+            }) ?? DEFAULT_INPUT_SCHEMA,
           description: toolMetadata?.description as string | undefined,
         },
       },
@@ -600,7 +605,10 @@ export function MCPAppsRenderer({
         const response = await fetch(`/api/mcp/resources/list`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverId: serverIdRef.current, ...(params ?? {}) }),
+          body: JSON.stringify({
+            serverId: serverIdRef.current,
+            ...(params ?? {}),
+          }),
         });
         if (!response.ok) {
           throw new Error(`Resource list failed: ${response.statusText}`);
@@ -612,7 +620,10 @@ export function MCPAppsRenderer({
         const response = await fetch(`/api/mcp/resource-templates/list`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverId: serverIdRef.current, ...(params ?? {}) }),
+          body: JSON.stringify({
+            serverId: serverIdRef.current,
+            ...(params ?? {}),
+          }),
         });
         if (!response.ok) {
           throw new Error(
@@ -626,7 +637,10 @@ export function MCPAppsRenderer({
         const response = await fetch(`/api/mcp/prompts/list`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverId: serverIdRef.current, ...(params ?? {}) }),
+          body: JSON.stringify({
+            serverId: serverIdRef.current,
+            ...(params ?? {}),
+          }),
         });
         if (!response.ok) {
           throw new Error(`Prompt list failed: ${response.statusText}`);
@@ -766,9 +780,9 @@ export function MCPAppsRenderer({
       isActive = false;
       bridgeRef.current = null;
       if (isReadyRef.current) {
-        bridge.teardownResource({}).catch(() => { });
+        bridge.teardownResource({}).catch(() => {});
       }
-      bridge.close().catch(() => { });
+      bridge.close().catch(() => {});
     };
   }, [addUiLog, serverId, toolCallId, widgetHtml, registerBridgeHandlers]);
 
@@ -919,20 +933,20 @@ export function MCPAppsRenderer({
     <div className={containerClassName}>
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
-          <button
-            onClick={() => {
-              setDisplayMode("inline");
-              if (isPip) {
-                onExitPip?.(toolCallId);
-              }
-              // onExitFullscreen is called within setDisplayMode when leaving fullscreen
-            }}
-            className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        )}
+        <button
+          onClick={() => {
+            setDisplayMode("inline");
+            if (isPip) {
+              onExitPip?.(toolCallId);
+            }
+            // onExitFullscreen is called within setDisplayMode when leaving fullscreen
+          }}
+          className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
+          aria-label="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      )}
 
       {isFullscreen && !isContainedFullscreenMode && (
         <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
@@ -977,10 +991,11 @@ export function MCPAppsRenderer({
         permissive={widgetPermissive}
         onMessage={handleSandboxMessage}
         title={`MCP App: ${toolName}`}
-        className={`bg-background overflow-hidden ${isFullscreen
+        className={`bg-background overflow-hidden ${
+          isFullscreen
             ? "flex-1 border-0 rounded-none"
             : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
-          }`}
+        }`}
         style={{
           height: isFullscreen ? "100%" : "400px",
         }}
