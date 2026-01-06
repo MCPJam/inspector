@@ -694,38 +694,42 @@ export function MCPAppsRenderer({
         const iframe = sandboxRef.current?.getIframeElement();
         if (!iframe || (height === undefined && width === undefined)) return;
 
+        // The MCP App has requested a `width` and `height`, but if
+        // `box-sizing: border-box` is applied to the outer iframe element, then we
+        // must add border thickness to `width` and `height` to compute the actual
+        // necessary width and height (in order to prevent a resize feedback loop).
         const style = getComputedStyle(iframe);
         const isBorderBox = style.boxSizing === "border-box";
 
-        if (width !== undefined) {
+        // Animate the change for a smooth transition.
+        const from: Keyframe = {};
+        const to: Keyframe = {};
+
+        let adjustedWidth = width;
+        let adjustedHeight = height;
+
+        if (adjustedWidth !== undefined) {
           if (isBorderBox) {
-            width +=
+            adjustedWidth +=
               parseFloat(style.borderLeftWidth) +
               parseFloat(style.borderRightWidth);
           }
+          // Use width with min(..., 100%) so the iframe can both grow and shrink
+          // dynamically based on widget requests, while respecting container bounds.
+          from.width = `${iframe.offsetWidth}px`;
+          iframe.style.width = to.width = `min(${adjustedWidth}px, 100%)`;
         }
-
-        if (height !== undefined) {
+        if (adjustedHeight !== undefined) {
           if (isBorderBox) {
-            height +=
+            adjustedHeight +=
               parseFloat(style.borderTopWidth) +
               parseFloat(style.borderBottomWidth);
           }
+          from.height = `${iframe.offsetHeight}px`;
+          iframe.style.height = to.height = `${adjustedHeight}px`;
         }
 
-        setIframeSize((current) => {
-          const next = { ...current };
-          if (typeof width === "number" && Number.isFinite(width)) {
-            next.width = width;
-          }
-          if (typeof height === "number" && Number.isFinite(height)) {
-            next.height = height;
-          }
-          if (next.width === current.width && next.height === current.height) {
-            return current;
-          }
-          return next;
-        });
+        iframe.animate([from, to], { duration: 300, easing: "ease-out" });
       };
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
