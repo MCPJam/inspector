@@ -502,7 +502,7 @@ export function LoggerView({
 
             // Border color: purple for Apps traffic, none for MCP Server
             const borderClass = isAppsTraffic
-              ? "border-l-2 border-l-purple-500/50"
+              ? "border-l-4 border-l-purple-500/50"
               : "";
 
             return (
@@ -522,25 +522,7 @@ export function LoggerView({
                     )}
                   </div>
                   <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {/* Source indicator */}
-                    <span
-                      className={`flex items-center justify-center p-0.5 rounded ${
-                        isAppsTraffic
-                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                          : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
-                      }`}
-                      title={isAppsTraffic ? "Apps (UI)" : "MCP Server"}
-                    >
-                      {isAppsTraffic ? (
-                        <AppWindow className="h-3 w-3" />
-                      ) : (
-                        <Server className="h-3 w-3" />
-                      )}
-                    </span>
-                    <span className="text-muted-foreground font-mono text-xs">
-                      {new Date(it.timestamp).toLocaleTimeString()}
-                    </span>
-                    <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50">
+                    <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50 whitespace-nowrap">
                       {it.serverId}
                     </span>
                     {/* Direction indicator */}
@@ -558,8 +540,14 @@ export function LoggerView({
                         <ArrowUpFromLine className="h-3 w-3" />
                       )}
                     </span>
-                    <span className="text-xs font-mono text-foreground truncate">
+                    <span
+                      className="text-xs font-mono text-foreground truncate"
+                      title={it.method}
+                    >
                       {it.method}
+                    </span>
+                    <span className="text-muted-foreground font-mono text-xs whitespace-nowrap ml-auto">
+                      {new Date(it.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
                 </div>
