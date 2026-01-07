@@ -286,9 +286,9 @@ export function ParametersPanel({
                             disabled={!field.required && !field.isSet}
                             className="w-full h-9 bg-background border border-border rounded px-2 text-xs disabled:cursor-not-allowed disabled:bg-muted/40"
                           >
-                            {field.enum?.map((v) => (
+                            {field.enum?.map((v, idx) => (
                               <option key={v} value={v}>
-                                {v}
+                                {field.enumLabels?.[idx] ?? v}
                               </option>
                             ))}
                           </select>

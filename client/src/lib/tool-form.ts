@@ -5,10 +5,43 @@ export interface FormField {
   required: boolean;
   value: any;
   enum?: string[];
+  enumLabels?: string[]; // Display labels for enum values (from oneOf/anyOf titles)
   minimum?: number;
   maximum?: number;
   pattern?: string;
   isSet: boolean;
+}
+
+/**
+ * Extract enum values from oneOf/anyOf with const pattern.
+ * This is commonly used by Python MCP servers for enum types.
+ * Returns { values, labels } where labels may have custom titles.
+ */
+function extractEnumFromOneOfAnyOf(prop: any): {
+  values: string[];
+  labels: string[];
+} | null {
+  const options = prop.oneOf || prop.anyOf;
+  if (!Array.isArray(options)) return null;
+
+  // Filter options that have a 'const' property (enum pattern)
+  const constOptions = options.filter(
+    (opt: any) => opt && typeof opt === "object" && "const" in opt,
+  );
+
+  if (constOptions.length === 0) return null;
+
+  const values: string[] = [];
+  const labels: string[] = [];
+
+  for (const opt of constOptions) {
+    const val = String(opt.const);
+    values.push(val);
+    // Use title if available, otherwise use the value itself
+    labels.push(opt.title ?? val);
+  }
+
+  return { values, labels };
 }
 
 export function getDefaultValue(type: string, enumValues?: string[]) {
@@ -36,11 +69,31 @@ export function generateFormFieldsFromSchema(schema: any): FormField[] {
   const fields: FormField[] = [];
   const requiredFields: string[] = schema.required || [];
   Object.entries(schema.properties).forEach(([key, prop]: [string, any]) => {
-    const fieldType = prop.enum ? "enum" : prop.type || "string";
+    // Check for enum values - supports both direct enum and oneOf/anyOf with const
+    let enumValues: string[] | undefined;
+    let enumLabels: string[] | undefined;
+
+    if (prop.enum) {
+      // Direct enum array
+      enumValues = prop.enum;
+      // Support legacy enumNames for labels
+      if (Array.isArray(prop.enumNames)) {
+        enumLabels = prop.enumNames;
+      }
+    } else {
+      // Check for oneOf/anyOf with const pattern (common in Python MCP servers)
+      const extracted = extractEnumFromOneOfAnyOf(prop);
+      if (extracted) {
+        enumValues = extracted.values;
+        enumLabels = extracted.labels;
+      }
+    }
+
+    const fieldType = enumValues ? "enum" : prop.type || "string";
     const isRequired = requiredFields.includes(key);
 
     // Start with type-based default value
-    let value = getDefaultValue(fieldType, prop.enum);
+    let value = getDefaultValue(fieldType, enumValues);
     // Required fields are considered "set" by default, optional fields are unset
     let isSet = isRequired;
 
@@ -60,7 +113,8 @@ export function generateFormFieldsFromSchema(schema: any): FormField[] {
       description: prop.description,
       required: isRequired,
       value,
-      enum: prop.enum,
+      enum: enumValues,
+      enumLabels,
       minimum: prop.minimum,
       maximum: prop.maximum,
       pattern: prop.pattern,
