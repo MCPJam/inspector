@@ -148,7 +148,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   }
 
   return (
-    <div className="h-[calc(100vh-120px)] flex flex-col">
+    <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="vertical" className="flex-1">
         {/* Top Section - Resources and Preview */}
         <ResizablePanel defaultSize={70} minSize={30}>
@@ -206,11 +206,10 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                           {resources.map((resource) => (
                             <div
                               key={resource.uri}
-                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                selectedResource === resource.uri
+                              className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${selectedResource === resource.uri
                                   ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
                                   : "hover:shadow-sm"
-                              }`}
+                                }`}
                               onClick={() => setSelectedResource(resource.uri)}
                             >
                               <div className="flex items-start gap-3">

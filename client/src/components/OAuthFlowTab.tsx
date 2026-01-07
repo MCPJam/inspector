@@ -301,7 +301,7 @@ export const OAuthFlowTab = ({
       : oauthFlowState.isInitiatingAuth
         ? "Processing..."
         : oauthFlowState.currentStep === "authorization_request" ||
-            oauthFlowState.currentStep === "generate_pkce_parameters"
+          oauthFlowState.currentStep === "generate_pkce_parameters"
           ? "Authorize"
           : "Continue";
   const continueDisabled =
@@ -469,7 +469,7 @@ export const OAuthFlowTab = ({
     : "Paste an MCP base URL to start debugging the OAuth flow.";
 
   return (
-    <div className="h-[calc(100vh-120px)] flex flex-col bg-background">
+    <div className="h-full flex flex-col bg-background">
       <div className="flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal" className="h-full">
           <ResizablePanel defaultSize={50} minSize={30}>

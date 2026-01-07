@@ -216,21 +216,21 @@ export default function App() {
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
-          serverConfigs:
-            activeTab === "oauth-flow"
-              ? appState.servers
-              : connectedServerConfigs,
-          selectedServer: appState.selectedServer,
-          onServerChange: setSelectedServer,
-          onConnect: handleConnect,
-          isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
-          onMultiServerToggle: toggleServerSelection,
-          selectedMultipleServers: appState.selectedMultipleServers,
-          showOnlyOAuthServers: activeTab === "oauth-flow",
-          showOnlyOpenAIAppsServers: activeTab === "app-builder",
-          openAiAppOrMcpAppsServers: openAiAppOrMcpAppsServers,
-          hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
-        }
+        serverConfigs:
+          activeTab === "oauth-flow"
+            ? appState.servers
+            : connectedServerConfigs,
+        selectedServer: appState.selectedServer,
+        onServerChange: setSelectedServer,
+        onConnect: handleConnect,
+        isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
+        onMultiServerToggle: toggleServerSelection,
+        selectedMultipleServers: appState.selectedMultipleServers,
+        showOnlyOAuthServers: activeTab === "oauth-flow",
+        showOnlyOpenAIAppsServers: activeTab === "app-builder",
+        openAiAppOrMcpAppsServers: openAiAppOrMcpAppsServers,
+        hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
+      }
       : undefined;
 
   const appContent = (
@@ -290,7 +290,7 @@ export default function App() {
             />
           )}
 
-          <div className={activeTab === "tasks" ? "" : "hidden"}>
+          <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
             <TasksTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}

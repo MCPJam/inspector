@@ -229,19 +229,19 @@ export function LoggerView({
             timestamp: timestamp ?? new Date().toISOString(),
             payload: message,
           });
-        } catch {}
+        } catch { }
       };
       es.onerror = () => {
         try {
           es?.close();
-        } catch {}
+        } catch { }
       };
-    } catch {}
+    } catch { }
 
     return () => {
       try {
         es?.close();
-      } catch {}
+      } catch { }
     };
   }, []);
 
@@ -508,11 +508,10 @@ export function LoggerView({
                     </span>
                     {/* Direction indicator */}
                     <span
-                      className={`flex items-center justify-center px-1 py-0.5 rounded ${
-                        isIncoming
+                      className={`flex items-center justify-center px-1 py-0.5 rounded ${isIncoming
                           ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
                           : "bg-green-500/10 text-green-600 dark:text-green-400"
-                      }`}
+                        }`}
                       title={it.direction}
                     >
                       {isIncoming ? (

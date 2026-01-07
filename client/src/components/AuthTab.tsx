@@ -399,7 +399,7 @@ export const AuthTab = ({
 
   if (!supportsOAuth) {
     return (
-      <div className="h-[calc(100vh-120px)] flex flex-col">
+      <div className="h-full flex flex-col">
         <div className="h-full flex flex-col bg-background">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
@@ -473,7 +473,7 @@ export const AuthTab = ({
   }
 
   return (
-    <div className="h-[calc(100vh-120px)] flex flex-col">
+    <div className="h-full flex flex-col">
       <div className="h-full flex flex-col bg-background">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">

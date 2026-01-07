@@ -215,7 +215,7 @@ export function ResourceTemplatesTab({
   }
 
   return (
-    <div className="h-[calc(100vh-120px)] flex flex-col">
+    <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="vertical" className="flex-1">
         {/* Top Section - Templates and Parameters */}
         <ResizablePanel defaultSize={70} minSize={30}>
@@ -277,11 +277,10 @@ export function ResourceTemplatesTab({
                             return (
                               <div
                                 key={template.uriTemplate}
-                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                  isSelected
+                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${isSelected
                                     ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
                                     : "hover:shadow-sm"
-                                }`}
+                                  }`}
                                 onClick={() => {
                                   setTemplateOverrides({});
                                   setSelectedTemplate(template.uriTemplate);
