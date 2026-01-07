@@ -13,8 +13,29 @@ export interface FormField {
 }
 
 /**
+ * Resolve a $ref reference in a JSON schema.
+ * Handles local references like "#/$defs/CategoryName"
+ */
+function resolveRef(ref: string, rootSchema: any): any | null {
+  if (!ref.startsWith("#/")) return null;
+
+  const path = ref.slice(2).split("/"); // Remove "#/" and split
+  let current = rootSchema;
+
+  for (const segment of path) {
+    if (current && typeof current === "object" && segment in current) {
+      current = current[segment];
+    } else {
+      return null;
+    }
+  }
+
+  return current;
+}
+
+/**
  * Extract enum values from oneOf/anyOf with const pattern.
- * This is commonly used by Python MCP servers for enum types.
+ * This is commonly used by some Python MCP servers for enum types.
  * Returns { values, labels } where labels may have custom titles.
  */
 function extractEnumFromOneOfAnyOf(prop: any): {
@@ -44,6 +65,42 @@ function extractEnumFromOneOfAnyOf(prop: any): {
   return { values, labels };
 }
 
+/**
+ * Extract enum information from a property, handling multiple schema patterns:
+ * 1. Direct enum array: { enum: ["a", "b", "c"] }
+ * 2. $ref to $defs: { $ref: "#/$defs/MyEnum" } where $defs.MyEnum.enum exists
+ * 3. oneOf/anyOf with const: { oneOf: [{ const: "a", title: "A" }, ...] }
+ */
+function extractEnumFromProperty(
+  prop: any,
+  rootSchema: any,
+): { values: string[]; labels?: string[] } | null {
+  // Pattern 1: Direct enum array
+  if (prop.enum) {
+    const labels = Array.isArray(prop.enumNames) ? prop.enumNames : undefined;
+    return { values: prop.enum, labels };
+  }
+
+  // Pattern 2: $ref to $defs (common with Pydantic/FastMCP)
+  if (prop.$ref && typeof prop.$ref === "string") {
+    const resolved = resolveRef(prop.$ref, rootSchema);
+    if (resolved?.enum) {
+      return { values: resolved.enum };
+    }
+    // Also check for oneOf/anyOf in the resolved schema
+    if (resolved) {
+      const extracted = extractEnumFromOneOfAnyOf(resolved);
+      if (extracted) return extracted;
+    }
+  }
+
+  // Pattern 3: oneOf/anyOf with const values
+  const extracted = extractEnumFromOneOfAnyOf(prop);
+  if (extracted) return extracted;
+
+  return null;
+}
+
 export function getDefaultValue(type: string, enumValues?: string[]) {
   switch (type) {
     case "enum":
@@ -69,24 +126,14 @@ export function generateFormFieldsFromSchema(schema: any): FormField[] {
   const fields: FormField[] = [];
   const requiredFields: string[] = schema.required || [];
   Object.entries(schema.properties).forEach(([key, prop]: [string, any]) => {
-    // Check for enum values - supports both direct enum and oneOf/anyOf with const
+    // Check for enum values - supports multiple patterns including $ref to $defs
     let enumValues: string[] | undefined;
     let enumLabels: string[] | undefined;
 
-    if (prop.enum) {
-      // Direct enum array
-      enumValues = prop.enum;
-      // Support legacy enumNames for labels
-      if (Array.isArray(prop.enumNames)) {
-        enumLabels = prop.enumNames;
-      }
-    } else {
-      // Check for oneOf/anyOf with const pattern (common in Python MCP servers)
-      const extracted = extractEnumFromOneOfAnyOf(prop);
-      if (extracted) {
-        enumValues = extracted.values;
-        enumLabels = extracted.labels;
-      }
+    const extracted = extractEnumFromProperty(prop, schema);
+    if (extracted) {
+      enumValues = extracted.values;
+      enumLabels = extracted.labels;
     }
 
     const fieldType = enumValues ? "enum" : prop.type || "string";
