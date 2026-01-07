@@ -756,7 +756,8 @@ function pickDefaultModel(
     const local = available.find((m) => m.provider === "ollama");
     if (local) return local;
   }
-  const priorities = [
+  const priorities: Array<Model | string> = [
+    "google/gemini-3-flash-preview",
     Model.CLAUDE_3_5_SONNET_LATEST,
     Model.GPT_4O,
     Model.DEEPSEEK_CHAT,

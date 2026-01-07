@@ -82,6 +82,7 @@ export const getDefaultModel = (
   availableModels: ModelDefinition[],
 ): ModelDefinition => {
   const modelIdsByPriority: Array<Model | string> = [
+    "google/gemini-3-flash-preview",
     "openai/gpt-5",
     "meta-llama/llama-3.3-70b-instruct",
     Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
