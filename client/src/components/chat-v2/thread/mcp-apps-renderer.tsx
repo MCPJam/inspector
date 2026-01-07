@@ -217,7 +217,7 @@ export function MCPAppsRenderer({
     [isPlaygroundActive, playgroundSafeAreaInsets],
   );
 
-  // Get device type and custom viewport from playground store for platform/viewport derivation (SEP-1865)
+  // Get device type and custom viewport from playground store for platform/containerDimensions derivation (SEP-1865)
   const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
 
@@ -233,23 +233,6 @@ export function MCPAppsRenderer({
         return "web";
     }
   }, [isPlaygroundActive, playgroundDeviceType]);
-
-  // Derive viewport dimensions from device type (using shared config + custom viewport)
-  const viewportWidth = useMemo(() => {
-    if (!isPlaygroundActive) return 400;
-    if (playgroundDeviceType === "custom") {
-      return customViewport.width;
-    }
-    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].width;
-  }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
-
-  const viewportHeight = useMemo(() => {
-    if (!isPlaygroundActive) return 400;
-    if (playgroundDeviceType === "custom") {
-      return customViewport.height;
-    }
-    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].height;
-  }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
 
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
@@ -289,7 +272,7 @@ export function MCPAppsRenderer({
     ],
   );
 
-  // maxHeight is sent to guest UI as part of viewport info (SEP-1865 protocol)
+  // maxHeight is sent to guest UI as part of containerDimensions (SEP-1865 protocol)
   // Note: We no longer use this to clamp resize, but apps may use it for layout decisions
   const maxHeight = useMemo(() => {
     if (!isPlaygroundActive) return 800;
@@ -333,7 +316,8 @@ export function MCPAppsRenderer({
   const onRequestPipRef = useRef(onRequestPip);
   const onExitPipRef = useRef(onExitPip);
   const setDisplayModeRef = useRef(setDisplayMode);
-  const viewportWidthRef = useRef(viewportWidth);
+  const isPlaygroundActiveRef = useRef(isPlaygroundActive);
+  const playgroundDeviceTypeRef = useRef(playgroundDeviceType);
   const effectiveDisplayModeRef = useRef(effectiveDisplayMode);
   const serverIdRef = useRef(serverId);
   const toolCallIdRef = useRef(toolCallId);
@@ -522,9 +506,7 @@ export function MCPAppsRenderer({
       theme: themeMode,
       displayMode: effectiveDisplayMode,
       availableDisplayModes: ["inline", "pip", "fullscreen"],
-      viewport: {
-        width: viewportWidth,
-        height: viewportHeight,
+      containerDimensions: {
         maxHeight,
         maxWidth,
       },
@@ -551,8 +533,6 @@ export function MCPAppsRenderer({
     [
       themeMode,
       effectiveDisplayMode,
-      viewportWidth,
-      viewportHeight,
       maxHeight,
       maxWidth,
       locale,
@@ -576,7 +556,8 @@ export function MCPAppsRenderer({
     onRequestPipRef.current = onRequestPip;
     onExitPipRef.current = onExitPip;
     setDisplayModeRef.current = setDisplayMode;
-    viewportWidthRef.current = viewportWidth;
+    isPlaygroundActiveRef.current = isPlaygroundActive;
+    playgroundDeviceTypeRef.current = playgroundDeviceType;
     effectiveDisplayModeRef.current = effectiveDisplayMode;
     serverIdRef.current = serverId;
     toolCallIdRef.current = toolCallId;
@@ -587,7 +568,8 @@ export function MCPAppsRenderer({
     onRequestPip,
     onExitPip,
     setDisplayMode,
-    viewportWidth,
+    isPlaygroundActive,
+    playgroundDeviceType,
     effectiveDisplayMode,
     serverId,
     toolCallId,
@@ -746,7 +728,11 @@ export function MCPAppsRenderer({
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
         const requestedMode = mode ?? "inline";
-        const isMobile = viewportWidthRef.current < 768;
+        // Use device type for mobile detection (defaults to mobile-like behavior when not in playground)
+        const isMobile = isPlaygroundActiveRef.current
+          ? playgroundDeviceTypeRef.current === "mobile" ||
+            playgroundDeviceTypeRef.current === "tablet"
+          : true;
         const actualMode: DisplayMode =
           isMobile && requestedMode === "pip" ? "fullscreen" : requestedMode;
 
