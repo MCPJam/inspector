@@ -541,7 +541,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: Model.GROK_CODE_FAST_1,
     name: "Grok Code Fast 1",
     provider: "xai",
-    contextLength: 128000,
+    contextLength: 256000,
   },
   {
     id: Model.GROK_4_FAST_NON_REASONING,
