@@ -5,6 +5,13 @@ import { TruncatedText } from "../ui/truncated-text";
 import { ResizablePanel } from "../ui/resizable";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { usePostHog } from "posthog-js/react";
 import type { FormField } from "@/lib/tool-form";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -51,14 +58,6 @@ export function ParametersPanel({
 
   // Handle Enter key in input fields
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !loading) {
-      e.preventDefault();
-      onExecute();
-    }
-  };
-
-  // Handle Enter key in select fields
-  const handleSelectKeyDown = (e: React.KeyboardEvent<HTMLSelectElement>) => {
     if (e.key === "Enter" && !loading) {
       e.preventDefault();
       onExecute();
@@ -277,21 +276,24 @@ export function ParametersPanel({
 
                       <div>
                         {field.type === "enum" ? (
-                          <select
+                          <Select
                             value={field.value}
-                            onChange={(e) =>
-                              onFieldChange(field.name, e.target.value)
+                            onValueChange={(val) =>
+                              onFieldChange(field.name, val)
                             }
-                            onKeyDown={handleSelectKeyDown}
                             disabled={!field.required && !field.isSet}
-                            className="w-full h-9 bg-background border border-border rounded px-2 text-xs disabled:cursor-not-allowed disabled:bg-muted/40"
                           >
-                            {field.enum?.map((v, idx) => (
-                              <option key={v} value={v}>
-                                {field.enumLabels?.[idx] ?? v}
-                              </option>
-                            ))}
-                          </select>
+                            <SelectTrigger className="w-full h-9 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {field.enum?.map((v, idx) => (
+                                <SelectItem key={v} value={v}>
+                                  {field.enumLabels?.[idx] ?? v}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         ) : field.type === "boolean" ? (
                           <div className="flex items-center space-x-3 py-2">
                             <input
