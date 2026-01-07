@@ -441,6 +441,18 @@ export function MCPAppsRenderer({
     }
   }, [cspMode, loadedCspMode, toolCallId, clearCspViolations]);
 
+  // Reset ready state and refs when CSP mode changes (widget will reinitialize)
+  // This ensures tool input/output are re-sent after CSP mode switch
+  useEffect(() => {
+    if (loadedCspMode !== null && loadedCspMode !== cspMode) {
+      setIsReady(false);
+      isReadyRef.current = false;
+      lastToolInputRef.current = null;
+      lastToolOutputRef.current = null;
+      lastToolErrorRef.current = null;
+    }
+  }, [cspMode, loadedCspMode]);
+
   // Sync displayMode from playground store when it changes (SEP-1865)
   // Only sync when not in controlled mode (parent controls displayMode via props)
   useEffect(() => {
