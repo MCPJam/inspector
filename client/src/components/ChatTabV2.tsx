@@ -2,7 +2,7 @@ import { FormEvent, useMemo, useState, useEffect, useCallback } from "react";
 import { ArrowDown } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { ModelDefinition } from "@/shared/types";
-import { LoggerView } from "./logging/logger-view";
+import { LoggerView } from "./logger-view";
 import {
   ResizablePanelGroup,
   ResizablePanel,

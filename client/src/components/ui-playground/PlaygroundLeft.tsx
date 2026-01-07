@@ -14,7 +14,7 @@ import { SearchInput } from "../ui/search-input";
 import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
-import { LoggerView } from "../logging/logger-view";
+import { LoggerView } from "../logger-view";
 import {
   ResizablePanelGroup,
   ResizablePanel,

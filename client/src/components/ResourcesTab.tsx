@@ -16,7 +16,7 @@ import {
   type MCPReadResourceResult,
   type MCPResource,
 } from "@/sdk";
-import { LoggerView } from "./logging/logger-view";
+import { LoggerView } from "./logger-view";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
