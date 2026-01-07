@@ -485,7 +485,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: "x-ai/grok-code-fast-1",
     name: "Grok Code Fast 1 (Free)",
     provider: "xai",
-    contextLength: 128000,
+    contextLength: 256000,
   },
   {
     id: "deepseek/deepseek-v3.2",
