@@ -129,6 +129,10 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "moonshotai/kimi-k2-0905",
   "google/gemini-2.5-flash",
   "z-ai/glm-4.6",
+  "google/gemini-3-flash-preview",
+  "openai/gpt-5.2-chat",
+  "x-ai/grok-code-fast-1",
+  "deepseek/deepseek-v3.2",
 ];
 
 export const isMCPJamProvidedModel = (modelId: string): boolean => {
@@ -464,6 +468,30 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "GLM 4.6 (Free)",
     provider: "z-ai",
     contextLength: 200000,
+  },
+  {
+    id: "google/gemini-3-flash-preview",
+    name: "Gemini 3 Flash Preview (Free)",
+    provider: "google",
+    contextLength: 1000000,
+  },
+  {
+    id: "openai/gpt-5.2-chat",
+    name: "GPT-5.2 Chat (Free)",
+    provider: "openai",
+    contextLength: 400000,
+  },
+  {
+    id: "x-ai/grok-code-fast-1",
+    name: "Grok Code Fast 1 (Free)",
+    provider: "xai",
+    contextLength: 128000,
+  },
+  {
+    id: "deepseek/deepseek-v3.2",
+    name: "DeepSeek V3.2 (Free)",
+    provider: "deepseek",
+    contextLength: 128000,
   },
   // Mistral models
   {

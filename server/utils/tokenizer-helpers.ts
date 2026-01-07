@@ -51,6 +51,12 @@ export function mapModelIdToTokenizerBackend(modelId: string): string | null {
     // xAI special cases
     case "x-ai/grok-4-fast":
       return "xai/grok-4-fast-reasoning";
+    case "x-ai/grok-code-fast-1":
+      return "xai/grok-code-fast-1";
+
+    // DeepSeek special cases for MCPJam provided models
+    case "deepseek/deepseek-v3.2":
+      return "deepseek/deepseek-v3.2";
 
     default:
       // Handle models that already have provider prefix
