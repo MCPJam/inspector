@@ -174,6 +174,7 @@ export function ServersTab({
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
+    setIsActionMenuOpen(false);
     const formattedJson = formatJsonConfig(connectedServerConfigs);
     const timestamp = new Date()
       .toISOString()
