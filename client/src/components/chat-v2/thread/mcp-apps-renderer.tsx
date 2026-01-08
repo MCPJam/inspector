@@ -90,6 +90,10 @@ interface MCPAppsRendererProps {
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  /** Whether the tool was cancelled (SEP-1865 ui/notifications/tool-cancelled) */
+  toolCancelled?: boolean;
+  /** Reason for tool cancellation */
+  toolCancelReason?: string;
 }
 
 class LoggingTransport implements Transport {
@@ -171,6 +175,8 @@ export function MCPAppsRenderer({
   onDisplayModeChange,
   onRequestFullscreen,
   onExitFullscreen,
+  toolCancelled,
+  toolCancelReason,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -322,6 +328,7 @@ export function MCPAppsRenderer({
   const lastToolInputRef = useRef<string | null>(null);
   const lastToolOutputRef = useRef<string | null>(null);
   const lastToolErrorRef = useRef<string | null>(null);
+  const lastToolCancelledRef = useRef<boolean>(false);
   const isReadyRef = useRef(false);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
@@ -878,10 +885,26 @@ export function MCPAppsRenderer({
     });
   }, [isReady, toolErrorText, toolOutput, toolState]);
 
+  // SEP-1865: Send tool cancellation notification
+  useEffect(() => {
+    if (!isReady || !toolCancelled) return;
+    const bridge = bridgeRef.current;
+    if (!bridge) return;
+
+    // Prevent duplicate cancellation notifications
+    if (lastToolCancelledRef.current) return;
+    lastToolCancelledRef.current = true;
+
+    bridge.sendToolCancelled?.({
+      reason: toolCancelReason ?? "Tool execution was cancelled",
+    });
+  }, [isReady, toolCancelled, toolCancelReason]);
+
   useEffect(() => {
     lastToolInputRef.current = null;
     lastToolOutputRef.current = null;
     lastToolErrorRef.current = null;
+    lastToolCancelledRef.current = false;
   }, [toolCallId]);
 
   const handleSandboxMessage = (event: MessageEvent) => {
