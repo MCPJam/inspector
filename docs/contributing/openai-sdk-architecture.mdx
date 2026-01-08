@@ -417,7 +417,7 @@ The `/widget-content/:toolId` endpoint performs the following:
 Per the OpenAI Apps SDK spec, these values are **controlled by the host** (Inspector), not computed in the widget:
 
 - `locale`: Browser language from `navigator.language` (e.g., 'en-US', 'es-ES')
-- `deviceType`: Computed from viewport width (mobile: <768px, tablet: <1024px, desktop: ≥1024px)
+- `deviceType`: Computed from viewport width (mobile: \<768px, tablet: \<1024px, desktop: ≥1024px)
 - `userLocation`: Coarse IP-based geolocation `{ country, region, city }` or `null` (uses ip-api.com, no API key required)
 - `maxHeight`: Maximum allowed height for inline mode (ChatGPT default: ~500px)
 

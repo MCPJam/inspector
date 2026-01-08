@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import {
   useTrafficLogStore,
+  subscribeToRpcStream,
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/traffic-log-store";
@@ -195,54 +196,10 @@ export function LoggerView({
     }
   };
 
+  // Subscribe to the singleton SSE connection for RPC traffic
   useEffect(() => {
-    let es: EventSource | null = null;
-    try {
-      const params = new URLSearchParams();
-      params.set("replay", "3");
-      // Add timestamp to ensure fresh connection
-      params.set("_t", Date.now().toString());
-      es = new EventSource(`/api/mcp/servers/rpc/stream?${params.toString()}`);
-      es.onmessage = (evt) => {
-        try {
-          const data = JSON.parse(evt.data) as {
-            type?: string;
-          } & RpcEventMessage;
-          if (!data || data.type !== "rpc") return;
-
-          const { serverId, direction, message, timestamp } = data;
-          const msg: any = message as any;
-          const method: string =
-            typeof msg?.method === "string"
-              ? msg.method
-              : msg?.result !== undefined
-                ? "result"
-                : msg?.error !== undefined
-                  ? "error"
-                  : "unknown";
-
-          useTrafficLogStore.getState().addMcpServerLog({
-            serverId: typeof serverId === "string" ? serverId : "unknown",
-            direction:
-              typeof direction === "string" ? direction.toUpperCase() : "",
-            method,
-            timestamp: timestamp ?? new Date().toISOString(),
-            payload: message,
-          });
-        } catch {}
-      };
-      es.onerror = () => {
-        try {
-          es?.close();
-        } catch {}
-      };
-    } catch {}
-
-    return () => {
-      try {
-        es?.close();
-      } catch {}
-    };
+    const unsubscribe = subscribeToRpcStream();
+    return unsubscribe;
   }, []);
 
   // Combine and sort all items by timestamp (newest first)

@@ -183,11 +183,7 @@ export function PlaygroundLeft({
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={35} minSize={10} maxSize={70}>
           <div className="h-full min-h-0 flex flex-col border-t border-border bg-background">
-            <LoggerView
-              isCollapsable={false}
-              isLogLevelVisible={false}
-              isSearchVisible={false}
-            />
+            <LoggerView isCollapsable={false} />
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
