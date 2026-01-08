@@ -1,6 +1,3 @@
-import "./sentry";
-import * as Sentry from "@sentry/node";
-
 import { serve } from "@hono/node-server";
 import dotenv from "dotenv";
 import fixPath from "fix-path";
@@ -283,7 +280,7 @@ logBox(`http://${SERVER_HOSTNAME}:${displayPort}`, "🎵 MCPJam");
 const server = serve({
   fetch: app.fetch,
   port: SERVER_PORT,
-  hostname: "0.0.0.0", // Bind to all interfaces for Docker
+  hostname: "127.0.0.1",
 });
 
 // Handle graceful shutdown
