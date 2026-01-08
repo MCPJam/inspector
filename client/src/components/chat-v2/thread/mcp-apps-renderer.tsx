@@ -316,10 +316,6 @@ export function MCPAppsRenderer({
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
-  const [iframeSize, setIframeSize] = useState<{
-    width?: number;
-    height?: number;
-  }>({});
 
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
@@ -886,7 +882,6 @@ export function MCPAppsRenderer({
     lastToolInputRef.current = null;
     lastToolOutputRef.current = null;
     lastToolErrorRef.current = null;
-    setIframeSize({});
   }, [toolCallId]);
 
   const handleSandboxMessage = (event: MessageEvent) => {
@@ -982,16 +977,8 @@ export function MCPAppsRenderer({
   })();
 
   const iframeStyle: CSSProperties = {
-    height: isFullscreen
-      ? "100%"
-      : iframeSize.height !== undefined
-        ? `${iframeSize.height}px`
-        : "400px",
-    width: isFullscreen
-      ? "100%"
-      : iframeSize.width !== undefined
-        ? `min(${iframeSize.width}px, 100%)`
-        : "100%",
+    height: isFullscreen ? "100%" : "400px",
+    width: "100%",
     maxWidth: "100%",
     transition: isFullscreen
       ? undefined

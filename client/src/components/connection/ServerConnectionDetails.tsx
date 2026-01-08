@@ -1,4 +1,4 @@
-import { LoggerView } from "../logging/logger-view";
+import { LoggerView } from "../logger-view";
 
 interface ServerConnectionDetailsProps {
   serverCount?: number;

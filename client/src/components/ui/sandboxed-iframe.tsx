@@ -196,6 +196,7 @@ export const SandboxedIframe = forwardRef<
       ref={outerRef}
       src={sandboxProxyUrl}
       sandbox={sandbox}
+      allow="local-network-access *; microphone *; midi *"
       title={title}
       className={className}
       style={style}

@@ -15,7 +15,7 @@ import {
 } from "./ui/resizable";
 import { ParametersPanel } from "./tools/ParametersPanel";
 import { ResultsPanel } from "./tools/ResultsPanel";
-import { LoggerView } from "./logging/logger-view";
+import { LoggerView } from "./logger-view";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {

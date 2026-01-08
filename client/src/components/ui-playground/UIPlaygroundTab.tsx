@@ -140,8 +140,7 @@ export function UIPlaygroundTab({
     return Object.keys(tools).filter((name) => {
       const meta = toolsMetadata[name];
       return (
-        meta?.["openai/outputTemplate"] != null ||
-        meta?.["ui/resourceUri"] != null
+        meta?.["openai/outputTemplate"] != null || meta?.ui?.resourceUri != null
       );
     });
   }, [tools, toolsMetadata]);
@@ -211,7 +210,7 @@ export function UIPlaygroundTab({
       const meta = toolsMetadata[selectedTool];
       if (meta?.["openai/outputTemplate"] != null) {
         setSelectedProtocol("openai-apps");
-      } else if (meta?.["ui/resourceUri"] != null) {
+      } else if (meta?.ui?.resourceUri != null) {
         setSelectedProtocol("mcp-apps");
       } else {
         setSelectedProtocol(null);
@@ -230,7 +229,7 @@ export function UIPlaygroundTab({
       (meta) => meta?.["openai/outputTemplate"] != null,
     );
     const hasMCPApps = toolMetaEntries.some(
-      (meta) => meta?.["ui/resourceUri"] != null,
+      (meta) => meta?.ui?.resourceUri != null,
     );
 
     // If server only has one protocol type, use that

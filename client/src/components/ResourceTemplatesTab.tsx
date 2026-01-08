@@ -19,7 +19,7 @@ import {
 } from "@/sdk";
 import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/apis/mcp-resource-templates-api";
 import { readResource as readResourceTemplateApi } from "@/lib/apis/mcp-resources-api";
-import { LoggerView } from "./logging/logger-view";
+import { LoggerView } from "./logger-view";
 
 interface ResourceTemplatesTabProps {
   serverConfig?: MCPServerConfig;

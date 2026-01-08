@@ -191,6 +191,11 @@ document.addEventListener('securitypolicyviolation', function(e) {
         "sandbox",
         "allow-scripts allow-same-origin allow-forms",
       );
+      // Permissions Policy matching ChatGPT's actual implementation
+      inner.setAttribute(
+        "allow",
+        "local-network-access *; microphone *; midi *",
+      );
       document.body.appendChild(inner);
 
       // Handle messages from parent (host) and inner (guest UI)

@@ -19,7 +19,7 @@ import { EmptyState } from "./ui/empty-state";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { MCPServerConfig } from "@/sdk";
-import { LoggerView } from "./logging/logger-view";
+import { LoggerView } from "./logger-view";
 import {
   Task,
   listTasks,

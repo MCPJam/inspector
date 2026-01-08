@@ -193,8 +193,8 @@ export function ResultsPanel({
   const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
   const hasOpenAIComponent =
     openaiOutputTemplate && typeof openaiOutputTemplate === "string";
-  // Check for MCP Apps (SEP-1865) using ui/resourceUri in tool metadata
-  const mcpAppsResourceUri = toolMeta?.["ui/resourceUri"];
+  // Check for MCP Apps (SEP-1865) using ui.resourceUri in tool metadata
+  const mcpAppsResourceUri = toolMeta?.ui?.resourceUri;
   const hasMCPAppsComponent =
     mcpAppsResourceUri && typeof mcpAppsResourceUri === "string";
   const uiResource = resolveUIResource(result);

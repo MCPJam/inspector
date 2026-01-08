@@ -6,10 +6,7 @@ import {
   ArrowUpFromLine,
   Search,
   Trash2,
-  Server,
-  AppWindow,
   PanelRightClose,
-  Loader2,
   Copy,
 } from "lucide-react";
 import JsonView from "react18-json-view";
@@ -34,6 +31,20 @@ import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "sonner";
 import { useSharedAppState } from "@/state/app-state-context";
 import type { ServerWithName } from "@/state/app-types";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Filter, Settings2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps";
@@ -95,12 +106,12 @@ export function LoggerView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedServerId, setSelectedServerId] = useState<string>("");
-  const [selectedLevel, setSelectedLevel] = useState<LoggingLevel>("debug");
+  const [serverLogLevels, setServerLogLevels] = useState<
+    Record<string, LoggingLevel>
+  >({});
   const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
     "all",
   );
-  const [isUpdatingLevel, setIsUpdatingLevel] = useState(false);
 
   // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
   const uiLogItems = useTrafficLogStore((s) => s.items);
@@ -151,46 +162,7 @@ export function LoggerView({
     return connectedServers.filter((server) => filter.has(server.id));
   }, [connectedServers, serverIds]);
 
-  useEffect(() => {
-    if (selectableServers.length === 0) {
-      setSelectedServerId("");
-      return;
-    }
-    setSelectedServerId((prev) => {
-      if (prev && selectableServers.some((server) => server.id === prev)) {
-        return prev;
-      }
-      return selectableServers[0]?.id ?? "";
-    });
-  }, [selectableServers]);
-
-  const handleApplyLogLevel = async () => {
-    if (!selectedServerId) return;
-    setIsUpdatingLevel(true);
-    try {
-      const response = await setServerLoggingLevel(
-        selectedServerId,
-        selectedLevel,
-      );
-      if (!response?.success) {
-        throw new Error(
-          response?.error ||
-            `Failed to set logging level for ${selectedServerId}`,
-        );
-      }
-      toast.success(
-        `Logging level set to "${selectedLevel}" for ${selectedServerId}`,
-      );
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to update logging level",
-      );
-    } finally {
-      setIsUpdatingLevel(false);
-    }
-  };
+  // Removed unused handleApplyLogLevel
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -312,68 +284,28 @@ export function LoggerView({
     return result;
   }, [allItems, searchQuery, serverIds, sourceFilter]);
 
-  const canUpdateLogLevel = !!selectedServerId && !isUpdatingLevel;
-
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex flex-col gap-3 p-3 border-b border-border flex-shrink-0">
+      <div className="flex flex-col gap-2 p-3 border-b border-border flex-shrink-0">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-semibold text-foreground">Logs</h2>
-          <div className="flex items-center gap-0.5">
-            {/* Source filter buttons */}
-            <div className="flex items-center rounded-md border border-border overflow-hidden mr-1">
-              <button
-                onClick={() => setSourceFilter("all")}
-                className={`px-2 py-1 text-[10px] transition-colors ${
-                  sourceFilter === "all"
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Show all logs"
-              >
-                All
-              </button>
-              <button
-                onClick={() => setSourceFilter("mcp-server")}
-                className={`px-2 py-1 text-[10px] flex items-center gap-1 border-l border-border transition-colors ${
-                  sourceFilter === "mcp-server"
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Show MCP Server logs only"
-              >
-                <Server className="h-3 w-3" />
-                Server
-              </button>
-              <button
-                onClick={() => setSourceFilter("mcp-apps")}
-                className={`px-2 py-1 text-[10px] flex items-center gap-1 border-l border-border transition-colors ${
-                  sourceFilter === "mcp-apps"
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50"
-                }`}
-                title="Show UI/Apps logs only"
-              >
-                <AppWindow className="h-3 w-3" />
-                Apps
-              </button>
-            </div>
+          <div className="flex items-center gap-1">
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={copyLogs}
               disabled={filteredItems.length === 0}
-              className="h-7 px-2"
+              className="h-7 w-7"
               title="Copy logs to clipboard"
             >
               <Copy className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={clearMessages}
               disabled={allItems.length === 0}
-              className="h-7 px-2"
+              className="h-7 w-7"
               title="Clear all messages"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -381,9 +313,9 @@ export function LoggerView({
             {onClose && isCollapsable && (
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon"
                 onClick={onClose}
-                className="h-7 px-2"
+                className="h-7 w-7"
                 title="Hide JSON-RPC panel"
               >
                 <PanelRightClose className="h-3.5 w-3.5" />
@@ -391,6 +323,7 @@ export function LoggerView({
             )}
           </div>
         </div>
+
         {isSearchVisible && (
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
@@ -402,83 +335,131 @@ export function LoggerView({
                 className="h-7 pl-7 text-xs"
               />
             </div>
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
+            <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline-block">
               {filteredItems.length} / {allItems.length}
             </span>
-          </div>
-        )}
-        {isLogLevelVisible && (
-          <>
-            <span className="mt-1 text-[9px] font-semibold uppercase text-muted-foreground">
-              Log Level
-            </span>
-            <div className="mt-0.5 flex w-full items-center gap-1 text-[10px]">
-              <div className="flex-[2] min-w-0">
-                <Select
-                  value={selectedServerId}
-                  onValueChange={setSelectedServerId}
-                  disabled={selectableServers.length === 0 || isUpdatingLevel}
+
+            {/* Source Filter */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 relative"
+                  title="Filter Source"
                 >
-                  <SelectTrigger className="h-5 w-full bg-transparent px-1.5 py-0 text-[11px] cursor-pointer">
-                    <SelectValue placeholder="Server" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {selectableServers.length === 0 ? (
-                      <SelectItem value="none" disabled>
-                        No connected servers
-                      </SelectItem>
-                    ) : (
-                      selectableServers.map((server) => (
-                        <SelectItem
-                          key={server.id}
-                          value={server.id}
-                          className="text-[10px]"
-                        >
-                          {server.id}
-                        </SelectItem>
-                      ))
+                  <Filter
+                    className={cn(
+                      "h-3.5 w-3.5",
+                      sourceFilter !== "all" && "text-primary",
                     )}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex-[1] min-w-0">
-                <Select
-                  value={selectedLevel}
+                  />
+                  {sourceFilter !== "all" && (
+                    <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuRadioGroup
+                  value={sourceFilter}
                   onValueChange={(value) =>
-                    setSelectedLevel(value as LoggingLevel)
+                    setSourceFilter(value as "all" | TrafficSource)
                   }
-                  disabled={!selectedServerId || isUpdatingLevel}
                 >
-                  <SelectTrigger className="h-5 w-full bg-transparent px-1.5 py-0 text-[11px] cursor-pointer">
-                    <SelectValue placeholder="Level" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LOGGING_LEVELS.map((level) => (
-                      <SelectItem
-                        key={level}
-                        value={level}
-                        className="text-[10px]"
-                      >
-                        {level}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleApplyLogLevel}
-                disabled={!canUpdateLogLevel}
-                className="flex-[1] h-9 justify-center px-1.5 text-[10px]"
-              >
-                {isUpdatingLevel && (
-                  <Loader2 className="mr-1 h-2 w-2 animate-spin" />
-                )}
-                Apply
-              </Button>
-            </div>
-          </>
+                  <DropdownMenuRadioItem value="all" className="text-xs">
+                    All
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="mcp-server" className="text-xs">
+                    Server
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
+                    Apps
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* Log Level Config */}
+            {isLogLevelVisible && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    title="Log Levels"
+                  >
+                    <Settings2 className="h-3.5 w-3.5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[280px] p-3" align="end">
+                  <div className="space-y-3">
+                    <h4 className="font-medium text-xs text-muted-foreground mb-2">
+                      Server Log Levels
+                    </h4>
+                    {selectableServers.length === 0 ? (
+                      <p className="text-[10px] text-muted-foreground">
+                        No connected servers
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {selectableServers.map((server) => (
+                          <div
+                            key={server.id}
+                            className="flex items-center justify-between gap-2"
+                          >
+                            <span
+                              className="text-[11px] font-medium truncate max-w-[120px]"
+                              title={server.id}
+                            >
+                              {server.id}
+                            </span>
+                            <Select
+                              value={serverLogLevels[server.id] || "debug"}
+                              onValueChange={(val) => {
+                                const level = val as LoggingLevel;
+                                setServerLogLevels((prev) => ({
+                                  ...prev,
+                                  [server.id]: level,
+                                }));
+                                setServerLoggingLevel(server.id, level)
+                                  .then((res) => {
+                                    if (res?.success)
+                                      toast.success(
+                                        `Updated ${server.id} to ${level}`,
+                                      );
+                                    else
+                                      toast.error(
+                                        res?.error || "Failed to update",
+                                      );
+                                  })
+                                  .catch(() => toast.error("Failed to update"));
+                              }}
+                            >
+                              <SelectTrigger className="h-6 w-[100px] text-[10px]">
+                                <SelectValue placeholder="Level" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {LOGGING_LEVELS.map((level) => (
+                                  <SelectItem
+                                    key={level}
+                                    value={level}
+                                    className="text-[10px]"
+                                  >
+                                    {level}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
+          </div>
         )}
       </div>
 
@@ -502,7 +483,7 @@ export function LoggerView({
 
             // Border color: purple for Apps traffic, none for MCP Server
             const borderClass = isAppsTraffic
-              ? "border-l-2 border-l-purple-500/50"
+              ? "border-l-4 border-l-purple-500/50"
               : "";
 
             return (
@@ -522,25 +503,7 @@ export function LoggerView({
                     )}
                   </div>
                   <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {/* Source indicator */}
-                    <span
-                      className={`flex items-center justify-center p-0.5 rounded ${
-                        isAppsTraffic
-                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400"
-                          : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
-                      }`}
-                      title={isAppsTraffic ? "Apps (UI)" : "MCP Server"}
-                    >
-                      {isAppsTraffic ? (
-                        <AppWindow className="h-3 w-3" />
-                      ) : (
-                        <Server className="h-3 w-3" />
-                      )}
-                    </span>
-                    <span className="text-muted-foreground font-mono text-xs">
-                      {new Date(it.timestamp).toLocaleTimeString()}
-                    </span>
-                    <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50">
+                    <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50 whitespace-nowrap">
                       {it.serverId}
                     </span>
                     {/* Direction indicator */}
@@ -558,8 +521,14 @@ export function LoggerView({
                         <ArrowUpFromLine className="h-3 w-3" />
                       )}
                     </span>
-                    <span className="text-xs font-mono text-foreground truncate">
+                    <span
+                      className="text-xs font-mono text-foreground truncate"
+                      title={it.method}
+                    >
                       {it.method}
+                    </span>
+                    <span className="text-muted-foreground font-mono text-xs whitespace-nowrap ml-auto">
+                      {new Date(it.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
                 </div>

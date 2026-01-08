@@ -391,8 +391,8 @@ function CombinedToolPart({
   // Check if this tool has OpenAI App or MCP Apps metadata
   const toolMetadata = toolName ? toolsMetadata[toolName] : undefined;
   const hasOpenAIApp = !!toolMetadata?.["openai/outputTemplate"];
-  const hasMCPApp = !!toolMetadata?.["ui/resourceUri"];
-  const mcpAppsResourceUri = toolMetadata?.["ui/resourceUri"] as
+  const hasMCPApp = !!toolMetadata?.ui?.resourceUri;
+  const mcpAppsResourceUri = toolMetadata?.ui?.resourceUri as
     | string
     | undefined;
   const serverId = toolName

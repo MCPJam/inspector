@@ -45,7 +45,7 @@ import {
   TooltipTrigger,
 } from "./ui/tooltip";
 import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
-import { LoggerView } from "./logging/logger-view";
+import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 
 interface ServersTabProps {

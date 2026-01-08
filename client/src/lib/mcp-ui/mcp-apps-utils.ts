@@ -16,8 +16,8 @@ export function detectUIType(
     return UIType.OPENAI_SDK;
   }
 
-  // 2. MCP Apps (SEP-1865): Check for ui/resourceUri metadata
-  if (toolMeta?.["ui/resourceUri"]) {
+  // 2. MCP Apps (SEP-1865): Check for ui.resourceUri metadata
+  if (toolMeta?.ui?.resourceUri) {
     return UIType.MCP_APPS;
   }
 
@@ -51,7 +51,7 @@ export function getUIResourceUri(
 ): string | null {
   switch (uiType) {
     case UIType.MCP_APPS:
-      return (toolMeta?.["ui/resourceUri"] as string) ?? null;
+      return (toolMeta?.ui?.resourceUri as string) ?? null;
     case UIType.OPENAI_SDK:
       return (toolMeta?.["openai/outputTemplate"] as string) ?? null;
     default:
@@ -67,7 +67,7 @@ export function isMCPApp(
 
   return Object.values(metadata).some(
     (meta) =>
-      (meta as Record<string, unknown> | undefined)?.["ui/resourceUri"] != null,
+      (meta as Record<string, unknown> | undefined)?.ui?.resourceUri != null,
   );
 }
 

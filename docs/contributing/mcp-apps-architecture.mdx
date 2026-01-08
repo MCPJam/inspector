@@ -11,7 +11,7 @@ This guide explains how MCPJam Inspector implements MCP Apps (SEP-1865) to rende
 <Note>
   MCPJam Inspector also supports [OpenAI Apps SDK](./openai-sdk-architecture)
   and [MCP-UI](./playground-architecture#mcp-ui-integration) for custom UI
-  rendering. MCP Apps takes priority when a tool has `ui/resourceUri` metadata.
+  rendering. MCP Apps takes priority when a tool has `ui.resourceUri` metadata.
 </Note>
 
 ## Overview
@@ -30,7 +30,7 @@ MCP Apps enables MCP servers to provide rich, interactive widgets for tool resul
 
 When rendering tool results, the Inspector checks for UI metadata in this order:
 
-1. **MCP Apps**: `ui/resourceUri` in tool metadata
+1. **MCP Apps**: `ui.resourceUri` in tool metadata
 2. **OpenAI Apps SDK**: `openai/outputTemplate` in tool metadata
 3. **MCP-UI**: Inline `ui://` resource in tool result
 
@@ -143,7 +143,7 @@ When a tool is executed, the system checks for MCP Apps support:
 // In thread.tsx
 const uiType = detectUIType(partToolMeta, (part as any).output);
 
-if (uiType === "mcp-apps" && partToolMeta?.["ui/resourceUri"]) {
+if (uiType === "mcp-apps" && partToolMeta?.ui?.resourceUri) {
   return <MCPAppsRenderer ... />;
 }
 ```
@@ -315,7 +315,7 @@ The sandbox proxy uses a permissive CSP to allow widget content:
 | Protocol          | JSON-RPC 2.0        | Custom postMessage      |
 | Sandbox           | Double-iframe       | Single iframe           |
 | API               | `window.mcpApp`     | `window.openai`         |
-| Metadata          | `ui/resourceUri`    | `openai/outputTemplate` |
+| Metadata          | `ui.resourceUri`    | `openai/outputTemplate` |
 | State persistence | Not supported       | localStorage            |
 | Modal support     | Not supported       | Supported               |
 

@@ -183,7 +183,7 @@ The playground supports rendering custom UI components from MCP tools using both
 
 **ChatGPT Apps**: When a tool includes an `openai/outputTemplate` metadata field pointing to a resource URI, the playground will render the custom HTML interface in an isolated iframe with access to the `window.openai` API.
 
-**MCP Apps**: When a tool includes a `ui/resourceUri` metadata field, the playground will render the custom UI component inline in the chat.
+**MCP Apps**: When a tool includes a `ui.resourceUri` metadata field, the playground will render the custom UI component inline in the chat.
 
 This enables MCP servers to provide rich, interactive visualizations for tool results, including charts, forms, and custom widgets that can call other tools or send followup messages to the chat.
 

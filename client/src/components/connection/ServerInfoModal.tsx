@@ -64,7 +64,7 @@ export function ServerInfoModal({
   if (serverCapabilities?.prompts) capabilities.push("Prompts");
   if (serverCapabilities?.resources) capabilities.push("Resources");
 
-  // Check if this is an MCP App (has tools with ui/resourceUri metadata)
+  // Check if this is an MCP App (has tools with ui.resourceUri metadata)
   const isMCPAppServer = isMCPApp(toolsData);
 
   // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
