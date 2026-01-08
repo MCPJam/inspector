@@ -44,6 +44,8 @@ export function formatJsonConfig(
       }
 
       mcpServers[key] = serverConfig;
+    } else {
+      console.warn(`Skipping server "${key}": missing required url or command`);
     }
   }
 
