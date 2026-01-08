@@ -163,11 +163,11 @@ export function TasksTab({
   // Convert hook elicitation to DialogElicitation format for the dialog
   const dialogElicitation: DialogElicitation | null = taskElicitation
     ? {
-      requestId: taskElicitation.requestId,
-      message: taskElicitation.message,
-      schema: taskElicitation.schema as Record<string, unknown> | undefined,
-      timestamp: taskElicitation.timestamp,
-    }
+        requestId: taskElicitation.requestId,
+        message: taskElicitation.message,
+        schema: taskElicitation.schema as Record<string, unknown> | undefined,
+        timestamp: taskElicitation.timestamp,
+      }
     : null;
 
   // Priority: user override > server suggestion > user default
@@ -637,10 +637,11 @@ export function TasksTab({
                             return (
                               <div
                                 key={task.taskId}
-                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${selectedTaskId === task.taskId
-                                  ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                  : "hover:shadow-sm"
-                                  }`}
+                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                                  selectedTaskId === task.taskId
+                                    ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                    : "hover:shadow-sm"
+                                }`}
                                 onClick={() => setSelectedTaskId(task.taskId)}
                               >
                                 <div className="flex items-start gap-3">

@@ -301,7 +301,7 @@ export const OAuthFlowTab = ({
       : oauthFlowState.isInitiatingAuth
         ? "Processing..."
         : oauthFlowState.currentStep === "authorization_request" ||
-          oauthFlowState.currentStep === "generate_pkce_parameters"
+            oauthFlowState.currentStep === "generate_pkce_parameters"
           ? "Authorize"
           : "Continue";
   const continueDisabled =
