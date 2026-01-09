@@ -39,6 +39,11 @@ import { formatErrorMessage } from "@/components/chat-v2/shared/chat-helpers";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import { useChatSession } from "@/hooks/use-chat-session";
+import {
+  isToolPart,
+  isDynamicTool,
+  getToolInfo,
+} from "@/components/chat-v2/thread/thread-helpers";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -260,6 +265,9 @@ export function PlaygroundMain({
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
   const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
+  const [cancelledToolIds, setCancelledToolIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   // Custom viewport from store
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
@@ -324,8 +332,41 @@ export function PlaygroundMain({
     selectedServers,
     onReset: () => {
       setInput("");
+      setCancelledToolIds(new Set());
     },
   });
+
+  // Wrapped stop function that tracks cancelled tool IDs
+  const handleStop = useCallback(() => {
+    // Find all in-progress tool calls and mark them as cancelled
+    const inProgressToolIds = new Set<string>();
+    for (const msg of messages) {
+      for (const part of msg.parts ?? []) {
+        if (isToolPart(part) || isDynamicTool(part)) {
+          const toolInfo = getToolInfo(part);
+          if (
+            toolInfo.toolCallId &&
+            toolInfo.toolState !== "output-available" &&
+            toolInfo.toolState !== "output-error"
+          ) {
+            inProgressToolIds.add(toolInfo.toolCallId);
+          }
+        }
+      }
+    }
+
+    if (inProgressToolIds.size > 0) {
+      setCancelledToolIds((prev) => {
+        const next = new Set(prev);
+        for (const id of inProgressToolIds) {
+          next.add(id);
+        }
+        return next;
+      });
+    }
+
+    stop();
+  }, [messages, stop]);
 
   // Set playground active flag for widget renderers to read
   const setPlaygroundActive = useUIPlaygroundStore(
@@ -483,7 +524,7 @@ export function PlaygroundMain({
     value: input,
     onChange: setInput,
     onSubmit,
-    stop,
+    stop: handleStop,
     disabled: inputDisabled,
     isLoading: isStreaming,
     placeholder,
@@ -573,6 +614,7 @@ export function PlaygroundMain({
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
+                cancelledToolIds={cancelledToolIds}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
