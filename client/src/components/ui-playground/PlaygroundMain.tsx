@@ -188,6 +188,8 @@ interface PlaygroundMainProps {
   // Timezone (IANA) per SEP-1865
   timeZone?: string;
   onTimeZoneChange?: (timeZone: string) => void;
+  // Callback to expose the stop function to parent
+  onStopReady?: (stopFn: () => void) => void;
 }
 
 function ScrollToBottomButton() {
@@ -250,6 +252,7 @@ export function PlaygroundMain({
   onLocaleChange,
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
   onTimeZoneChange,
+  onStopReady,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
@@ -367,6 +370,11 @@ export function PlaygroundMain({
 
     stop();
   }, [messages, stop]);
+
+  // Expose stop function to parent
+  useEffect(() => {
+    onStopReady?.(handleStop);
+  }, [onStopReady, handleStop]);
 
   // Set playground active flag for widget renderers to read
   const setPlaygroundActive = useUIPlaygroundStore(
