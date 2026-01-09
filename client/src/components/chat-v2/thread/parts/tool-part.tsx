@@ -328,7 +328,10 @@ export function ToolPart({
             </div>
           )}
           {hasWidgetDebug && activeDebugTab === "csp" && (
-            <CspDebugPanel cspInfo={widgetDebugInfo.csp} />
+            <CspDebugPanel
+              cspInfo={widgetDebugInfo.csp}
+              protocol={widgetDebugInfo.protocol}
+            />
           )}
           {!hasWidgetDebug && (
             <div className="space-y-4">

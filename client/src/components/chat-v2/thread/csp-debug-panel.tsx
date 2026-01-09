@@ -29,8 +29,11 @@ interface CspDebugPanelProps {
     widgetDeclared?: {
       connect_domains?: string[];
       resource_domains?: string[];
+      connectDomains?: string[];
+      resourceDomains?: string[];
     } | null;
   };
+  protocol?: "openai-apps" | "mcp-apps";
 }
 
 /**
@@ -134,11 +137,25 @@ function analyzeSuggestedFixes(violations: CspViolation[]): SuggestedFix[] {
  */
 function generateCodeSnippet(
   fixes: SuggestedFix[],
-  existing?: { connect_domains?: string[]; resource_domains?: string[] } | null,
+  existing?: {
+    connect_domains?: string[];
+    resource_domains?: string[];
+    connectDomains?: string[];
+    resourceDomains?: string[];
+  } | null,
+  protocol?: "openai-apps" | "mcp-apps",
 ): string {
-  const connectDomains = new Set(existing?.connect_domains || []);
-  const resourceDomains = new Set(existing?.resource_domains || []);
+  // Merge domains from both formats
+  const connectDomains = new Set([
+    ...(existing?.connect_domains || []),
+    ...(existing?.connectDomains || []),
+  ]);
+  const resourceDomains = new Set([
+    ...(existing?.resource_domains || []),
+    ...(existing?.resourceDomains || []),
+  ]);
 
+  // Add new domains from fixes
   for (const fix of fixes) {
     const targetSet =
       fix.field === "connect_domains" ? connectDomains : resourceDomains;
@@ -147,27 +164,38 @@ function generateCodeSnippet(
     }
   }
 
+  // Generate output in the correct format based on protocol
+  // Default to camelCase (MCP format) if protocol is unknown
+  const useCamelCase = protocol !== "openai-apps";
+
   const result: Record<string, string[]> = {};
   if (connectDomains.size > 0) {
-    result.connect_domains = Array.from(connectDomains);
+    const key = useCamelCase ? "connectDomains" : "connect_domains";
+    result[key] = Array.from(connectDomains);
   }
   if (resourceDomains.size > 0) {
-    result.resource_domains = Array.from(resourceDomains);
+    const key = useCamelCase ? "resourceDomains" : "resource_domains";
+    result[key] = Array.from(resourceDomains);
   }
 
   return JSON.stringify(result, null, 2);
 }
 
-export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
+export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
   const currentMode = cspInfo?.mode ?? "permissive";
   const violations = cspInfo?.violations ?? [];
   const hasViolations = violations.length > 0;
   const [copied, setCopied] = useState(false);
 
-  // Get widget's declared domains (what they put in openai/widgetCSP)
-  const declaredConnectDomains = cspInfo?.widgetDeclared?.connect_domains ?? [];
+  // Get widget's declared domains (from openai/widgetCSP or ui.csp)
+  const declaredConnectDomains =
+    cspInfo?.widgetDeclared?.connect_domains ??
+    cspInfo?.widgetDeclared?.connectDomains ??
+    [];
   const declaredResourceDomains =
-    cspInfo?.widgetDeclared?.resource_domains ?? [];
+    cspInfo?.widgetDeclared?.resource_domains ??
+    cspInfo?.widgetDeclared?.resourceDomains ??
+    [];
 
   // Analyze violations and generate suggested fixes
   const suggestedFixes = useMemo(
@@ -178,9 +206,9 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
   const codeSnippet = useMemo(
     () =>
       hasViolations
-        ? generateCodeSnippet(suggestedFixes, cspInfo?.widgetDeclared)
+        ? generateCodeSnippet(suggestedFixes, cspInfo?.widgetDeclared, protocol)
         : "",
-    [suggestedFixes, cspInfo?.widgetDeclared, hasViolations],
+    [suggestedFixes, cspInfo?.widgetDeclared, hasViolations, protocol],
   );
 
   const handleCopy = async () => {
@@ -206,7 +234,9 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
           <div className="mt-2 pl-5 space-y-1">
             <div className="flex items-center justify-between">
               <Label className="text-[10px] text-muted-foreground">
-                Add the following to your openai/widgetCSP field
+                {protocol === "mcp-apps"
+                  ? "Add the following to your ui.csp field"
+                  : "Add the following to your openai/widgetCSP field"}
               </Label>
               <button
                 onClick={handleCopy}
@@ -322,13 +352,17 @@ export function CspDebugPanel({ cspInfo }: CspDebugPanelProps) {
 
       {/* Docs link */}
       <a
-        href="https://developers.openai.com/apps-sdk/reference/#component-resource-configuration"
+        href={
+          protocol === "mcp-apps"
+            ? "https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/draft/apps.mdx#ui-resource-format"
+            : "https://developers.openai.com/apps-sdk/reference/#component-resource-configuration"
+        }
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
       >
         <ExternalLink className="h-3 w-3" />
-        openai/widgetCSP docs
+        {protocol === "mcp-apps" ? "MCP Apps UI format docs" : "openai/widgetCSP docs"}
       </a>
     </div>
   );

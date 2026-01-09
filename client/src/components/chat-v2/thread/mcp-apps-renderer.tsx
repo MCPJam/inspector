@@ -399,6 +399,21 @@ export function MCPAppsRenderer({
         setWidgetPermissive(permissive ?? false);
         setPrefersBorder(prefersBorder ?? true);
         setLoadedCspMode(cspMode);
+
+        // Update the widget debug store with CSP info
+        if (csp || !permissive) {
+          setWidgetCspStore(toolCallId, {
+            mode: permissive ? "permissive" : "widget-declared",
+            connectDomains: csp?.connectDomains || [],
+            resourceDomains: csp?.resourceDomains || [],
+            widgetDeclared: csp
+              ? {
+                  connectDomains: csp.connectDomains,
+                  resourceDomains: csp.resourceDomains,
+                }
+              : null,
+          });
+        }
       } catch (err) {
         setLoadError(
           err instanceof Error ? err.message : "Failed to prepare widget",
@@ -427,6 +442,7 @@ export function MCPAppsRenderer({
   // Widget debug store
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
+  const setWidgetCspStore = useWidgetDebugStore((s) => s.setWidgetCsp);
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
 

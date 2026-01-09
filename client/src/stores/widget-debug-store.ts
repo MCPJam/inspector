@@ -36,10 +36,14 @@ export interface WidgetCspInfo {
   headerString?: string;
   /** List of CSP violations for this widget */
   violations: CspViolation[];
-  /** Widget's actual openai/widgetCSP declaration (null if not declared) */
+  /** Widget's actual CSP declaration (null if not declared) */
   widgetDeclared?: {
+    // ChatGPT Apps format (snake_case)
     connect_domains?: string[];
     resource_domains?: string[];
+    // MCP Apps format (camelCase)
+    connectDomains?: string[];
+    resourceDomains?: string[];
   } | null;
 }
 
