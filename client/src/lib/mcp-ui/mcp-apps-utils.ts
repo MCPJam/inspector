@@ -1,5 +1,6 @@
 import { isUIResource } from "@mcp-ui/client";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
+import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 export enum UIType {
   MCP_APPS = "mcp-apps",
@@ -17,7 +18,7 @@ export function detectUIType(
   }
 
   // 2. MCP Apps (SEP-1865): Check for ui.resourceUri metadata
-  if (toolMeta?.ui?.resourceUri) {
+  if (getToolUiResourceUri({ _meta: toolMeta })) {
     return UIType.MCP_APPS;
   }
 
@@ -51,7 +52,7 @@ export function getUIResourceUri(
 ): string | null {
   switch (uiType) {
     case UIType.MCP_APPS:
-      return (toolMeta?.ui?.resourceUri as string) ?? null;
+      return getToolUiResourceUri({ _meta: toolMeta }) ?? null;
     case UIType.OPENAI_SDK:
       return (toolMeta?.["openai/outputTemplate"] as string) ?? null;
     default:
@@ -66,8 +67,7 @@ export function isMCPApp(
   if (!metadata) return false;
 
   return Object.values(metadata).some(
-    (meta) =>
-      (meta as Record<string, unknown> | undefined)?.ui?.resourceUri != null,
+    (meta) => getToolUiResourceUri({ _meta: meta }) != null,
   );
 }
 
