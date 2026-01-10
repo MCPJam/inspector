@@ -6,7 +6,7 @@
  * allowing users to execute tools and then chat about the results.
  */
 
-import { useEffect, useCallback, useMemo, useState } from "react";
+import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench } from "lucide-react";
 import {
@@ -121,6 +121,20 @@ export function UIPlaygroundTab({
       setToolOutput,
       setToolResponseMetadata,
     });
+
+  // Ref to store the stop function from PlaygroundMain
+  const stopFnRef = useRef<(() => void) | null>(null);
+
+  // Handler to receive stop function from PlaygroundMain
+  const handleStopReady = useCallback((stopFn: () => void) => {
+    stopFnRef.current = stopFn;
+  }, []);
+
+  // Cancel handler for the sidebar
+  const handleCancel = useCallback(() => {
+    stopFnRef.current?.();
+    setIsExecuting(false);
+  }, [setIsExecuting]);
 
   // Saved requests hook
   const savedRequestsHook = useSavedRequests({
@@ -294,6 +308,7 @@ export function UIPlaygroundTab({
                 onToggleField={updateFormFieldIsSet}
                 isExecuting={isExecuting}
                 onExecute={executeTool}
+                onCancel={handleCancel}
                 onSave={savedRequestsHook.openSaveDialog}
                 savedRequests={savedRequestsHook.savedRequests}
                 filteredSavedRequests={filteredSavedRequests}
@@ -338,6 +353,7 @@ export function UIPlaygroundTab({
             onLocaleChange={handleLocaleChange}
             timeZone={globals.timeZone}
             onTimeZoneChange={handleTimeZoneChange}
+            onStopReady={handleStopReady}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

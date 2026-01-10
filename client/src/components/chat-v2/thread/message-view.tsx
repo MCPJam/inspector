@@ -25,6 +25,7 @@ export function MessageView({
   onExitFullscreen,
   displayMode,
   onDisplayModeChange,
+  cancelledToolIds,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -40,6 +41,7 @@ export function MessageView({
   onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  cancelledToolIds?: Set<string>;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -67,6 +69,7 @@ export function MessageView({
             onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            cancelledToolIds={cancelledToolIds}
           />
         ))}
       </UserMessageBubble>
@@ -108,6 +111,7 @@ export function MessageView({
                 onExitFullscreen={onExitFullscreen}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
+                cancelledToolIds={cancelledToolIds}
               />
             ))}
           </div>

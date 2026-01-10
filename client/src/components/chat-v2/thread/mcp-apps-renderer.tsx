@@ -91,6 +91,10 @@ interface MCPAppsRendererProps {
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  /** Whether the tool was cancelled (SEP-1865 ui/notifications/tool-cancelled) */
+  toolCancelled?: boolean;
+  /** Reason for tool cancellation */
+  toolCancelReason?: string;
 }
 
 class LoggingTransport implements Transport {
@@ -172,6 +176,8 @@ export function MCPAppsRenderer({
   onDisplayModeChange,
   onRequestFullscreen,
   onExitFullscreen,
+  toolCancelled,
+  toolCancelReason,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -323,6 +329,7 @@ export function MCPAppsRenderer({
   const lastToolInputRef = useRef<string | null>(null);
   const lastToolOutputRef = useRef<string | null>(null);
   const lastToolErrorRef = useRef<string | null>(null);
+  const lastToolCancelledRef = useRef<boolean>(false);
   const isReadyRef = useRef(false);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
@@ -336,9 +343,10 @@ export function MCPAppsRenderer({
   const toolCallIdRef = useRef(toolCallId);
   const pipWidgetIdRef = useRef(pipWidgetId);
 
-  // Fetch widget HTML when tool output is available or CSP mode changes
+  // Fetch widget HTML when tool input is available (for cancellation support) or output is available
+  // Loading early allows us to send cancellation notifications to the widget during execution
   useEffect(() => {
-    if (toolState !== "output-available") return;
+    if (toolState !== "input-available" && toolState !== "output-available") return;
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP policy)
     if (widgetHtml && loadedCspMode === cspMode) return;
 
@@ -864,8 +872,10 @@ export function MCPAppsRenderer({
     bridge.setHostContext(hostContext);
   }, [hostContext, isReady]);
 
+  // Send tool input when available (works with input-available for early widget loading)
   useEffect(() => {
-    if (!isReady || toolState !== "output-available") return;
+    if (!isReady) return;
+    if (toolState !== "input-available" && toolState !== "output-available") return;
     const bridge = bridgeRef.current;
     if (!bridge || lastToolInputRef.current !== null) return;
 
@@ -906,10 +916,26 @@ export function MCPAppsRenderer({
     });
   }, [isReady, toolErrorText, toolOutput, toolState]);
 
+  // SEP-1865: Send tool cancellation notification
+  useEffect(() => {
+    if (!isReady || !toolCancelled) return;
+    const bridge = bridgeRef.current;
+    if (!bridge) return;
+
+    // Prevent duplicate cancellation notifications
+    if (lastToolCancelledRef.current) return;
+    lastToolCancelledRef.current = true;
+
+    bridge.sendToolCancelled?.({
+      reason: toolCancelReason ?? "Tool execution was cancelled",
+    });
+  }, [isReady, toolCancelled, toolCancelReason]);
+
   useEffect(() => {
     lastToolInputRef.current = null;
     lastToolOutputRef.current = null;
     lastToolErrorRef.current = null;
+    lastToolCancelledRef.current = false;
   }, [toolCallId]);
 
   const handleSandboxMessage = (event: MessageEvent) => {
@@ -949,11 +975,23 @@ export function MCPAppsRenderer({
     );
   };
 
-  // Loading states
-  if (toolState !== "output-available") {
+  // Loading states - show placeholder only during input-streaming (before input is complete)
+  // Once input-available, we load the widget for cancellation support
+  if (toolState !== "input-available" && toolState !== "output-available" && toolState !== "output-error") {
+    // Show cancelled state if tool was cancelled before input was available
+    if (toolCancelled) {
+      return (
+        <div className="border border-orange-500/40 rounded-md bg-orange-500/10 text-xs text-orange-600 dark:text-orange-400 px-3 py-2">
+          <div className="font-medium">Tool Cancelled</div>
+          <div className="text-orange-500/80 mt-1">
+            {toolCancelReason ?? "Operation was cancelled"}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-        Waiting for tool to finish executing...
+        Waiting for tool input...
       </div>
     );
   }

@@ -47,6 +47,7 @@ export function PartSwitch({
   onExitFullscreen,
   displayMode,
   onDisplayModeChange,
+  cancelledToolIds,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -62,6 +63,7 @@ export function PartSwitch({
   onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  cancelledToolIds?: Set<string>;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
@@ -134,6 +136,12 @@ export function PartSwitch({
             onDisplayModeChange={onDisplayModeChange}
             onRequestFullscreen={onRequestFullscreen}
             onExitFullscreen={onExitFullscreen}
+            toolCancelled={
+              toolInfo.toolCallId
+                ? cancelledToolIds?.has(toolInfo.toolCallId)
+                : false
+            }
+            toolCancelReason="Operation was cancelled by user"
           />
         </>
       );

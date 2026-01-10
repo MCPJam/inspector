@@ -41,6 +41,7 @@ interface PlaygroundLeftProps {
   onToggleField: (name: string, isSet: boolean) => void;
   isExecuting: boolean;
   onExecute: () => void;
+  onCancel: () => void;
   onSave: () => void;
   // Saved requests
   savedRequests: SavedRequest[];
@@ -69,6 +70,7 @@ export function PlaygroundLeft({
   onToggleField,
   isExecuting,
   onExecute,
+  onCancel,
   onSave,
   savedRequests,
   filteredSavedRequests,
@@ -166,6 +168,7 @@ export function PlaygroundLeft({
         canSave={!!selectedToolName}
         fetchingTools={fetchingTools}
         onExecute={onExecute}
+        onCancel={onCancel}
         onSave={onSave}
         onRefresh={onRefresh}
         onClose={onClose}

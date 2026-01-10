@@ -28,6 +28,11 @@ import {
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
+import {
+  isToolPart,
+  isDynamicTool,
+  getToolInfo,
+} from "@/components/chat-v2/thread/thread-helpers";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -76,6 +81,9 @@ export function ChatTabV2({
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+  const [cancelledToolIds, setCancelledToolIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -122,8 +130,41 @@ export function ChatTabV2({
     onReset: () => {
       setInput("");
       setWidgetStateQueue([]);
+      setCancelledToolIds(new Set());
     },
   });
+
+  // Wrapped stop function that tracks cancelled tool IDs
+  const handleStop = useCallback(() => {
+    // Find all in-progress tool calls and mark them as cancelled
+    const inProgressToolIds = new Set<string>();
+    for (const msg of messages) {
+      for (const part of msg.parts ?? []) {
+        if (isToolPart(part) || isDynamicTool(part)) {
+          const toolInfo = getToolInfo(part);
+          if (
+            toolInfo.toolCallId &&
+            toolInfo.toolState !== "output-available" &&
+            toolInfo.toolState !== "output-error"
+          ) {
+            inProgressToolIds.add(toolInfo.toolCallId);
+          }
+        }
+      }
+    }
+
+    if (inProgressToolIds.size > 0) {
+      setCancelledToolIds((prev) => {
+        const next = new Set(prev);
+        for (const id of inProgressToolIds) {
+          next.add(id);
+        }
+        return next;
+      });
+    }
+
+    stop();
+  }, [messages, stop]);
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -395,7 +436,7 @@ export function ChatTabV2({
     value: input,
     onChange: setInput,
     onSubmit,
-    stop,
+    stop: handleStop,
     disabled: inputDisabled,
     isLoading: isStreaming,
     placeholder,
@@ -514,6 +555,7 @@ export function ChatTabV2({
                       enableFullscreenChatOverlay
                       fullscreenChatPlaceholder={placeholder}
                       fullscreenChatDisabled={inputDisabled}
+                      cancelledToolIds={cancelledToolIds}
                     />
                     {errorMessage && (
                       <div className="px-4 pb-4 pt-4">

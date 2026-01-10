@@ -4,7 +4,7 @@
  * Header with tabs (Tools/Saved) and action buttons (Run, Save, Refresh, Close)
  */
 
-import { RefreshCw, Play, Save, PanelLeftClose } from "lucide-react";
+import { RefreshCw, Play, Save, PanelLeftClose, Square } from "lucide-react";
 import { Button } from "../ui/button";
 
 interface TabHeaderProps {
@@ -17,6 +17,7 @@ interface TabHeaderProps {
   canSave: boolean;
   fetchingTools: boolean;
   onExecute: () => void;
+  onCancel: () => void;
   onSave: () => void;
   onRefresh: () => void;
   onClose?: () => void;
@@ -32,6 +33,7 @@ export function TabHeader({
   canSave,
   fetchingTools,
   onExecute,
+  onCancel,
   onSave,
   onRefresh,
   onClose,
@@ -108,20 +110,28 @@ export function TabHeader({
           )}
         </div>
 
-        {/* Run button */}
-        <Button
-          onClick={onExecute}
-          disabled={isExecuting || !canExecute}
-          size="sm"
-          className="h-8 px-3 text-xs ml-auto"
-        >
-          {isExecuting ? (
-            <RefreshCw className="h-3 w-3 animate-spin" />
-          ) : (
+        {/* Run/Cancel button */}
+        {isExecuting ? (
+          <Button
+            onClick={onCancel}
+            size="sm"
+            variant="destructive"
+            className="h-8 px-3 text-xs ml-auto"
+          >
+            <Square className="h-3 w-3" />
+            <span className="ml-1">Cancel</span>
+          </Button>
+        ) : (
+          <Button
+            onClick={onExecute}
+            disabled={!canExecute}
+            size="sm"
+            className="h-8 px-3 text-xs ml-auto"
+          >
             <Play className="h-3 w-3" />
-          )}
-          <span className="ml-1">Run</span>
-        </Button>
+            <span className="ml-1">Run</span>
+          </Button>
+        )}
       </div>
     </div>
   );

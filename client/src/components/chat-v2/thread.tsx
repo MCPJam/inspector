@@ -22,6 +22,8 @@ interface ThreadProps {
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
+  /** Set of tool call IDs that have been cancelled */
+  cancelledToolIds?: Set<string>;
 }
 
 export function Thread({
@@ -38,6 +40,7 @@ export function Thread({
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
+  cancelledToolIds,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -105,6 +108,7 @@ export function Thread({
             onExitFullscreen={handleExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            cancelledToolIds={cancelledToolIds}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}
