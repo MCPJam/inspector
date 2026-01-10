@@ -362,7 +362,9 @@ export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
         className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
       >
         <ExternalLink className="h-3 w-3" />
-        {protocol === "mcp-apps" ? "MCP Apps UI format docs" : "openai/widgetCSP docs"}
+        {protocol === "mcp-apps"
+          ? "MCP Apps UI format docs"
+          : "openai/widgetCSP docs"}
       </a>
     </div>
   );

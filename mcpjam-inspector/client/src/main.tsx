@@ -1,18 +1,18 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App.tsx";
+import App from "./App.jsx";
 import "./index.css";
 import {
   getPostHogKey,
   getPostHogOptions,
   isPostHogDisabled,
-} from "./lib/PosthogUtils.ts";
+} from "./lib/PosthogUtils.js";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
-import { initSentry } from "./lib/sentry.ts";
-import { IframeRouterError } from "./components/IframeRouterError.tsx";
+import { initSentry } from "./lib/sentry.js";
+import { IframeRouterError } from "./components/IframeRouterError.jsx";
 
 // Initialize Sentry before React mounts
 initSentry();
