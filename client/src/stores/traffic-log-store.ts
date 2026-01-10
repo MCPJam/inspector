@@ -85,7 +85,7 @@ export function subscribeToRpcStream(): () => void {
     params.set("_t", Date.now().toString());
 
     sseConnection = new EventSource(
-      `/api/mcp/servers/rpc/stream?${params.toString()}`
+      `/api/mcp/servers/rpc/stream?${params.toString()}`,
     );
 
     sseConnection.onmessage = (evt) => {
@@ -100,7 +100,11 @@ export function subscribeToRpcStream(): () => void {
         if (!data || data.type !== "rpc") return;
 
         const { serverId, direction, message, timestamp } = data;
-        const msg = message as { method?: string; result?: unknown; error?: unknown };
+        const msg = message as {
+          method?: string;
+          result?: unknown;
+          error?: unknown;
+        };
         const method: string =
           typeof msg?.method === "string"
             ? msg.method
@@ -112,7 +116,8 @@ export function subscribeToRpcStream(): () => void {
 
         useTrafficLogStore.getState().addMcpServerLog({
           serverId: typeof serverId === "string" ? serverId : "unknown",
-          direction: typeof direction === "string" ? direction.toUpperCase() : "",
+          direction:
+            typeof direction === "string" ? direction.toUpperCase() : "",
           method,
           timestamp: timestamp ?? new Date().toISOString(),
           payload: message,

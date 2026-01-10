@@ -1119,7 +1119,6 @@ export class MCPClientManager {
   ): Promise<Transport> {
     const preferSSE = config.preferSSE ?? config.url.pathname.endsWith("/sse");
     let streamableError: unknown;
-
     if (!preferSSE) {
       const streamableTransport = new StreamableHTTPClientTransport(
         config.url,
