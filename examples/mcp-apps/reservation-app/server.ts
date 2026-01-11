@@ -18,6 +18,19 @@ export function createServer(): McpServer {
 
   const resourceUri = "ui://reservation/reservation-app.html";
 
+  // Resource: The built HTML file
+  registerAppResource(server,
+    resourceUri,
+    resourceUri,
+    { mimeType: RESOURCE_MIME_TYPE },
+    async (): Promise<ReadResourceResult> => {
+      const html = await fs.readFile(path.join(DIST_DIR, "reservation-app.html"), "utf-8");
+      return {
+        contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
+      };
+    },
+  );
+
   // Tool: get-reservation - Shows the reservation UI
   registerAppTool(server,
     "get-reservation",
@@ -74,19 +87,6 @@ Beverages:
           type: "text", 
           text: menu 
         }] 
-      };
-    },
-  );
-
-  // Resource: The built HTML file
-  registerAppResource(server,
-    resourceUri,
-    resourceUri,
-    { mimeType: RESOURCE_MIME_TYPE },
-    async (): Promise<ReadResourceResult> => {
-      const html = await fs.readFile(path.join(DIST_DIR, "reservation-app.html"), "utf-8");
-      return {
-        contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
       };
     },
   );
