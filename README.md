@@ -16,7 +16,7 @@ www.mcpjam.com
 
 </div>
 
-MCPJam Inspector is the local development client for ChatGPT apps, MCP ext-apps, and MCP servers. Build and test your apps with a full widget emulator, chat with any LLM, and inspect your server’s tools, resources, prompts, and OAuth flows.
+MCPJam Inspector is the local development client for ChatGPT apps, MCP apps (ext-apps), and MCP servers. Build and test your apps with a full widget emulator, chat with any LLM, and inspect your server’s tools, resources, prompts, and OAuth flows.
 
 No more ngrok or ChatGPT subscription needed. MCPJam is the fastest way to iterate on any MCP project.
 
