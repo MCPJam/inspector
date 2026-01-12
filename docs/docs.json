@@ -13,21 +13,22 @@
       {
         "group": "Overview",
         "icon": "book-open",
-        "pages": ["index", "getting-started", "installation"]
+        "pages": ["index", "getting-started", "installation", "inspector/launch-from-code"]
       },
       {
-        "group": "Features",
-        "icon": "sparkles",
+        "group": "Inspector Features",
+        "icon": "star",
         "pages": [
-          "inspector/connecting-servers",
+          "inspector/app-builder",
           "inspector/llm-playground",
-          "inspector/tools-prompts-resources",
-          "inspector/debugging",
           "inspector/guided-oauth",
-          "evals/overview",
-          "inspector/launch-from-code",
-          "inspector/docs-server"
+          "inspector/tools-prompts-resources"
         ]
+      },
+      {
+        "group": "SDK",
+        "icon": "code",
+        "pages": ["evals/overview"]
       },
       {
         "group": "Guides",
@@ -38,22 +39,6 @@
         "group": "Troubleshooting",
         "icon": "wrench",
         "pages": ["troubleshooting/common-errors"]
-      },
-      {
-        "group": "Contributing",
-        "icon": "code",
-        "pages": [
-          "CONTRIBUTING",
-          "contributing/onboarding",
-          "contributing/system-architecture",
-          "contributing/mcp-client-manager",
-          "contributing/playground-architecture",
-          "contributing/evals-architecture",
-          "contributing/mcp-capabilities-architecture",
-          "contributing/oauth-architecture",
-          "contributing/openai-sdk-architecture",
-          "contributing/mcp-apps-architecture"
-        ]
       },
       {
         "group": "Changelog",

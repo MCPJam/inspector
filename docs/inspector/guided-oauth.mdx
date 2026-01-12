@@ -1,113 +1,40 @@
 ---
-title: "Guided OAuth Testing"
-description: "Test your server's OAuth at each step of the flow"
-icon: "Stairs"
+title: "OAuth Debugger"
+description: "Debug your MCP server's OAuth implementation at every step of the handshake"
+icon: "Shield"
 ---
 
-Guided OAuth lets you test your OAuth implementation step-by-step. The feature works functionally, but we're actively making improvements. The guided OAuth testing is compliant to [MCP OAuth](https://modelcontextprotocol.io/specification/draft/basic/authorization).
+The OAuth Debugger provides a visual, step-by-step interface for testing and debugging your MCP server's OAuth 2.1 implementation. View every step of the OAuth handshake in detail with guided explanations, inspect network messages, and validate your implementation against multiple protocol versions. The debugger is fully compliant with [MCP OAuth specification](https://modelcontextprotocol.io/specification/draft/basic/authorization).
 
 <Frame>
   <img
     className="block"
-    src="/images/oauth/guided-oauth.png"
-    alt="Multiple"
-    width="300"
+    src="/images/oauth-debugger.png"
+    alt="MCPJam OAuth Debugger Interface"
+    width="1000"
   />
 </Frame>
 
+## Key Features
+
+The OAuth Debugger provides comprehensive tooling for testing OAuth implementations:
+
+- **Visual Step-by-Step Guide** - Interactive flow guide with detailed explanations for each OAuth step
+- **Multi-Protocol Support** - Test against OAuth spec versions 03-26, 06-18, and 11-25
+- **Full Registration Methods** - Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD)
+- **Network Inspection** - View all HTTP requests and responses with headers and body content
+- **Educational Context** - Built-in teachable moments and tips for common OAuth issues
+- **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress
+- **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
+
 ## Getting Started
 
-To begin testing OAuth flows:
+To begin debugging OAuth flows:
 
-1. Navigate to the **OAuth Flow** tab
-2. If no HTTP servers are configured, you'll be prompted to configure a target server
-3. Click **Configure Target** to open the OAuth Profile Modal
-4. Enter your server's base URL and configure optional settings
-5. Click **Save configuration** to create the test profile
+1. **Navigate to the OAuth Debugger** - Click the OAuth Flow tab in MCPJam Inspector
+2. **Configure a Target Server** - Click **Configure Target** to open the OAuth Profile Modal
+3. **Enter Server Details** - Provide your server's base URL and select your protocol version
+4. **Choose Registration Method** - Select CIMD, DCR, or pre-registered based on your implementation
+5. **Start Testing** - Click **Continue** to begin the OAuth flow
 
-Once configured, you can select any HTTP server from the dropdown to test its OAuth implementation.
-
-## OAuth Profile Configuration
-
-The OAuth Profile Modal lets you configure test targets with the following options:
-
-### Required Settings
-
-- **Server Name**: A unique identifier for this test configuration
-- **Server URL**: The base URL of your MCP server (e.g., `https://example.com`)
-- **Protocol**: Choose from 2025-03-26, 2025-06-18, or 2025-11-25 (Latest)
-- **Registration**: Select CIMD (URL-based), Dynamic (DCR), or Pre-registered
-
-### Advanced Settings (Optional)
-
-- **Scopes**: Space-separated OAuth scopes (e.g., `openid profile email`)
-- **Client Credentials**: Pre-configured client ID and secret for pre-registered flows
-- **Custom Headers**: Additional headers for discovery and token requests (useful for API keys)
-
-The configuration is saved as a server entry that can be reused across debugging sessions.
-
-## Interactive Flow Guide
-
-The OAuth debugger provides an interactive guide that walks you through each step of the OAuth flow:
-
-- **Step-by-step breakdown**: Each step shows its title, description, and current status (Pending, In Progress, or Complete)
-- **Educational hints**: Learn what to pay attention to at each step with contextual "teachable moments"
-- **Tips and best practices**: Get helpful tips for common issues and configuration recommendations
-- **Synchronized diagram**: Click "Show in diagram" to focus on a specific step in the sequence diagram
-- **HTTP request/response logs**: Inspect the actual HTTP traffic for each step, including headers and body content
-- **Console output**: View detailed JSON data for metadata, tokens, and other OAuth artifacts
-
-The guide automatically scrolls to show the latest activity and highlights the current step, making it easy to follow along as the flow progresses.
-
-## Protocol Versions
-
-The debugger supports multiple MCP OAuth protocol versions:
-
-- **2025-03-26** - Original MCP OAuth specification with direct discovery from MCP server base URL
-- **2025-06-18** - Current specification with Protected Resource Metadata (RFC9728)
-- **2025-11-25** - Draft specification with Client ID Metadata Documents (CIMD) support
-
-Select your protocol version in the OAuth debugger to test against the appropriate specification.
-
-## OAuth Steps
-
-1. Metadata Discovery
-2. Client Registration
-3. Request & fetch auth code
-4. Request access token
-
-## Features
-
-### Integrated Controls
-
-The OAuth debugger includes streamlined controls in the logger panel:
-
-- **Configure** (gear icon): Open the OAuth Profile Modal to modify server settings
-- **Reset** (refresh icon): Reset the current flow to start over
-- **Continue**: Advance to the next step in the OAuth flow
-
-These controls are context-aware and update based on the current flow state.
-
-### Edit Configuration
-
-You can edit your server configuration during OAuth testing. Click the **Configure** button (gear icon) to modify settings like:
-
-- Server URL
-- Protocol version
-- Registration strategy
-- OAuth scopes
-- Custom headers
-- Client credentials
-
-Changes update the OAuth flow immediately, regenerating the authorization URL with your new configuration.
-
-### Copy Logs
-
-Export OAuth logs for debugging or sharing with your team. Click **Copy logs** to copy in two formats:
-
-- **Guide view** - Step-by-step explanation with teachable moments and tips
-- **Raw view** - Complete timeline with all HTTP requests and responses
-
-### Transport Detection
-
-The debugger automatically detects deprecated HTTP+SSE transport and displays a warning. If your server uses this older transport, you'll see a yellow badge with migration guidance to the modern Streamable HTTP transport (2025-03-26).
+The debugger will guide you through each step of the OAuth handshake, providing real-time feedback and educational context.

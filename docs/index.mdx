@@ -1,10 +1,19 @@
 ---
 title: "Overview"
-description: "MCPJam Inspector is the local development platform for ChatGPT apps, MCP apps, and MCP servers"
+description: "MCPJam is the local inspector for ChatGPT apps, MCP Apps (ext-apps), and MCP servers."
 icon: "Book"
 ---
 
-MCPJam Inspector is the local development platform for ChatGPT apps, MCP apps (Claude), and MCP servers. Build and test your apps with a full widget emulator, chat with any LLM, and inspect your server's tools, resources, prompts, and OAuth flows. MCPJam is the fastest way to iterate on any MCP project.
+MCPJam inspector is the local testing tool for ChatGPT apps and MCP servers. Build your apps locally with MCPJam's widget emulator and test against any LLM in the playground. Inspect your MCP server’s tools, resources, prompts, and OAuth flows. No more ngrok or ChatGPT subscription needed.
+
+<Frame>
+  <img
+    className="block"
+    src="/images/mcpjam-banner.png"
+    alt="MCPJam Inspector Logo"
+    width="1000"
+  />
+</Frame>
 
 ## Quick Start
 
@@ -19,32 +28,13 @@ Start up the MCPJam inspector with a bash command
   Start testing your MCP servers immediately
 </Card>
 
-## MCPJam Inspector can
-
-- Build and test ChatGPT apps and MCP apps with a full widget emulator that supports custom UI components and interactive visualizations.
-- Test your MCP tools, prompts, and resources. Manually trigger your server features to quickly iterate on its development.
-- Validate your OAuth 2 implementation with the OAuth step by step feature.
-- Check your MCP server's behavior against different LLMs in the LLM playground. Simulate how your server would behave in environments like Claude, ChatGPT, Gemini, and more.
-- Debug JSON-RPC messages sent back and forth between your server and client.
-
-<Frame>
-  <img
-    className="block"
-    src="/images/demo_1.png"
-    alt="MCPJam Inspector Logo"
-    width="300"
-  />
-</Frame>
-
 ## Key features
 
-| Capability                 | Description                                                                                                                              |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Multi-protocol servers** | Connect to STDIO, SSE, and streamable HTTP MCP servers.                                                                                  |
-| **Flexible auth**          | Supports OAuth 2.1 and bearer tokens, including custom scopes and client credentials.                                                    |
-| **Rich configuration**     | Configure environment variables, custom headers, and timeouts.                                                                           |
-| **Manual tool invocation** | Manually invoke MCP tools, resources, resource templates, and elicitation flows.                                                         |
-| **Server info**            | View server icons, version, capabilities, instructions, and ChatGPT widget metadata exposed by the server.                               |
-| **LLM playground**         | Integrated chat playground with OpenAI, Anthropic Claude, and Ollama model support. Test how your MCP server would behave against an LLM |
-| **Debugging**              | Comprehensive logging, tracing, and error reporting for MCP server development                                                           |
-| **Developer experience**   | Connect to multiple MCP servers. Save configurations. Upgraded UI/UX for modern dev experience.                                          |
+| Capability           | Description                                                                                                                                                                                                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ChatGPT Apps SDK     | Local development for ChatGPT Apps SDK support. Full support for the `windows.openai` API: `widgetState`, `callTool`, `structuredContent`, `sendFollowUpMessage`, `displayMode`, CSP, and more. No more ngrok or ChatGPT subscription needed. [Read more](https://www.mcpjam.com/blog/app-builder) |
+| MCP ext-apps (Claude)   | Full local development for MCP Apps (SEP-1865). Support for all JSON-RPC message types, such as `tools/call`, `ui/initialize`, `ui/message`, `ui/open-link`, and more. [Read more](https://www.mcpjam.com/blog/mcp-apps-preview)                                                                   |
+| OAuth Debugger       | Debug your MCP server's OAuth implementation at every step. Visually inspect every network message. Supports all protocol versions (03-26, 06-18, and 11-25). Support for client pre-registration, DCR, and CIMD. [Read more](https://www.mcpjam.com/blog/oauth-debugger)                          |
+| LLM playground       | Chat with your MCP server against any LLM in the playground. We provide frontier models such as GPT-5 and Claude Sonnet for free, or bring your own API key. Playground supports ChatGPT apps and MCP Apps. [Read more](https://www.mcpjam.com/blog/frontier-models)                               |
+| MCP server debugging | Connect to and test any MCP server local or remote. Manually invoke MCP tools, resources, resource templates, and elicitation flows. View all JSON-RPC logs. Support for all features from the official MCP inspector.                                                                             |
+| Server info          | View server icons, version, capabilities, instructions, and ChatGPT widget metadata exposed by the server. [Read more](https://www.mcpjam.com/blog/server-instructions)                                                                                                                            |

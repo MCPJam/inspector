@@ -1,0 +1,132 @@
+---
+title: "App Builder"
+description: "Build and test ChatGPT apps and MCP apps locally with a full widget emulator"
+icon: "Cube"
+---
+
+The App Builder is a local development environment for building [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps (Claude)](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865). It provides a full widget emulator so you can quickly view and iterate on your apps without needing ngrok or a ChatGPT subscription.
+
+<Frame>
+  <img
+    className="block"
+    src="/images/app-builder.png"
+    alt="MCPJam App Builder Interface"
+    width="1000"
+  />
+</Frame>
+
+## Key Features
+
+The App Builder provides everything you need to develop and test apps locally:
+
+- **Widget Preview** - Instantly view your widgets by manually invoking tools or chatting with your server using an LLM
+- **Full Protocol Support** - Complete support for `window.openai` API including `widgetState`, `callTool`, `structuredContent`, `sendFollowUpMessage`, and `displayMode`
+- **MCP Apps Support** - Full support for MCP Apps (SEP-1865) including all JSON-RPC message types like `tools/call`, `ui/initialize`, `ui/message`, and `ui/open-link`
+- **Device Emulation** - Test your widgets across Desktop, Tablet, and Mobile viewports
+- **CSP Testing** - Validate your Content Security Policy configurations
+- **Comprehensive Logging** - View all JSON-RPC messages and `window.openai` API calls in real-time
+
+## Getting Started
+
+To start building apps with MCPJam:
+
+1. **Connect your MCP server** - Use the Servers tab to connect to your MCP server that returns widget-enabled tools
+2. **Navigate to App Builder** - Switch to the App Builder tab in the inspector
+3. **Invoke a tool** - Either manually invoke a tool from the Tools list, or chat with your server in the playground
+
+When a tool returns a widget (either via `openai/outputTemplate` for ChatGPT apps or `ui.resourceUri` for MCP apps), it will render immediately in the widget emulator.
+
+## Widget Emulator Features
+
+### Device Viewports
+
+Test your widgets across different device types to ensure responsive design:
+
+- **Desktop** - Standard desktop viewport for full-screen experiences
+- **Tablet** - Medium-sized viewport for tablet devices
+- **Mobile** - Small viewport mimicking phone screens
+
+Switch between viewports using the device selector in the emulator toolbar. Your widget will automatically receive the appropriate device context via the `window.openai.userAgent.device.type` property.
+
+### Theme Testing
+
+Toggle between light and dark modes to test your widget's appearance in both themes. The theme preference is passed to your widget through the `window.openai` API, allowing your app to adapt its styling accordingly.
+
+### Locale Configuration
+
+Test your app's internationalization by selecting different locales from the locale selector. Choose from common BCP 47 locales (e.g., `en-US`, `es-ES`, `ja-JP`, `fr-FR`) to verify that your widget properly handles different languages and regions.
+
+### Device Capabilities
+
+Configure device-specific capabilities to test different interaction patterns:
+
+- **Hover** - Enable/disable hover support to test mouse-based interactions vs touch-only interfaces
+- **Touch** - Toggle touch input to simulate mobile and tablet devices
+
+These settings affect `window.openai.userAgent.capabilities.hover` and `window.openai.userAgent.capabilities.touch`.
+
+### Safe Area Insets
+
+Simulate device notches, rounded corners, and gesture areas with configurable safe area insets:
+
+- **Preset Profiles** - Quick access to common device configurations:
+  - None (0px)
+  - iPhone with Notch (44px top, 34px bottom)
+  - iPhone with Dynamic Island (59px top, 34px bottom)
+  - Android gesture navigation (24px top, 16px bottom)
+- **Custom Values** - Manually adjust top, bottom, left, and right insets
+
+Your widget receives these values through `window.openai.safeArea.insets` and can adjust its layout to avoid being obscured by system UI.
+
+## Display Modes
+
+ChatGPT apps can request different display modes to optimize their presentation:
+
+- **Inline** (default) - Widget renders within the chat message flow
+- **Picture-in-Picture** - Widget floats at the top of the screen, staying visible while scrolling
+- **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
+
+Widgets can request display mode changes using:
+```javascript
+window.openai.requestDisplayMode({ mode: 'pip' })
+window.openai.requestDisplayMode({ mode: 'fullscreen' })
+```
+
+Users can exit PiP or fullscreen modes by clicking the close button.
+
+## Content Security Policy (CSP)
+
+The App Builder includes CSP enforcement controls to help you test widget security configurations. Switch between two CSP modes using the shield icon:
+
+- **Permissive** (default) - Allows all HTTPS resources, suitable for development
+- **Strict** - Only allows domains declared in your widget's `openai/widgetCSP` metadata
+
+When a widget violates CSP rules in strict mode, you'll see a badge showing the number of blocked requests. Click the CSP debug tab to view:
+
+- **Suggested fix** - Copyable JSON snippet to add to your `openai/widgetCSP` field
+- **Blocked requests** - List of all CSP violations with directive and URI details
+- **Declared domains** - The `connect_domains` and `resource_domains` your widget currently declares
+
+This helps you identify which external resources your widget needs and configure proper CSP declarations before deploying to production.
+
+## Debugging Tools
+
+The App Builder provides several debugging views to help you understand your widget's behavior:
+
+- **Data View** (database icon) - Inspect tool input, output, and error details
+- **Widget State View** (box icon) - View the current widget state and see when it was last updated
+- **Globals View** (globe icon) - Examine global values passed to the widget (theme, display mode, locale, device capabilities)
+- **CSP View** (shield icon) - Monitor Content Security Policy violations and get suggested fixes
+
+Click any icon in the tool header to toggle the corresponding debug panel.
+
+## JSON-RPC Logging
+
+All communication between the inspector and your MCP server is logged in real-time. This includes:
+
+- Tool invocation requests and responses
+- `window.openai` API calls from your widget
+- Widget state updates
+- JSON-RPC message types for MCP Apps (`tools/call`, `ui/initialize`, `ui/message`, etc.)
+
+Use the logger panel to debug issues and understand the complete flow of messages.

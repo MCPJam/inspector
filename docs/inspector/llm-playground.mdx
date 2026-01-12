@@ -1,279 +1,151 @@
 ---
 title: "LLM Playground"
-description: "Test your MCP server's behavior against various LLMs"
-icon: "Robot"
+description: "Chat with your MCP server against any LLM and test ChatGPT apps and MCP apps"
+icon: "Messages"
 ---
 
-Use the LLM playground to test your server against different LLMs. This is helpful to simulate how LLMs interpret your server and test for hallucinations.
-
-The playground is also great for simulating agent behaviors. You can customize the system prompt, swap models, and configure system prompts and temperature as if you would building an agent.
+The LLM Playground lets you chat with your MCP server using any LLM. Test how different models interact with your tools, simulate agent behaviors, and develop ChatGPT apps and MCP apps with a full widget emulator. We provide frontier models like GPT-5 and Claude Sonnet for free, or bring your own API key.
 
 <Frame>
   <img
     className="block"
-    src="/images/playground/llm-playground.png"
-    alt="MCPJam Inspector Logo"
-    width="300"
+    src="/images/mcpjam-mcp-ui.png"
+    alt="MCPJam LLM Playground"
+    width="1000"
   />
 </Frame>
 
-## Set up LLM Playground
+## Key Features
 
-You need to set up at least one LLM to use the playground. Go to the settings tab in the inspector and follow instructions from there.
+- **Multi-LLM Support** - Test against OpenAI, Anthropic Claude, Google Gemini, Deepseek, Mistral, Ollama, OpenRouter, and LiteLLM
+- **Free Frontier Models** - Access GPT-5, Claude Sonnet, and Gemini 2.5 models for free
+- **Widget Emulator** - Full support for ChatGPT apps and MCP apps with inline rendering
+- **Real-time Debugging** - Split-panel view with chat on the left and JSON-RPC logs on the right
+- **Prompt Library** - Use MCP prompts directly in chat by typing `/`
+- **Elicitation Support** - Interactive prompts and forms from your MCP server
+- **Customizable Agent** - Configure system prompts and temperature settings
 
-### OpenAI
+## Setup
 
-Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys).
+To use the playground, configure at least one LLM provider:
 
-`gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-4`, `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.1-codex-mini`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5-chat-latest`, `gpt-5-pro`, `gpt-5-codex`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-3.5-turbo`,`o3-mini`, `o3`, `o4-mini`, `o1`
+1. **Navigate to Settings** - Click the Settings tab in MCPJam Inspector
+2. **Choose a Provider** - Select from OpenAI, Anthropic, Gemini, Deepseek, Mistral, Ollama, OpenRouter, or LiteLLM
+3. **Add API Key** - Enter your API key for the selected provider
+4. **Select Model** - Go to the Playground and choose your model from the dropdown
+
+### Supported Providers
+
+**OpenAI**
+Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys). Supports GPT-4, GPT-5, and o-series models.
 
 <Note>
-  GPT-5 models require organization verification. If you encounter access
-  errors, visit [OpenAI
-  Settings](https://platform.openai.com/settings/organization/general) and
-  verify your organization. Access may take up to 15 minutes after verification.
+  GPT-5 models require organization verification and do not support temperature configuration.
 </Note>
 
-<Note>
-  GPT-5 models do not support temperature configuration. The temperature setting
-  will be automatically disabled when using GPT-5 models.
-</Note>
+**Anthropic Claude**
+Get an API key from [Anthropic Console](https://console.anthropic.com/). Supports Claude Opus, Sonnet, and Haiku models.
 
-### Claude (Anthropic)
+**Google Gemini**
+Get an API key from [Google AI Studio](https://aistudio.google.com/). Supports Gemini Pro, Flash, and Gemma models.
 
-Get an API key from [Anthropic Console](https://console.anthropic.com/).
+**Deepseek**
+Get an API key from [Deepseek Platform](https://platform.deepseek.com/). Supports deepseek-chat and deepseek-reasoner.
 
-`claude-opus-4-1`, `claude-opus-4-0`, `claude-sonnet-4-5`, `claude-sonnet-4-0`, `claude-3-7-sonnet-latest`, `claude-haiku-4-5`, `claude-3-5-haiku-latest`
+**Mistral AI**
+Get an API key from [Mistral AI Console](https://console.mistral.ai/api-keys/). Supports Mistral Large, Codestral, and Ministral models.
 
-### Gemini
+**OpenRouter**
+Get an API key from [OpenRouter Console](https://openrouter.ai/settings/keys). Access 100+ models through a unified interface.
 
-Get an API key from [Google AI Studio](https://aistudio.google.com/)
+**Ollama**
+Install [Ollama](https://ollama.com/) and start with `ollama serve <model>`. MCPJam automatically detects running models.
 
-`gemini-3-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash-exp`, `gemini-1.5-pro`, `gemini-1.5-pro-002`, `gemini-1.5-flash`, `gemini-1.5-flash-002`, `gemini-1.5-flash-8b`, `gemini-1.5-flash-8b-001`, `gemma-3-2b`, `gemma-3-9b`, `gemma-3-27b`, `gemma-2-2b`, `gemma-2-9b`, `gemma-2-27b`, `codegemma-2b`, `codegemma-7b`
+**LiteLLM Proxy**
+Use [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) to connect to 100+ LLMs through a unified OpenAI-compatible interface. Configure your proxy URL, API key, and model aliases in the Settings tab.
 
-### Deepseek
+## Playground Layout
 
-Get an API key from [Deepseek Platform](https://platform.deepseek.com/)
+The playground features a split-panel interface:
 
-`deepseek-chat`, `deepseek-reasoner`
+**Chat Panel (Left)**
+- Send messages and view LLM responses
+- See tool calls and results inline
+- View rendered widgets from ChatGPT apps and MCP apps
+- Access MCP prompts by typing `/`
 
-### Mistral AI
+**JSON-RPC Logger (Right)**
+- Real-time view of MCP protocol messages
+- Inspect requests and responses between the inspector and your servers
+- Debug tool invocations and error responses
 
-Get an API key from [Mistral AI Console](https://console.mistral.ai/api-keys/)
+Resize panels by dragging the divider to focus on chat or debugging as needed.
 
-`mistral-large-latest`, `mistral-small-latest`, `codestral-latest`, `ministral-8b-latest`, `ministral-3b-latest`
+## System Prompt and Temperature
 
-### OpenRouter
+Customize your LLM's behavior just like building an agent:
 
-Get an API key from [OpenRouter Console](https://openrouter.ai/settings/keys)
-
-Select from any tool-capable model in the dropdown.
-
-### Ollama
-
-Make sure you have [Ollama installed](https://ollama.com/), and the MCPJam Ollama URL configuration is pointing to your Ollama instance.
-
-Start an Ollama instance with `ollama serve <model>`. MCPJam will automatically detect any Ollama models running.
-
-### LiteLLM Proxy
-
-Use [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) to connect to 100+ LLMs through a unified OpenAI-compatible interface.
-
-1. **Start LiteLLM Proxy**: Follow the [LiteLLM Proxy Quick Start Guide](https://docs.litellm.ai/docs/proxy/quick_start) to set up your proxy server
-2. **Configure in MCPJam**: Go to Settings → LiteLLM card → Click "Configure"
-3. **Enter Connection Details**:
-   - **Base URL**: Your LiteLLM proxy URL (default: `http://localhost:4000`)
-   - **API Key**: Your proxy API key (use the same key you use in your API requests)
-   - **Model Aliases**: Comma-separated list of model names configured in your proxy (e.g., `gpt-3.5-turbo, claude-3-opus, gemini-pro`)
+- **System Prompt** - Set instructions and context for the LLM
+- **Temperature** - Control randomness (0 = deterministic, higher = more creative)
 
 <Info>
-  Use the exact model names that work with your LiteLLM proxy's
-  `/v1/chat/completions` endpoint. These are typically the model names without
-  provider prefixes (e.g., `gpt-3.5-turbo` instead of `openai/gpt-3.5-turbo`).
+  Higher temperature settings may cause more hallucinations with MCP tool interactions. Start with default values.
 </Info>
 
-**Example configuration:**
+## MCP Prompts
 
-```yaml
-# In your LiteLLM config.yaml
-model_list:
-  - model_name: gpt-3.5-turbo
-    litellm_params:
-      model: openai/gpt-3.5-turbo
-      api_key: os.environ/OPENAI_API_KEY
-```
+Use MCP prompts directly in the playground by typing `/` to trigger the prompts menu. When you select a prompt, it appears as an expandable card showing:
 
-Then in MCPJam, use `gpt-3.5-turbo` as the model alias.
+- Server name and description
+- Required and optional arguments
+- Preview of the prompt content
 
-## Choose an LLM model
+Click the card to expand details or remove it before sending. This helps you understand what will be sent to the LLM.
 
-Once you've configured your LLM API keys, go to the Playground tab. On the bottom near the text input, you should see a LLM model selector. Select the model from the ones you've configured
+## ChatGPT Apps and MCP Apps
 
-<Frame>
-  <img
-    className="block"
-    src="/images/playground/model-selector.png"
-    alt="Model selector"
-    width="300"
-  />
-</Frame>
+The playground supports rendering custom UI components from both [ChatGPT apps](https://developers.openai.com/apps-sdk) and [MCP apps](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865):
 
-## System prompt and temperature
+**ChatGPT Apps**
+Tools with `openai/outputTemplate` metadata render custom HTML interfaces in an isolated iframe with access to the `window.openai` API.
 
-You can configure the system prompt and temperature, just like you would building an agent. The temperature is defaulted to the default value of the LLM providers (Claude = 0, OpenAI = 1.0).
+**MCP Apps**
+Tools with `ui.resourceUri` metadata render custom UI components inline in the chat.
 
-<Info>
-  Higher temperature settings tend to hallucinate more with MCP interactions
-</Info>
+Widgets can display interactive visualizations, trigger tool calls, send follow-up messages, and open external links.
 
-<Frame>
-  <img
-    className="block"
-    src="/images/playground/prompt-config.png"
-    alt="Model selector"
-    width="300"
-  />
-</Frame>
+### Display Modes
 
-## Using MCP prompts in chat
+Widgets can request different display modes:
 
-You can use MCP prompts directly in the playground chat by typing `/` to trigger the prompts menu. When you select a prompt, it appears as an expandable card above the chat input showing:
+- **Inline** (default) - Renders within the chat message flow
+- **Picture-in-Picture** - Floats at the top of the screen while scrolling
+- **Fullscreen** - Expands to fill the entire viewport
 
-- **Server name** - Which MCP server provides the prompt
-- **Description** - What the prompt does
-- **Arguments** - Required and optional parameters
-- **Preview** - A preview of the prompt content
+Users can exit PiP or fullscreen modes by clicking the close button.
 
-Click the card to expand/collapse details, or click the X button to remove it before sending. This helps you understand what will be sent to the LLM before submitting your message.
+### Widget Debugging
 
-## Playground layout
+Access debugging information using icon buttons in the tool header:
 
-The playground features a split-panel layout with:
+- **Data** - View tool input, output, and error details
+- **Widget State** - Inspect current widget state and updates
+- **Globals** - View global values (theme, display mode, locale)
 
-- **Chat panel** (left) - Your conversation with the LLM, including tool calls and results
-- **JSON-RPC logger** (right) - Real-time view of MCP protocol messages between Inspector and your servers
+### Device and Locale Testing
 
-You can resize the panels by dragging the divider between them. This layout helps you understand exactly how the LLM interacts with your MCP servers.
+Test widgets across different environments:
 
-## Error handling
+- **Device Selector** - Switch between mobile, tablet, and desktop viewports
+- **Locale Selector** - Test internationalization with different locales
+- **Theme Toggle** - Switch between light and dark modes
 
-When errors occur during playground interactions, you'll see an error message with a "Reset chat" button. For detailed debugging, click "More details" to expand additional error information, including JSON-formatted error responses when available. This helps you quickly identify and resolve issues with your MCP server or LLM configuration.
+These settings are passed to widgets via the `window.openai` API, allowing them to adapt their UI.
 
-## Elicitation support
+## Error Handling
 
-MCPJam has elicitation support in the LLM playground. Any elicitation requests will be shown as a popup modal.
+When errors occur, you'll see an error message with a "Reset chat" button. Click "More details" to expand additional error information, including JSON-formatted responses. This helps you quickly identify and resolve issues with your MCP server or LLM configuration.
 
-## MCP-UI support
+## Elicitation Support
 
-The playground supports rendering custom UI components from MCP servers using the [MCP-UI specification](https://github.com/modelcontextprotocol/mcp-ui). When an MCP tool returns a UI resource, it will be rendered inline in the chat with interactive capabilities.
-
-MCP-UI components can:
-
-- Display rich, interactive visualizations
-- Trigger tool calls through button actions
-- Send follow-up messages to the chat
-- Open external links
-- Show notifications
-
-This enables MCP server developers to create custom user experiences beyond plain text responses.
-
-## ChatGPT Apps and MCP Apps support
-
-The playground supports rendering custom UI components from MCP tools using both the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk) (ChatGPT apps) and MCP Apps.
-
-**ChatGPT Apps**: When a tool includes an `openai/outputTemplate` metadata field pointing to a resource URI, the playground will render the custom HTML interface in an isolated iframe with access to the `window.openai` API.
-
-**MCP Apps**: When a tool includes a `ui.resourceUri` metadata field, the playground will render the custom UI component inline in the chat.
-
-This enables MCP servers to provide rich, interactive visualizations for tool results, including charts, forms, and custom widgets that can call other tools or send followup messages to the chat.
-
-### Display modes
-
-OpenAI Apps can request different display modes to optimize their presentation:
-
-- **Inline** (default) - Widget renders within the chat message flow
-- **Picture-in-Picture** - Widget floats at the top of the screen, staying visible while you scroll through the chat
-- **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
-
-Widgets can request display mode changes using `window.openai.requestDisplayMode({ mode: 'pip' })` or `window.openai.requestDisplayMode({ mode: 'fullscreen' })`. Users can exit PiP or fullscreen modes by clicking the close button in the top-left corner of the widget.
-
-### Device and locale testing
-
-The playground includes controls for testing widgets across different device types and locales:
-
-- **Device selector** - Switch between mobile, tablet, and desktop viewports to test responsive layouts
-- **Locale selector** - Choose from common BCP 47 locales (e.g., en-US, es-ES, ja-JP) to test internationalization
-- **Theme toggle** - Switch between light and dark modes
-
-These settings are automatically passed to widgets via the `window.openai` API, allowing them to adapt their UI accordingly.
-
-### Widget debugging
-
-When viewing tool results with custom UI components, you can access debugging information using the icon buttons in the tool header:
-
-- **Data** (database icon) - View tool input, output, and error details
-- **Widget State** (box icon) - Inspect the current widget state and see when it was last updated
-- **Globals** (globe icon) - View global values passed to the widget (theme, display mode, locale, etc.)
-
-Click any icon to toggle the corresponding debug panel. Click again to close it.
-
-### Content Security Policy (CSP)
-
-The UI Playground includes CSP enforcement controls to help you test widget security configurations. You can switch between two CSP modes using the shield icon in the toolbar:
-
-- **Permissive** (default) - Allows all HTTPS resources, suitable for development and testing
-- **Strict** - Only allows domains declared in the widget's `openai/widgetCSP` metadata field
-
-When a widget violates CSP rules in strict mode, you'll see a badge on the CSP debug tab showing the number of blocked requests. Click the CSP tab to view:
-
-- **Suggested fix** - Copyable JSON snippet to add to your widget's `openai/widgetCSP` field
-- **Blocked requests** - List of all CSP violations with directive and URI details
-- **Declared domains** - The `connect_domains` and `resource_domains` your widget currently declares
-
-This helps you identify which external resources your widget needs and configure proper CSP declarations before deploying to production environments.
-
-<Info>
-  CSP mode only applies in the UI Playground. The Chat tab always uses
-  permissive mode to avoid disrupting normal testing workflows.
-</Info>
-
-## UI Playground device settings
-
-The UI Playground provides controls to simulate different device environments for testing ChatGPT Apps and MCP Apps. These settings affect how widgets receive device context through the `window.openai` API.
-
-### Device type
-
-Select between mobile, tablet, or desktop device types. This affects the `window.openai.userAgent.device.type` value that widgets receive. The device type selector is located in the playground toolbar.
-
-### Device capabilities
-
-Toggle hover and touch capabilities to simulate different input methods:
-
-- **Hover** - Indicates whether the device supports hover interactions (typically enabled for desktop, disabled for mobile)
-- **Touch** - Indicates whether the device supports touch input (typically enabled for mobile/tablet, disabled for desktop)
-
-These settings are reflected in `window.openai.userAgent.capabilities.hover` and `window.openai.userAgent.capabilities.touch`.
-
-### Safe area insets
-
-Configure safe area insets to simulate device notches, rounded corners, and gesture areas. Click the safe area button in the toolbar to open the editor, which provides:
-
-- **Visual preview** - Shows how insets affect the content area
-- **Preset configurations** - Quick access to common device profiles:
-  - **None** - No insets (0px on all sides)
-  - **Notch** - iPhone with notch (44px top, 34px bottom)
-  - **Island** - iPhone with Dynamic Island (59px top, 34px bottom)
-  - **Android** - Android gesture navigation (24px top, 16px bottom)
-- **Custom values** - Manually adjust top, bottom, left, and right insets in pixels
-
-Widgets receive these values through `window.openai.safeArea.insets` and can use them to adjust their layout accordingly.
-
-#### Fullscreen navigation
-
-When a widget is in fullscreen mode, a navigation header appears at the top with:
-
-- **Back/Forward buttons** - Navigate through the widget's browsing history (enabled when navigation is available)
-- **Widget title** - Displays the tool name
-- **Close button** - Exit fullscreen mode
-
-The navigation buttons mirror the widget's internal history state, allowing you to navigate multi-page widgets without leaving fullscreen mode.
+MCPJam supports elicitation flows from MCP servers. Elicitation requests appear as popup modals, allowing you to provide additional input when the LLM needs more information to complete a task.

@@ -1,43 +1,56 @@
 ---
-title: "Tools / Prompts / Resources"
-description: "Manually trigger your server's tools, prompts, and resources"
+title: "MCP Inspector"
+description: "Manually test your MCP server's tools, resources, and prompts"
 icon: "Hammer"
 ---
 
-Test your MCP server's implementation of tools, prompts, and resources. You can manually trigger them to quickly iterate on your implementation.
-
-## Tools
+The MCP Inspector provides a complete testing environment for your MCP server. Manually invoke tools, read resources, fetch prompts, and view all JSON-RPC messages between MCPJam and your server.
 
 <Frame>
   <img
     className="block"
-    src="/images/demo_1.png"
-    alt="MCPJam Inspector Logo"
-    width="300"
+    src="/images/mcp-tools.png"
+    alt="MCPJam MCP Inspector"
+    width="1000"
   />
 </Frame>
 
-- View all tools, tool name, tool description.
-- Search for tools
-- View tool params
-- Trigger a tool with params
-- Support for elicitation
+## Tools
 
-### Save requests
+Test your MCP tools by manually invoking them with custom parameters:
 
-You can save a tool request. Saved requests will show up in the `Saved Requests` tab. They are stored in your browser local storage. Clicking on a saved request will fill out a tool with the params you saved.
+- **View all tools** - Browse tool names, descriptions, and parameters
+- **Search tools** - Quickly find specific tools by name
+- **Invoke tools** - Trigger tools with custom input parameters
+- **View results** - See tool outputs, including widget responses for ChatGPT apps and MCP apps
+- **Elicitation support** - Handle elicitation requests from tools
+- **Save requests** - Save frequently used tool invocations for quick testing
+
+Saved requests are stored in your browser's local storage and accessible from the Saved Requests tab.
 
 ## Resources
 
-- View all resources, resource name, location, mimetype
-- Read a resource
+Inspect your MCP server's resources:
+
+- **Browse resources** - View all available resources with names, URIs, and MIME types
+- **Read resources** - Fetch and view resource content
+- **Resource templates** - Test templated resources with dynamic parameters
 
 ## Prompts
 
-- View all prompts, prompt name, prompt description
-- View prompt params
-- Fetch a prompt with given params
+Test your MCP prompts:
 
-### Using prompts in the playground
+- **View prompts** - Browse prompt names, descriptions, and parameters
+- **Fetch prompts** - Retrieve prompt content with custom arguments
+- **Use in playground** - Type `/` in the LLM Playground to insert prompts directly into chat
 
-You can use MCP prompts directly in the LLM playground by typing `/` in the chat input. This opens a menu of available prompts from your connected servers. When you select a prompt, it appears as an expandable card showing the server, description, arguments, and a preview of the content before you send it to the LLM.
+## JSON-RPC Logging
+
+All communication between MCPJam and your MCP server is logged in real-time:
+
+- **Request/response pairs** - View complete JSON-RPC messages
+- **Message types** - See tool calls, resource reads, prompt fetches, and more
+- **Error tracking** - Inspect errors and validation issues
+- **Timestamps** - Track message timing and performance
+
+The JSON-RPC logger helps you debug your MCP server implementation and understand the complete protocol flow.
