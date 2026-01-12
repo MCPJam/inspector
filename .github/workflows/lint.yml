@@ -10,6 +10,9 @@ jobs:
   formatting:
     runs-on: ubuntu-latest
     name: Check Code Formatting
+    defaults:
+      run:
+        working-directory: mcpjam-inspector
 
     steps:
       - name: Checkout code
@@ -41,6 +44,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     name: Build and Test
+    defaults:
+      run:
+        working-directory: mcpjam-inspector
 
     steps:
       - name: Checkout code

@@ -25,6 +25,9 @@ permissions:
 jobs:
   build-mac:
     runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mcpjam-inspector
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -93,7 +96,7 @@ jobs:
       - name: Notarize and staple DMG
         run: |
           # Find the DMG file
-          DMG_PATH=$(find out/make -name "*.dmg" | head -n1)
+          DMG_PATH=$(find "$GITHUB_WORKSPACE/mcpjam-inspector/out/make" -name "*.dmg" | head -n1)
 
           if [ ! -f "$DMG_PATH" ]; then
             echo "DMG file not found!"
@@ -116,8 +119,8 @@ jobs:
           echo "✅ DMG successfully notarized and stapled"
 
           # Rename DMG to consistent name
-          cp "$DMG_PATH" "MCPJam Inspector.dmg"
-          echo "DMG_PATH=MCPJam Inspector.dmg" >> $GITHUB_ENV
+          cp "$DMG_PATH" "$GITHUB_WORKSPACE/MCPJam Inspector.dmg"
+          echo "DMG_PATH=$GITHUB_WORKSPACE/MCPJam Inspector.dmg" >> $GITHUB_ENV
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
@@ -125,7 +128,7 @@ jobs:
       - name: Notarize and staple ZIP
         run: |
           # Find the ZIP file
-          ZIP_PATH=$(find out/make -name "*.zip" | head -n1)
+          ZIP_PATH=$(find "$GITHUB_WORKSPACE/mcpjam-inspector/out/make" -name "*.zip" | head -n1)
 
           if [ ! -f "$ZIP_PATH" ]; then
             echo "ZIP file not found!"

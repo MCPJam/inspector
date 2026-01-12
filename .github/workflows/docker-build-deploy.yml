@@ -49,8 +49,8 @@ jobs:
       - name: Build and push AMD64 image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./mcpjam-inspector
+          file: ./mcpjam-inspector/Dockerfile
           push: true
           tags: ${{ env.DOCKER_REPOSITORY }}:${{ needs.prepare.outputs.version }}-amd64
           labels: ${{ needs.prepare.outputs.labels }}
@@ -79,8 +79,8 @@ jobs:
       - name: Build and push ARM64 image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./mcpjam-inspector
+          file: ./mcpjam-inspector/Dockerfile
           push: true
           tags: ${{ env.DOCKER_REPOSITORY }}:${{ needs.prepare.outputs.version }}-arm64
           labels: ${{ needs.prepare.outputs.labels }}

@@ -24,6 +24,9 @@ jobs:
     runs-on: windows-latest
     env:
       WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+    defaults:
+      run:
+        working-directory: mcpjam-inspector
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -88,7 +91,7 @@ jobs:
           $setupFile = Get-ChildItem -Path "out\make" -Recurse -Name "*Setup.exe" | Select-Object -First 1
           if ($setupFile) {
             Copy-Item "out\make\$setupFile" "MCPJam-Inspector-Setup.exe"
-            echo "SETUP_PATH=MCPJam-Inspector-Setup.exe" >> $env:GITHUB_ENV
+            echo "SETUP_PATH=mcpjam-inspector\MCPJam-Inspector-Setup.exe" >> $env:GITHUB_ENV
           }
         shell: powershell
 
@@ -98,9 +101,9 @@ jobs:
         with:
           name: mcpjam-inspector-windows
           path: |
-            out\make\**\*Setup.exe
-            out\make\**\RELEASES
-            out\make\**\*.nupkg
+            mcpjam-inspector\out\make\**\*Setup.exe
+            mcpjam-inspector\out\make\**\RELEASES
+            mcpjam-inspector\out\make\**\*.nupkg
           retention-days: 30
 
       - name: Create GitHub Release
@@ -113,8 +116,8 @@ jobs:
           prerelease: false
           files: |
             ${{ env.SETUP_PATH }}
-            out\make\**\RELEASES
-            out\make\**\*.nupkg
+            mcpjam-inspector\out\make\**\RELEASES
+            mcpjam-inspector\out\make\**\*.nupkg
           body: |
             ## Download for Windows
             - **Windows Installer**: [MCPJam Inspector Setup.exe](https://github.com/MCPJam/inspector/releases/download/${{ github.event_name == 'workflow_dispatch' && (inputs.version || 'v0.9.14-manual') || github.ref_name }}/MCPJam-Inspector-Setup.exe)
