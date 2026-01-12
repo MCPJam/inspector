@@ -1,26 +1,28 @@
 ---
-title: "Quickstart"
-description: "The MCPJam inspector can be started with a `npx` command"
+title: "Getting Started"
+description: "Start testing your MCP servers in minutes"
 icon: "rocket"
 ---
 
-## Quick start
+## Quick Start
 
-Run the command in your terminal
+Start MCPJam Inspector with a single command:
 
-    ```bash
-    npx @mcpjam/inspector@latest
-    ```
-
-After installing the package, you should see a link to `localhost`. Open that link up to see the inspector.
-
-If you don't have Node.js installed, check out our [desktop app](https://mcpjam.com).
-
-## Connect to your first MCP server
-
-Click on "Add server" and connect to your first MCP server
-
+```bash
+npx @mcpjam/inspector@latest
 ```
+
+After installation completes, you'll see a link to `localhost`. Open that link in your browser to access the inspector.
+
+<Note>
+  Don't have Node.js installed? Download our desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe).
+</Note>
+
+## Connect Your First MCP Server
+
+Click "Add server" and connect to an MCP server. For this example, we'll use Anthropic's sample server:
+
+```bash
 npx -y @modelcontextprotocol/server-everything
 ```
 
@@ -28,29 +30,56 @@ npx -y @modelcontextprotocol/server-everything
   <img src="/images/everything-demo.png" alt="Server everything demo" />
 </Frame>
 
-Once you hit submit, you should see the connection status as "Connected". This page is your server connections page. You can connect to multiple MCP servers simulatenously on MCPJam.
+Once you submit, the connection status should show "Connected". You can connect to multiple MCP servers simultaneously on MCPJam.
 
-<Info>
-  `@modelcontextprotocol/server-everything` is the example server from Anthropic
-</Info>
+## Test an MCP Tool
 
-## Test an MCP tool
+Navigate to the "Tools" tab to see all available tools from `server-everything`. This tab lets you manually test individual tools with custom parameters.
 
-Go to the "Tools" tab. You'll be able to see all of the MCP tools `server-everything` has. Tools tab lets you test individual tools with configured params.
-
-Try testing out the `add` tool and set params for `a` and `b`. Upon hitting "Execute", you should see the tool's return value on the bottom.
+Try the `add` tool:
+1. Select the `add` tool from the list
+2. Set parameters for `a` and `b`
+3. Click "Execute"
+4. View the tool's return value at the bottom
 
 <Frame>
   <img src="/images/tool-add.png" alt="Add tool demo" />
 </Frame>
-## Try other features
 
-Hope this showed you the basics of the inspector. Explore additional parts of the inspector:
+## Explore More Features
 
-- Advanced server connections (HTTP/SSE, STDIO, Auth)
-- LLM playground with ChatGPT app and MCP app widget emulator
-- Prompts testing
-- Resources testing
-- Tracing
-- Elicitation
-- Evals (CLI)
+Now that you've connected a server and tested a tool, explore the full power of MCPJam Inspector:
+
+<CardGroup cols={2}>
+  <Card
+    title="App Builder"
+    icon="cube"
+    href="/inspector/app-builder"
+  >
+    Build and test ChatGPT apps and MCP apps with a full widget emulator
+  </Card>
+
+  <Card
+    title="LLM Playground"
+    icon="messages"
+    href="/inspector/llm-playground"
+  >
+    Chat with your MCP server using frontier models like GPT-5 and Claude Sonnet
+  </Card>
+
+  <Card
+    title="OAuth Debugger"
+    icon="shield"
+    href="/inspector/guided-oauth"
+  >
+    Debug your OAuth implementation with step-by-step guidance
+  </Card>
+
+  <Card
+    title="MCP Inspector"
+    icon="hammer"
+    href="/inspector/tools-prompts-resources"
+  >
+    Manually test tools, resources, and prompts with full JSON-RPC logging
+  </Card>
+</CardGroup>

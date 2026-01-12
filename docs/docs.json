@@ -39,11 +39,6 @@
         "group": "Troubleshooting",
         "icon": "wrench",
         "pages": ["troubleshooting/common-errors"]
-      },
-      {
-        "group": "Changelog",
-        "icon": "clock",
-        "pages": ["changelog/overview"]
       }
     ],
     "global": {
