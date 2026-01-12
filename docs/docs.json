@@ -30,6 +30,11 @@
         ]
       },
       {
+        "group": "Guides",
+        "icon": "map",
+        "pages": ["guides/first-mcp-app"]
+      },
+      {
         "group": "Troubleshooting",
         "icon": "wrench",
         "pages": ["troubleshooting/common-errors"]
