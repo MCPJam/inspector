@@ -1,0 +1,500 @@
+---
+title: "My First MCP App"
+description: "Build a simple Reservation MCP App from scratch"
+icon: "sparkles"
+---
+
+We're going to create a simple Reservation MCP App for a restaurant called Jammy Wammy!
+
+## Setting up your environment
+
+### Initialize the project
+
+```bash
+mkdir reservation-app
+cd reservation-app
+npm init -y
+```
+
+### Install dependencies
+
+```bash
+npm install @modelcontextprotocol/sdk @modelcontextprotocol/ext-apps react react-dom zod
+npm install -D @types/node @types/react @types/react-dom typescript vite @vitejs/plugin-react vite-plugin-singlefile cross-env
+```
+
+### Configure package.json
+
+Add the following to your `package.json`:
+
+```json
+{
+  "type": "module",
+  "main": "server.ts",
+  "scripts": {
+    "build": "cross-env INPUT=reservation-app.html vite build",
+    "start": "node server.ts"
+  }
+}
+```
+
+### Create tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}
+```
+
+### Create vite.config.ts
+
+```ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { viteSingleFile } from "vite-plugin-singlefile";
+
+const INPUT = process.env.INPUT;
+if (!INPUT) {
+  throw new Error("INPUT environment variable is not set");
+}
+
+const isDevelopment = process.env.NODE_ENV === "development";
+
+export default defineConfig({
+  plugins: [react(), viteSingleFile()],
+  build: {
+    sourcemap: isDevelopment ? "inline" : undefined,
+    cssMinify: !isDevelopment,
+    minify: !isDevelopment,
+
+    rollupOptions: {
+      input: INPUT,
+    },
+    outDir: "dist",
+    emptyOutDir: false,
+  },
+});
+```
+
+## Creating your first View
+
+Now let's create the HTML file and React component that will be displayed when the MCP tool is called.
+
+### Create reservation-app.html
+
+First, create the HTML file that will serve as the entry point for your app:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Reservation App</title>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/reservation.tsx"></script>
+</body>
+</html>
+```
+
+This is a standard HTML file with a few important elements:
+- A `root` div where React will mount your app
+- A module script that imports your React component
+- Color scheme meta tag for light/dark mode support
+
+### Create src/reservation.tsx
+
+```tsx
+import { useApp } from "@modelcontextprotocol/ext-apps/react";
+import { StrictMode, useCallback } from "react";
+import { createRoot } from "react-dom/client";
+
+const IMPLEMENTATION = { name: "Reservation App", version: "1.0.0" };
+
+function ReservationApp() {
+  const { app, error } = useApp({
+    appInfo: IMPLEMENTATION,
+    capabilities: {},
+  });
+
+  const handleMenuRequest = useCallback(async () => {
+    if (!app) return;
+    try {
+      await app.sendMessage({
+        role: "user",
+        content: [{ type: "text", text: `What's on the menu at Jammy Wammy?` }],
+      });
+    } catch (e) {
+      console.error("Failed to send message:", e);
+    }
+  }, [app]);
+
+  if (error) return <div><strong>ERROR:</strong> {error.message}</div>;
+  if (!app) return <div>Loading...</div>;
+
+  return (
+    <main style={{
+      padding: "20px",
+      fontFamily: "system-ui, -apple-system, sans-serif",
+      maxWidth: "600px",
+      margin: "0 auto"
+    }}>
+      <h1 style={{ fontSize: "24px", marginBottom: "16px" }}>
+        🎉 Reservation Confirmed!
+      </h1>
+      
+      <p style={{ fontSize: "16px", marginBottom: "24px" }}>
+        Your table at <strong>Jammy Wammy</strong> is ready!
+      </p>
+
+      <button
+        onClick={handleMenuRequest}
+        style={{
+          padding: "12px 24px",
+          fontSize: "16px",
+          backgroundColor: "#007bff",
+          color: "white",
+          border: "none",
+          borderRadius: "6px",
+          cursor: "pointer",
+          fontWeight: "500"
+        }}
+      >
+        What's on the menu?
+      </button>
+    </main>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <ReservationApp />
+  </StrictMode>,
+);
+```
+
+### Understanding the MCP App features
+
+#### The `useApp` hook
+
+The `useApp` hook is the foundation of your MCP App. It establishes the connection between your UI and the MCP host.
+
+```tsx
+const { app, error } = useApp({
+  appInfo: IMPLEMENTATION,
+  capabilities: {},
+});
+```
+
+- **`appInfo`**: Identifies your app with a name and version
+- **`capabilities`**: Declares what features your app supports (empty for this simple example)
+- **`app`**: The app instance you'll use to interact with the MCP host
+- **`error`**: Contains any connection errors
+
+#### Sending messages with `app.sendMessage()`
+
+The `sendMessage` method lets your app send follow-up messages to the LLM, enabling interactive conversations:
+
+```tsx
+await app.sendMessage({
+  role: "user",
+  content: [{ type: "text", text: `What's on the menu at Jammy Wammy?` }],
+});
+```
+
+This is powerful because it allows your UI to trigger additional LLM interactions. When the user clicks "What's on the menu?", the message is sent back to the LLM, which can then call another MCP tool (like `get-menu`) to respond.
+
+#### What else can your app do?
+
+The `app` object provides several methods to interact with the MCP host:
+
+- **`app.sendMessage()`** - Send messages to the LLM (as shown above)
+- **`app.callServerTool()`** - Call other MCP tools on your server directly
+- **`app.sendLog()`** - Send log messages to the host for debugging
+- **`app.openLink()`** - Request the host to open a URL
+- **`app.getHostContext()`** - Get information about the host environment (safe area insets, theme, etc.)
+
+For a complete reference of all available methods and capabilities, see the [MCP Apps API documentation](#).
+
+#### Mounting the React app
+
+Don't forget to mount your app to the DOM:
+
+```tsx
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <ReservationApp />
+  </StrictMode>,
+);
+```
+
+## Setting up the MCP Server
+
+Now let's create the server that will register your tools and serve the UI.
+
+### Create server.ts
+
+```ts
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
+
+const DIST_DIR = path.join(import.meta.dirname, "dist");
+
+export function createServer(): McpServer {
+  const server = new McpServer({
+    name: "Jammy Wammy Reservation Server",
+    version: "1.0.0",
+  });
+
+  const resourceUri = "ui://reservation/reservation-app.html";
+
+  // Resource: The built HTML file
+  registerAppResource(server,
+    resourceUri,
+    resourceUri,
+    { mimeType: RESOURCE_MIME_TYPE },
+    async (): Promise<ReadResourceResult> => {
+      const html = await fs.readFile(path.join(DIST_DIR, "reservation-app.html"), "utf-8");
+      return {
+        contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
+      };
+    },
+  );
+
+  // Tool: get-reservation - Shows the reservation UI
+  registerAppTool(server,
+    "get-reservation",
+    {
+      title: "Get Reservation",
+      description: "Make a reservation at Jammy Wammy restaurant.",
+      inputSchema: {},
+      _meta: { ui: { resourceUri } },
+    },
+    async (): Promise<CallToolResult> => {
+      return { 
+        content: [{ 
+          type: "text", 
+          text: "Reservation confirmed at Jammy Wammy! 🎉" 
+        }] 
+      };
+    },
+  );
+
+  // Tool: get-menu - Returns the menu (no UI)
+  server.registerTool(
+    "get-menu",
+    {
+      title: "Get Menu",
+      description: "Get the menu for Jammy Wammy restaurant.",
+      inputSchema: {},
+    },
+    async (): Promise<CallToolResult> => {
+      const menu = `
+🍽️ Jammy Wammy Menu
+
+Appetizers:
+- Bruschetta - $8
+- Calamari - $12
+
+Main Courses:
+- Margherita Pizza - $16
+- Spaghetti Carbonara - $18
+- Grilled Salmon - $24
+- Chicken Parmesan - $20
+
+Desserts:
+- Tiramisu - $9
+- Panna Cotta - $8
+
+Beverages:
+- House Wine (glass) - $10
+- Craft Beer - $7
+- Fresh Lemonade - $4
+      `.trim();
+
+      return { 
+        content: [{ 
+          type: "text", 
+          text: menu 
+        }] 
+      };
+    },
+  );
+
+  return server;
+}
+
+async function main() {
+  const server = createServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+```
+
+### Understanding the server components
+
+#### Creating the MCP Server
+
+```ts
+const server = new McpServer({
+  name: "Jammy Wammy Reservation Server",
+  version: "1.0.0",
+});
+```
+
+This initializes your MCP server with a name and version.
+
+#### Registering the App Resource
+
+```ts
+const resourceUri = "ui://reservation/reservation-app.html";
+
+registerAppResource(server,
+  resourceUri,
+  resourceUri,
+  { mimeType: RESOURCE_MIME_TYPE },
+  async (): Promise<ReadResourceResult> => {
+    const html = await fs.readFile(path.join(DIST_DIR, "reservation-app.html"), "utf-8");
+    return {
+      contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
+    };
+  },
+);
+```
+
+`registerAppResource` allows us to easily register a resource with UI metadata so the host knows where the assets are to serve it to the host.
+
+#### Registering an App Tool (with UI)
+
+```ts
+registerAppTool(server,
+  "get-reservation",
+  {
+    title: "Get Reservation",
+    description: "Make a reservation at Jammy Wammy restaurant.",
+    inputSchema: {},
+    _meta: { ui: { resourceUri } },
+  },
+  async (): Promise<CallToolResult> => {
+    return { 
+      content: [{ 
+        type: "text", 
+        text: "Reservation confirmed at Jammy Wammy! 🎉" 
+      }] 
+    };
+  },
+);
+```
+
+This is the tool that will be directly called by the LLM to render your tool.
+We give it our `resourceUri` in the `_meta` field allowing us to have multiple tools to render different UI.
+We can also return text content to the LLM as well to give it more context about our View.
+
+#### Registering a Regular Tool (without UI)
+
+```ts
+server.registerTool(
+  "get-menu",
+  {
+    title: "Get Menu",
+    description: "Get the menu for Jammy Wammy restaurant.",
+    inputSchema: {},
+  },
+  async (): Promise<CallToolResult> => {
+    return { 
+      content: [{ type: "text", text: menu }] 
+    };
+  },
+);
+```
+
+Regular tools work just like standard MCP tools - they return text content without any UI.
+
+#### Starting the Server
+
+```ts
+async function main() {
+  const server = createServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+```
+
+This connects your server to STDIO transport, allowing it to communicate with MCP clients.
+
+## Building and Running Your App
+
+Now that everything is set up, let's build and run your MCP App!
+
+### Build the app
+
+The build process uses Vite to bundle your React component and the HTML file into a single, self-contained HTML file:
+
+```bash
+npm run build
+```
+
+This will create a `dist/reservation-app.html` file with all your JavaScript and CSS inlined - perfect for serving through MCP.
+
+### Run the server
+
+Start your MCP server:
+
+```bash
+npm start
+```
+
+Your server is now running and communicating via STDIO. It's ready to be connected to an MCP client like MCPJam Inspector!
+
+### Testing with MCPJam Inspector
+
+The easiest way to test your app is using MCPJam Inspector with the built-in `node` command:
+
+```bash
+npx @mcpjam/inspector node server.ts
+```
+
+This will:
+1. Start MCPJam Inspector
+2. Automatically connect to your server via STDIO
+3. Show all available tools including `get-reservation` and `get-menu`
+4. Let you test the full interactive flow
+
+### What's next?
+
+Now that your server is running, you can:
+
+1. **Test the flow** - Call the `get-reservation` tool to see your UI
+2. **Try the menu button** - Click "What's on the menu?" and watch the LLM call the `get-menu` tool
+3. **Iterate and expand** - Add more tools, improve the UI, or build something completely new!
+
+Congratulations! You've built your first MCP App! 🎉

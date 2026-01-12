@@ -1,0 +1,31 @@
+{
+  "name": "reservation-app",
+  "version": "1.0.0",
+  "description": "Jammy Wammy Reservation MCP App",
+  "main": "server.ts",
+  "type": "module",
+  "scripts": {
+    "build": "cross-env INPUT=reservation-app.html vite build",
+    "start": "node server.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.0.6",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "cross-env": "^10.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^0.3.1",
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@vitejs/plugin-react": "^5.1.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "vite-plugin-singlefile": "^2.3.0",
+    "zod": "^4.3.5"
+  }
+}
