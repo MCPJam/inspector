@@ -423,6 +423,9 @@ export class MCPClientManager {
     const client = this.getClientById(serverId);
     try {
       await client.close();
+    } catch {
+      // Ignore errors from close() - the SDK may throw McpError when closing
+      // connections that have pending requests. This is expected behavior.
     } finally {
       if (client.transport) {
         await this.safeCloseTransport(client.transport);

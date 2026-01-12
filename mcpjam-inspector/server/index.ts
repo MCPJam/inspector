@@ -12,6 +12,30 @@ import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@/sdk";
 
+// Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
+// This prevents the server from crashing when MCP connections are closed while
+// requests are pending - the SDK rejects pending promises on connection close
+process.on("unhandledRejection", (reason, _promise) => {
+  // Check if this is an expected MCP connection close error
+  const isMcpConnectionClosed =
+    reason instanceof Error &&
+    (reason.message.includes("Connection closed") ||
+      reason.name === "McpError");
+
+  if (isMcpConnectionClosed) {
+    // Log at debug level - this is expected during disconnect operations
+    appLogger.debug("MCP connection closed with pending requests", {
+      message: reason.message,
+    });
+  } else {
+    // Log unexpected rejections as warnings
+    appLogger.warn("Unhandled promise rejection", {
+      reason: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+    });
+  }
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
