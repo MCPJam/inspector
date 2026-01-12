@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./mcpjam-inspector/client/public/mcp_jam_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="./mcpjam-inspector/client/public/mcp_jam_light.png">
-  <img width="250" alt="MCPJam Inspector V1 logo" src="./mcpjam-inspector/client/public/mcp_jam_light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="../mcpjam-inspector/client/public/mcp_jam_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="../mcpjam-inspector/client/public/mcp_jam_light.png">
+  <img width="250" alt="MCPJam Inspector V1 logo" src="../mcpjam-inspector/client/public/mcp_jam_light.png">
 </picture>
 
 <br/>
@@ -28,7 +28,7 @@ Start up the MCPJam inspector:
 npx @mcpjam/inspector@latest
 ```
 
-<img alt="MCPJam Inspector Demo" src="./docs/images/mcpjam-banner.png">
+<img alt="MCPJam Inspector Demo" src="../docs/images/mcpjam-banner.png">
 
 # Table of contents
 
@@ -89,25 +89,25 @@ Develop [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps (C
 - Change emulator device to Desktop, Tablet, or Mobile views.
 - Test your app's locale change, CSP permissions, light / dark mode, hover & touch, and safe area insets.
 
-<img alt="MCPJam LLM playground" src="./docs/images/pizza-demo.png">
+<img alt="MCPJam LLM playground" src="../docs/images/pizza-demo.png">
 
 ## OAuth Debugger
 
 View every step of the OAuth handshake in detail, with guided explanations. Test with every version of the OAuth spec (03-26, 06-18, and 11-25). Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD).
 
-<img alt="MCPJam OAuth Flow Debugger" src="./docs/images/oauth-debugger.png">
+<img alt="MCPJam OAuth Flow Debugger" src="../docs/images/oauth-debugger.png">
 
 ## LLM Playground
 
 Try your server against any LLM model. We provide frontier models like GPT-5, Claude Sonnet, Gemini 2.5 for free, or bring your own API key. View your server's token usage.
 
-<img alt="MCPJam LLM playground" src="./docs/images/playground.png">
+<img alt="MCPJam LLM playground" src="../docs/images/playground.png">
 
 ## MCP Inspector
 
 MCPJam contains all of the tooling to test your MCP server. Test your server's tools, resources, prompts, templates, with full JSON-RPC observability. MCPJam has all features from the original inspector and more.
 
-<img alt="MCPJam LLM playground" src="./docs/images/mcp-tools.png">
+<img alt="MCPJam LLM playground" src="../docs/images/mcp-tools.png">
 
 # Contributing 👨‍💻
 
