@@ -1,4 +1,4 @@
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
 export const generateUploadUrl = mutation({
@@ -43,4 +43,13 @@ export const saveImage = mutation({
 
     return { storageId: args.storageId, docId };
   },
+});
+
+export const getImageById = query({
+  args: { id: v.string() },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("images")
+      .withIndex("by_image_id", (q) => q.eq("id", args.id))
+      .unique(),
 });

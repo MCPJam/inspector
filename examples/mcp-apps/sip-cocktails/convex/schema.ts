@@ -22,12 +22,17 @@ export default defineSchema({
     uploadedAt: v.number(),
   }).index("by_image_id", ["id"]),
   ingredients: defineTable({
+    id: v.string(),
     name: v.string(),
     subName: v.optional(v.string()),
     description: v.string(),
     imageId: v.id("images"),
-  }),
+    imageIds: v.optional(v.array(v.id("images"))),
+  })
+    .index("by_ingredient_id", ["id"])
+    .index("by_name", ["name"]),
   cocktails: defineTable({
+    id: v.string(),
     name: v.string(),
     tagline: v.string(),
     subName: v.optional(v.string()),
@@ -51,5 +56,7 @@ export default defineSchema({
       calories: v.number(),
     }),
     garnish: v.optional(v.string()),
-  }),
+  })
+    .index("by_cocktail_id", ["id"])
+    .index("by_name", ["name"]),
 });

@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as cocktails from "../cocktails.js";
 import type * as images from "../images.js";
+import type * as ingredients from "../ingredients.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +19,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  cocktails: typeof cocktails;
   images: typeof images;
+  ingredients: typeof ingredients;
 }>;
 
 /**
