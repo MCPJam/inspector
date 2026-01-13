@@ -19,19 +19,13 @@ export function createServer(): McpServer {
     name: "Sip Cocktails MCP App Server",
     version: "1.0.0",
   });
-
   const convexUrl = process.env.CONVEX_URL ?? process.env.VITE_CONVEX_URL;
   if (!convexUrl) {
     throw new Error("Missing CONVEX_URL or VITE_CONVEX_URL.");
   }
   const convexClient = new ConvexHttpClient(convexUrl);
+  const resourceUri = "ui://cocktail/cocktail-recipe-widget.html";
 
-  // Two-part registration: tool + resource, tied together by the resource URI.
-  const resourceUri = "ui://cocktail/mcp-app.html";
-
-  // Register a tool with UI metadata. When the host calls this tool, it reads
-  // `_meta.ui.resourceUri` to know which resource to fetch and render as an
-  // interactive UI.
   registerAppTool(server,
     "get-cocktail",
     {
@@ -59,13 +53,12 @@ export function createServer(): McpServer {
     },
   );
 
-  // Register the resource, which returns the bundled HTML/JavaScript for the UI.
   registerAppResource(server,
     resourceUri,
     resourceUri,
     { mimeType: RESOURCE_MIME_TYPE },
     async (): Promise<ReadResourceResult> => {
-      const html = await fs.readFile(path.join(DIST_DIR, "mcp-app.html"), "utf-8");
+      const html = await fs.readFile(path.join(DIST_DIR, "cocktail-recipe-widget.html"), "utf-8");
       return {
         contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
       };
