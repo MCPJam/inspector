@@ -2,9 +2,12 @@ import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@model
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import { ConvexHttpClient } from "convex/browser";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 import { startServer } from "./server-utils.js";
+import { api } from "./convex/_generated/api.js";
 
 const DIST_DIR = path.join(import.meta.dirname, "dist");
 
@@ -13,27 +16,46 @@ const DIST_DIR = path.join(import.meta.dirname, "dist");
  */
 export function createServer(): McpServer {
   const server = new McpServer({
-    name: "Basic MCP App Server (React)",
+    name: "Sip Cocktails MCP App Server",
     version: "1.0.0",
   });
 
+  const convexUrl = process.env.CONVEX_URL ?? process.env.VITE_CONVEX_URL;
+  if (!convexUrl) {
+    throw new Error("Missing CONVEX_URL or VITE_CONVEX_URL.");
+  }
+  const convexClient = new ConvexHttpClient(convexUrl);
+
   // Two-part registration: tool + resource, tied together by the resource URI.
-  const resourceUri = "ui://get-time/mcp-app.html";
+  const resourceUri = "ui://cocktail/mcp-app.html";
 
   // Register a tool with UI metadata. When the host calls this tool, it reads
   // `_meta.ui.resourceUri` to know which resource to fetch and render as an
   // interactive UI.
   registerAppTool(server,
-    "get-time",
+    "get-cocktail",
     {
-      title: "Get Time",
-      description: "Returns the current server time as an ISO 8601 string.",
-      inputSchema: {},
-      _meta: { ui: { resourceUri } },
+      title: "Get Cocktail",
+      description: "Fetch a cocktail by id with ingredients and images.",
+      inputSchema: z.object({ id: z.string() }),
+      _meta: { ui: { resourceUri, visibility: ["app"] } },
     },
-    async (): Promise<CallToolResult> => {
-      const time = new Date().toISOString();
-      return { content: [{ type: "text", text: time }] };
+    async ({ id }: { id: string }): Promise<CallToolResult> => {
+      const cocktail = await convexClient.query(api.cocktails.getCocktailById, {
+        id,
+      });
+      if (!cocktail) {
+        return {
+          content: [{ type: "text", text: `Cocktail "${id}" not found.` }],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          { type: "text", text: `Loaded cocktail "${cocktail.name}".` },
+        ],
+        structuredContent: { cocktail },
+      };
     },
   );
 
@@ -58,7 +80,7 @@ async function main() {
     await createServer().connect(new StdioServerTransport());
   } else {
     const port = parseInt(process.env.PORT ?? "3001", 10);
-    await startServer(createServer, { port, name: "Basic MCP App Server (React)" });
+    await startServer(createServer, { port, name: "Sip Cocktails MCP App Server" });
   }
 }
 
