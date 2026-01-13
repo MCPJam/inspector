@@ -13,6 +13,7 @@ import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
+import { ProfileTab } from "./components/ProfileTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
@@ -331,6 +332,7 @@ export default function App() {
             />
           )}
           {activeTab === "settings" && <SettingsTab />}
+          {activeTab === "profile" && <ProfileTab />}
         </div>
       </SidebarInset>
     </SidebarProvider>

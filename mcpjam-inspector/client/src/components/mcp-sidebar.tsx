@@ -12,6 +12,7 @@ import {
   Activity,
   Fish,
   ListTodo,
+  User,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -101,6 +102,16 @@ const navigationSections = [
         title: "Tracing",
         url: "#tracing",
         icon: Activity,
+      },
+    ],
+  },
+  {
+    id: "collaboration",
+    items: [
+      {
+        title: "Profile",
+        url: "#profile",
+        icon: User,
       },
     ],
   },

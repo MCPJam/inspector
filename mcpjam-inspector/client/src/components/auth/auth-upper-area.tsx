@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { CircleUser, LogOut, RefreshCw, Settings } from "lucide-react";
+import { CircleUser, LogOut, RefreshCw, Settings, User } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { DiscordIcon } from "@/components/ui/discord-icon";
@@ -20,6 +20,7 @@ import {
   ActiveServerSelector,
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
+import { useProfilePicture } from "@/hooks/useProfilePicture";
 
 interface AuthUpperAreaProps {
   activeServerSelectorProps?: ActiveServerSelectorProps;
@@ -31,6 +32,7 @@ export function AuthUpperArea({
   const { isLoading } = useConvexAuth();
   const { user, signIn, signOut, signUp } = useAuth();
   const posthog = usePostHog();
+  const { profilePictureUrl } = useProfilePicture();
 
   const communityLinks = (
     <div className="flex items-center gap-1">
@@ -76,7 +78,7 @@ export function AuthUpperArea({
     signOut({ returnTo });
   };
 
-  const avatarUrl = user?.profilePictureUrl || undefined;
+  const avatarUrl = profilePictureUrl;
 
   const dropdown = (
     <DropdownMenu>
@@ -112,6 +114,13 @@ export function AuthUpperArea({
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => (window.location.hash = "profile")}
+          className="cursor-pointer"
+        >
+          <User className="size-4" />
+          Profile
+        </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => (window.location.hash = "settings")}
           className="cursor-pointer"
