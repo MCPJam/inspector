@@ -1,0 +1,76 @@
+{
+	"name": "vite-plugin-singlefile",
+	"version": "2.3.0",
+	"description": "Vite plugin for inlining all JavaScript and CSS resources",
+	"main": "dist/cjs/index.js",
+	"type": "module",
+	"module": "dist/esm/index.js",
+	"exports": {
+		".": {
+			"types": "./dist/esm/declarations/index.d.ts",
+			"import": "./dist/esm/index.js",
+			"require": "./dist/cjs/index.js"
+		}
+	},
+	"typings": "dist/esm/declarations/index.d.ts",
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">18.0.0"
+	},
+	"scripts": {
+		"dev": "rimraf dist && tsc -w -p tsconfig.json",
+		"prepare": "npm run build",
+		"build": "rimraf dist && tsc -p tsconfig.json && tsc -p tsconfig-cjs.json && node fixup.cjs",
+		"test": "vitest",
+		"test:watch": "vitest watch",
+		"lint": "eslint src/index.ts"
+	},
+	"keywords": [
+		"vite",
+		"inline",
+		"css",
+		"SFA",
+		"single-file"
+	],
+	"author": "richard@tallent.us",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/richardtallent/vite-plugin-singlefile"
+	},
+	"bugs": {
+		"url": "https://github.com/richardtallent/vite-plugin-singlefile/issues"
+	},
+	"homepage": "https://github.com/richardtallent/vite-plugin-singlefile/tree/main/#readme",
+	"dependencies": {
+		"micromatch": "^4.0.8"
+	},
+	"peerDependencies": {
+		"rollup": "^4.44.1",
+		"vite": "^5.4.11 || ^6.0.0 || ^7.0.0"
+	},
+	"devDependencies": {
+		"@eslint/eslintrc": "^3.3.1",
+		"@eslint/js": "^9.30.1",
+		"@types/jest": "^30.0.0",
+		"@types/micromatch": "^4.0.9",
+		"@types/node": "latest",
+		"@typescript-eslint/eslint-plugin": "^8.35.1",
+		"@typescript-eslint/parser": "^8.35.1",
+		"eslint": "^9.30.1",
+		"globale": "^1.0.0",
+		"rimraf": "^6.0.1",
+		"typescript": "^5.8.3",
+		"vitest": "^3.2.4"
+	},
+	"prettier": {
+		"useTabs": true,
+		"semi": false,
+		"singleQuote": false,
+		"bracketSpacing": true,
+		"trailingComma": "es5",
+		"printWidth": 180
+	}
+}
