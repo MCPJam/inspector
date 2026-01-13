@@ -80,7 +80,7 @@ export function EditableText({
           baseStyles,
           "border border-input focus:outline-none focus:ring-2 focus:ring-ring bg-background",
           inputClassName,
-          className
+          className,
         )}
       />
     );
@@ -94,7 +94,7 @@ export function EditableText({
         baseStyles,
         "hover:bg-accent text-left",
         disabled && "cursor-default hover:bg-transparent",
-        className
+        className,
       )}
     >
       {value || placeholder}

@@ -15,7 +15,9 @@ export function ProfileTab() {
 
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
-  const generateUploadUrl = useAction("users:generateProfilePictureUploadUrl" as any);
+  const generateUploadUrl = useAction(
+    "users:generateProfilePictureUploadUrl" as any,
+  );
   const updateProfilePicture = useMutation("users:updateProfilePicture" as any);
   const updateName = useMutation("users:updateName" as any);
   const updateInfo = useMutation("users:updateInfo" as any);
@@ -91,7 +93,10 @@ export function ProfileTab() {
   }
 
   // Prefer convexUser name (can be edited) over WorkOS user name
-  const displayName = convexUser?.name || [user.firstName, user.lastName].filter(Boolean).join(" ") || "User";
+  const displayName =
+    convexUser?.name ||
+    [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+    "User";
   const initials = getInitials(displayName);
   const avatarUrl = profilePictureUrl;
 

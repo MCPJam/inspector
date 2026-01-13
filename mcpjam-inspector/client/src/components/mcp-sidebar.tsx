@@ -12,7 +12,6 @@ import {
   Activity,
   Fish,
   ListTodo,
-  User,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";

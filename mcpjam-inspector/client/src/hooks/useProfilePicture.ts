@@ -10,7 +10,8 @@ export function useProfilePicture() {
   const convexUser = useQuery("users:getCurrentUser" as any);
 
   // Priority: Custom uploaded picture > WorkOS picture > undefined
-  const profilePictureUrl = convexUser?.profilePictureUrl || user?.profilePictureUrl || undefined;
+  const profilePictureUrl =
+    convexUser?.profilePictureUrl || user?.profilePictureUrl || undefined;
 
   return {
     profilePictureUrl,
