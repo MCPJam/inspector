@@ -56,7 +56,21 @@ export function createServer(): McpServer {
   registerAppResource(server,
     resourceUri,
     resourceUri,
-    { mimeType: RESOURCE_MIME_TYPE },
+    {
+      mimeType: RESOURCE_MIME_TYPE,
+      _meta: {
+        ui: {
+          csp: {
+            connectDomains: ["https://sleek-hound-600.convex.cloud"],
+            resourceDomains: [
+              "https://sleek-hound-600.convex.cloud",
+              "https://fonts.googleapis.com",
+              "https://fonts.gstatic.com",
+            ],
+          },
+        },
+      },
+    },
     async (): Promise<ReadResourceResult> => {
       const html = await fs.readFile(path.join(DIST_DIR, "cocktail-recipe-widget.html"), "utf-8");
       return {

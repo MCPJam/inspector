@@ -1,0 +1,167 @@
+.shell {
+  width: 100%;
+  max-height: 100%;
+  padding: 0;
+  background: #ffffff;
+  color: #111111;
+}
+
+.card {
+  width: 1200px;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: clamp(1.2rem, 2.4vw, 2.4rem) clamp(1.2rem, 5vw, 5rem) clamp(1.4rem, 3vw, 2.8rem);
+  display: grid;
+  gap: 0.9rem;
+}
+
+.hero {
+  display: grid;
+  place-items: center;
+}
+
+.heroImage {
+  width: 220px;
+  height: 220px;
+  border-radius: 16px;
+  object-fit: cover;
+}
+
+.heroFallback {
+  width: 220px;
+  height: 220px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  color: #888888;
+  font-size: 0.85rem;
+}
+
+.header {
+  text-align: center;
+  display: grid;
+  gap: 0.25rem;
+  margin-top: -0.5rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #666666;
+}
+
+.section {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #444444;
+}
+
+.ingredientList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ingredientItem {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.15rem 0;
+}
+
+.ingredientMeasure {
+  font-size: 0.85rem;
+  color: #555555;
+  min-width: 80px;
+  text-align: right;
+}
+
+.ingredientImage,
+.ingredientImageFallback {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.ingredientInfo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: baseline;
+}
+
+.ingredientName {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.ingredientSubName {
+  font-size: 0.78rem;
+  color: #666666;
+}
+
+.optional {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #888888;
+}
+
+.instructions {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #333333;
+  line-height: 1.45;
+}
+
+.description {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #666666;
+  line-height: 1.45;
+}
+
+.metaLine {
+  font-size: 0.78rem;
+  color: #7a7a7a;
+}
+
+.status {
+  padding: 1rem 0;
+  text-align: center;
+  color: #666666;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 540px) {
+  .card {
+    padding: 0.9rem 0.9rem 1rem;
+  }
+
+  .heroImage,
+  .heroFallback {
+    width: 180px;
+    height: 180px;
+  }
+
+  .ingredientItem {
+    grid-template-columns: 56px 1fr auto;
+  }
+}

@@ -4,69 +4,18 @@
 import type { McpUiHostContext } from "@modelcontextprotocol/ext-apps";
 import { useApp } from "@modelcontextprotocol/ext-apps/react";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { StrictMode, useCallback, useEffect, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import styles from "./mcp-app.module.css";
+import type { CocktailData } from "./lib/types";
+import styles from "./cocktail-recipe-widget.module.css";
 
 const IMPLEMENTATION = { name: "Cocktail Widget", version: "1.0.0" };
-const DEFAULT_COCKTAIL_ID = "amaretto_sour";
 
 
 const log = {
   info: console.log.bind(console, "[APP]"),
   warn: console.warn.bind(console, "[APP]"),
   error: console.error.bind(console, "[APP]"),
-};
-
-type ImageDoc = {
-  _id: string;
-  id: string;
-  filename: string;
-  contentType: string;
-  storageId: string;
-  uploadedAt: number;
-  url: string | null;
-};
-
-type IngredientDoc = {
-  _id: string;
-  id: string;
-  name: string;
-  subName?: string;
-  description: string;
-  imageId: string;
-  imageIds?: string[];
-  image?: ImageDoc | null;
-  images?: ImageDoc[];
-};
-
-type CocktailIngredient = {
-  ingredientId: string;
-  measurements: Record<string, number>;
-  displayOverrides?: Record<string, string>;
-  note?: string;
-  optional?: boolean;
-  ingredient: IngredientDoc;
-};
-
-type CocktailData = {
-  _id: string;
-  id: string;
-  name: string;
-  tagline: string;
-  subName?: string;
-  description: string;
-  instructions: string;
-  hashtags: string[];
-  garnish?: string;
-  nutrition: {
-    abv: number;
-    sugar: number;
-    volume: number;
-    calories: number;
-  };
-  image?: ImageDoc | null;
-  ingredients: CocktailIngredient[];
 };
 
 function extractCocktail(callToolResult: CallToolResult): CocktailData | null {
@@ -80,6 +29,7 @@ function extractCocktail(callToolResult: CallToolResult): CocktailData | null {
 function CocktailApp() {
   const [cocktail, setCocktail] = useState<CocktailData | null>(null);
   const [status, setStatus] = useState("Loading cocktail...");
+  const [cocktailId, setCocktailId] = useState<string | null>(null);
   const [hostContext, setHostContext] = useState<McpUiHostContext | undefined>();
   const { app, error } = useApp({
     appInfo: IMPLEMENTATION,
@@ -90,7 +40,32 @@ function CocktailApp() {
         return {};
       };
       app.ontoolinput = async (input) => {
+        const id = typeof input.arguments?.id === "string" ? input.arguments.id : null;
         log.info("Received tool call input:", input);
+        if (id) {
+          setCocktailId(id);
+          setCocktail(null);
+          setStatus(`Loading ${id}...`);
+        }
+      };
+
+      app.ontoolresult = async (result) => {
+        log.info("Received tool call result:", result);
+        if (result.isError) {
+          setStatus("Failed to load cocktail.");
+          return;
+        }
+        const data = extractCocktail(result);
+        if (!data) {
+          setStatus("No cocktail returned from server.");
+          return;
+        }
+        setCocktail(data);
+      };
+
+      app.ontoolcancelled = async (params) => {
+        log.warn("Tool call cancelled:", params);
+        setStatus("Cocktail request cancelled.");
       };
 
       app.onerror = log.error;
@@ -107,30 +82,11 @@ function CocktailApp() {
     }
   }, [app]);
 
-  const loadCocktail = useCallback(async () => {
-    if (!app) return;
-    setStatus("Loading cocktail...");
-    try {
-      const result = await app.callServerTool({
-        name: "get-cocktail",
-        arguments: { id: DEFAULT_COCKTAIL_ID },
-      });
-      const data = extractCocktail(result);
-      if (!data) {
-        throw new Error("No cocktail returned from server.");
-      }
-      setCocktail(data);
-    } catch (err) {
-      log.error(err);
-      setStatus("Failed to load cocktail.");
-    }
-  }, [app]);
-
   useEffect(() => {
-    if (app) {
-      loadCocktail();
+    if (app && !cocktailId) {
+      setStatus("Waiting for tool input...");
     }
-  }, [app, loadCocktail]);
+  }, [app, cocktailId]);
 
   if (error) return <div className={styles.status}>Error: {error.message}</div>;
   if (!app) return <div className={styles.status}>Connecting...</div>;
@@ -165,7 +121,6 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
         imageUrl: entry.ingredient.image?.url ?? null,
         measurements,
         optional: entry.optional,
-        note: entry.note,
       };
     });
   }, [cocktail]);
@@ -185,12 +140,6 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
           <div className={styles.status}>{status}</div>
         ) : (
           <>
-            <header className={styles.header}>
-              <span className={styles.kicker}>Signature Cocktail</span>
-              <h1>{cocktail.name}</h1>
-              <p className={styles.tagline}>{cocktail.tagline}</p>
-            </header>
-
             <div className={styles.hero}>
               {cocktail.image?.url ? (
                 <img
@@ -203,21 +152,12 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
               )}
             </div>
 
-            <div className={styles.details}>
-              <p className={styles.description}>{cocktail.description}</p>
-              <div className={styles.metaRow}>
-                <span>{cocktail.instructions}</span>
-              </div>
-              {cocktail.garnish && (
-                <div className={styles.metaRow}>
-                  <span className={styles.metaLabel}>Garnish</span>
-                  <span>{cocktail.garnish}</span>
-                </div>
-              )}
-            </div>
+            <header className={styles.header}>
+              <h1 className={styles.title}>{cocktail.name}</h1>
+              <p className={styles.subtitle}>{cocktail.tagline}</p>
+            </header>
 
             <section className={styles.section}>
-              <h2>Ingredients</h2>
               <ul className={styles.ingredientList}>
                 {ingredientRows.map((item) => (
                   <li key={item.key} className={styles.ingredientItem}>
@@ -231,60 +171,38 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
                       <div className={styles.ingredientImageFallback} />
                     )}
                     <div className={styles.ingredientInfo}>
-                      <div className={styles.ingredientName}>
-                        {item.name}
-                        {item.subName ? (
-                          <span className={styles.ingredientSubName}>
-                            {item.subName}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className={styles.ingredientMeta}>
-                        <span>{item.measurements}</span>
-                        {item.optional ? (
-                          <span className={styles.optional}>optional</span>
-                        ) : null}
-                      </div>
-                      {item.note && (
-                        <div className={styles.ingredientNote}>{item.note}</div>
-                      )}
+                      <span className={styles.ingredientName}>{item.name}</span>
+                      {item.subName ? (
+                        <span className={styles.ingredientSubName}>
+                          {item.subName}
+                        </span>
+                      ) : null}
+                      {item.optional ? (
+                        <span className={styles.optional}>optional</span>
+                      ) : null}
                     </div>
+                    <span className={styles.ingredientMeasure}>
+                      {item.measurements || "—"}
+                    </span>
                   </li>
                 ))}
               </ul>
             </section>
 
             <section className={styles.section}>
-              <h2>Nutrition</h2>
-              <div className={styles.nutritionGrid}>
-                <div>
-                  <span className={styles.metaLabel}>ABV</span>
-                  <span>{cocktail.nutrition.abv}%</span>
-                </div>
-                <div>
-                  <span className={styles.metaLabel}>Sugar</span>
-                  <span>{cocktail.nutrition.sugar}g</span>
-                </div>
-                <div>
-                  <span className={styles.metaLabel}>Volume</span>
-                  <span>{cocktail.nutrition.volume}ml</span>
-                </div>
-                <div>
-                  <span className={styles.metaLabel}>Calories</span>
-                  <span>{cocktail.nutrition.calories}</span>
-                </div>
-              </div>
+              <h2 className={styles.sectionTitle}>Instructions</h2>
+              <p className={styles.instructions}>{cocktail.instructions}</p>
             </section>
 
-            <footer className={styles.footer}>
-              <div className={styles.tagRow}>
-                {cocktail.hashtags.map((tag) => (
-                  <span key={tag} className={styles.tag}>
-                    #{tag}
-                  </span>
-                ))}
+            <section className={styles.section}>
+              <h2 className={styles.sectionTitle}>Info</h2>
+              <p className={styles.description}>{cocktail.description}</p>
+              <div className={styles.metaLine}>
+                {cocktail.garnish ? `Garnish: ${cocktail.garnish}` : "No garnish"}
+                {` • ${cocktail.nutrition.abv}% ABV`}
+                {` • ${cocktail.nutrition.volume}ml`}
               </div>
-            </footer>
+            </section>
           </>
         )}
       </section>
