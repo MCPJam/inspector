@@ -1,55 +1,42 @@
 .shell {
-  --color-ink: #101211;
-  --color-muted: #6b6158;
-  --color-accent: #d7894f;
-  --color-card: #fffaf4;
-  --color-shadow: rgba(20, 12, 6, 0.18);
-  --color-veil: rgba(255, 255, 255, 0.65);
-
+  width: 100%;
   min-height: 100vh;
-  padding: 2.5rem 1.5rem 3rem;
-  display: flex;
-  justify-content: center;
-  background: radial-gradient(circle at top, #f7e6cf, #f2d1b1 40%, #f2bfa1 95%);
-  color: var(--color-ink);
+  padding: 0;
+  background: #ffffff;
+  color: #111111;
 }
 
 .card {
-  width: min(520px, 100%);
-  background: var(--color-card);
-  border-radius: 28px;
-  box-shadow: 0 24px 60px var(--color-shadow);
-  padding: 2rem 2rem 2.5rem;
+  width: 100%;
+  max-width: none;
+  padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1.75rem;
+  gap: 1.5rem;
 }
 
 .header h1 {
   margin: 0.4rem 0 0.5rem;
-  font-size: 2.4rem;
-  letter-spacing: -0.02em;
+  font-size: 2rem;
 }
 
 .kicker {
   text-transform: uppercase;
-  font-size: 0.7rem;
-  letter-spacing: 0.26em;
-  color: var(--color-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  color: #666666;
 }
 
 .tagline {
   margin: 0;
-  font-size: 1.05rem;
-  color: var(--color-muted);
+  font-size: 1rem;
+  color: #666666;
 }
 
 .hero {
-  border-radius: 22px;
+  border-radius: 12px;
   overflow: hidden;
-  position: relative;
-  background: linear-gradient(135deg, #f0c79a, #e6a76e);
-  min-height: 220px;
+  border: 1px solid #e5e5e5;
 }
 
 .heroImage {
@@ -57,16 +44,14 @@
   height: 100%;
   object-fit: cover;
   display: block;
-  filter: saturate(110%);
 }
 
 .heroFallback {
   height: 220px;
   display: grid;
   place-items: center;
-  color: var(--color-veil);
+  color: #888888;
   font-size: 0.95rem;
-  letter-spacing: 0.05em;
 }
 
 .details {
@@ -76,7 +61,7 @@
 
 .description {
   margin: 0;
-  font-size: 1.02rem;
+  font-size: 1rem;
   line-height: 1.5;
 }
 
@@ -84,15 +69,15 @@
   display: flex;
   gap: 0.5rem;
   align-items: baseline;
-  color: var(--color-muted);
+  color: #666666;
   font-size: 0.95rem;
 }
 
 .metaLabel {
   text-transform: uppercase;
   font-size: 0.7rem;
-  letter-spacing: 0.18em;
-  color: var(--color-accent);
+  letter-spacing: 0.14em;
+  color: #444444;
   margin-right: 0.5rem;
 }
 
@@ -114,18 +99,17 @@
   grid-template-columns: 54px 1fr;
   gap: 0.75rem;
   align-items: center;
-  padding: 0.6rem;
-  border-radius: 16px;
-  background: #fff2e3;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #eeeeee;
 }
 
 .ingredientImage,
 .ingredientImageFallback {
   width: 54px;
   height: 54px;
-  border-radius: 14px;
+  border-radius: 10px;
   object-fit: cover;
-  background: rgba(255, 255, 255, 0.6);
+  background: #f4f4f4;
 }
 
 .ingredientInfo {
@@ -142,7 +126,7 @@
 
 .ingredientSubName {
   font-size: 0.8rem;
-  color: var(--color-muted);
+  color: #666666;
 }
 
 .ingredientMeta {
@@ -150,19 +134,19 @@
   gap: 0.6rem;
   align-items: center;
   font-size: 0.88rem;
-  color: var(--color-muted);
+  color: #666666;
 }
 
 .ingredientNote {
   font-size: 0.78rem;
-  color: #7c6250;
+  color: #666666;
 }
 
 .optional {
   font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--color-accent);
+  letter-spacing: 0.12em;
+  color: #444444;
 }
 
 .nutritionGrid {
@@ -170,7 +154,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem 1.25rem;
   font-size: 0.9rem;
-  color: var(--color-muted);
+  color: #666666;
 }
 
 .nutritionGrid div {
@@ -179,7 +163,7 @@
 }
 
 .footer {
-  border-top: 1px solid rgba(110, 79, 55, 0.15);
+  border-top: 1px solid #eeeeee;
   padding-top: 1rem;
 }
 
@@ -192,26 +176,25 @@
 .tag {
   padding: 0.2rem 0.6rem;
   border-radius: 999px;
-  background: rgba(215, 137, 79, 0.15);
-  color: #8a4b1e;
+  background: #f3f3f3;
+  color: #444444;
   font-size: 0.75rem;
   letter-spacing: 0.04em;
 }
 
 .status {
-  padding: 1.5rem;
+  padding: 1.5rem 0;
   text-align: center;
-  color: var(--color-muted);
+  color: #666666;
 }
 
 @media (max-width: 540px) {
-  .card {
-    padding: 1.5rem;
-    border-radius: 22px;
+  .shell {
+    padding: 0;
   }
 
   .header h1 {
-    font-size: 2rem;
+    font-size: 1.6rem;
   }
 
   .ingredientItem {
