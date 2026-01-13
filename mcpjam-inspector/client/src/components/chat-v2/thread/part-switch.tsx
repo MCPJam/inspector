@@ -84,61 +84,6 @@ export function PartSwitch({
         </>
       );
     }
-
-    if (uiType === UIType.MCP_APPS) {
-      if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
-        return (
-          <>
-            <ToolPart part={toolPart} uiType={uiType} />
-            <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              Failed to load server id or resource uri for MCP App.
-            </div>
-          </>
-        );
-      }
-
-      return (
-        <>
-          <ToolPart
-            part={toolPart}
-            uiType={uiType}
-            displayMode={displayMode}
-            pipWidgetId={pipWidgetId}
-            fullscreenWidgetId={fullscreenWidgetId}
-            onDisplayModeChange={onDisplayModeChange}
-            onRequestFullscreen={onRequestFullscreen}
-            onExitFullscreen={onExitFullscreen}
-            onRequestPip={onRequestPip}
-            onExitPip={onExitPip}
-          />
-          <MCPAppsRenderer
-            serverId={serverId}
-            toolCallId={toolInfo.toolCallId}
-            toolName={toolInfo.toolName}
-            toolState={toolInfo.toolState}
-            toolInput={toolInfo.input}
-            toolOutput={toolInfo.output}
-            toolErrorText={toolInfo.errorText}
-            resourceUri={uiResourceUri}
-            toolMetadata={partToolMeta}
-            onSendFollowUp={onSendFollowUp}
-            onCallTool={(toolName, params) =>
-              callTool(serverId, toolName, params)
-            }
-            onWidgetStateChange={onWidgetStateChange}
-            pipWidgetId={pipWidgetId}
-            fullscreenWidgetId={fullscreenWidgetId}
-            onRequestPip={onRequestPip}
-            onExitPip={onExitPip}
-            displayMode={displayMode}
-            onDisplayModeChange={onDisplayModeChange}
-            onRequestFullscreen={onRequestFullscreen}
-            onExitFullscreen={onExitFullscreen}
-          />
-        </>
-      );
-    }
-
     if (uiType === UIType.OPENAI_SDK) {
       if (toolInfo.toolState !== "output-available") {
         return (
@@ -197,6 +142,60 @@ export function PartSwitch({
             onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+          />
+        </>
+      );
+    }
+
+    if (uiType === UIType.MCP_APPS) {
+      if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
+        return (
+          <>
+            <ToolPart part={toolPart} uiType={uiType} />
+            <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
+              Failed to load server id or resource uri for MCP App.
+            </div>
+          </>
+        );
+      }
+
+      return (
+        <>
+          <ToolPart
+            part={toolPart}
+            uiType={uiType}
+            displayMode={displayMode}
+            pipWidgetId={pipWidgetId}
+            fullscreenWidgetId={fullscreenWidgetId}
+            onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
+          />
+          <MCPAppsRenderer
+            serverId={serverId}
+            toolCallId={toolInfo.toolCallId}
+            toolName={toolInfo.toolName}
+            toolState={toolInfo.toolState}
+            toolInput={toolInfo.input}
+            toolOutput={toolInfo.output}
+            toolErrorText={toolInfo.errorText}
+            resourceUri={uiResourceUri}
+            toolMetadata={partToolMeta}
+            onSendFollowUp={onSendFollowUp}
+            onCallTool={(toolName, params) =>
+              callTool(serverId, toolName, params)
+            }
+            onWidgetStateChange={onWidgetStateChange}
+            pipWidgetId={pipWidgetId}
+            fullscreenWidgetId={fullscreenWidgetId}
+            onRequestPip={onRequestPip}
+            onExitPip={onExitPip}
+            displayMode={displayMode}
+            onDisplayModeChange={onDisplayModeChange}
+            onRequestFullscreen={onRequestFullscreen}
+            onExitFullscreen={onExitFullscreen}
           />
         </>
       );

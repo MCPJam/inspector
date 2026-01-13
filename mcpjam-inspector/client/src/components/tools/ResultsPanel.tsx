@@ -15,6 +15,11 @@ import {
   useWidgetDebugStore,
   type WidgetDebugInfo,
 } from "@/stores/widget-debug-store";
+import {
+  detectUIType,
+  getUIResourceUri,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 
@@ -189,14 +194,10 @@ export function ResultsPanel({
   );
 
   const rawResult = result as unknown as Record<string, unknown> | null;
-  // Check for OpenAI component using tool metadata from definition
-  const openaiOutputTemplate = toolMeta?.["openai/outputTemplate"];
-  const hasOpenAIComponent =
-    openaiOutputTemplate && typeof openaiOutputTemplate === "string";
-  // Check for MCP Apps (SEP-1865) using ui.resourceUri in tool metadata
-  const mcpAppsResourceUri = toolMeta?.ui?.resourceUri;
-  const hasMCPAppsComponent =
-    mcpAppsResourceUri && typeof mcpAppsResourceUri === "string";
+  const uiType = detectUIType(toolMeta, rawResult);
+  const uiResourceUri = getUIResourceUri(uiType, toolMeta);
+  const hasOpenAIComponent = uiType === UIType.OPENAI_SDK;
+  const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
   const uiResource = resolveUIResource(result);
   const hasWidgetComponent = hasOpenAIComponent || hasMCPAppsComponent;
 
@@ -344,47 +345,7 @@ export function ResultsPanel({
           </ScrollArea>
         ) : rawResult ? (
           (() => {
-            // MCP Apps (SEP-1865) rendering - check first before OpenAI
-            if (!showStructured && hasMCPAppsComponent && mcpAppsResourceUri) {
-              return (
-                <MCPAppsRenderer
-                  serverId={serverId || "unknown-server"}
-                  toolCallId={resolvedToolCallId}
-                  toolName={toolName || "unknown-tool"}
-                  toolState="output-available"
-                  toolInput={toolParameters}
-                  toolOutput={rawResult}
-                  resourceUri={mcpAppsResourceUri}
-                  toolMetadata={toolMeta}
-                  onSendFollowUp={onSendFollowup}
-                  onCallTool={async (invocationToolName, params) => {
-                    const toolResponse = await onExecuteFromUI(
-                      invocationToolName,
-                      params,
-                    );
-
-                    if ("error" in toolResponse) {
-                      throw new Error(toolResponse.error);
-                    }
-
-                    if (toolResponse.status === "completed") {
-                      const result = toolResponse.result as any;
-                      return {
-                        content: result?.content || [],
-                        structuredContent: result?.structuredContent || result,
-                        isError: result?.isError ?? false,
-                      };
-                    }
-
-                    throw new Error(
-                      "Elicitation not supported in this context",
-                    );
-                  }}
-                />
-              );
-            }
-
-            if (!showStructured && hasOpenAIComponent && openaiOutputTemplate) {
+            if (!showStructured && hasOpenAIComponent) {
               return (
                 <ChatGPTAppRenderer
                   serverId={serverId || "unknown-server"}
@@ -429,6 +390,45 @@ export function ResultsPanel({
                       isError: true,
                       error: "Elicitation not supported in this context",
                     };
+                  }}
+                />
+              );
+            }
+
+            if (!showStructured && hasMCPAppsComponent && uiResourceUri) {
+              return (
+                <MCPAppsRenderer
+                  serverId={serverId || "unknown-server"}
+                  toolCallId={resolvedToolCallId}
+                  toolName={toolName || "unknown-tool"}
+                  toolState="output-available"
+                  toolInput={toolParameters}
+                  toolOutput={rawResult}
+                  resourceUri={uiResourceUri}
+                  toolMetadata={toolMeta}
+                  onSendFollowUp={onSendFollowup}
+                  onCallTool={async (invocationToolName, params) => {
+                    const toolResponse = await onExecuteFromUI(
+                      invocationToolName,
+                      params,
+                    );
+
+                    if ("error" in toolResponse) {
+                      throw new Error(toolResponse.error);
+                    }
+
+                    if (toolResponse.status === "completed") {
+                      const result = toolResponse.result as any;
+                      return {
+                        content: result?.content || [],
+                        structuredContent: result?.structuredContent || result,
+                        isError: result?.isError ?? false,
+                      };
+                    }
+
+                    throw new Error(
+                      "Elicitation not supported in this context",
+                    );
                   }}
                 />
               );

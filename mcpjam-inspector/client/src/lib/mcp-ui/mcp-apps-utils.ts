@@ -30,17 +30,6 @@ export function detectUIType(
       if (isUIResource(item as any)) {
         return UIType.MCP_UI;
       }
-      // Also check nested resource
-      if (
-        item &&
-        typeof item === "object" &&
-        (item as { type?: string }).type === "resource" &&
-        (item as { resource?: { uri?: string } }).resource?.uri?.startsWith(
-          "ui://",
-        )
-      ) {
-        return UIType.MCP_UI;
-      }
     }
   }
   return null;
