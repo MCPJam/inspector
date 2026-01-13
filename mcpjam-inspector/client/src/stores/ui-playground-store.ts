@@ -243,7 +243,7 @@ const initialState = {
   followUpMessages: [] as FollowUpMessage[],
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
-  mcpAppsCspMode: "permissive" as CspMode,
+  mcpAppsCspMode: "widget-declared" as CspMode,
   selectedProtocol: null as AppProtocol,
   capabilities: getDefaultCapabilities("desktop"),
   safeAreaPreset: "none" as SafeAreaPreset,

@@ -31,6 +31,8 @@ interface CspDebugPanelProps {
       resource_domains?: string[];
       connectDomains?: string[];
       resourceDomains?: string[];
+      frameDomains?: string[];
+      baseUriDomains?: string[];
     } | null;
   };
   protocol?: "openai-apps" | "mcp-apps";
@@ -196,6 +198,8 @@ export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
     cspInfo?.widgetDeclared?.resource_domains ??
     cspInfo?.widgetDeclared?.resourceDomains ??
     [];
+  const declaredFrameDomains = cspInfo?.widgetDeclared?.frameDomains ?? [];
+  const declaredBaseUriDomains = cspInfo?.widgetDeclared?.baseUriDomains ?? [];
 
   // Analyze violations and generate suggested fixes
   const suggestedFixes = useMemo(
@@ -336,6 +340,60 @@ export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
             )}
           </div>
         </div>
+
+        {protocol === "mcp-apps" && (
+          <>
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground">
+                frameDomains
+              </Label>
+              <div className="text-[10px]">
+                {currentMode === "permissive" ? (
+                  <span className="text-muted-foreground italic">
+                    Not enforced in permissive mode
+                  </span>
+                ) : declaredFrameDomains.length > 0 ? (
+                  <div className="font-mono space-y-0.5">
+                    {declaredFrameDomains.map((d, i) => (
+                      <div key={i} className="truncate">
+                        {d}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground italic">
+                    Not declared
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground">
+                baseUriDomains
+              </Label>
+              <div className="text-[10px]">
+                {currentMode === "permissive" ? (
+                  <span className="text-muted-foreground italic">
+                    Not enforced in permissive mode
+                  </span>
+                ) : declaredBaseUriDomains.length > 0 ? (
+                  <div className="font-mono space-y-0.5">
+                    {declaredBaseUriDomains.map((d, i) => (
+                      <div key={i} className="truncate">
+                        {d}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground italic">
+                    Not declared
+                  </span>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Full header toggle */}
