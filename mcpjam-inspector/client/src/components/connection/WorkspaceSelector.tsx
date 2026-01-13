@@ -7,9 +7,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { EditableText } from "@/components/ui/editable-text";
 import { cn } from "@/lib/utils";
 import { Workspace } from "@/state/app-types";
-import { useState } from "react";
 
 interface WorkspaceSelectorProps {
   activeWorkspaceId: string;
@@ -29,8 +29,6 @@ export function WorkspaceSelector({
   onDeleteWorkspace,
 }: WorkspaceSelectorProps) {
   const activeWorkspace = workspaces[activeWorkspaceId];
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedName, setEditedName] = useState(activeWorkspace?.name || "");
 
   const workspaceList = Object.values(workspaces).sort((a, b) => {
     // Default workspace first
@@ -59,51 +57,19 @@ export function WorkspaceSelector({
     onCreateWorkspace(name, true);
   };
 
-  const handleNameClick = () => {
-    setIsEditing(true);
-    setEditedName(activeWorkspace?.name || "");
-  };
-
-  const handleNameBlur = () => {
-    setIsEditing(false);
-    if (editedName.trim() && editedName !== activeWorkspace?.name) {
-      onUpdateWorkspace(activeWorkspaceId, { name: editedName.trim() });
-    } else {
-      setEditedName(activeWorkspace?.name || "");
-    }
-  };
-
-  const handleNameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleNameBlur();
-    } else if (e.key === "Escape") {
-      setIsEditing(false);
-      setEditedName(activeWorkspace?.name || "");
-    }
+  const handleSaveName = (name: string) => {
+    onUpdateWorkspace(activeWorkspaceId, { name });
   };
 
   return (
     <div className="flex items-center gap-1">
       {/* Editable workspace name */}
-      {isEditing ? (
-        <input
-          type="text"
-          value={editedName}
-          onChange={(e) => setEditedName(e.target.value)}
-          onBlur={handleNameBlur}
-          onKeyDown={handleNameKeyDown}
-          autoFocus
-          className="px-3 py-2 text-m font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      ) : (
-        <Button
-          variant="ghost"
-          onClick={handleNameClick}
-          className="px-3 py-2 h-auto text-m font-semibold hover:bg-accent"
-        >
-          {activeWorkspace?.name || "No Workspace"}
-        </Button>
-      )}
+      <EditableText
+        value={activeWorkspace?.name || "No Workspace"}
+        onSave={handleSaveName}
+        className="px-3 py-2 text-m font-semibold"
+        placeholder="Workspace name"
+      />
 
       {/* Dropdown menu */}
       <DropdownMenu>

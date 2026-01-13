@@ -3,18 +3,14 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { EditableText } from "@/components/ui/editable-text";
 import { getInitials } from "@/lib/utils";
-import { Mail, Calendar, Camera, Loader2, Pencil, Check, X } from "lucide-react";
+import { Camera, Loader2 } from "lucide-react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 
 export function ProfileTab() {
   const { user, signIn } = useAuth();
   const [isUploading, setIsUploading] = useState(false);
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [editedName, setEditedName] = useState("");
-  const [isSavingName, setIsSavingName] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { profilePictureUrl } = useProfilePicture();
@@ -72,31 +68,8 @@ export function ProfileTab() {
     }
   };
 
-  const handleStartEditName = () => {
-    const currentName = convexUser?.name || [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "";
-    setEditedName(currentName);
-    setIsEditingName(true);
-  };
-
-  const handleCancelEditName = () => {
-    setIsEditingName(false);
-    setEditedName("");
-  };
-
-  const handleSaveName = async () => {
-    if (!editedName.trim()) return;
-
-    setIsSavingName(true);
-    try {
-      await updateName({ name: editedName.trim() });
-      setIsEditingName(false);
-      setEditedName("");
-    } catch (error) {
-      console.error("Failed to update name:", error);
-      alert("Failed to update name. Please try again.");
-    } finally {
-      setIsSavingName(false);
-    }
+  const handleSaveName = async (name: string) => {
+    await updateName({ name });
   };
 
   if (!user) {
@@ -118,109 +91,55 @@ export function ProfileTab() {
   const avatarUrl = profilePictureUrl;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      {/* Profile Header */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-start gap-6">
-            {/* Editable Profile Picture */}
-            <div className="relative group">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleFileChange}
-              />
-              <Avatar
-                className="h-28 w-28 cursor-pointer ring-4 ring-background shadow-lg"
-                onClick={handleAvatarClick}
-              >
-                <AvatarImage src={avatarUrl} alt={displayName} />
-                <AvatarFallback className="bg-primary/10 text-primary text-3xl">
-                  {initials}
-                </AvatarFallback>
-              </Avatar>
-              {/* Camera Icon Overlay */}
-              <button
-                onClick={handleAvatarClick}
-                disabled={isUploading}
-                className="absolute bottom-0 left-0 p-1.5 bg-muted border border-border rounded-full shadow-sm hover:bg-accent transition-colors cursor-pointer"
-              >
-                {isUploading ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                ) : (
-                  <Camera className="h-4 w-4 text-muted-foreground" />
-                )}
-              </button>
-            </div>
-            <div className="flex-1">
-              {/* Editable Name */}
-              {isEditingName ? (
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={editedName}
-                    onChange={(e) => setEditedName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSaveName();
-                      if (e.key === "Escape") handleCancelEditName();
-                    }}
-                    className="text-xl font-bold h-9 max-w-xs"
-                    autoFocus
-                    disabled={isSavingName}
-                  />
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={handleSaveName}
-                    disabled={isSavingName || !editedName.trim()}
-                    className="h-8 w-8 p-0"
-                  >
-                    {isSavingName ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Check className="h-4 w-4 text-green-600" />
-                    )}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={handleCancelEditName}
-                    disabled={isSavingName}
-                    className="h-8 w-8 p-0"
-                  >
-                    <X className="h-4 w-4 text-muted-foreground" />
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 group">
-                  <h1 className="text-2xl font-bold">{displayName}</h1>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={handleStartEditName}
-                    className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <Pencil className="h-4 w-4 text-muted-foreground" />
-                  </Button>
-                </div>
-              )}
-              <div className="flex items-center gap-2 mt-2 text-muted-foreground">
-                <Mail className="w-4 h-4" />
-                <span>{user.email}</span>
-              </div>
-              {user.createdAt && (
-                <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                  <Calendar className="w-4 h-4" />
-                  <span>
-                    Joined {new Date(user.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="p-8 max-w-4xl">
+      {/* Profile Header - Asana style */}
+      <div className="flex items-start gap-6">
+        {/* Profile Picture */}
+        <div className="relative group shrink-0">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <Avatar
+            className="h-36 w-36 cursor-pointer"
+            onClick={handleAvatarClick}
+          >
+            <AvatarImage src={avatarUrl} alt={displayName} />
+            <AvatarFallback className="bg-primary/10 text-primary text-4xl">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
+          {/* Camera Icon Overlay */}
+          <button
+            onClick={handleAvatarClick}
+            disabled={isUploading}
+            className="absolute bottom-1 left-1 p-2 bg-background border border-border rounded-full shadow-sm hover:bg-accent transition-colors cursor-pointer"
+          >
+            {isUploading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : (
+              <Camera className="h-4 w-4 text-muted-foreground" />
+            )}
+          </button>
+        </div>
+
+        {/* Profile Info */}
+        <div className="flex-1 pt-2">
+          {/* Editable Name */}
+          <EditableText
+            value={displayName}
+            onSave={handleSaveName}
+            className="text-3xl font-semibold -ml-2"
+            placeholder="Enter your name"
+          />
+
+          {/* Email */}
+          <p className="text-muted-foreground mt-1">{user.email}</p>
+        </div>
+      </div>
     </div>
   );
 }

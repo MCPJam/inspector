@@ -106,16 +106,6 @@ const navigationSections = [
     ],
   },
   {
-    id: "collaboration",
-    items: [
-      {
-        title: "Profile",
-        url: "#profile",
-        icon: User,
-      },
-    ],
-  },
-  {
     id: "settings",
     items: [
       {
