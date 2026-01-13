@@ -9,7 +9,7 @@
          are subject to the parent document's CSP. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src * data: blob: 'unsafe-inline'; media-src * blob: data:; font-src * blob: data:; script-src * 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob: data:; style-src * blob: data: 'unsafe-inline'; connect-src * data: blob: about:; frame-src * blob: data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*; base-uri 'self';"
+      content="default-src 'self'; img-src * data: blob: 'unsafe-inline'; media-src * blob: data:; font-src * blob: data:; script-src * 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob: data:; style-src * blob: data: 'unsafe-inline'; connect-src * data: blob: about:; frame-src * blob: data: http://localhost:* https://localhost:* http://127.0.0.1:* https://127.0.0.1:*;"
     />
     <title>MCP Apps Sandbox Proxy</title>
     <style>
@@ -150,6 +150,19 @@
           baseUri,
         });
 
+        console.log("[buildCSP] Built CSP string:", [
+          "default-src 'none'",
+          "script-src 'unsafe-inline' " + resourceSrc,
+          "style-src 'unsafe-inline' " + resourceSrc,
+          "img-src " + resourceSrc,
+          "font-src " + resourceSrc,
+          "media-src " + resourceSrc,
+          "connect-src " + connectSrc,
+          "frame-src " + frameSrc,
+          "object-src 'none'",
+          "base-uri " + baseUri,
+        ].join("; "));
+
         return [
           "default-src 'none'",
           "script-src 'unsafe-inline' " + resourceSrc,
@@ -246,20 +259,8 @@ document.addEventListener('securitypolicyviolation', function(e) {
             const { html, sandbox, csp, permissions, permissive } =
               event.data.params || {};
 
-            console.log("[Sandbox Proxy] Received CSP metadata:", {
-              csp,
-              permissive,
-              frameDomains: csp?.frameDomains,
-              baseUriDomains: csp?.baseUriDomains,
-              sandboxAttribute: sandbox,
-            });
-
             if (typeof sandbox === "string") {
               inner.setAttribute("sandbox", sandbox);
-              console.log(
-                "[Sandbox Proxy] Set inner iframe sandbox attribute:",
-                sandbox,
-              );
             }
 
             // Set Permission Policy allow attribute based on requested permissions (SEP-1865)
@@ -290,12 +291,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
               } else {
                 // Build CSP and inject into HTML (SEP-1865)
                 const cspValue = buildCSP(csp);
-                console.log("[Sandbox Proxy] Built CSP string:", cspValue);
                 const processedHtml = injectCSP(html, cspValue);
-                console.log(
-                  "[Sandbox Proxy] Injected CSP meta tag (first 500 chars):",
-                  processedHtml.substring(0, 500),
-                );
                 inner.srcdoc = processedHtml;
               }
             }

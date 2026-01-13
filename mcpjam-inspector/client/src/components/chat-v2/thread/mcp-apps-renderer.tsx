@@ -397,12 +397,6 @@ export function MCPAppsRenderer({
           return;
         }
 
-        console.log("[MCP Apps Renderer] Received CSP from API:", {
-          csp,
-          frameDomains: csp?.frameDomains,
-          baseUriDomains: csp?.baseUriDomains,
-        });
-
         setWidgetHtml(html);
         setWidgetCsp(csp);
         setWidgetPermissions(permissions);
