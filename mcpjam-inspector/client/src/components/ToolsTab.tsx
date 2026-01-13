@@ -385,14 +385,16 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setCreatedTaskId(task.taskId);
 
       // Track the task locally so it appears in the Tasks tab
-      trackTask({
-        taskId: task.taskId,
-        serverId: serverName,
-        createdAt: task.createdAt,
-        toolName,
-        primitiveType: "tool",
-        primitiveName: toolName,
-      });
+      if (serverName) {
+        trackTask({
+          taskId: task.taskId,
+          serverId: serverName,
+          createdAt: task.createdAt,
+          toolName,
+          primitiveType: "tool",
+          primitiveName: toolName,
+        });
+      }
 
       logger.info("Background task created", {
         toolName,
@@ -411,7 +413,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     }
 
     if ("error" in response && response.error) {
-      setError(response.error);
+      setError(response.error as string);
     }
   };
 
@@ -586,9 +588,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     ? {
         requestId: activeElicitation.requestId,
         message: activeElicitation.request.message,
-        schema: activeElicitation.request.requestedSchema as
-          | Record<string, unknown>
-          | undefined,
+        schema: (
+          activeElicitation.request as unknown as {
+            requestedSchema?: Record<string, unknown>;
+          }
+        ).requestedSchema as Record<string, unknown> | undefined,
         timestamp: activeElicitation.timestamp,
       }
     : null;
