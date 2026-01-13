@@ -1,5 +1,5 @@
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -33,6 +33,7 @@ export function AuthUpperArea({
   const { user, signIn, signOut, signUp } = useAuth();
   const posthog = usePostHog();
   const { profilePictureUrl } = useProfilePicture();
+  const convexUser = useQuery("users:getCurrentUser" as any);
 
   const communityLinks = (
     <div className="flex items-center gap-1">
@@ -63,9 +64,11 @@ export function AuthUpperArea({
     </div>
   );
 
-  const displayName = user
+  // Prefer convexUser name (can be edited) over WorkOS user name
+  const workOsName = user
     ? [user.firstName, user.lastName].filter(Boolean).join(" ")
     : "";
+  const displayName = convexUser?.name || workOsName || "User";
   const email = user?.email ?? "";
   const initials = getInitials(displayName);
 
