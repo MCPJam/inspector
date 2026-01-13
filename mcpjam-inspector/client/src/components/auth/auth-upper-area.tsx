@@ -69,14 +69,10 @@ export function AuthUpperArea({
 
   const handleSignOut = () => {
     const isElectron = (window as any).isElectron;
-    const origin = window.location.origin;
-    const normalizedOrigin = origin.includes("://localhost")
-      ? origin.replace("://localhost", "://127.0.0.1")
-      : origin;
     const returnTo =
       isElectron && import.meta.env.DEV
         ? "http://localhost:8080/callback"
-        : normalizedOrigin;
+        : window.location.origin;
     signOut({ returnTo });
   };
 
