@@ -69,7 +69,7 @@
        * Build iframe allow attribute from permissions (SEP-1865)
        * @param {Object} permissions - Permissions metadata (camera, microphone, geolocation, clipboardWrite)
        * @returns {string} Permission Policy allow attribute string
-       * 
+       *
        * Note: For srcdoc iframes, we use '*' allowlist since they don't have a defined origin.
        * This allows the sandboxed content to request these permissions.
        */
@@ -222,7 +222,8 @@ document.addEventListener('securitypolicyviolation', function(e) {
             event.data.method === "ui/notifications/sandbox-resource-ready"
           ) {
             // Load HTML into inner iframe with CSP enforcement
-            const { html, sandbox, csp, permissions, permissive } = event.data.params || {};
+            const { html, sandbox, csp, permissions, permissive } =
+              event.data.params || {};
 
             if (typeof sandbox === "string") {
               inner.setAttribute("sandbox", sandbox);

@@ -200,7 +200,15 @@ export const SandboxedIframe = forwardRef<
       },
       sandboxProxyOrigin,
     );
-  }, [proxyReady, html, sandbox, csp, permissions, permissive, sandboxProxyOrigin]);
+  }, [
+    proxyReady,
+    html,
+    sandbox,
+    csp,
+    permissions,
+    permissive,
+    sandboxProxyOrigin,
+  ]);
 
   return (
     <iframe
