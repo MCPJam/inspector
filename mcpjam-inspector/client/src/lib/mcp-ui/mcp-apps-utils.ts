@@ -23,6 +23,12 @@ export function detectUIType(
   }
 
   // 3. MCP-UI: Check for inline ui:// resource in result
+  const directResource = (toolResult as { resource?: { uri?: string } })
+    ?.resource;
+  if (directResource?.uri?.startsWith("ui://")) {
+    return UIType.MCP_UI;
+  }
+
   const content = (toolResult as { content?: unknown[] })?.content;
   if (Array.isArray(content)) {
     for (const item of content) {
