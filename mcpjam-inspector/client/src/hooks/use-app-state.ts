@@ -56,7 +56,7 @@ export function useAppState() {
   // Convex integration for workspaces
   const { isAuthenticated } = useConvexAuth();
   const { workspaces: remoteWorkspaces } = useWorkspaceQueries({ isAuthenticated });
-  const { updateWorkspace: convexUpdateWorkspace } = useWorkspaceMutations();
+  const { updateWorkspace: convexUpdateWorkspace, deleteWorkspace: convexDeleteWorkspace } = useWorkspaceMutations();
 
   // Refs to prevent sync loops and track last sync
   const isSyncingFromConvexRef = useRef(false);
@@ -1232,17 +1232,37 @@ export function useAppState() {
   );
 
   const handleDeleteWorkspace = useCallback(
-    (workspaceId: string) => {
+    async (workspaceId: string) => {
       if (workspaceId === appState.activeWorkspaceId) {
         toast.error(
           "Cannot delete the active workspace. Switch to another workspace first.",
         );
         return;
       }
+
+      const workspace = appState.workspaces[workspaceId];
+
+      // If it's a shared workspace, delete from Convex first
+      if (workspace?.sharedWorkspaceId && isAuthenticated) {
+        try {
+          await convexDeleteWorkspace({ workspaceId: workspace.sharedWorkspaceId });
+        } catch (error) {
+          let errorMessage = "Failed to delete workspace";
+          if (error instanceof Error) {
+            // Convex errors include "Uncaught Error: " prefix - extract the actual message
+            const match = error.message.match(/Uncaught Error: (.+?)(?:\n|$)/);
+            errorMessage = match ? match[1] : error.message;
+          }
+          logger.error("Failed to delete workspace from Convex", { error: errorMessage });
+          toast.error(errorMessage);
+          return;
+        }
+      }
+
       dispatch({ type: "DELETE_WORKSPACE", workspaceId });
       toast.success("Workspace deleted");
     },
-    [appState.activeWorkspaceId],
+    [appState.activeWorkspaceId, appState.workspaces, isAuthenticated, convexDeleteWorkspace, logger],
   );
 
   const handleDuplicateWorkspace = useCallback(
