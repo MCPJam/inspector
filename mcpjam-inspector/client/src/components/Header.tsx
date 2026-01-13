@@ -2,6 +2,7 @@ import { AuthUpperArea } from "./auth/auth-upper-area";
 import { SidebarTrigger } from "./ui/sidebar";
 import { useHeaderIpc } from "./ipc/use-header-ipc";
 import { WorkspaceSelector } from "./connection/WorkspaceSelector";
+import { WorkspaceMembers } from "./workspace/WorkspaceMembers";
 import { Workspace } from "@/state/app-types";
 import { ActiveServerSelectorProps } from "./ActiveServerSelector";
 
@@ -26,6 +27,14 @@ export const Header = ({
 }: HeaderProps) => {
   const { activeIpc, dismissActiveIpc } = useHeaderIpc();
 
+  const activeWorkspace = workspaces[activeWorkspaceId];
+
+  const handleWorkspaceShared = (sharedWorkspaceId: string) => {
+    if (activeWorkspaceId) {
+      onUpdateWorkspace(activeWorkspaceId, { sharedWorkspaceId });
+    }
+  };
+
   return (
     <header className="flex shrink-0 flex-col border-b transition-[width,height] ease-linear">
       <div className="flex h-12 shrink-0 items-center gap-2 px-4 lg:px-6 drag">
@@ -38,6 +47,12 @@ export const Header = ({
             onCreateWorkspace={onCreateWorkspace}
             onUpdateWorkspace={onUpdateWorkspace}
             onDeleteWorkspace={onDeleteWorkspace}
+          />
+          <WorkspaceMembers
+            workspaceName={activeWorkspace?.name || "Workspace"}
+            workspaceServers={activeWorkspace?.servers || {}}
+            sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
+            onWorkspaceShared={handleWorkspaceShared}
           />
         </div>
         <AuthUpperArea activeServerSelectorProps={activeServerSelectorProps} />

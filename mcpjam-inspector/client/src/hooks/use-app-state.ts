@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, useMemo } from "react";
 import { toast } from "sonner";
+import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
 import {
   initialAppState,
@@ -8,6 +9,11 @@ import {
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
+import {
+  useWorkspaceQueries,
+  useWorkspaceMutations,
+} from "./useWorkspaces";
+import { serializeServersForSharing } from "@/lib/workspace-serialization";
 import {
   testConnection,
   deleteServer,
@@ -47,6 +53,16 @@ export function useAppState() {
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
 
+  // Convex integration for workspaces
+  const { isAuthenticated } = useConvexAuth();
+  const { workspaces: remoteWorkspaces } = useWorkspaceQueries({ isAuthenticated });
+  const { updateWorkspace: convexUpdateWorkspace } = useWorkspaceMutations();
+
+  // Refs to prevent sync loops and track last sync
+  const isSyncingFromConvexRef = useRef(false);
+  const lastConvexSyncRef = useRef<Map<string, number>>(new Map());
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // Load from storage once
   useEffect(() => {
     try {
@@ -65,6 +81,70 @@ export function useAppState() {
   useEffect(() => {
     if (!isLoading) saveAppState(appState);
   }, [appState, isLoading]);
+
+  // Merge workspaces from Convex on load/change
+  useEffect(() => {
+    if (!remoteWorkspaces || remoteWorkspaces.length === 0) return;
+    if (isSyncingFromConvexRef.current) return;
+
+    isSyncingFromConvexRef.current = true;
+    try {
+      dispatch({ type: "MERGE_WORKSPACES", workspaces: remoteWorkspaces });
+    } finally {
+      setTimeout(() => {
+        isSyncingFromConvexRef.current = false;
+      }, 100);
+    }
+  }, [remoteWorkspaces]);
+
+  // Create stable reference to active workspace for sync effect
+  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
+  const activeWorkspaceServersJson = useMemo(() => {
+    if (!activeWorkspace?.sharedWorkspaceId) return null;
+    return JSON.stringify(serializeServersForSharing(activeWorkspace.servers));
+  }, [activeWorkspace?.sharedWorkspaceId, activeWorkspace?.servers]);
+
+  // Sync local changes to Convex (debounced)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (!activeWorkspace?.sharedWorkspaceId) return;
+    if (isSyncingFromConvexRef.current) return;
+    if (!activeWorkspaceServersJson) return;
+
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+
+    syncTimeoutRef.current = setTimeout(async () => {
+      const lastSync = lastConvexSyncRef.current.get(activeWorkspace.sharedWorkspaceId!) || 0;
+      const now = Date.now();
+
+      if (now - lastSync < 1000) return;
+
+      try {
+        const serializedServers = JSON.parse(activeWorkspaceServersJson);
+        await convexUpdateWorkspace({
+          workspaceId: activeWorkspace.sharedWorkspaceId,
+          name: activeWorkspace.name,
+          servers: serializedServers,
+        });
+        lastConvexSyncRef.current.set(activeWorkspace.sharedWorkspaceId!, now);
+        logger.debug("Synced workspace to Convex", {
+          workspaceId: activeWorkspace.sharedWorkspaceId,
+        });
+      } catch (error) {
+        logger.error("Failed to sync workspace to Convex", {
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }, 1000);
+
+    return () => {
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+      }
+    };
+  }, [isAuthenticated, activeWorkspace?.sharedWorkspaceId, activeWorkspace?.name, activeWorkspaceServersJson, convexUpdateWorkspace, logger]);
 
   const validateForm = (formData: ServerFormData): string | null => {
     if (formData.type === "stdio") {
