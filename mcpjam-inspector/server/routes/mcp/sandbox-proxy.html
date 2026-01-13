@@ -150,18 +150,21 @@
           baseUri,
         });
 
-        console.log("[buildCSP] Built CSP string:", [
-          "default-src 'none'",
-          "script-src 'unsafe-inline' " + resourceSrc,
-          "style-src 'unsafe-inline' " + resourceSrc,
-          "img-src " + resourceSrc,
-          "font-src " + resourceSrc,
-          "media-src " + resourceSrc,
-          "connect-src " + connectSrc,
-          "frame-src " + frameSrc,
-          "object-src 'none'",
-          "base-uri " + baseUri,
-        ].join("; "));
+        console.log(
+          "[buildCSP] Built CSP string:",
+          [
+            "default-src 'none'",
+            "script-src 'unsafe-inline' " + resourceSrc,
+            "style-src 'unsafe-inline' " + resourceSrc,
+            "img-src " + resourceSrc,
+            "font-src " + resourceSrc,
+            "media-src " + resourceSrc,
+            "connect-src " + connectSrc,
+            "frame-src " + frameSrc,
+            "object-src 'none'",
+            "base-uri " + baseUri,
+          ].join("; "),
+        );
 
         return [
           "default-src 'none'",
