@@ -24,16 +24,14 @@ import {
   forwardRef,
   useMemo,
 } from "react";
+import type {
+  McpUiResourceCsp,
+  McpUiResourcePermissions,
+} from "@modelcontextprotocol/ext-apps/app-bridge";
 
 export interface SandboxedIframeHandle {
   postMessage: (data: unknown) => void;
   getIframeElement: () => HTMLIFrameElement | null;
-}
-
-/** CSP metadata per SEP-1865 */
-interface UIResourceCSP {
-  connectDomains?: string[];
-  resourceDomains?: string[];
 }
 
 interface SandboxedIframeProps {
@@ -42,7 +40,9 @@ interface SandboxedIframeProps {
   /** Sandbox attribute for the inner iframe */
   sandbox?: string;
   /** CSP metadata from resource _meta.ui.csp (SEP-1865) */
-  csp?: UIResourceCSP;
+  csp?: McpUiResourceCsp;
+  /** Permissions metadata from resource _meta.ui.permissions (SEP-1865) */
+  permissions?: McpUiResourcePermissions;
   /** Skip CSP injection entirely (for permissive/testing mode) */
   permissive?: boolean;
   /** Callback when sandbox proxy is ready */
@@ -73,6 +73,7 @@ export const SandboxedIframe = forwardRef<
     html,
     sandbox = "allow-scripts allow-same-origin allow-forms allow-popups",
     csp,
+    permissions,
     permissive,
     onProxyReady,
     onMessage,
@@ -177,7 +178,17 @@ export const SandboxedIframe = forwardRef<
     return () => window.removeEventListener("message", handleMessage);
   }, [handleMessage]);
 
-  // Send HTML and CSP to sandbox when ready (SEP-1865)
+  // Build allow attribute for outer iframe based on requested permissions
+  const outerAllowAttribute = useMemo(() => {
+    const allowList = ["local-network-access *", "midi *"];
+    if (permissions?.camera) allowList.push("camera *");
+    if (permissions?.microphone) allowList.push("microphone *");
+    if (permissions?.geolocation) allowList.push("geolocation *");
+    if (permissions?.clipboardWrite) allowList.push("clipboard-write *");
+    return allowList.join("; ");
+  }, [permissions]);
+
+  // Send HTML, CSP, and permissions to sandbox when ready (SEP-1865)
   useEffect(() => {
     if (!proxyReady || !html) return;
 
@@ -185,18 +196,18 @@ export const SandboxedIframe = forwardRef<
       {
         jsonrpc: "2.0",
         method: "ui/notifications/sandbox-resource-ready",
-        params: { html, sandbox, csp, permissive },
+        params: { html, sandbox, csp, permissions, permissive },
       },
       sandboxProxyOrigin,
     );
-  }, [proxyReady, html, sandbox, csp, permissive, sandboxProxyOrigin]);
+  }, [proxyReady, html, sandbox, csp, permissions, permissive, sandboxProxyOrigin]);
 
   return (
     <iframe
       ref={outerRef}
       src={sandboxProxyUrl}
       sandbox={sandbox}
-      allow="local-network-access *; microphone *; midi *"
+      allow={outerAllowAttribute}
       title={title}
       className={className}
       style={style}

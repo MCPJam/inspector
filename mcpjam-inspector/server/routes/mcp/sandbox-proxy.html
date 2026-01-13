@@ -66,6 +66,26 @@
       }
 
       /**
+       * Build iframe allow attribute from permissions (SEP-1865)
+       * @param {Object} permissions - Permissions metadata (camera, microphone, geolocation, clipboardWrite)
+       * @returns {string} Permission Policy allow attribute string
+       * 
+       * Note: For srcdoc iframes, we use '*' allowlist since they don't have a defined origin.
+       * This allows the sandboxed content to request these permissions.
+       */
+      function buildAllowAttribute(permissions) {
+        if (!permissions) return "";
+
+        const allowList = [];
+        if (permissions.camera) allowList.push("camera *");
+        if (permissions.microphone) allowList.push("microphone *");
+        if (permissions.geolocation) allowList.push("geolocation *");
+        if (permissions.clipboardWrite) allowList.push("clipboard-write *");
+
+        return allowList.join("; ");
+      }
+
+      /**
        * Build CSP string from metadata (SEP-1865)
        * @param {Object} csp - CSP metadata with connectDomains and resourceDomains
        * @returns {string} CSP policy string
@@ -191,11 +211,6 @@ document.addEventListener('securitypolicyviolation', function(e) {
         "sandbox",
         "allow-scripts allow-same-origin allow-forms",
       );
-      // Permissions Policy matching ChatGPT's actual implementation
-      inner.setAttribute(
-        "allow",
-        "local-network-access *; microphone *; midi *",
-      );
       document.body.appendChild(inner);
 
       // Handle messages from parent (host) and inner (guest UI)
@@ -207,10 +222,16 @@ document.addEventListener('securitypolicyviolation', function(e) {
             event.data.method === "ui/notifications/sandbox-resource-ready"
           ) {
             // Load HTML into inner iframe with CSP enforcement
-            const { html, sandbox, csp, permissive } = event.data.params || {};
+            const { html, sandbox, csp, permissions, permissive } = event.data.params || {};
 
             if (typeof sandbox === "string") {
               inner.setAttribute("sandbox", sandbox);
+            }
+
+            // Set Permission Policy allow attribute based on requested permissions (SEP-1865)
+            const allowAttribute = buildAllowAttribute(permissions);
+            if (allowAttribute) {
+              inner.setAttribute("allow", allowAttribute);
             }
 
             if (typeof html === "string") {

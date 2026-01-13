@@ -10,6 +10,10 @@ import { Hono } from "hono";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type {
+  McpUiResourceCsp,
+  McpUiResourcePermissions,
+} from "@modelcontextprotocol/ext-apps";
 
 const apps = new Hono();
 
@@ -100,14 +104,10 @@ apps.post("/widget/store", async (c) => {
   }
 });
 
-// CSP metadata type per SEP-1865
-interface UIResourceCSP {
-  connectDomains?: string[];
-  resourceDomains?: string[];
-}
-
+// UI Resource metadata per SEP-1865 (using SDK types)
 interface UIResourceMeta {
-  csp?: UIResourceCSP;
+  csp?: McpUiResourceCsp;
+  permissions?: McpUiResourcePermissions;
   domain?: string;
   prefersBorder?: boolean;
 }
@@ -168,19 +168,30 @@ apps.get("/widget-content/:toolId", async (c) => {
       return c.json({ error: "No HTML content in resource" }, 404);
     }
 
-    // Extract CSP and other UI metadata from resource _meta (SEP-1865)
+    // Extract CSP, permissions, and other UI metadata from resource _meta (SEP-1865)
     const uiMeta = (content._meta as { ui?: UIResourceMeta } | undefined)?.ui;
     const csp = uiMeta?.csp;
+    const permissions = uiMeta?.permissions;
     const prefersBorder = uiMeta?.prefersBorder;
 
-    // Log CSP configuration for security review (SEP-1865)
-    logger.debug("[MCP Apps] CSP configuration", {
+    // Log CSP and permissions configuration for security review (SEP-1865)
+    logger.debug("[MCP Apps] Security configuration", {
       resourceUri,
       effectiveCspMode,
       widgetDeclaredCsp: csp
         ? {
             connectDomains: csp.connectDomains || [],
             resourceDomains: csp.resourceDomains || [],
+            frameDomains: csp.frameDomains || [],
+            baseUriDomains: csp.baseUriDomains || [],
+          }
+        : null,
+      widgetDeclaredPermissions: permissions
+        ? {
+            camera: permissions.camera !== undefined,
+            microphone: permissions.microphone !== undefined,
+            geolocation: permissions.geolocation !== undefined,
+            clipboardWrite: permissions.clipboardWrite !== undefined,
           }
         : null,
     });
@@ -194,6 +205,7 @@ apps.get("/widget-content/:toolId", async (c) => {
     return c.json({
       html,
       csp: isPermissive ? undefined : csp,
+      permissions, // Include permissions metadata
       permissive: isPermissive, // Tell sandbox-proxy to skip CSP injection entirely
       cspMode: effectiveCspMode,
       prefersBorder,

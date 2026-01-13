@@ -34,6 +34,8 @@ import {
   AppBridge,
   PostMessageTransport,
   type McpUiHostContext,
+  type McpUiResourceCsp,
+  type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   JSONRPCMessage,
@@ -59,11 +61,7 @@ type ToolState =
   | "output-available"
   | "output-error";
 
-// CSP metadata type per SEP-1865
-interface UIResourceCSP {
-  connectDomains?: string[];
-  resourceDomains?: string[];
-}
+// CSP and permissions metadata types are now imported from SDK
 
 interface MCPAppsRendererProps {
   serverId: string;
@@ -311,9 +309,12 @@ export function MCPAppsRenderer({
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
-  const [widgetCsp, setWidgetCsp] = useState<UIResourceCSP | undefined>(
+  const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
     undefined,
   );
+  const [widgetPermissions, setWidgetPermissions] = useState<
+    McpUiResourcePermissions | undefined
+  >(undefined);
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
@@ -381,6 +382,7 @@ export function MCPAppsRenderer({
         const {
           html,
           csp,
+          permissions,
           permissive,
           mimeTypeWarning: warning,
           mimeTypeValid: valid,
@@ -397,20 +399,26 @@ export function MCPAppsRenderer({
 
         setWidgetHtml(html);
         setWidgetCsp(csp);
+        setWidgetPermissions(permissions);
         setWidgetPermissive(permissive ?? false);
         setPrefersBorder(prefersBorder ?? true);
         setLoadedCspMode(cspMode);
 
-        // Update the widget debug store with CSP info
-        if (csp || !permissive) {
+        // Update the widget debug store with CSP and permissions info
+        if (csp || permissions || !permissive) {
           setWidgetCspStore(toolCallId, {
             mode: permissive ? "permissive" : "widget-declared",
             connectDomains: csp?.connectDomains || [],
             resourceDomains: csp?.resourceDomains || [],
+            frameDomains: csp?.frameDomains || [],
+            baseUriDomains: csp?.baseUriDomains || [],
+            permissions: permissions,
             widgetDeclared: csp
               ? {
                   connectDomains: csp.connectDomains,
                   resourceDomains: csp.resourceDomains,
+                  frameDomains: csp.frameDomains,
+                  baseUriDomains: csp.baseUriDomains,
                 }
               : null,
           });
@@ -807,6 +815,13 @@ export function MCPAppsRenderer({
         serverTools: {},
         serverResources: {},
         logging: {},
+        sandbox: {
+          // In permissive mode: omit CSP (undefined) to indicate no restrictions
+          // In widget-declared mode: pass the widget's declared CSP
+          csp: widgetPermissive ? undefined : widgetCsp,
+          // Always pass permissions (if widget declared them)
+          permissions: widgetPermissions,
+        },
       },
       { hostContext: hostContextRef.current ?? {} },
     );
@@ -1072,6 +1087,7 @@ export function MCPAppsRenderer({
         html={widgetHtml}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
         csp={widgetCsp}
+        permissions={widgetPermissions}
         permissive={widgetPermissive}
         onMessage={handleSandboxMessage}
         title={`MCP App: ${toolName}`}

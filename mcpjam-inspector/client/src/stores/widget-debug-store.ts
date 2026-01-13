@@ -32,6 +32,17 @@ export interface WidgetCspInfo {
   connectDomains: string[];
   /** Allowed domains for scripts/styles/fonts - effective values */
   resourceDomains: string[];
+  /** Allowed domains for nested iframes (frame-src) - effective values */
+  frameDomains?: string[];
+  /** Allowed base URIs (base-uri) - effective values */
+  baseUriDomains?: string[];
+  /** Permissions requested by the widget */
+  permissions?: {
+    camera?: {};
+    microphone?: {};
+    geolocation?: {};
+    clipboardWrite?: {};
+  };
   /** Full CSP header string (for advanced users) */
   headerString?: string;
   /** List of CSP violations for this widget */
@@ -44,6 +55,8 @@ export interface WidgetCspInfo {
     // MCP Apps format (camelCase)
     connectDomains?: string[];
     resourceDomains?: string[];
+    frameDomains?: string[];
+    baseUriDomains?: string[];
   } | null;
 }
 
