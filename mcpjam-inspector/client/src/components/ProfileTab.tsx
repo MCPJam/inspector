@@ -18,6 +18,7 @@ export function ProfileTab() {
   const generateUploadUrl = useAction("users:generateProfilePictureUploadUrl" as any);
   const updateProfilePicture = useMutation("users:updateProfilePicture" as any);
   const updateName = useMutation("users:updateName" as any);
+  const updateInfo = useMutation("users:updateInfo" as any);
 
   const handleAvatarClick = () => {
     fileInputRef.current?.click();
@@ -70,6 +71,10 @@ export function ProfileTab() {
 
   const handleSaveName = async (name: string) => {
     await updateName({ name });
+  };
+
+  const handleSaveInfo = async (info: string) => {
+    await updateInfo({ info });
   };
 
   if (!user) {
@@ -138,6 +143,14 @@ export function ProfileTab() {
 
           {/* Email */}
           <p className="text-muted-foreground mt-1">{user.email}</p>
+
+          {/* About Me */}
+          <EditableText
+            value={convexUser?.info || ""}
+            onSave={handleSaveInfo}
+            className="text-muted-foreground -ml-2 mt-3"
+            placeholder="About me"
+          />
         </div>
       </div>
     </div>
