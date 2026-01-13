@@ -87,7 +87,7 @@
 
       /**
        * Build CSP string from metadata (SEP-1865)
-       * @param {Object} csp - CSP metadata with connectDomains and resourceDomains
+       * @param {Object} csp - CSP metadata with connectDomains, resourceDomains, frameDomains, and baseUriDomains
        * @returns {string} CSP policy string
        */
       function buildCSP(csp) {
@@ -117,6 +117,12 @@
         const resourceDomains = (csp.resourceDomains || [])
           .map(sanitizeDomain)
           .filter(Boolean);
+        const frameDomains = (csp.frameDomains || [])
+          .map(sanitizeDomain)
+          .filter(Boolean);
+        const baseUriDomains = (csp.baseUriDomains || [])
+          .map(sanitizeDomain)
+          .filter(Boolean);
 
         // connect-src: Only allow declared domains, or 'none' if empty
         const connectSrc =
@@ -129,6 +135,21 @@
             ? ["data:", "blob:", ...resourceDomains].join(" ")
             : "data: blob:";
 
+        // frame-src: Only allow declared frame domains, or 'none' if empty
+        const frameSrc =
+          frameDomains.length > 0 ? frameDomains.join(" ") : "'none'";
+
+        // base-uri: Only allow declared base URI domains, or 'none' if empty
+        const baseUri =
+          baseUriDomains.length > 0 ? baseUriDomains.join(" ") : "'none'";
+
+        console.log("[buildCSP] Processing domains:", {
+          frameDomains,
+          frameSrc,
+          baseUriDomains,
+          baseUri,
+        });
+
         return [
           "default-src 'none'",
           "script-src 'unsafe-inline' " + resourceSrc,
@@ -137,9 +158,9 @@
           "font-src " + resourceSrc,
           "media-src " + resourceSrc,
           "connect-src " + connectSrc,
-          "frame-src 'none'",
+          "frame-src " + frameSrc,
           "object-src 'none'",
-          "base-uri 'none'",
+          "base-uri " + baseUri,
         ].join("; ");
       }
 
@@ -225,8 +246,20 @@ document.addEventListener('securitypolicyviolation', function(e) {
             const { html, sandbox, csp, permissions, permissive } =
               event.data.params || {};
 
+            console.log("[Sandbox Proxy] Received CSP metadata:", {
+              csp,
+              permissive,
+              frameDomains: csp?.frameDomains,
+              baseUriDomains: csp?.baseUriDomains,
+              sandboxAttribute: sandbox,
+            });
+
             if (typeof sandbox === "string") {
               inner.setAttribute("sandbox", sandbox);
+              console.log(
+                "[Sandbox Proxy] Set inner iframe sandbox attribute:",
+                sandbox,
+              );
             }
 
             // Set Permission Policy allow attribute based on requested permissions (SEP-1865)
@@ -257,7 +290,12 @@ document.addEventListener('securitypolicyviolation', function(e) {
               } else {
                 // Build CSP and inject into HTML (SEP-1865)
                 const cspValue = buildCSP(csp);
+                console.log("[Sandbox Proxy] Built CSP string:", cspValue);
                 const processedHtml = injectCSP(html, cspValue);
+                console.log(
+                  "[Sandbox Proxy] Injected CSP meta tag (first 500 chars):",
+                  processedHtml.substring(0, 500),
+                );
                 inner.srcdoc = processedHtml;
               }
             }
