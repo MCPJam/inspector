@@ -1,0 +1,281 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* FIFA World Cup 2026 Theme - Deep Blue & Gold */
+:root {
+  --background: 220 60% 8%;
+  --foreground: 45 90% 95%;
+  --card: 220 50% 12%;
+  --card-foreground: 45 90% 95%;
+  --popover: 220 50% 10%;
+  --popover-foreground: 45 90% 95%;
+  --primary: 45 85% 55%;
+  --primary-foreground: 220 60% 8%;
+  --secondary: 220 40% 20%;
+  --secondary-foreground: 45 90% 95%;
+  --muted: 220 35% 18%;
+  --muted-foreground: 220 20% 60%;
+  --accent: 160 50% 40%;
+  --accent-foreground: 45 90% 95%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 40% 22%;
+  --input: 220 40% 18%;
+  --ring: 45 85% 55%;
+  --radius: 0.5rem;
+  
+  /* Trophy gold gradient */
+  --gold-light: #f5d742;
+  --gold-mid: #d4a917;
+  --gold-dark: #9c7a0a;
+  --fifa-blue: #0a2463;
+  --trophy-green: #1a6b52;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  color: hsl(var(--foreground));
+  font-family: "Outfit", "DM Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* Trophy background - always visible */
+body {
+  background: 
+    /* Dark overlay for readability */
+    linear-gradient(
+      135deg,
+      rgba(10, 36, 99, 0.92) 0%,
+      rgba(10, 36, 99, 0.85) 40%,
+      rgba(10, 36, 99, 0.75) 100%
+    ),
+    /* Trophy image */
+    url('/trophy.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* Fallback gradient if image doesn't load */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: 
+    radial-gradient(ellipse at 30% 20%, rgba(212, 169, 23, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(26, 107, 82, 0.1) 0%, transparent 40%),
+    linear-gradient(180deg, var(--fifa-blue) 0%, #051235 100%);
+}
+
+/* Root container - adapts to any size */
+#root {
+  container-type: inline-size;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  /* Subtle inner shadow for depth */
+  box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.3);
+}
+
+/* ==========================================
+   RESPONSIVE CONTAINER QUERIES
+   One UI that adapts to container size
+   Works for: inline, fullscreen, pip, phone, desktop
+   ========================================== */
+
+/* Large containers (desktop fullscreen, wide inline) */
+@container (min-width: 800px) {
+  .wc-header { font-size: 2rem; }
+  .wc-subheader { font-size: 1.125rem; }
+}
+
+/* Medium containers (standard inline, tablet) */
+@container (min-width: 500px) and (max-width: 799px) {
+  .wc-header { font-size: 1.5rem; }
+  .wc-subheader { font-size: 1rem; }
+}
+
+/* Small containers (phone, small inline) */
+@container (max-width: 499px) {
+  h1 { font-size: 1.25rem !important; }
+  h2 { font-size: 1.1rem !important; }
+  p, span, button { font-size: 0.875rem !important; }
+  .text-2xl { font-size: 1.5rem !important; }
+}
+
+/* Very small containers (PIP mode, mini widget) */
+@container (max-width: 350px) {
+  h1 { font-size: 1rem !important; }
+  h2 { font-size: 0.9rem !important; }
+  p, span, button { font-size: 0.8rem !important; }
+  .text-2xl { font-size: 1.125rem !important; }
+  .gap-4 { gap: 0.375rem !important; }
+  .p-3, .p-4 { padding: 0.375rem !important; }
+  .space-y-3, .space-y-4 { gap: 0.375rem !important; }
+}
+
+/* Micro containers (tiny pip) */
+@container (max-width: 250px) {
+  h1 { font-size: 0.875rem !important; }
+  h2 { font-size: 0.8rem !important; }
+  p, span, button { font-size: 0.7rem !important; }
+  .text-2xl { font-size: 1rem !important; }
+  .gap-4 { gap: 0.25rem !important; }
+  .p-3, .p-4 { padding: 0.25rem !important; }
+}
+
+/* ==========================================
+   CARD & COMPONENT STYLING
+   Glass morphism with gold accents
+   ========================================== */
+
+/* Glass card effect */
+.glass-card {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 169, 23, 0.2);
+  border-radius: var(--radius);
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Gold accent elements */
+.gold-accent {
+  background: linear-gradient(135deg, var(--gold-light) 0%, var(--gold-mid) 50%, var(--gold-dark) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gold-border {
+  border: 1px solid var(--gold-mid);
+  box-shadow: 0 0 20px rgba(212, 169, 23, 0.15);
+}
+
+/* Button styling */
+button {
+  transition: all 0.2s ease;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(212, 169, 23, 0.25);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* ==========================================
+   SCROLLING & OVERFLOW
+   ========================================== */
+
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(212, 169, 23, 0.3) transparent;
+}
+
+.overflow-x-auto::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--gold-mid) 0%, var(--gold-dark) 100%);
+  border-radius: 3px;
+}
+
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* ==========================================
+   ANIMATIONS
+   ========================================== */
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+/* Staggered entrance animations */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+
+/* Trophy shimmer effect on headers */
+.trophy-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--gold-dark) 0%,
+    var(--gold-light) 25%,
+    var(--gold-mid) 50%,
+    var(--gold-light) 75%,
+    var(--gold-dark) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 3s linear infinite;
+}
+
+/* ==========================================
+   UTILITY CLASSES
+   ========================================== */
+
+/* Responsive grid that adapts to container */
+.responsive-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+
+@container (max-width: 400px) {
+  .responsive-grid {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+}
+
+/* Flexible layout helpers */
+.flex-responsive {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+@container (max-width: 350px) {
+  .flex-responsive {
+    flex-direction: column;
+  }
+}
+

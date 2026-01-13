@@ -1,0 +1,23 @@
+{
+  "name": "worldcup-2026",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:ui": "cd ui && npm run build",
+    "build:widgets": "npm run build:ui",
+    "start:server": "cd server && npm start",
+    "start": "npm run build:ui && npm run start:server",
+    "dev": "npm run build:ui && npm run start:server"
+  }
+}
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "worldcup-2026-mcp",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-12-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "build": {
+    "command": "npm run build:ui"
+  },
+  "assets": {
+    "directory": "./ui/dist",
+    "binding": "ASSETS"
+  }
+}
+
+
+
+
+
+
+
+
+
+
