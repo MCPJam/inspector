@@ -46,36 +46,41 @@ for (const ingredient of ingredients) {
 }
 
 for (const cocktail of cocktails) {
-  const imageDoc = await getImageDoc(cocktail.imageId);
-  const resolvedIngredients = cocktail.ingredients.map((entry) => {
-    const ingredientDocId = ingredientIdMap.get(entry.ingredientId);
-    if (!ingredientDocId) {
-      throw new Error(
-        `Missing ingredient "${entry.ingredientId}" for cocktail "${cocktail.id}".`,
-      );
-    }
-    return {
-      ingredientId: ingredientDocId,
-      measurements: entry.measurements,
-      displayOverrides: entry.displayOverrides,
-      note: entry.note,
-      optional: entry.optional,
-    };
-  });
+  try {
+    const imageDoc = await getImageDoc(cocktail.imageId);
+    const resolvedIngredients = cocktail.ingredients.map((entry) => {
+      const ingredientDocId = ingredientIdMap.get(entry.ingredientId);
+      if (!ingredientDocId) {
+        throw new Error(
+          `Missing ingredient "${entry.ingredientId}" for cocktail "${cocktail.id}".`,
+        );
+      }
+      return {
+        ingredientId: ingredientDocId,
+        measurements: entry.measurements,
+        displayOverrides: entry.displayOverrides,
+        note: entry.note,
+        optional: entry.optional,
+      };
+    });
 
-  const docId = await client.mutation("cocktails:upsertCocktail", {
-    id: cocktail.id,
-    name: cocktail.name,
-    tagline: cocktail.tagline,
-    subName: cocktail.subName,
-    imageId: imageDoc._id,
-    description: cocktail.description,
-    instructions: cocktail.instructions,
-    hashtags: cocktail.hashtags,
-    ingredients: resolvedIngredients,
-    nutrition: cocktail.nutrition,
-    garnish: cocktail.garnish,
-  });
+    const docId = await client.mutation("cocktails:upsertCocktail", {
+      id: cocktail.id,
+      name: cocktail.name,
+      tagline: cocktail.tagline,
+      subName: cocktail.subName,
+      imageId: imageDoc._id,
+      description: cocktail.description,
+      instructions: cocktail.instructions,
+      hashtags: cocktail.hashtags,
+      ingredients: resolvedIngredients,
+      nutrition: cocktail.nutrition,
+      garnish: cocktail.garnish,
+    });
 
-  console.log(`Cocktail ${cocktail.id} -> ${docId}`);
+    console.log(`Cocktail ${cocktail.id} -> ${docId}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Skipping cocktail "${cocktail.id}": ${message}`);
+  }
 }
