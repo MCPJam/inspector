@@ -40,6 +40,8 @@ connect.post("/", async (c) => {
 
     const mcpClientManager = c.mcpClientManager;
     try {
+      // Disconnect first if already connected to avoid "already connected" errors
+      await mcpClientManager.disconnectServer(serverId);
       await mcpClientManager.connectToServer(serverId, serverConfig);
       return c.json({
         success: true,
