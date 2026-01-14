@@ -20,40 +20,48 @@ import {
 import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/apis/mcp-resource-templates-api";
 import { readResource as readResourceTemplateApi } from "@/lib/apis/mcp-resources-api";
 import { LoggerView } from "./logger-view";
+import { parseTemplate } from "url-template";
 
 interface ResourceTemplatesTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
 }
 
-// Naive implementation of URI template extraction, should work mostly fine for
-// out use case but we could switch to a full RFC 6570 library if needed
+// RFC 6570 compliant URI template parameter extraction
 function extractTemplateParameters(uriTemplate: string): string[] {
-  const paramRegex = /\{([^}]+)\}/g;
-  const params: string[] = [];
+  const params = new Set<string>();
+
+  // Parse all RFC 6570 expressions: {var}, {+var}, {#var}, {?var}, {&var}, etc.
+  const paramRegex = /\{[+#./;?&]?([^}]+)\}/g;
   let match;
+
   while ((match = paramRegex.exec(uriTemplate)) !== null) {
-    // Handle various URI template modifiers like {+path}, {#fragment}, etc.
-    const paramName = match[1].replace(/^[+#./;?&]/, "").split(",")[0];
-    if (!params.includes(paramName)) {
-      params.push(paramName);
-    }
+    // Split on comma to handle multi-variable expressions like {?x,y,z}
+    const variables = match[1].replace(/^[+#./;?&]/, "").split(",");
+
+    variables.forEach((v) => {
+      // Handle variable modifiers like :3 (prefix) or * (explode)
+      const varName = v.split(":")[0].replace(/\*$/, "").trim();
+      if (varName) params.add(varName);
+    });
   }
-  return params;
+
+  return Array.from(params);
 }
 
-// Naive implementation of URI template substitution, should work mostly fine for
-// out use case but we could switch to a full RFC 6570 library if needed
+// RFC 6570 compliant URI template expansion using url-template library
 function buildUriFromTemplate(
   uriTemplate: string,
   params: Record<string, string>,
 ): string {
-  let uri = uriTemplate;
-  for (const [key, value] of Object.entries(params)) {
-    // Handle basic substitution - could be enhanced for full RFC 6570 support
-    uri = uri.replace(new RegExp(`\\{[+#./;?&]?${key}[^}]*\\}`, "g"), value);
-  }
-  return uri;
+  const template = parseTemplate(uriTemplate);
+
+  // RFC 6570 compliant expansion:
+  // - Undefined values expand to empty string (removes the expression)
+  // - Query params {?x,y} expand to ?x=val1&y=val2 or empty if both undefined
+  // - Fragment {#x} expands to #val or empty if undefined
+  // - Reserved {+x} expands with reserved characters
+  return template.expand(params);
 }
 
 export function ResourceTemplatesTab({
