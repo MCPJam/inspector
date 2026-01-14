@@ -31,8 +31,8 @@ To set up, create a new folder directory. In that directory, we'll create a test
 
 #### Test file
 
-- `prompt` is what a user would type in the chat to interact with your server.
-- `expectedTools` is what tools you'd expect to be called given the prompt
+- `query` is what a user would type in the chat to interact with your server.
+- `expectedTools` is what tools you'd expect to be called given the query
 - Customize the environment with `model` and optional `advancedConfig`
 
 ```json weather-tests.json
@@ -40,7 +40,7 @@ To set up, create a new folder directory. In that directory, we'll create a test
   "tests": [
     {
       "title": "Test weather tool",
-      "prompt": "What's the weather in San Francisco?",
+      "query": "What's the weather in San Francisco?",
       "expectedTools": ["get_weather"],
       "model": { "id": "claude-3-5-sonnet-20241022", "provider": "anthropic" },
       "selectedServers": ["weather-server"],
