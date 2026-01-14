@@ -18,7 +18,10 @@ export function createServer(): McpServer {
   const server = new McpServer({
     name: "Sip Cocktails MCP App Server",
     version: "1.0.0",
+    description: "A server for the Sip Cocktails MCP App. This server provides a tool to fetch cocktail recipes and a resource to display them in a widget.",
+    websiteUrl: "https://sipcocktails.com",
   });
+
   const convexUrl = process.env.CONVEX_URL ?? process.env.VITE_CONVEX_URL;
   if (!convexUrl) {
     throw new Error("Missing CONVEX_URL or VITE_CONVEX_URL.");
@@ -29,9 +32,9 @@ export function createServer(): McpServer {
   const sharedResourceMeta = {
     ui: {
       csp: {
-        connectDomains: ["https://sleek-hound-600.convex.cloud"],
+        connectDomains: [convexUrl],
         resourceDomains: [
-          "https://sleek-hound-600.convex.cloud",
+          convexUrl,
           "https://fonts.googleapis.com",
           "https://fonts.gstatic.com",
         ],
@@ -43,8 +46,8 @@ export function createServer(): McpServer {
     "get-cocktail",
     {
       title: "Get Cocktail",
-      description: "Fetch a cocktail by id with ingredients and images.",
-      inputSchema: z.object({ id: z.string() }),
+      description: "Fetch a cocktail by id with ingredients and images. If the id is unknown, use the 'Get All Cocktails' tool to get a list of all cocktails.",
+      inputSchema: z.object({ id: z.string().describe("The id of the cocktail to fetch. ex. 'margarita' or 'bloody_mary'. Ids are lower case and snake case.") }),
       _meta: { ui: { resourceUri, visibility: ["app"] } },
     },
     async ({ id }: { id: string }): Promise<CallToolResult> => {
@@ -62,6 +65,28 @@ export function createServer(): McpServer {
           { type: "text", text: `Loaded cocktail "${cocktail.name}".` },
         ],
         structuredContent: { cocktail },
+      };
+    },
+  );
+
+  server.registerTool(
+    "get_all_cocktails",
+    {
+      title: "Get All Cocktails",
+      description: "Fetch all cocktail ids with their names.",
+      inputSchema: {},
+    },
+    async (): Promise<CallToolResult> => {
+      const cocktails = await convexClient.query(
+        api.cocktails.getCocktailIdsAndNames,
+        {},
+      );
+
+      return {
+        content: [
+          { type: "text", text: `Loaded ${cocktails.length} cocktails.` },
+        ],
+        structuredContent: { cocktails },
       };
     },
   );

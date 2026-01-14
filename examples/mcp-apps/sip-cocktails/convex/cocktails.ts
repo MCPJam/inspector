@@ -134,3 +134,14 @@ export const getCocktailById = query({
     };
   },
 });
+
+export const getCocktailIdsAndNames = query({
+  args: {},
+  handler: async (ctx) => {
+    const cocktails = await ctx.db.query("cocktails").collect();
+    return cocktails.map((cocktail) => ({
+      id: cocktail.id,
+      name: cocktail.name,
+    }));
+  },
+});
