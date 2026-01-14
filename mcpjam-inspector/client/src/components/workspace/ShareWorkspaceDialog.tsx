@@ -60,7 +60,7 @@ export function ShareWorkspaceDialog({
   });
 
   const isOwner = !sharedWorkspaceId || activeMembers.some(
-    (m) => m.email.toLowerCase() === currentUser.email?.toLowerCase() && m.addedBy === m.userId
+    (m) => m.email.toLowerCase() === currentUser.email?.toLowerCase() && m.isOwner
   );
 
   const handleInvite = async () => {

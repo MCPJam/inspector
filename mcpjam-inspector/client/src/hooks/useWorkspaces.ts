@@ -18,6 +18,7 @@ export interface WorkspaceMember {
   email: string;
   addedBy: string;
   addedAt: number;
+  isOwner: boolean;
   user: {
     name: string;
     email: string;
