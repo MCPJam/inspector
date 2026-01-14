@@ -49,7 +49,6 @@ class TunnelManager {
         config.domain = this.domain;
         // Add X-Forwarded-Host and X-Forwarded-Proto headers to preserve the original
         // ngrok domain and protocol. This allows downstream servers to know the public URL.
-        // See: https://github.com/MCPJam/inspector/issues/1177
         config.request_header_add = [
           `X-Forwarded-Host:${this.domain}`,
           `X-Forwarded-Proto:https`,
