@@ -967,6 +967,19 @@ export function useAppState() {
             config: serverConfig as MCPServerConfig,
             tokens: getStoredTokens(serverName),
           });
+          // Sync server config to Convex (tokens stay in localStorage only)
+          const serverEntry: ServerWithName = {
+            name: serverName,
+            config: serverConfig as MCPServerConfig,
+            lastConnectionTime: new Date(),
+            connectionStatus: "connected",
+            retryCount: 0,
+            enabled: true,
+            useOAuth: true,
+          };
+          syncServerToConvex(serverName, serverEntry).catch((err) =>
+            logger.warn("Background sync to Convex failed", { serverName, err })
+          );
           await fetchAndStoreInitInfo(serverName);
           return { success: true };
         } else {
@@ -991,7 +1004,7 @@ export function useAppState() {
         return { success: false, error: errorMessage };
       }
     },
-    [fetchAndStoreInitInfo],
+    [fetchAndStoreInitInfo, syncServerToConvex, logger],
   );
 
   // Connect a server with tokens from OAuth flow (for new connections)
