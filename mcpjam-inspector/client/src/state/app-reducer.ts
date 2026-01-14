@@ -332,15 +332,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         if (existingEntry) {
           const [localId, localWorkspace] = existingEntry;
 
-          // Merge servers: start with remote, then add local-only servers
-          // This preserves newly added servers until they sync to remote
+          // For shared workspaces, remote is the source of truth
+          // Don't preserve local-only servers - if they're not in remote, they were deleted
           const mergedServers = { ...deserializedServers };
-          for (const [serverName, localServer] of Object.entries(localWorkspace.servers)) {
-            if (!mergedServers[serverName]) {
-              // Server exists locally but not remotely - keep it (will sync to remote)
-              mergedServers[serverName] = localServer;
-            }
-          }
 
           updatedWorkspaces[localId] = {
             ...localWorkspace,
