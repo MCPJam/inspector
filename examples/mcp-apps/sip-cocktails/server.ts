@@ -26,6 +26,19 @@ export function createServer(): McpServer {
   const convexClient = new ConvexHttpClient(convexUrl);
   const resourceUri = "ui://cocktail/cocktail-recipe-widget.html";
 
+  const sharedResourceMeta = {
+    ui: {
+      csp: {
+        connectDomains: ["https://sleek-hound-600.convex.cloud"],
+        resourceDomains: [
+          "https://sleek-hound-600.convex.cloud",
+          "https://fonts.googleapis.com",
+          "https://fonts.gstatic.com",
+        ],
+      },
+    },
+  };
+
   registerAppTool(server,
     "get-cocktail",
     {
@@ -58,23 +71,12 @@ export function createServer(): McpServer {
     resourceUri,
     {
       mimeType: RESOURCE_MIME_TYPE,
-      _meta: {
-        ui: {
-          csp: {
-            connectDomains: ["https://sleek-hound-600.convex.cloud"],
-            resourceDomains: [
-              "https://sleek-hound-600.convex.cloud",
-              "https://fonts.googleapis.com",
-              "https://fonts.gstatic.com",
-            ],
-          },
-        },
-      },
+      _meta: sharedResourceMeta,
     },
     async (): Promise<ReadResourceResult> => {
       const html = await fs.readFile(path.join(DIST_DIR, "cocktail-recipe-widget.html"), "utf-8");
       return {
-        contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html }],
+        contents: [{ uri: resourceUri, mimeType: RESOURCE_MIME_TYPE, text: html, _meta: sharedResourceMeta }],
       };
     },
   );
