@@ -75,7 +75,42 @@ export function isOpenAIApp(
   return Object.values(metadata).some(
     (meta) =>
       (meta as Record<string, unknown> | undefined)?.[
-        "openai/outputTemplate"
+      "openai/outputTemplate"
       ] != null,
   );
+}
+
+/**
+ * Get the visibility array from tool metadata.
+ * Default: ["model", "app"] if not specified (per SEP-1865)
+ */
+export function getToolVisibility(
+  toolMeta: Record<string, unknown> | undefined,
+): Array<"model" | "app"> {
+  const ui = toolMeta?.ui as
+    | { visibility?: Array<"model" | "app"> }
+    | undefined;
+  return ui?.visibility ?? ["model", "app"];
+}
+
+/**
+ * Check if tool is visible to model only (not callable by apps).
+ * True when visibility is exactly ["model"]
+ */
+export function isVisibleToModelOnly(
+  toolMeta: Record<string, unknown> | undefined,
+): boolean {
+  const visibility = getToolVisibility(toolMeta);
+  return visibility.length === 1 && visibility[0] === "model";
+}
+
+/**
+ * Check if tool is visible to app only (hidden from model).
+ * True when visibility is exactly ["app"]
+ */
+export function isVisibleToAppOnly(
+  toolMeta: Record<string, unknown> | undefined,
+): boolean {
+  const visibility = getToolVisibility(toolMeta);
+  return visibility.length === 1 && visibility[0] === "app";
 }

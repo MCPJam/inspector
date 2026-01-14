@@ -183,6 +183,7 @@ export function PartSwitch({
             toolErrorText={toolInfo.errorText}
             resourceUri={uiResourceUri}
             toolMetadata={partToolMeta}
+            toolsMetadata={toolsMetadata}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
               callTool(serverId, toolName, params)
