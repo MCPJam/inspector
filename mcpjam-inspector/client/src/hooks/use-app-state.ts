@@ -68,6 +68,10 @@ export function useAppState() {
   const [convexActiveWorkspaceId, setConvexActiveWorkspaceId] = useState<string | null>(null);
   // Debounce timer for Convex updates
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Fallback to local storage if Convex takes too long or fails
+  const [useLocalFallback, setUseLocalFallback] = useState(false);
+  const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const CONVEX_TIMEOUT_MS = 10000; // 10 seconds timeout
 
   // Load from storage once
   useEffect(() => {
@@ -87,6 +91,48 @@ export function useAppState() {
   useEffect(() => {
     if (!isLoading) saveAppState(appState);
   }, [appState, isLoading]);
+
+  // Convex timeout - fall back to local if Convex takes too long
+  useEffect(() => {
+    if (!isAuthenticated) {
+      // Not authenticated, reset fallback state
+      setUseLocalFallback(false);
+      if (convexTimeoutRef.current) {
+        clearTimeout(convexTimeoutRef.current);
+        convexTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (remoteWorkspaces !== undefined) {
+      // Convex responded, clear timeout and reset fallback
+      setUseLocalFallback(false);
+      if (convexTimeoutRef.current) {
+        clearTimeout(convexTimeoutRef.current);
+        convexTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    // Authenticated but still waiting for Convex - start timeout
+    if (!convexTimeoutRef.current && !useLocalFallback) {
+      convexTimeoutRef.current = setTimeout(() => {
+        logger.warn("Convex connection timed out, falling back to local storage");
+        toast.warning("Cloud sync unavailable - using local data", {
+          description: "Your changes will be saved locally",
+        });
+        setUseLocalFallback(true);
+        convexTimeoutRef.current = null;
+      }, CONVEX_TIMEOUT_MS);
+    }
+
+    return () => {
+      if (convexTimeoutRef.current) {
+        clearTimeout(convexTimeoutRef.current);
+        convexTimeoutRef.current = null;
+      }
+    };
+  }, [isAuthenticated, remoteWorkspaces, useLocalFallback, logger]);
 
   // Convert remote workspaces to local format
   const convexWorkspaces = useMemo((): Record<string, Workspace> => {
@@ -111,18 +157,26 @@ export function useAppState() {
   }, [remoteWorkspaces]);
 
   // Derive effective workspaces based on auth state
-  // When authenticated: use Convex as source of truth
-  // When not authenticated: use local state
+  // When authenticated: use Convex as source of truth (unless fallback is active)
+  // When not authenticated or fallback: use local state
   const effectiveWorkspaces = useMemo((): Record<string, Workspace> => {
+    if (useLocalFallback) {
+      // Convex connection failed, use local storage
+      return appState.workspaces;
+    }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
       // If no workspaces in Convex yet, show empty (migration will create them)
       return convexWorkspaces;
     }
     return appState.workspaces;
-  }, [isAuthenticated, remoteWorkspaces, convexWorkspaces, appState.workspaces]);
+  }, [isAuthenticated, remoteWorkspaces, convexWorkspaces, appState.workspaces, useLocalFallback]);
 
   // Derive effective active workspace ID
   const effectiveActiveWorkspaceId = useMemo(() => {
+    if (useLocalFallback) {
+      // Convex connection failed, use local storage
+      return appState.activeWorkspaceId;
+    }
     if (isAuthenticated && remoteWorkspaces !== undefined) {
       // Use convexActiveWorkspaceId if set and valid
       if (convexActiveWorkspaceId && effectiveWorkspaces[convexActiveWorkspaceId]) {
@@ -133,7 +187,7 @@ export function useAppState() {
       return firstId || "none";
     }
     return appState.activeWorkspaceId;
-  }, [isAuthenticated, remoteWorkspaces, convexActiveWorkspaceId, effectiveWorkspaces, appState.activeWorkspaceId]);
+  }, [isAuthenticated, remoteWorkspaces, convexActiveWorkspaceId, effectiveWorkspaces, appState.activeWorkspaceId, useLocalFallback]);
 
   // Set initial active workspace when Convex workspaces load
   useEffect(() => {
@@ -161,6 +215,7 @@ export function useAppState() {
       hasMigratedRef.current = false; // Reset when logged out
       return;
     }
+    if (useLocalFallback) return; // Skip migration if Convex is unavailable
     if (hasMigratedRef.current) return;
     if (remoteWorkspaces === undefined) return; // Still loading
 
@@ -198,7 +253,7 @@ export function useAppState() {
     Promise.all(localWorkspaces.map(migrateWorkspace)).then(() => {
       toast.success("Your workspaces have been synced to the cloud");
     });
-  }, [isAuthenticated, remoteWorkspaces, appState.workspaces, convexCreateWorkspace, logger]);
+  }, [isAuthenticated, useLocalFallback, remoteWorkspaces, appState.workspaces, convexCreateWorkspace, logger]);
 
   // Get active workspace with server runtime state overlaid
   const activeWorkspace = useMemo(() => {
@@ -256,7 +311,8 @@ export function useAppState() {
 
   // Helper to sync server config to Convex workspace
   const syncServerToConvex = useCallback(async (serverName: string, serverEntry: ServerWithName) => {
-    if (!isAuthenticated || !effectiveActiveWorkspaceId) return;
+    // Skip Convex sync if using local fallback or not authenticated
+    if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId) return;
 
     const currentWorkspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
     if (!currentWorkspace) return;
@@ -277,11 +333,12 @@ export function useAppState() {
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  }, [isAuthenticated, effectiveActiveWorkspaceId, effectiveWorkspaces, convexUpdateWorkspace, logger]);
+  }, [useLocalFallback, isAuthenticated, effectiveActiveWorkspaceId, effectiveWorkspaces, convexUpdateWorkspace, logger]);
 
   // Helper to remove server from Convex workspace
   const removeServerFromConvex = useCallback(async (serverName: string) => {
-    if (!isAuthenticated || !effectiveActiveWorkspaceId) return;
+    // Skip Convex sync if using local fallback or not authenticated
+    if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId) return;
 
     const currentWorkspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
     if (!currentWorkspace) return;
@@ -299,7 +356,7 @@ export function useAppState() {
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  }, [isAuthenticated, effectiveActiveWorkspaceId, effectiveWorkspaces, convexUpdateWorkspace, logger]);
+  }, [useLocalFallback, isAuthenticated, effectiveActiveWorkspaceId, effectiveWorkspaces, convexUpdateWorkspace, logger]);
 
   // Helper to fetch and store initialization info
   const fetchAndStoreInitInfo = useCallback(async (serverName: string) => {
@@ -1651,6 +1708,8 @@ export function useAppState() {
     // State
     appState,
     isLoading,
+    // Cloud sync status - true when authenticated and Convex is working
+    isCloudSyncActive: isAuthenticated && !useLocalFallback && remoteWorkspaces !== undefined,
 
     // Computed values - use effective servers (from active workspace with runtime state)
     // All servers from the active workspace (for display in ServersTab)
