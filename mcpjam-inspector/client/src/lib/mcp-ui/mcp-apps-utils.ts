@@ -75,7 +75,7 @@ export function isOpenAIApp(
   return Object.values(metadata).some(
     (meta) =>
       (meta as Record<string, unknown> | undefined)?.[
-      "openai/outputTemplate"
+        "openai/outputTemplate"
       ] != null,
   );
 }

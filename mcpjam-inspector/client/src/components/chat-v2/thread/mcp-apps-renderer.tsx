@@ -365,7 +365,7 @@ export function MCPAppsRenderer({
           const errorData = await contentResponse.json().catch(() => ({}));
           throw new Error(
             errorData.error ||
-            `Failed to fetch widget: ${contentResponse.statusText}`,
+              `Failed to fetch widget: ${contentResponse.statusText}`,
           );
         }
         const {
@@ -381,7 +381,7 @@ export function MCPAppsRenderer({
         if (!valid) {
           setLoadError(
             warning ||
-            `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`,
+              `Invalid mimetype - SEP-1865 requires "text/html;profile=mcp-app"`,
           );
           return;
         }
@@ -404,11 +404,11 @@ export function MCPAppsRenderer({
             permissions: permissions,
             widgetDeclared: csp
               ? {
-                connectDomains: csp.connectDomains,
-                resourceDomains: csp.resourceDomains,
-                frameDomains: csp.frameDomains,
-                baseUriDomains: csp.baseUriDomains,
-              }
+                  connectDomains: csp.connectDomains,
+                  resourceDomains: csp.resourceDomains,
+                  frameDomains: csp.frameDomains,
+                  baseUriDomains: csp.baseUriDomains,
+                }
               : null,
           });
         }
@@ -778,7 +778,7 @@ export function MCPAppsRenderer({
         // Use device type for mobile detection (defaults to mobile-like behavior when not in playground)
         const isMobile = isPlaygroundActiveRef.current
           ? playgroundDeviceTypeRef.current === "mobile" ||
-          playgroundDeviceTypeRef.current === "tablet"
+            playgroundDeviceTypeRef.current === "tablet"
           : true;
         const actualMode: DisplayMode =
           isMobile && requestedMode === "pip" ? "fullscreen" : requestedMode;
@@ -868,9 +868,9 @@ export function MCPAppsRenderer({
       isActive = false;
       bridgeRef.current = null;
       if (isReadyRef.current) {
-        bridge.teardownResource({}).catch(() => { });
+        bridge.teardownResource({}).catch(() => {});
       }
-      bridge.close().catch(() => { });
+      bridge.close().catch(() => {});
     };
   }, [addUiLog, serverId, toolCallId, widgetHtml, registerBridgeHandlers]);
 
@@ -1033,20 +1033,20 @@ export function MCPAppsRenderer({
     <div className={containerClassName}>
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
-          <button
-            onClick={() => {
-              setDisplayMode("inline");
-              if (isPip) {
-                onExitPip?.(toolCallId);
-              }
-              // onExitFullscreen is called within setDisplayMode when leaving fullscreen
-            }}
-            className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        )}
+        <button
+          onClick={() => {
+            setDisplayMode("inline");
+            if (isPip) {
+              onExitPip?.(toolCallId);
+            }
+            // onExitFullscreen is called within setDisplayMode when leaving fullscreen
+          }}
+          className="absolute left-3 top-3 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 hover:bg-black/40 text-white transition-colors cursor-pointer"
+          aria-label="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      )}
 
       {isFullscreen && !isContainedFullscreenMode && (
         <div className="flex items-center justify-between px-4 h-14 border-b border-border/40 bg-background/95 backdrop-blur z-40 shrink-0">
@@ -1092,10 +1092,11 @@ export function MCPAppsRenderer({
         permissive={widgetPermissive}
         onMessage={handleSandboxMessage}
         title={`MCP App: ${toolName}`}
-        className={`bg-background overflow-hidden ${isFullscreen
-          ? "flex-1 border-0 rounded-none"
-          : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
-          }`}
+        className={`bg-background overflow-hidden ${
+          isFullscreen
+            ? "flex-1 border-0 rounded-none"
+            : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
+        }`}
         style={iframeStyle}
       />
 

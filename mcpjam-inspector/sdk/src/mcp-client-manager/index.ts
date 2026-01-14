@@ -1449,10 +1449,10 @@ export class MCPClientManager {
     config: MCPServerConfig,
   ):
     | ((event: {
-      direction: "send" | "receive";
-      message: unknown;
-      serverId: string;
-    }) => void)
+        direction: "send" | "receive";
+        message: unknown;
+        serverId: string;
+      }) => void)
     | undefined {
     if (config.rpcLogger) return config.rpcLogger;
     if (config.logJsonRpc || this.defaultLogJsonRpc) {
