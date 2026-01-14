@@ -1,7 +1,7 @@
 import type { ServerWithName, ConnectionStatus } from "@/state/app-types";
 
 export function serializeServersForSharing(
-  servers: Record<string, ServerWithName>
+  servers: Record<string, ServerWithName>,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
@@ -16,20 +16,26 @@ export function serializeServersForSharing(
       const config: Record<string, unknown> = {};
 
       if ((server.config as any).url) {
-        config.url = (server.config as any).url instanceof URL
-          ? (server.config as any).url.href
-          : (server.config as any).url;
+        config.url =
+          (server.config as any).url instanceof URL
+            ? (server.config as any).url.href
+            : (server.config as any).url;
       }
-      if ((server.config as any).command) config.command = (server.config as any).command;
-      if ((server.config as any).args) config.args = (server.config as any).args;
-      if ((server.config as any).timeout) config.timeout = (server.config as any).timeout;
+      if ((server.config as any).command)
+        config.command = (server.config as any).command;
+      if ((server.config as any).args)
+        config.args = (server.config as any).args;
+      if ((server.config as any).timeout)
+        config.timeout = (server.config as any).timeout;
 
       if ((server.config as any).requestInit) {
         const requestInit: Record<string, unknown> = {};
         if ((server.config as any).requestInit.headers) {
           const headers: Record<string, string> = {};
-          for (const [key, value] of Object.entries((server.config as any).requestInit.headers)) {
-            if (key.toLowerCase() !== 'authorization') {
+          for (const [key, value] of Object.entries(
+            (server.config as any).requestInit.headers,
+          )) {
+            if (key.toLowerCase() !== "authorization") {
               headers[key] = value as string;
             }
           }
@@ -58,7 +64,7 @@ export function serializeServersForSharing(
 }
 
 export function deserializeServersFromConvex(
-  servers: Record<string, any>
+  servers: Record<string, any>,
 ): Record<string, ServerWithName> {
   const result: Record<string, ServerWithName> = {};
 
@@ -78,7 +84,8 @@ export function deserializeServersFromConvex(
       if (serverData.config.args) config.args = serverData.config.args;
       if (serverData.config.env) config.env = serverData.config.env;
       if (serverData.config.timeout) config.timeout = serverData.config.timeout;
-      if (serverData.config.requestInit) config.requestInit = serverData.config.requestInit;
+      if (serverData.config.requestInit)
+        config.requestInit = serverData.config.requestInit;
     }
 
     const server: ServerWithName = {
@@ -103,7 +110,7 @@ export function deserializeServersFromConvex(
 
 export function serversHaveChanged(
   local: Record<string, ServerWithName>,
-  remote: Record<string, any>
+  remote: Record<string, any>,
 ): boolean {
   const localKeys = Object.keys(local);
   const remoteKeys = Object.keys(remote);
@@ -120,12 +127,19 @@ export function serversHaveChanged(
     if (localServer.enabled !== remoteServer.enabled) return true;
     if (localServer.useOAuth !== remoteServer.useOAuth) return true;
 
-    const localUrl = (localServer.config as any)?.url?.toString?.() || (localServer.config as any)?.url;
+    const localUrl =
+      (localServer.config as any)?.url?.toString?.() ||
+      (localServer.config as any)?.url;
     const remoteUrl = remoteServer.config?.url;
     if (localUrl !== remoteUrl) return true;
 
-    if ((localServer.config as any)?.command !== remoteServer.config?.command) return true;
-    if (JSON.stringify((localServer.config as any)?.args) !== JSON.stringify(remoteServer.config?.args)) return true;
+    if ((localServer.config as any)?.command !== remoteServer.config?.command)
+      return true;
+    if (
+      JSON.stringify((localServer.config as any)?.args) !==
+      JSON.stringify(remoteServer.config?.args)
+    )
+      return true;
   }
 
   return false;

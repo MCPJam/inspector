@@ -39,7 +39,9 @@ export function WorkspaceMembers({
   }
 
   if (!sharedWorkspaceId) {
-    const displayName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+    const displayName = [user.firstName, user.lastName]
+      .filter(Boolean)
+      .join(" ");
     const initials = getInitials(displayName);
 
     return (
@@ -97,10 +99,13 @@ export function WorkspaceMembers({
               key={member._id}
               className={cn(
                 "size-8 border-2 border-background ring-0",
-                "hover:z-10 transition-transform hover:scale-105"
+                "hover:z-10 transition-transform hover:scale-105",
               )}
             >
-              <AvatarImage src={member.user?.imageUrl || undefined} alt={name} />
+              <AvatarImage
+                src={member.user?.imageUrl || undefined}
+                alt={name}
+              />
               <AvatarFallback className="text-xs">{initials}</AvatarFallback>
             </Avatar>
           );

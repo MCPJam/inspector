@@ -33,7 +33,7 @@ export function useWorkspaceQueries({
 }) {
   const workspaces = useQuery(
     "workspaces:getMyWorkspaces" as any,
-    isAuthenticated ? ({} as any) : "skip"
+    isAuthenticated ? ({} as any) : "skip",
   ) as RemoteWorkspace[] | undefined;
 
   const isLoading = isAuthenticated && workspaces === undefined;
@@ -62,7 +62,7 @@ export function useWorkspaceMembers({
 
   const members = useQuery(
     "workspaces:getWorkspaceMembers" as any,
-    enableQuery ? ({ workspaceId } as any) : "skip"
+    enableQuery ? ({ workspaceId } as any) : "skip",
   ) as WorkspaceMember[] | undefined;
 
   const isLoading = enableQuery && members === undefined;

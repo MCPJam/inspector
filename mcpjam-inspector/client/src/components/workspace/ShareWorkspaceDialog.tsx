@@ -59,9 +59,12 @@ export function ShareWorkspaceDialog({
     workspaceId: sharedWorkspaceId || null,
   });
 
-  const isOwner = !sharedWorkspaceId || activeMembers.some(
-    (m) => m.email.toLowerCase() === currentUser.email?.toLowerCase() && m.isOwner
-  );
+  const isOwner =
+    !sharedWorkspaceId ||
+    activeMembers.some(
+      (m) =>
+        m.email.toLowerCase() === currentUser.email?.toLowerCase() && m.isOwner,
+    );
 
   const handleInvite = async () => {
     if (!email.trim()) return;
@@ -88,7 +91,9 @@ export function ShareWorkspaceDialog({
       });
 
       if (result.isPending) {
-        toast.success(`Invitation sent to ${email}. They'll get access once they sign up.`);
+        toast.success(
+          `Invitation sent to ${email}. They'll get access once they sign up.`,
+        );
       } else {
         toast.success(`${email} has been added to the workspace.`);
       }
@@ -131,7 +136,9 @@ export function ShareWorkspaceDialog({
     }
   };
 
-  const displayName = [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") || "You";
+  const displayName =
+    [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") ||
+    "You";
   const displayInitials = getInitials(displayName);
 
   return (
@@ -152,7 +159,10 @@ export function ShareWorkspaceDialog({
                 onKeyDown={(e) => e.key === "Enter" && handleInvite()}
                 className="flex-1"
               />
-              <Button onClick={handleInvite} disabled={!email.trim() || isInviting}>
+              <Button
+                onClick={handleInvite}
+                disabled={!email.trim() || isInviting}
+              >
                 {isInviting ? "..." : "Invite"}
               </Button>
             </div>
@@ -160,21 +170,31 @@ export function ShareWorkspaceDialog({
 
           <div className="space-y-2">
             <label className="text-sm font-medium">
-              {sharedWorkspaceId ? "People with access" : "Only you have access"}
+              {sharedWorkspaceId
+                ? "People with access"
+                : "Only you have access"}
             </label>
             <div className="space-y-1 max-h-[300px] overflow-y-auto">
               {!sharedWorkspaceId && (
                 <div className="flex items-center gap-3 p-2 rounded-md">
                   <Avatar className="size-9">
                     <AvatarImage src={profilePictureUrl} alt={displayName} />
-                    <AvatarFallback className="text-sm">{displayInitials}</AvatarFallback>
+                    <AvatarFallback className="text-sm">
+                      {displayInitials}
+                    </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-medium truncate">{displayName}</p>
-                      <span className="text-xs text-muted-foreground">(you)</span>
+                      <p className="text-sm font-medium truncate">
+                        {displayName}
+                      </p>
+                      <span className="text-xs text-muted-foreground">
+                        (you)
+                      </span>
                     </div>
-                    <p className="text-xs text-muted-foreground truncate">{currentUser.email}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {currentUser.email}
+                    </p>
                   </div>
                 </div>
               )}
@@ -183,7 +203,9 @@ export function ShareWorkspaceDialog({
                 const name = member.user?.name || member.email;
                 const memberEmail = member.email;
                 const initials = getInitials(name);
-                const isSelf = memberEmail.toLowerCase() === currentUser.email?.toLowerCase();
+                const isSelf =
+                  memberEmail.toLowerCase() ===
+                  currentUser.email?.toLowerCase();
                 const canRemove = isOwner && !isSelf;
 
                 return (
@@ -192,17 +214,26 @@ export function ShareWorkspaceDialog({
                     className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50"
                   >
                     <Avatar className="size-9">
-                      <AvatarImage src={member.user?.imageUrl || undefined} alt={name} />
-                      <AvatarFallback className="text-sm">{initials}</AvatarFallback>
+                      <AvatarImage
+                        src={member.user?.imageUrl || undefined}
+                        alt={name}
+                      />
+                      <AvatarFallback className="text-sm">
+                        {initials}
+                      </AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="text-sm font-medium truncate">{name}</p>
                         {isSelf && (
-                          <span className="text-xs text-muted-foreground">(you)</span>
+                          <span className="text-xs text-muted-foreground">
+                            (you)
+                          </span>
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground truncate">{memberEmail}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {memberEmail}
+                      </p>
                     </div>
                     {canRemove && (
                       <Button
@@ -234,8 +265,12 @@ export function ShareWorkspaceDialog({
                         <Clock className="size-4 text-muted-foreground" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{member.email}</p>
-                        <p className="text-xs text-muted-foreground">Invited - waiting for signup</p>
+                        <p className="text-sm font-medium truncate">
+                          {member.email}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Invited - waiting for signup
+                        </p>
                       </div>
                       {isOwner && (
                         <Button
