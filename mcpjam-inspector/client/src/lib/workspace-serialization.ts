@@ -140,6 +140,23 @@ export function serversHaveChanged(
       JSON.stringify(remoteServer.config?.args)
     )
       return true;
+    if ((localServer.config as any)?.timeout !== remoteServer.config?.timeout)
+      return true;
+    if (
+      JSON.stringify((localServer.config as any)?.requestInit) !==
+      JSON.stringify(remoteServer.config?.requestInit)
+    )
+      return true;
+    if (
+      JSON.stringify((localServer.config as any)?.env) !==
+      JSON.stringify(remoteServer.config?.env)
+    )
+      return true;
+    if (
+      JSON.stringify(localServer.oauthFlowProfile) !==
+      JSON.stringify(remoteServer.oauthFlowProfile)
+    )
+      return true;
   }
 
   return false;
