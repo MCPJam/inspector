@@ -42,6 +42,8 @@ export function useAppState() {
 
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
   const [isLoading, setIsLoading] = useState(true);
+  // Guard to prevent duplicate OAuth callback processing
+  const oauthCallbackHandledRef = useRef(false);
   // Operation guard to avoid races
   const opTokenRef = useRef<Map<string, number>>(new Map());
   const nextOpToken = (name: string) => {
@@ -381,19 +383,15 @@ export function useAppState() {
   // OAuth callback finish handler
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
-      // Get saved hash but don't clear URL yet - wait until OAuth succeeds
-      const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
+      // Note: URL is already cleared by the useEffect before calling this function
+      // to prevent duplicate processing from React re-renders
 
       try {
         const result = await handleOAuthCallback(code);
 
-        // Only clear URL and hash after successful OAuth
+        // Clean up OAuth return hash from localStorage
         localStorage.removeItem("mcp-oauth-return-hash");
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname + savedHash,
-        );
+
         if (result.success && result.serverConfig && result.serverName) {
           const serverName = result.serverName;
 
@@ -478,15 +476,9 @@ export function useAppState() {
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
 
-        // Clear URL on failure too, but keep ?code= removal to prevent redirect loops
-        // The CLI config check uses urlParams.has("code") to prevent re-triggering OAuth
+        // Clean up OAuth state on failure
         localStorage.removeItem("mcp-oauth-return-hash");
         localStorage.removeItem("mcp-oauth-pending");
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname + savedHash,
-        );
       }
     },
     [logger, syncServerToConvex, fetchAndStoreInitInfo],
@@ -500,23 +492,44 @@ export function useAppState() {
       return;
     }
 
-    if (!isLoading) {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get("code");
-      const error = urlParams.get("error");
-      if (code) {
-        handleOAuthCallbackComplete(code);
-      } else if (error) {
-        toast.error(`OAuth authorization failed: ${error}`);
-        localStorage.removeItem("mcp-oauth-pending");
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname,
-        );
-      }
+    // Wait for local storage to load
+    if (isLoading) return;
+
+    // If authenticated, also wait for Convex workspaces to load and workspace ID to be set
+    // This ensures syncServerToConvex will work correctly
+    if (isAuthenticated && (isLoadingWorkspaces || !effectiveActiveWorkspaceId)) {
+      return;
     }
-  }, [isLoading, handleOAuthCallbackComplete]);
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get("code");
+    const error = urlParams.get("error");
+    if (code) {
+      // Prevent duplicate processing (React StrictMode, dependency changes, etc.)
+      if (oauthCallbackHandledRef.current) {
+        return;
+      }
+      oauthCallbackHandledRef.current = true;
+
+      // Clear URL immediately to prevent re-processing on re-renders
+      const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname + savedHash,
+      );
+
+      handleOAuthCallbackComplete(code);
+    } else if (error) {
+      toast.error(`OAuth authorization failed: ${error}`);
+      localStorage.removeItem("mcp-oauth-pending");
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname,
+      );
+    }
+  }, [isLoading, isLoadingWorkspaces, isAuthenticated, effectiveActiveWorkspaceId, handleOAuthCallbackComplete]);
 
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
