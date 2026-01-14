@@ -83,8 +83,10 @@ export function useAppState() {
   }, [appState, isLoading]);
 
   // Merge workspaces from Convex on load/change
+  // This also handles cleanup when user is removed from a workspace
   useEffect(() => {
-    if (!remoteWorkspaces || remoteWorkspaces.length === 0) return;
+    // Skip if still loading (undefined means loading, [] means loaded but empty)
+    if (remoteWorkspaces === undefined) return;
     if (isSyncingFromConvexRef.current) return;
 
     isSyncingFromConvexRef.current = true;
