@@ -1,0 +1,20 @@
+[
+  {
+    "id": "tools-call-audio",
+    "name": "ToolsCallAudio",
+    "description": "Tool returns audio content",
+    "status": "FAILURE",
+    "timestamp": "2026-01-14T18:55:10.261Z",
+    "errorMessage": "No audio content found",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-Call",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#calling-tools"
+      }
+    ],
+    "details": {
+      "hasAudioContent": false,
+      "audioDataLength": 0
+    }
+  }
+]

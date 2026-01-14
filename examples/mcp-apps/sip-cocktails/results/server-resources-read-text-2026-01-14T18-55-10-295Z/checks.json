@@ -1,0 +1,16 @@
+[
+  {
+    "id": "resources-read-text",
+    "name": "ResourcesReadText",
+    "description": "Read text resource successfully",
+    "status": "FAILURE",
+    "timestamp": "2026-01-14T18:55:10.298Z",
+    "errorMessage": "Failed: MCP error -32602: MCP error -32602: Resource test://static-text not found",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-Read",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#reading-resources"
+      }
+    ]
+  }
+]

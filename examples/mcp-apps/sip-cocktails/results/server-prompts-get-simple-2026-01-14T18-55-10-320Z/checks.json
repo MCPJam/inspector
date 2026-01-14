@@ -1,0 +1,16 @@
+[
+  {
+    "id": "prompts-get-simple",
+    "name": "PromptsGetSimple",
+    "description": "Get simple prompt successfully",
+    "status": "FAILURE",
+    "timestamp": "2026-01-14T18:55:10.323Z",
+    "errorMessage": "Failed: MCP error -32601: Method not found",
+    "specReferences": [
+      {
+        "id": "MCP-Prompts-Get",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/prompts#getting-prompts"
+      }
+    ]
+  }
+]

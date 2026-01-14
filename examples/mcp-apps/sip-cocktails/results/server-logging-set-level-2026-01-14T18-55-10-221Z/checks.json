@@ -1,0 +1,16 @@
+[
+  {
+    "id": "logging-set-level",
+    "name": "LoggingSetLevel",
+    "description": "Server accepts logging level setting",
+    "status": "FAILURE",
+    "timestamp": "2026-01-14T18:55:10.230Z",
+    "errorMessage": "Failed: MCP error -32601: Method not found",
+    "specReferences": [
+      {
+        "id": "MCP-Logging",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/logging"
+      }
+    ]
+  }
+]

@@ -1,10 +1,24 @@
-# MCPJam SDK Proposal
+# MCPJam SDK Spec Proposal
 
 The MCPJam SDK `@mcpjam/sdk` provides utilities for MCP server unit testing, end to end (e2e) testing, and server evals. 
 
 Below is the proposal for the SDK. If you have any suggestions for improvements, please leave a comment below. 
 
-## MCPClientManager
+## SDK use cases & intended user 
+
+The SDK is useful for: 
+- MCP server developers 
+- MCP client developers 
+- MCP-apps / ChatGPT apps marketplace maintainers 
+- SDK developers
+
+Example use cases: 
+- Unit test and evaluate MCP servers for server developers. ⭐
+- Implement a spec-compliant MCP client with an LLM - for client developers 
+- Maintainers of a apps marketplace can test performance and security of apps on their marketplace
+- Write conformance tests on MCP server code in the MCP SDKs. 
+
+## MCPClientManager (complete)
 The official [Typescript MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk/tree/main/packages/client/src/client) contains the `Client` class. This object handles the connection between the MCP client and the server, sending and receiving JSON-RPC messages. This `Client` object is limited to a single MCP connection. 
 
 `MCPClientManager` is a proposed class in the MCPJam SDK that handles multiple `Client` objects. It manages a dictionary of `Client` objects. The `serverId` mapped to the Client. 
@@ -133,6 +147,102 @@ const response = await generateText({
 });
 
 console.log(response) // The files in /tmp are ...
+```
+
+## Unit Testing
+
+MCP primitives like tools, resources, prompts, etc. are at its foundation functions with deterministic return values. MCP unit testing tests your MCP server's primitives. 
+
+How MCP unit testing works: 
+1. `MCPClientManager` connects to your MCP server. 
+2. `MCPClientManager` invokes functions such as `listTools`, `callTool`, `readResource`, etc. This sends JSON-RPC messages to your MCP server. 
+3. We test that your MCP server responds properly to these requests. 
+
+You can use any testing framework such as Jest for unit testing. We envision unit tests to live inside the MCP server code base. See the [Bright Data MCP server](https://github.com/brightdata/brightdata-mcp) for example, they have MCPJam evals CLI test cases inside the codebase. Unit tests can be run manually by developers, or integrated in a CI/CD pipeline. 
+
+Example of unit testing an MCP server with Jest and `@mcpjam/sdk`:
+
+```ts
+import { MCPClientManager } from "@mcpjam/sdk";
+
+beforeEach(() => {
+    const clientManager = new MCPClientManager(
+        {
+            asana: {
+                url: new URL("https://staging.asana.com/mcp"),
+                requestInit: {
+                    headers: {
+                        Authorization: "Bearer abCD2EfG",
+                    },
+                },
+            }
+        },
+        { name: 'mcpjam', version: '1.0.0' },
+        { capabilities: {} }
+    );
+});
+
+test('Server connection works', () => {
+    await expect(clientManager.ping("asana")).resolves.not.toThrowError(); 
+});
+
+test('Server has the right capabilities', () => {
+    const capabilities = clientManager.listServerCapabilities("asana"); 
+    expect(capabilities.tools).toBeDefined(); 
+    expect(capabilities.tasks).toBeUndefined(); 
+    ...
+});
+
+test('Server has the right tools', () => {
+    const tools = clientManager.listTools("asana"); 
+    expect(tools.length).toBe(26); 
+    expect(tools[0].name).toBe("asana_list_projects"); 
+    ...
+})
+
+test('Call asana_list_projects fetches projects properly', () => {
+    ...
+})
+
+// Deterministically test any capability of the MCP server. 
+```
+
+## Testing ChatGPT apps / MCP apps (ext-apps)
+
+Test compliance with ChatGPT apps SDK and MCP apps. Used for app developers to maintain the server's compliance to ext-apps. Can also be used by app marketplace maintainers to test that apps are valid. 
+
+Examples of testing for MCP apps (ext-apps). 
+
+```ts
+import { MCPClientManager } from "@mcpjam/sdk";
+import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+
+beforeEach(() => {
+  const manager = new MCPClientManager(
+      {
+          sip-cocktails: {
+              url: new URL("https://localhost:3000/mcp"),
+          }
+      },
+      { name: 'mcpjam', version: '1.0.0' },
+      { capabilities: {} }
+  );
+});
+
+test('tools with UI contain a correct resource Uri', () => {
+  const allTools = manager.listTools("sip-cocktails");
+  expect(getToolUiResourceUri(allTools[0])).toBeDefined(); 
+  expect(getToolUiResourceUri(allTools[0])).toBe("ui://cocktail/cocktail-recipe-widget.html"); 
+});
+
+test('cocktail widget has the proper CSP configurations', () => {
+  const cocktailWidgetResource = manager.readResource("sip-cocktails", {
+    uri: "ui://cocktail/cocktail-recipe-widget.html",
+  }) 
+  expect(cocktailWidgetResource.contents[0]._meta._ui.csp.connectedDomains.length).toBe(3); 
+  ...
+});
+
 ```
 
 ## Evaluations 

@@ -1,0 +1,28 @@
+[
+  {
+    "id": "tools-call-sampling",
+    "name": "ToolsCallSampling",
+    "description": "Tool requests LLM sampling from client",
+    "status": "FAILURE",
+    "timestamp": "2026-01-14T18:55:10.288Z",
+    "errorMessage": "Server did not request sampling from client",
+    "specReferences": [
+      {
+        "id": "MCP-Sampling",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/utilities/sampling"
+      }
+    ],
+    "details": {
+      "samplingRequested": false,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "MCP error -32602: Tool test_sampling not found"
+          }
+        ],
+        "isError": true
+      }
+    }
+  }
+]

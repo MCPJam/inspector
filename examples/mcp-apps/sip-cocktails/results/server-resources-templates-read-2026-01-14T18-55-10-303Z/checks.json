@@ -1,0 +1,16 @@
+[
+  {
+    "id": "resources-templates-read",
+    "name": "ResourcesTemplateRead",
+    "description": "Read resource from template with parameter substitution",
+    "status": "FAILURE",
+    "timestamp": "2026-01-14T18:55:10.307Z",
+    "errorMessage": "Failed: MCP error -32602: MCP error -32602: Resource test://template/123/data not found",
+    "specReferences": [
+      {
+        "id": "MCP-Resources-Templates",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/resources#resource-templates"
+      }
+    ]
+  }
+]

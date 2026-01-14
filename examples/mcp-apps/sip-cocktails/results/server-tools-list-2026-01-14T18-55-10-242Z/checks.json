@@ -1,0 +1,22 @@
+[
+  {
+    "id": "tools-list",
+    "name": "ToolsList",
+    "description": "Server lists available tools with valid structure",
+    "status": "SUCCESS",
+    "timestamp": "2026-01-14T18:55:10.248Z",
+    "specReferences": [
+      {
+        "id": "MCP-Tools-List",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools#listing-tools"
+      }
+    ],
+    "details": {
+      "toolCount": 2,
+      "tools": [
+        "get-cocktail",
+        "get_all_cocktails"
+      ]
+    }
+  }
+]
