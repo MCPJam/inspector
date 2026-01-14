@@ -22,3 +22,6 @@ pnpm-lock.yaml
 # Coverage
 coverage
 .nyc_output
+
+# MCP Apps Spec
+apps.mdx
