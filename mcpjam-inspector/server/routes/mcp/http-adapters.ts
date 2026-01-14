@@ -66,7 +66,8 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         // so direct access (without the proxy) advertises a reachable URL.
         const xfProto = c.req.header("x-forwarded-proto");
         const xfHost = c.req.header("x-forwarded-host");
-        const host = xfHost || c.req.header("host");
+        const rawHost = c.req.header("host");
+        const host = xfHost || rawHost;
         let proto = xfProto;
         if (!proto) {
           const originHeader = c.req.header("origin");
