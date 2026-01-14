@@ -1265,6 +1265,44 @@ export function useAppState() {
     [appState.activeWorkspaceId, appState.workspaces, isAuthenticated, convexDeleteWorkspace, logger],
   );
 
+  // Leave a shared workspace (removes from local state without deleting from Convex)
+  // The backend removeMember call should be made before calling this
+  const handleLeaveWorkspace = useCallback(
+    async (workspaceId: string) => {
+      const workspace = appState.workspaces[workspaceId];
+      if (!workspace) {
+        toast.error("Workspace not found");
+        return;
+      }
+
+      // Find another workspace to switch to
+      const otherWorkspaceIds = Object.keys(appState.workspaces).filter(id => id !== workspaceId);
+      const defaultWorkspace = otherWorkspaceIds.find(id => appState.workspaces[id].isDefault);
+      const targetWorkspaceId = defaultWorkspace || otherWorkspaceIds[0];
+
+      if (!targetWorkspaceId) {
+        toast.error("Cannot leave the only workspace");
+        return;
+      }
+
+      // Disconnect all servers before leaving
+      const workspaceServers = Object.keys(workspace.servers || {});
+      for (const serverName of workspaceServers) {
+        const server = appState.servers[serverName];
+        if (server?.connectionStatus === "connected") {
+          await handleDisconnect(serverName);
+        }
+      }
+
+      // Switch to another workspace first
+      dispatch({ type: "SWITCH_WORKSPACE", workspaceId: targetWorkspaceId });
+
+      // Then delete the workspace from local state (don't touch Convex - removeMember already handled it)
+      dispatch({ type: "DELETE_WORKSPACE", workspaceId });
+    },
+    [appState.workspaces, appState.servers, handleDisconnect],
+  );
+
   const handleDuplicateWorkspace = useCallback(
     (workspaceId: string, newName: string) => {
       dispatch({ type: "DUPLICATE_WORKSPACE", workspaceId, newName });
@@ -1365,6 +1403,7 @@ export function useAppState() {
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleDeleteWorkspace,
+    handleLeaveWorkspace,
     handleDuplicateWorkspace,
     handleSetDefaultWorkspace,
     handleExportWorkspace,

@@ -106,6 +106,7 @@ export default function App() {
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleDeleteWorkspace,
+    handleLeaveWorkspace,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
@@ -245,6 +246,7 @@ export default function App() {
           onCreateWorkspace={handleCreateWorkspace}
           onUpdateWorkspace={handleUpdateWorkspace}
           onDeleteWorkspace={handleDeleteWorkspace}
+          onLeaveWorkspace={handleLeaveWorkspace}
           activeServerSelectorProps={activeServerSelectorProps}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">

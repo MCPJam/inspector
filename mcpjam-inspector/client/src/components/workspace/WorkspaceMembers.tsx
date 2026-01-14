@@ -15,6 +15,7 @@ interface WorkspaceMembersProps {
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onLeaveWorkspace?: () => void;
 }
 
 export function WorkspaceMembers({
@@ -22,6 +23,7 @@ export function WorkspaceMembers({
   workspaceServers,
   sharedWorkspaceId,
   onWorkspaceShared,
+  onLeaveWorkspace,
 }: WorkspaceMembersProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -66,6 +68,7 @@ export function WorkspaceMembers({
           sharedWorkspaceId={sharedWorkspaceId}
           currentUser={user}
           onWorkspaceShared={onWorkspaceShared}
+          onLeaveWorkspace={onLeaveWorkspace}
         />
       </div>
     );
@@ -133,6 +136,7 @@ export function WorkspaceMembers({
         sharedWorkspaceId={sharedWorkspaceId}
         currentUser={user}
         onWorkspaceShared={onWorkspaceShared}
+        onLeaveWorkspace={onLeaveWorkspace}
       />
     </div>
   );

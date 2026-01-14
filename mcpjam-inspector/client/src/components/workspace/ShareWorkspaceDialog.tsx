@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { Link, Clock, X } from "lucide-react";
+import { Clock, X, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import {
   useWorkspaceMutations,
@@ -33,6 +33,7 @@ interface ShareWorkspaceDialogProps {
   sharedWorkspaceId?: string | null;
   currentUser: CurrentUser;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onLeaveWorkspace?: () => void;
 }
 
 export function ShareWorkspaceDialog({
@@ -43,9 +44,11 @@ export function ShareWorkspaceDialog({
   sharedWorkspaceId,
   currentUser,
   onWorkspaceShared,
+  onLeaveWorkspace,
 }: ShareWorkspaceDialogProps) {
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
 
   const { isAuthenticated } = useConvexAuth();
   const { profilePictureUrl } = useProfilePicture();
@@ -110,10 +113,22 @@ export function ShareWorkspaceDialog({
     }
   };
 
-  const handleCopyLink = () => {
-    const link = window.location.href;
-    navigator.clipboard.writeText(link);
-    toast.success("Link copied to clipboard");
+  const handleLeaveWorkspace = async () => {
+    if (!sharedWorkspaceId || !currentUser.email) return;
+    setIsLeaving(true);
+    try {
+      await removeMember({
+        workspaceId: sharedWorkspaceId,
+        email: currentUser.email,
+      });
+      toast.success("You have left the workspace");
+      onClose();
+      onLeaveWorkspace?.();
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to leave workspace");
+    } finally {
+      setIsLeaving(false);
+    }
   };
 
   const displayName = [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") || "You";
@@ -239,14 +254,18 @@ export function ShareWorkspaceDialog({
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={handleCopyLink}
-          >
-            <Link className="size-4 mr-2" />
-            Copy link
-          </Button>
+          {/* Show leave button for non-owners of shared workspaces */}
+          {sharedWorkspaceId && !isOwner && (
+            <Button
+              variant="outline"
+              className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={handleLeaveWorkspace}
+              disabled={isLeaving}
+            >
+              <LogOut className="size-4 mr-2" />
+              {isLeaving ? "Leaving..." : "Leave workspace"}
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
