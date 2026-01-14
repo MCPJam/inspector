@@ -578,8 +578,10 @@ export function useAppState() {
 
     // If authenticated, also wait for Convex workspaces to load and workspace ID to be set
     // This ensures syncServerToConvex will work correctly
+    // Skip this wait if useLocalFallback is true (Convex timed out)
     if (
       isAuthenticated &&
+      !useLocalFallback &&
       (isLoadingWorkspaces || !effectiveActiveWorkspaceId)
     ) {
       return;
@@ -614,6 +616,7 @@ export function useAppState() {
     isLoadingWorkspaces,
     isAuthenticated,
     effectiveActiveWorkspaceId,
+    useLocalFallback,
     handleOAuthCallbackComplete,
   ]);
 
