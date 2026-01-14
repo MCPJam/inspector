@@ -416,7 +416,11 @@ export function useAppState() {
                 config: result.serverConfig,
                 tokens: getStoredTokens(serverName),
               });
-              // Sync server config to Convex workspace
+              logger.info("OAuth connection successful", { serverName });
+              toast.success(
+                `OAuth connection successful! Connected to ${serverName}.`,
+              );
+              // Sync server config to Convex workspace (non-blocking)
               const serverEntry: ServerWithName = {
                 name: serverName,
                 config: result.serverConfig,
@@ -426,12 +430,11 @@ export function useAppState() {
                 enabled: true,
                 useOAuth: true,
               };
-              await syncServerToConvex(serverName, serverEntry);
-              // Fetch initialization info after successful connection
-              await fetchAndStoreInitInfo(serverName);
-              logger.info("OAuth connection successful", { serverName });
-              toast.success(
-                `OAuth connection successful! Connected to ${serverName}.`,
+              syncServerToConvex(serverName, serverEntry).catch((err) =>
+                logger.warn("Background sync to Convex failed", { serverName, err })
+              );
+              fetchAndStoreInitInfo(serverName).catch((err) =>
+                logger.warn("Failed to fetch init info", { serverName, err })
               );
             } else {
               dispatch({
@@ -588,10 +591,15 @@ export function useAppState() {
                 enabled: true,
                 useOAuth: true,
               };
-              await syncServerToConvex(formData.name, serverEntry);
-              await fetchAndStoreInitInfo(formData.name);
               toast.success(
                 `Connected successfully with existing OAuth tokens!`,
+              );
+              // Background sync - don't block UI
+              syncServerToConvex(formData.name, serverEntry).catch((err) =>
+                logger.warn("Background sync to Convex failed", { serverName: formData.name, err })
+              );
+              fetchAndStoreInitInfo(formData.name).catch((err) =>
+                logger.warn("Failed to fetch init info", { serverName: formData.name, err })
               );
               return;
             } else {
@@ -653,10 +661,14 @@ export function useAppState() {
                   enabled: true,
                   useOAuth: true,
                 };
-                await syncServerToConvex(formData.name, serverEntry);
-                // Fetch initialization info after successful connection
-                await fetchAndStoreInitInfo(formData.name);
                 toast.success(`Connected successfully with OAuth!`);
+                // Background sync - don't block UI
+                syncServerToConvex(formData.name, serverEntry).catch((err) =>
+                  logger.warn("Background sync to Convex failed", { serverName: formData.name, err })
+                );
+                fetchAndStoreInitInfo(formData.name).catch((err) =>
+                  logger.warn("Failed to fetch init info", { serverName: formData.name, err })
+                );
               } else {
                 dispatch({
                   type: "CONNECT_FAILURE",
@@ -711,11 +723,15 @@ export function useAppState() {
             retryCount: 0,
             enabled: true,
           };
-          await syncServerToConvex(formData.name, serverEntry);
-          // Fetch initialization info after successful connection
-          await fetchAndStoreInitInfo(formData.name);
           logger.info("Connection successful", { serverName: formData.name });
           toast.success(`Connected successfully!`);
+          // Background sync - don't block UI
+          syncServerToConvex(formData.name, serverEntry).catch((err) =>
+            logger.warn("Background sync to Convex failed", { serverName: formData.name, err })
+          );
+          fetchAndStoreInitInfo(formData.name).catch((err) =>
+            logger.warn("Failed to fetch init info", { serverName: formData.name, err })
+          );
         } else {
           dispatch({
             type: "CONNECT_FAILURE",
@@ -1246,11 +1262,16 @@ export function useAppState() {
             enabled: true,
             useOAuth: true,
           };
-          await syncServerToConvex(serverName, serverEntry);
-          await fetchAndStoreInitInfo(serverName);
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
           });
+          // Background sync - don't block UI
+          syncServerToConvex(serverName, serverEntry).catch((err) =>
+            logger.warn("Background sync to Convex failed", { serverName, err })
+          );
+          fetchAndStoreInitInfo(serverName).catch((err) =>
+            logger.warn("Failed to fetch init info", { serverName, err })
+          );
           return { success: true } as const;
         } else {
           dispatch({
@@ -1297,10 +1318,14 @@ export function useAppState() {
             retryCount: 0,
             enabled: true,
           };
-          await syncServerToConvex(serverName, serverEntry);
-          // Fetch initialization info after successful reconnection
-          await fetchAndStoreInitInfo(serverName);
           logger.info("Reconnection successful", { serverName, result });
+          // Background sync - don't block UI
+          syncServerToConvex(serverName, serverEntry).catch((err) =>
+            logger.warn("Background sync to Convex failed", { serverName, err })
+          );
+          fetchAndStoreInitInfo(serverName).catch((err) =>
+            logger.warn("Failed to fetch init info", { serverName, err })
+          );
           return { success: true } as const;
         } else {
           dispatch({
