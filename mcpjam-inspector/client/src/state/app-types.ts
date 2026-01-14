@@ -1,7 +1,6 @@
 import { MCPServerConfig } from "@/sdk";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
-import type { RemoteWorkspace } from "@/hooks/useWorkspaces";
 
 export type ConnectionStatus =
   | "connected"
@@ -104,8 +103,7 @@ export type AppAction =
   | { type: "SWITCH_WORKSPACE"; workspaceId: string }
   | { type: "SET_DEFAULT_WORKSPACE"; workspaceId: string }
   | { type: "IMPORT_WORKSPACE"; workspace: Workspace }
-  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string }
-  | { type: "MERGE_WORKSPACES"; workspaces: RemoteWorkspace[] };
+  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string };
 
 export const initialAppState: AppState = {
   workspaces: {

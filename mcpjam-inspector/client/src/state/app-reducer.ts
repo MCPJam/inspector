@@ -5,7 +5,6 @@ import {
   ServerWithName,
   Workspace,
 } from "./app-types";
-import { deserializeServersFromConvex } from "@/lib/workspace-serialization";
 
 const setStatus = (
   server: ServerWithName,
@@ -311,88 +310,6 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.workspaces,
           [newWorkspace.id]: newWorkspace,
         },
-      };
-    }
-
-    case "MERGE_WORKSPACES": {
-      const updatedWorkspaces = { ...state.workspaces };
-      let updatedServers = { ...state.servers };
-      let activeWorkspaceUpdated = false;
-      let newActiveWorkspaceId = state.activeWorkspaceId;
-
-      const validWorkspaceIds = new Set(action.workspaces.map((w) => w._id));
-
-      for (const remoteWorkspace of action.workspaces) {
-        const existingEntry = Object.entries(state.workspaces).find(
-          ([, w]) => w.sharedWorkspaceId === remoteWorkspace._id
-        );
-
-        const deserializedServers = deserializeServersFromConvex(remoteWorkspace.servers || {});
-
-        if (existingEntry) {
-          const [localId, localWorkspace] = existingEntry;
-
-          // For shared workspaces, remote is the source of truth
-          // Don't preserve local-only servers - if they're not in remote, they were deleted
-          const mergedServers = { ...deserializedServers };
-
-          updatedWorkspaces[localId] = {
-            ...localWorkspace,
-            name: remoteWorkspace.name,
-            servers: mergedServers,
-            updatedAt: new Date(remoteWorkspace.updatedAt),
-          };
-
-          if (localId === state.activeWorkspaceId) {
-            // Preserve connection state for all servers
-            for (const [serverName, server] of Object.entries(mergedServers)) {
-              const existingServer = state.servers[serverName];
-              if (existingServer) {
-                mergedServers[serverName] = {
-                  ...server,
-                  connectionStatus: existingServer.connectionStatus,
-                  lastConnectionTime: existingServer.lastConnectionTime,
-                  oauthTokens: existingServer.oauthTokens,
-                  initializationInfo: existingServer.initializationInfo,
-                };
-              }
-            }
-            updatedServers = mergedServers;
-            activeWorkspaceUpdated = true;
-          }
-        } else {
-          const newLocalId = `shared_${remoteWorkspace._id}`;
-          const newWorkspace: Workspace = {
-            id: newLocalId,
-            name: remoteWorkspace.name,
-            description: remoteWorkspace.description,
-            servers: deserializedServers,
-            createdAt: new Date(remoteWorkspace.createdAt),
-            updatedAt: new Date(remoteWorkspace.updatedAt),
-            sharedWorkspaceId: remoteWorkspace._id,
-          };
-          updatedWorkspaces[newLocalId] = newWorkspace;
-        }
-      }
-
-      for (const [localId, workspace] of Object.entries(updatedWorkspaces)) {
-        if (workspace.sharedWorkspaceId && !validWorkspaceIds.has(workspace.sharedWorkspaceId)) {
-          delete updatedWorkspaces[localId];
-          if (localId === state.activeWorkspaceId) {
-            const defaultWorkspace = Object.values(updatedWorkspaces).find((w) => w.isDefault);
-            const firstWorkspace = Object.keys(updatedWorkspaces)[0];
-            newActiveWorkspaceId = defaultWorkspace?.id || firstWorkspace || "default";
-            updatedServers = updatedWorkspaces[newActiveWorkspaceId]?.servers || {};
-            activeWorkspaceUpdated = true;
-          }
-        }
-      }
-
-      return {
-        ...state,
-        workspaces: updatedWorkspaces,
-        activeWorkspaceId: newActiveWorkspaceId,
-        servers: activeWorkspaceUpdated ? updatedServers : state.servers,
       };
     }
 

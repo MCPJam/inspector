@@ -90,6 +90,7 @@ export default function App() {
   const {
     appState,
     isLoading,
+    workspaceServers,
     connectedServerConfigs,
     selectedMCPConfig,
     handleConnect,
@@ -253,7 +254,7 @@ export default function App() {
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
-              connectedServerConfigs={appState.servers}
+              connectedServerConfigs={workspaceServers}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
