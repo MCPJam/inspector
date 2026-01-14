@@ -1,22 +1,23 @@
-# Example: Basic Server (React)
+# Sip Cocktails MCP App
 
-![Screenshot](screenshot.png)
+![Sip Cocktails demo](demo.png)
 
-An MCP App example with a React UI.
-
-> [!TIP]
-> Looking for a vanilla JavaScript example? See [`basic-server-vanillajs`](https://github.com/modelcontextprotocol/ext-apps/tree/main/examples/basic-server-vanillajs)!
+An MCP App that serves cocktail recipes with a React UI widget and Convex-backed data.
 
 ## Overview
 
-- Tool registration with a linked UI resource
-- React UI using the [`useApp()`](https://modelcontextprotocol.github.io/ext-apps/api/functions/_modelcontextprotocol_ext-apps_react.useApp.html) hook
-- App communication APIs: [`callServerTool`](https://modelcontextprotocol.github.io/ext-apps/api/classes/app.App.html#callservertool), [`sendMessage`](https://modelcontextprotocol.github.io/ext-apps/api/classes/app.App.html#sendmessage), [`sendLog`](https://modelcontextprotocol.github.io/ext-apps/api/classes/app.App.html#sendlog), [`openLink`](https://modelcontextprotocol.github.io/ext-apps/api/classes/app.App.html#openlink)
+- Interactive cocktail recipe widget with images, instructions, nutrition, and ingredient measurements
+- MCP tools for fetching a single cocktail and listing all cocktail ids/names
+- Convex queries/mutations for cocktails, ingredients, and image storage
+- Seed scripts for uploading images and populating data
 
 ## Key Files
 
-- [`server.ts`](server.ts) - MCP server with tool and resource registration
-- [`mcp-app.html`](mcp-app.html) / [`src/mcp-app.tsx`](src/mcp-app.tsx) - React UI using `useApp()` hook
+- `server.ts` - MCP server with tool and UI resource registration
+- `src/cocktail-recipe-widget.tsx` - React widget UI
+- `convex/cocktails.ts` / `convex/ingredients.ts` - Convex queries and mutations
+- `scripts/seed-cocktails.mjs` / `scripts/upload-images.mjs` - Data seeding utilities
+- `scripts/data/cocktails.mjs` / `scripts/data/ingredients.mjs` - Seed data
 
 ## Getting Started
 
@@ -27,6 +28,6 @@ npm run dev
 
 ## How It Works
 
-1. The server registers a `get-time` tool with metadata linking it to a UI HTML resource (`ui://get-time/mcp-app.html`).
-2. When the tool is invoked, the Host renders the UI from the resource.
-3. The UI uses the MCP App SDK API to communicate with the host and call server tools.
+1. The server registers MCP tools for cocktail lookup and list retrieval.
+2. When `get-cocktail` is invoked, the host renders the cocktail recipe widget UI.
+3. The UI calls back into the server to fetch a cocktail and render its details.

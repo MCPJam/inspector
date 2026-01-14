@@ -1,12 +1,12 @@
 {
-  "name": "@modelcontextprotocol/server-basic-react",
-  "version": "0.4.0",
+  "name": "Sip Cocktails",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Basic MCP App Server example using React",
+  "description": "Sip Cocktails MCP App",
   "repository": {
     "type": "git",
-    "url": "https://github.com/modelcontextprotocol/ext-apps",
-    "directory": "examples/basic-server-react"
+    "url": "https://github.com/mcpjam/inspector",
+    "directory": "examples/mcp-apps/sip-cocktails"
   },
   "license": "MIT",
   "main": "server.ts",
@@ -16,8 +16,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc --noEmit && cross-env INPUT=mcp-app.html vite build",
-    "watch": "cross-env INPUT=mcp-app.html vite build --watch",
+    "build": "tsc --noEmit && cross-env INPUT=cocktail-recipe-widget.html vite build",
+    "watch": "cross-env INPUT=cocktail-recipe-widget.html vite build --watch",
     "serve": "bun --watch server.ts",
     "start": "cross-env NODE_ENV=development npm run build && npm run serve",
     "dev": "cross-env NODE_ENV=development concurrently 'npm run watch' 'npm run serve'",
@@ -26,6 +26,7 @@
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^0.4.0",
     "@modelcontextprotocol/sdk": "^1.24.0",
+    "convex": "^1.31.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^4.1.13"
