@@ -59,4 +59,10 @@ export default defineSchema({
   })
     .index("by_cocktail_id", ["id"])
     .index("by_name", ["name"]),
+  users: defineTable({
+    name: v.string(),
+    tokenIdentifier: v.string(),
+    email: v.optional(v.string()),
+    picture: v.optional(v.string()),
+  }).index("by_token", ["tokenIdentifier"]),
 });

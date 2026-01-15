@@ -11,6 +11,7 @@
 import type * as cocktails from "../cocktails.js";
 import type * as images from "../images.js";
 import type * as ingredients from "../ingredients.js";
+import type * as users from "../users.js";
 
 import type {
   ApiFromModules,
@@ -22,6 +23,7 @@ declare const fullApi: ApiFromModules<{
   cocktails: typeof cocktails;
   images: typeof images;
   ingredients: typeof ingredients;
+  users: typeof users;
 }>;
 
 /**

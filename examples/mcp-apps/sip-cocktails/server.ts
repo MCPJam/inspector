@@ -11,10 +11,14 @@ import { api } from "./convex/_generated/api.js";
 
 const DIST_DIR = path.join(import.meta.dirname, "dist");
 
+type ServerFactoryOptions = {
+  authToken?: string;
+};
+
 /**
  * Creates a new MCP server instance with tools and resources registered.
  */
-export function createServer(): McpServer {
+export function createServer(options: ServerFactoryOptions = {}): McpServer {
   const server = new McpServer({
     name: "Sip Cocktails MCP App Server",
     version: "1.0.0",
@@ -27,6 +31,9 @@ export function createServer(): McpServer {
     throw new Error("Missing CONVEX_URL or VITE_CONVEX_URL.");
   }
   const convexClient = new ConvexHttpClient(convexUrl);
+  if (options.authToken) {
+    convexClient.setAuth(options.authToken);
+  }
   const resourceUri = "ui://cocktail/cocktail-recipe-widget.html";
 
   const sharedResourceMeta = {
@@ -48,7 +55,7 @@ export function createServer(): McpServer {
       title: "Get Cocktail",
       description: "Fetch a cocktail by id with ingredients and images. If the id is unknown, use the 'Get All Cocktails' tool to get a list of all cocktails.",
       inputSchema: z.object({ id: z.string().describe("The id of the cocktail to fetch. ex. 'margarita' or 'bloody_mary'. Ids are lower case and snake case.") }),
-      _meta: { ui: { resourceUri, visibility: ["app"] } },
+      _meta: { ui: { resourceUri }, visibility: ["model"] },
     },
     async ({ id }: { id: string }): Promise<CallToolResult> => {
       const cocktail = await convexClient.query(api.cocktails.getCocktailById, {
@@ -60,11 +67,12 @@ export function createServer(): McpServer {
           isError: true,
         };
       }
+      const viewer = await getCurrentUser(convexClient);
       return {
         content: [
           { type: "text", text: `Loaded cocktail "${cocktail.name}".` },
         ],
-        structuredContent: { cocktail },
+        structuredContent: { cocktail, viewer },
       };
     },
   );
@@ -82,11 +90,34 @@ export function createServer(): McpServer {
         {},
       );
 
+      const viewer = await getCurrentUser(convexClient);
       return {
         content: [
           { type: "text", text: `Loaded ${cocktails.length} cocktails.` },
         ],
-        structuredContent: { cocktails },
+        structuredContent: { cocktails, viewer },
+      };
+    },
+  );
+
+  server.registerTool(
+    "get_current_user",
+    {
+      title: "Get Current User",
+      description: "Fetch the current authenticated user from Convex.",
+      inputSchema: {},
+    },
+    async (): Promise<CallToolResult> => {
+      const viewer = await getCurrentUser(convexClient);
+      if (!viewer) {
+        return {
+          content: [{ type: "text", text: "No authenticated user." }],
+          isError: true,
+        };
+      }
+      return {
+        content: [{ type: "text", text: `Loaded user "${viewer.name}".` }],
+        structuredContent: { viewer },
       };
     },
   );
@@ -107,6 +138,14 @@ export function createServer(): McpServer {
   );
 
   return server;
+}
+
+async function getCurrentUser(convexClient: ConvexHttpClient) {
+  try {
+    return await convexClient.action(api.users.syncCurrent, {});
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
