@@ -39,7 +39,10 @@ export async function startServer(
   app.use(cors());
   app.use(createAuthMetadataRoutes({ app, baseUrl, authkitIssuer }));
 
-  app.all("/mcp", authkitBearerAuth({ baseUrl, authkitIssuer }), async (req: Request, res: Response) => {
+  app.all(
+    "/mcp",
+    authkitBearerAuth({ baseUrl, authkitIssuer, allowAnonymous: true }),
+    async (req: Request, res: Response) => {
     const authToken = extractBearerToken(req.headers.authorization);
     const server = createServer({ authToken });
     const transport = new StreamableHTTPServerTransport({
@@ -64,7 +67,8 @@ export async function startServer(
         });
       }
     }
-  });
+    },
+  );
 
   const httpServer = app.listen(port, (err) => {
     if (err) {
@@ -135,9 +139,11 @@ function createAuthMetadataRoutes({
 function authkitBearerAuth({
   baseUrl,
   authkitIssuer,
+  allowAnonymous,
 }: {
   baseUrl: string;
   authkitIssuer: string;
+  allowAnonymous?: boolean;
 }) {
   const jwks = createRemoteJWKSet(new URL(`${authkitIssuer}/oauth2/jwks`));
   const resourceMetadata = new URL(
@@ -153,6 +159,10 @@ function authkitBearerAuth({
   return async (req: Request, res: Response, next: () => void) => {
     const token = extractBearerToken(req.headers.authorization);
     if (!token) {
+      if (allowAnonymous) {
+        next();
+        return;
+      }
       res
         .set("WWW-Authenticate", wwwAuthenticate)
         .status(401)
