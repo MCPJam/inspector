@@ -2,8 +2,8 @@
   width: 100%;
   max-height: 100%;
   padding: 0;
-  background: #ffffff;
-  color: #111111;
+  background: var(--color-background-primary, #ffffff);
+  color: var(--color-text-primary, #111111);
 }
 
 .card {
@@ -23,17 +23,17 @@
 .heroImage {
   width: 220px;
   height: 220px;
-  border-radius: 16px;
+  border-radius: var(--border-radius-xl, 16px);
   object-fit: cover;
 }
 
 .heroFallback {
   width: 220px;
   height: 220px;
-  border-radius: 16px;
+  border-radius: var(--border-radius-xl, 16px);
   display: grid;
   place-items: center;
-  color: #888888;
+  color: var(--color-text-tertiary, #888888);
   font-size: 0.85rem;
 }
 
@@ -53,7 +53,7 @@
 .subtitle {
   margin: 0;
   font-size: 0.95rem;
-  color: #666666;
+  color: var(--color-text-secondary, #666666);
 }
 
 .section {
@@ -66,7 +66,7 @@
   font-size: 0.9rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: #444444;
+  color: var(--color-text-secondary, #444444);
 }
 
 .ingredientList {
@@ -87,7 +87,7 @@
 
 .ingredientMeasure {
   font-size: 0.85rem;
-  color: #555555;
+  color: var(--color-text-secondary, #555555);
   min-width: 80px;
   text-align: right;
 }
@@ -96,7 +96,7 @@
 .ingredientImageFallback {
   width: 64px;
   height: 64px;
-  border-radius: 12px;
+  border-radius: var(--border-radius-lg, 12px);
   object-fit: cover;
 }
 
@@ -114,39 +114,39 @@
 
 .ingredientSubName {
   font-size: 0.78rem;
-  color: #666666;
+  color: var(--color-text-secondary, #666666);
 }
 
 .optional {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: #888888;
+  color: var(--color-text-tertiary, #888888);
 }
 
 .instructions {
   margin: 0;
   font-size: 0.9rem;
-  color: #333333;
+  color: var(--color-text-primary, #333333);
   line-height: 1.45;
 }
 
 .description {
   margin: 0;
   font-size: 0.86rem;
-  color: #666666;
+  color: var(--color-text-secondary, #666666);
   line-height: 1.45;
 }
 
 .metaLine {
   font-size: 0.78rem;
-  color: #7a7a7a;
+  color: var(--color-text-tertiary, #7a7a7a);
 }
 
 .status {
   padding: 1rem 0;
   text-align: center;
-  color: #666666;
+  color: var(--color-text-secondary, #666666);
   font-size: 0.9rem;
 }
 

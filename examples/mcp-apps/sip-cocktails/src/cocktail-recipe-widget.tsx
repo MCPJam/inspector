@@ -84,6 +84,16 @@ function CocktailApp() {
   }, [app]);
 
   useEffect(() => {
+    const vars = hostContext?.styles?.variables;
+    if (!vars) return;
+    Object.entries(vars).forEach(([key, value]) => {
+      if (value != null) {
+        document.documentElement.style.setProperty(key, value);
+      }
+    });
+  }, [hostContext?.styles?.variables]);
+
+  useEffect(() => {
     if (app && !cocktailId) {
       setStatus("Waiting for tool input...");
     }
@@ -130,7 +140,6 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
     <main
       className={styles.shell}
       style={{
-        ...(hostContext?.styles?.variables as React.CSSProperties),
         paddingTop: hostContext?.safeAreaInsets?.top,
         paddingRight: hostContext?.safeAreaInsets?.right,
         paddingBottom: hostContext?.safeAreaInsets?.bottom,
