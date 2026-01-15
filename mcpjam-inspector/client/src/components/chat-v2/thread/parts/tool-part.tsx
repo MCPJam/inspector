@@ -124,7 +124,11 @@ export function ToolPart({
     });
 
     return options;
-  }, [uiType, widgetDebugInfo?.csp?.violations?.length, widgetDebugInfo?.modelContext]);
+  }, [
+    uiType,
+    widgetDebugInfo?.csp?.violations?.length,
+    widgetDebugInfo?.modelContext,
+  ]);
 
   const handleDebugClick = (tab: "data" | "state" | "csp" | "context") => {
     if (activeDebugTab === tab) {
@@ -351,7 +355,9 @@ export function ToolPart({
                 {widgetDebugInfo.modelContext && (
                   <div className="text-[9px] text-muted-foreground/50">
                     Updated:{" "}
-                    {new Date(widgetDebugInfo.modelContext.updatedAt).toLocaleTimeString()}
+                    {new Date(
+                      widgetDebugInfo.modelContext.updatedAt,
+                    ).toLocaleTimeString()}
                   </div>
                 )}
               </div>
@@ -375,13 +381,17 @@ export function ToolPart({
                         Structured Content
                       </div>
                       <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[200px] overflow-auto">
-                        {safeStringify(widgetDebugInfo.modelContext.structuredContent)}
+                        {safeStringify(
+                          widgetDebugInfo.modelContext.structuredContent,
+                        )}
                       </pre>
                     </div>
                   )}
 
                   <div className="text-[9px] text-muted-foreground/50 mt-2">
-                    This context will be included in future turns with the model. Each update overwrites the previous context from this widget.
+                    This context will be included in future turns with the
+                    model. Each update overwrites the previous context from this
+                    widget.
                   </div>
                 </div>
               ) : (

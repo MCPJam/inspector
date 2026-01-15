@@ -494,20 +494,22 @@ export function PlaygroundMain({
 
       // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
       // Sent as "user" messages for compatibility with model provider APIs
-      const contextMessages = modelContextQueue.map(({ toolCallId, context }) => ({
-        id: `model-context-${toolCallId}-${Date.now()}`,
-        role: "user" as const,
-        parts: [
-          {
-            type: "text" as const,
-            text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+      const contextMessages = modelContextQueue.map(
+        ({ toolCallId, context }) => ({
+          id: `model-context-${toolCallId}-${Date.now()}`,
+          role: "user" as const,
+          parts: [
+            {
+              type: "text" as const,
+              text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+            },
+          ],
+          metadata: {
+            source: "widget-model-context",
+            toolCallId,
           },
-        ],
-        metadata: {
-          source: "widget-model-context",
-          toolCallId,
-        },
-      }));
+        }),
+      );
 
       if (contextMessages.length > 0) {
         setMessages((prev) => [...prev, ...contextMessages]);
