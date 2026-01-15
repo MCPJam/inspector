@@ -1,6 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 
 const measurementSchema = v.object({
   ml: v.optional(v.number()),
@@ -13,6 +13,32 @@ const displayOverridesSchema = v.object({
   oz: v.optional(v.string()),
   part: v.optional(v.string()),
 });
+
+async function getCurrentUser(ctx: {
+  auth: { getUserIdentity: () => Promise<null | { tokenIdentifier: string; name?: string; email?: string; picture?: string }> };
+  db: any;
+}): Promise<Doc<"users"> | null> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    return null;
+  }
+  const existing = await ctx.db
+    .query("users")
+    .withIndex("by_token", (q: any) =>
+      q.eq("tokenIdentifier", identity.tokenIdentifier),
+    )
+    .unique();
+  if (existing) {
+    return existing;
+  }
+  const id = await ctx.db.insert("users", {
+    name: identity.name ?? "Anonymous",
+    tokenIdentifier: identity.tokenIdentifier,
+    email: identity.email ?? undefined,
+    picture: identity.picture ?? undefined,
+  });
+  return await ctx.db.get(id);
+}
 
 export const upsertCocktail = mutation({
   args: {
@@ -143,5 +169,65 @@ export const getCocktailIdsAndNames = query({
       id: cocktail.id,
       name: cocktail.name,
     }));
+  },
+});
+
+export const saveCocktailRecipeLikedList = mutation({
+  args: { cocktailId: v.string() },
+  handler: async (ctx, args) => {
+    const viewer = await getCurrentUser(ctx);
+    if (!viewer) {
+      throw new Error("Not authenticated.");
+    }
+
+    const cocktail = await ctx.db
+      .query("cocktails")
+      .withIndex("by_cocktail_id", (q) => q.eq("id", args.cocktailId))
+      .unique();
+    if (!cocktail) {
+      throw new Error(`Cocktail "${args.cocktailId}" not found.`);
+    }
+
+    const existing = await ctx.db
+      .query("likedCocktailRecipes")
+      .withIndex("by_user_cocktail", (q) =>
+        q.eq("userId", viewer._id).eq("cocktailId", args.cocktailId),
+      )
+      .unique();
+    if (existing) {
+      return existing._id;
+    }
+
+    return ctx.db.insert("likedCocktailRecipes", {
+      userId: viewer._id,
+      cocktailId: args.cocktailId,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const getLikedCocktailRecipes = query({
+  args: {},
+  handler: async (ctx) => {
+    const viewer = await getCurrentUser(ctx);
+    if (!viewer) {
+      return [];
+    }
+
+    const liked = await ctx.db
+      .query("likedCocktailRecipes")
+      .withIndex("by_user", (q) => q.eq("userId", viewer._id))
+      .collect();
+
+    const cocktails = await Promise.all(
+      liked.map((entry) =>
+        ctx.db
+          .query("cocktails")
+          .withIndex("by_cocktail_id", (q) => q.eq("id", entry.cocktailId))
+          .unique(),
+      ),
+    );
+
+    return cocktails.filter(Boolean);
   },
 });

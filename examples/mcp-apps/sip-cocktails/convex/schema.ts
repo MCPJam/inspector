@@ -65,4 +65,11 @@ export default defineSchema({
     email: v.optional(v.string()),
     picture: v.optional(v.string()),
   }).index("by_token", ["tokenIdentifier"]),
+  likedCocktailRecipes: defineTable({
+    userId: v.id("users"),
+    cocktailId: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_cocktail", ["userId", "cocktailId"]),
 });

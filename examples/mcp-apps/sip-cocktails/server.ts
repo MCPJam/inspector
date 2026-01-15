@@ -78,53 +78,6 @@ export function createServer(options: ServerFactoryOptions = {}): McpServer {
     },
   );
 
-  server.registerTool(
-    "get_all_cocktails",
-    {
-      title: "Get All Cocktails",
-      description: "Fetch all cocktail ids with their names.",
-      inputSchema: {},
-    },
-    async (): Promise<CallToolResult> => {
-      const cocktails = await convexClient.query(
-        api.cocktails.getCocktailIdsAndNames,
-        {},
-      );
-
-      const viewer = await getCurrentUser(convexClient, isAuthenticated);
-      return {
-        content: [
-          { type: "text", text: `Loaded ${cocktails.length} cocktails.` },
-        ],
-        structuredContent: { cocktails, viewer },
-      };
-    },
-  );
-
-  if (isAuthenticated) {
-    server.registerTool(
-      "get_current_user",
-      {
-        title: "Get Current User",
-        description: "Fetch the current authenticated user from Convex.",
-        inputSchema: {},
-      },
-      async (): Promise<CallToolResult> => {
-        const viewer = await getCurrentUser(convexClient, isAuthenticated);
-        if (!viewer) {
-          return {
-            content: [{ type: "text", text: "No authenticated user." }],
-            isError: true,
-          };
-        }
-        return {
-          content: [{ type: "text", text: `Loaded user "${viewer.name}".` }],
-          structuredContent: { viewer },
-        };
-      },
-    );
-  }
-
   registerAppResource(server,
     resourceUri,
     resourceUri,
@@ -139,6 +92,48 @@ export function createServer(options: ServerFactoryOptions = {}): McpServer {
       };
     },
   );
+
+  server.registerTool(
+    "get_all_cocktails",
+    {
+      title: "Get All Cocktails",
+      description: "Fetch all cocktail ids with their names.",
+      inputSchema: {},
+    },
+    async (): Promise<CallToolResult> => {
+      const cocktails = await convexClient.query(
+        api.cocktails.getCocktailIdsAndNames,
+        {},
+      );
+      return {
+        content: [
+          { type: "text", text: `Loaded ${cocktails.length} cocktails.` },
+        ],
+        structuredContent: { cocktails },
+      };
+    },
+  );
+
+  if (isAuthenticated) {
+    server.registerTool(
+      "save_cocktail_recipe_liked_list",
+      {
+        title: "Get Current User",
+        description: "Fetch the current authenticated user from Convex.",
+        inputSchema: {
+          cocktailId: z
+            .string()
+            .describe("The id of the cocktail to save to the liked list. ex. 'margarita' or 'bloody_mary'."),
+        },
+      },
+      async ({ cocktailId }: { cocktailId: string }): Promise<CallToolResult> => {
+        await convexClient.mutation(api.cocktails.saveCocktailRecipeLikedList, {
+          cocktailId,
+        });
+        return { content: [{ type: "text", text: `Saved cocktail "${cocktailId}" to the liked list.` }] };
+      },
+    );
+  }
 
   return server;
 }
