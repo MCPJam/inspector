@@ -71,6 +71,7 @@ function CocktailApp() {
       app.onerror = log.error;
 
       app.onhostcontextchanged = (params) => {
+        log.info("Host context changed:", params);
         setHostContext((prev) => ({ ...prev, ...params }));
       };
     },
@@ -129,6 +130,7 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
     <main
       className={styles.shell}
       style={{
+        ...(hostContext?.styles?.variables as React.CSSProperties),
         paddingTop: hostContext?.safeAreaInsets?.top,
         paddingRight: hostContext?.safeAreaInsets?.right,
         paddingBottom: hostContext?.safeAreaInsets?.bottom,

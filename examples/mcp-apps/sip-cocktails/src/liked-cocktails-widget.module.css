@@ -1,0 +1,159 @@
+.shell {
+  width: 100%;
+  min-height: 100%;
+  padding: 0;
+  background: #ffffff;
+  color: #111111;
+}
+
+.frame {
+  width: 1200px;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: clamp(1.2rem, 2.4vw, 2.4rem) clamp(1.2rem, 5vw, 5rem)
+    clamp(1.4rem, 3vw, 2.8rem);
+  display: grid;
+  gap: 1.4rem;
+}
+
+.header {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.68rem;
+  color: #777777;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  margin: 0;
+  color: #666666;
+  font-size: 0.92rem;
+  max-width: 48rem;
+}
+
+.statusCard {
+  padding: 1rem 0;
+  border-radius: 12px;
+  background: #f6f6f6;
+  text-align: center;
+  color: #666666;
+}
+
+.list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #ededed;
+  animation: rise 0.5s ease both;
+  animation-delay: var(--delay);
+}
+
+.rowMain {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.rowTitle {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.name {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.tagline {
+  margin: 0;
+  color: #666666;
+  font-size: 0.86rem;
+}
+
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #777777;
+}
+
+.metaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.rowImage {
+  justify-self: end;
+}
+
+.image {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.imageFallback {
+  width: 96px;
+  height: 72px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: #888888;
+  background: #f4f4f4;
+  font-size: 0.75rem;
+}
+
+.status {
+  text-align: center;
+  color: #666666;
+  font-size: 0.9rem;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 720px) {
+  .row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .rowImage {
+    justify-self: start;
+  }
+
+  .image,
+  .imageFallback {
+    width: 100%;
+    height: 160px;
+  }
+}

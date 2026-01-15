@@ -16,8 +16,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc --noEmit && cross-env INPUT=cocktail-recipe-widget.html vite build",
-    "watch": "cross-env INPUT=cocktail-recipe-widget.html vite build --watch",
+    "build": "tsc --noEmit && cross-env INPUT=cocktail-recipe-widget.html vite build && cross-env INPUT=liked-cocktails-widget.html vite build",
+    "watch": "cross-env INPUT=cocktail-recipe-widget.html vite build --watch && cross-env INPUT=liked-cocktails-widget.html vite build --watch",
     "serve": "bun --watch server.ts",
     "start": "cross-env NODE_ENV=development npm run build && npm run serve",
     "dev": "cross-env NODE_ENV=development concurrently 'npm run watch' 'npm run serve'",
