@@ -41,6 +41,7 @@ import type {
   JSONRPCMessage,
   MessageExtraInfo,
   CallToolResult,
+  ContentBlock,
 } from "@modelcontextprotocol/sdk/types.js";
 import type {
   Transport,
@@ -92,6 +93,14 @@ interface MCPAppsRendererProps {
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  /** Callback when widget updates model context (SEP-1865 ui/update-model-context) */
+  onModelContextUpdate?: (
+    toolCallId: string,
+    context: {
+      content?: ContentBlock[];
+      structuredContent?: Record<string, unknown>;
+    },
+  ) => void;
 }
 
 class LoggingTransport implements Transport {
@@ -174,6 +183,7 @@ export function MCPAppsRenderer({
   onDisplayModeChange,
   onRequestFullscreen,
   onExitFullscreen,
+  onModelContextUpdate,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -325,6 +335,7 @@ export function MCPAppsRenderer({
   const toolCallIdRef = useRef(toolCallId);
   const pipWidgetIdRef = useRef(pipWidgetId);
   const toolsMetadataRef = useRef(toolsMetadata);
+  const onModelContextUpdateRef = useRef(onModelContextUpdate);
 
   // Fetch widget HTML when tool output is available or CSP mode changes
   useEffect(() => {
@@ -443,6 +454,9 @@ export function MCPAppsRenderer({
   const setWidgetCspStore = useWidgetDebugStore((s) => s.setWidgetCsp);
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
+  const setWidgetModelContext = useWidgetDebugStore(
+    (s) => s.setWidgetModelContext,
+  );
 
   // Clear CSP violations when CSP mode changes (stale data from previous mode)
   useEffect(() => {
@@ -600,6 +614,7 @@ export function MCPAppsRenderer({
     toolCallIdRef.current = toolCallId;
     pipWidgetIdRef.current = pipWidgetId;
     toolsMetadataRef.current = toolsMetadata;
+    onModelContextUpdateRef.current = onModelContextUpdate;
   }, [
     onSendFollowUp,
     onCallTool,
@@ -613,6 +628,7 @@ export function MCPAppsRenderer({
     toolCallId,
     pipWidgetId,
     toolsMetadata,
+    onModelContextUpdate,
   ]);
 
   const registerBridgeHandlers = useCallback(
@@ -796,8 +812,24 @@ export function MCPAppsRenderer({
 
         return { mode: actualMode };
       };
+
+      bridge.onupdatemodelcontext = async ({ content, structuredContent }) => {
+        // Store in debug store for UI display
+        setWidgetModelContext(toolCallId, {
+          content,
+          structuredContent,
+        });
+
+        // Notify parent component to queue for next model turn
+        onModelContextUpdateRef.current?.(toolCallId, {
+          content,
+          structuredContent,
+        });
+
+        return {};
+      };
     },
-    [setIsReady],
+    [setIsReady, toolCallId, setWidgetModelContext],
   );
 
   useEffect(() => {
@@ -871,8 +903,17 @@ export function MCPAppsRenderer({
         bridge.teardownResource({}).catch(() => {});
       }
       bridge.close().catch(() => {});
+      // Clear model context on widget teardown
+      setWidgetModelContext(toolCallId, null);
     };
-  }, [addUiLog, serverId, toolCallId, widgetHtml, registerBridgeHandlers]);
+  }, [
+    addUiLog,
+    serverId,
+    toolCallId,
+    widgetHtml,
+    registerBridgeHandlers,
+    setWidgetModelContext,
+  ]);
 
   useEffect(() => {
     const bridge = bridgeRef.current;

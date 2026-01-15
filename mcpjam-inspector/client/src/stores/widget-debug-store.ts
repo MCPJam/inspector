@@ -87,6 +87,12 @@ export interface WidgetDebugInfo {
   updatedAt: number;
   /** CSP configuration and violation tracking */
   csp?: WidgetCspInfo;
+  /** Model context set by the widget (SEP-1865 ui/update-model-context) */
+  modelContext?: {
+    content?: unknown[];
+    structuredContent?: Record<string, unknown>;
+    updatedAt: number;
+  } | null;
 }
 
 interface WidgetDebugStore {
@@ -127,6 +133,15 @@ interface WidgetDebugStore {
 
   // Clear CSP violations for a widget (e.g., when CSP mode changes)
   clearCspViolations: (toolCallId: string) => void;
+
+  // Set model context for a widget (SEP-1865 ui/update-model-context)
+  setWidgetModelContext: (
+    toolCallId: string,
+    context: {
+      content?: unknown[];
+      structuredContent?: Record<string, unknown>;
+    } | null,
+  ) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -257,6 +272,27 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
           ...existing.csp,
           violations: [],
         },
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  setWidgetModelContext: (toolCallId, context) => {
+    set((state) => {
+      const existing = state.widgets.get(toolCallId);
+      if (!existing) return state;
+
+      const widgets = new Map(state.widgets);
+      widgets.set(toolCallId, {
+        ...existing,
+        modelContext: context
+          ? {
+              content: context.content,
+              structuredContent: context.structuredContent,
+              updatedAt: Date.now(),
+            }
+          : null,
         updatedAt: Date.now(),
       });
       return { widgets };

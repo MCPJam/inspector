@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { UIMessage } from "@ai-sdk/react";
+import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 
 import { MessageView } from "./thread/message-view";
 import { ModelDefinition } from "@/shared/types";
@@ -16,6 +17,13 @@ interface ThreadProps {
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  onModelContextUpdate?: (
+    toolCallId: string,
+    context: {
+      content?: ContentBlock[];
+      structuredContent?: Record<string, unknown>;
+    },
+  ) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onFullscreenChange?: (isFullscreen: boolean) => void;
@@ -32,6 +40,7 @@ export function Thread({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  onModelContextUpdate,
   displayMode,
   onDisplayModeChange,
   onFullscreenChange,
@@ -97,6 +106,7 @@ export function Thread({
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
             onWidgetStateChange={onWidgetStateChange}
+            onModelContextUpdate={onModelContextUpdate}
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={handleRequestPip}

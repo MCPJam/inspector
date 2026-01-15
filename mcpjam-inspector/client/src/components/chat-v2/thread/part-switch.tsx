@@ -1,5 +1,6 @@
 import { ToolUIPart, DynamicToolUIPart, UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
+import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
@@ -39,6 +40,7 @@ export function PartSwitch({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  onModelContextUpdate,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
@@ -54,6 +56,13 @@ export function PartSwitch({
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  onModelContextUpdate?: (
+    toolCallId: string,
+    context: {
+      content?: ContentBlock[];
+      structuredContent?: Record<string, unknown>;
+    },
+  ) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
@@ -189,6 +198,7 @@ export function PartSwitch({
               callTool(serverId, toolName, params)
             }
             onWidgetStateChange={onWidgetStateChange}
+            onModelContextUpdate={onModelContextUpdate}
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={onRequestPip}
