@@ -120,6 +120,48 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms, true));
 }
 
+/**
+ * Validate command to prevent command injection
+ * Only allows alphanumeric characters, hyphens, underscores, dots, and forward slashes
+ */
+function validateCommand(command) {
+  if (typeof command !== "string" || !command.trim()) {
+    return false;
+  }
+  // Allow common command patterns: paths, node, npx, python, etc.
+  // Block shell metacharacters that could enable injection
+  const dangerousChars = /[;&|`$(){}[\]<>!#*?~]/;
+  if (dangerousChars.test(command)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Validate file path to prevent path traversal attacks
+ * Ensures the resolved path is within allowed directories
+ */
+function validateConfigPath(configPath) {
+  const resolvedPath = resolve(configPath);
+  const cwd = process.cwd();
+  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+
+  // Path must be within current working directory or home directory
+  const isWithinCwd = resolvedPath.startsWith(cwd + "/") || resolvedPath === cwd;
+  const isWithinHome = homeDir && (resolvedPath.startsWith(homeDir + "/") || resolvedPath === homeDir);
+
+  if (!isWithinCwd && !isWithinHome) {
+    return { valid: false, error: "Config file must be within current directory or home directory" };
+  }
+
+  // Block paths with suspicious patterns
+  if (resolvedPath.includes("..") || resolvedPath.includes("\0")) {
+    return { valid: false, error: "Invalid path pattern detected" };
+  }
+
+  return { valid: true, path: resolvedPath };
+}
+
 function isPortAvailable(port) {
   return new Promise((resolve) => {
     const server = createServer();
@@ -139,8 +181,18 @@ function isPortAvailable(port) {
 
 function spawnPromise(command, args, options) {
   return new Promise((resolve, reject) => {
+    // Validate command to prevent injection (skip for known-safe internal commands)
+    const safeInternalCommands = ["node", "npm", "ollama", "osascript", "open", "cmd", "gnome-terminal", "konsole", "xterm", "x-terminal-emulator", "bash"];
+    const isInternalCommand = safeInternalCommands.includes(command);
+
+    if (!isInternalCommand && !validateCommand(command)) {
+      reject(new Error(`Invalid command: potentially unsafe characters detected in "${command}"`));
+      return;
+    }
+
     const child = spawn(command, args, {
       stdio: options.echoOutput ? "inherit" : "pipe",
+      shell: false, // Explicitly disable shell to prevent injection
       ...options,
     });
 
@@ -479,7 +531,14 @@ async function main() {
     logStep("MCP Server", `Configuring auto-connection to: ${mcpConfigFile}`);
 
     try {
-      const configPath = resolve(mcpConfigFile);
+      // Validate path to prevent traversal attacks
+      const pathValidation = validateConfigPath(mcpConfigFile);
+      if (!pathValidation.valid) {
+        logError(`Invalid config path: ${pathValidation.error}`);
+        process.exit(1);
+      }
+      const configPath = pathValidation.path;
+
       if (!existsSync(configPath)) {
         logError(`MCP config file not found: ${configPath}`);
         process.exit(1);

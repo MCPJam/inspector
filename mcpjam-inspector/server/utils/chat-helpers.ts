@@ -42,8 +42,10 @@ export const createLlmModel = (
     case "litellm": {
       // LiteLLM uses OpenAI-compatible endpoints (standard chat completions API)
       const baseURL = litellmBaseUrl || "http://localhost:4000";
+      // LiteLLM may not require API key depending on setup - use env var or empty string
+      const litellmApiKey = apiKey || process.env.LITELLM_API_KEY || "";
       const openai = createOpenAI({
-        apiKey: apiKey || "dummy-key", // LiteLLM may not require API key depending on setup
+        apiKey: litellmApiKey,
         baseURL,
       });
       // IMPORTANT: Use .chat() to use Chat Completions API instead of Responses API
