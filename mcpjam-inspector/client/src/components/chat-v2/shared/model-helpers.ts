@@ -64,10 +64,10 @@ export function buildAvailableModels(params: {
 
   const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
     ? getOpenRouterSelectedModels().map((id) => ({
-        id,
-        name: id,
-        provider: "openrouter" as const,
-      }))
+      id,
+      name: id,
+      provider: "openrouter" as const,
+    }))
     : [];
 
   let models: ModelDefinition[] = cloud;
@@ -82,7 +82,7 @@ export const getDefaultModel = (
   availableModels: ModelDefinition[],
 ): ModelDefinition => {
   const modelIdsByPriority: Array<Model | string> = [
-    "google/gemini-3-flash-preview",
+    "anthropic/claude-haiku-4.5",
     "openai/gpt-5",
     "meta-llama/llama-3.3-70b-instruct",
     Model.CLAUDE_3_7_SONNET_LATEST, // anthropic

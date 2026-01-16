@@ -129,7 +129,6 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "moonshotai/kimi-k2-0905",
   "google/gemini-2.5-flash",
   "z-ai/glm-4.6",
-  "google/gemini-3-flash-preview",
   "openai/gpt-5.2-chat",
   "x-ai/grok-code-fast-1",
   "deepseek/deepseek-v3.2",
@@ -470,12 +469,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   {
-    id: "google/gemini-3-flash-preview",
-    name: "Gemini 3 Flash Preview (Free)",
-    provider: "google",
-    contextLength: 1000000,
-  },
-  {
     id: "openai/gpt-5.2-chat",
     name: "GPT-5.2 Chat (Free)",
     provider: "openai",
@@ -718,12 +711,12 @@ export interface ConnectionTestResponse {
 
 export interface ChatStreamEvent {
   type:
-    | "text"
-    | "tool_call"
-    | "tool_result"
-    | "elicitation_request"
-    | "elicitation_complete"
-    | "error";
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "elicitation_request"
+  | "elicitation_complete"
+  | "error";
   content?: string;
   toolCall?: ToolCall;
   toolResult?: {
