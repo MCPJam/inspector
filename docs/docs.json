@@ -22,7 +22,8 @@
           "inspector/app-builder",
           "inspector/llm-playground",
           "inspector/guided-oauth",
-          "inspector/tools-prompts-resources"
+          "inspector/tools-prompts-resources",
+          "inspector/workspaces"
         ]
       },
       {
