@@ -99,9 +99,7 @@ export function WorkspaceSelector({
               )}
               onClick={() => onSwitchWorkspace(workspace.id)}
             >
-              <span className="truncate flex-1">
-                {workspace.name}
-              </span>
+              <span className="truncate flex-1">{workspace.name}</span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
