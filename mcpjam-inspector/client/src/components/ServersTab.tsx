@@ -516,7 +516,6 @@ export function ServersTab({
         : connectedCount > 0
           ? renderConnectedContent()
           : renderEmptyContent()}
-      {connectedCount > 0 ? renderConnectedContent() : renderEmptyContent()}
 
       {/* Add Server Modal */}
       <AddServerModal
