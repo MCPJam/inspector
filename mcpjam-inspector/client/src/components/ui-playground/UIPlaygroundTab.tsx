@@ -32,8 +32,7 @@ import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
 
 // Constants
 import { PANEL_SIZES } from "./constants";
-import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
+import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface UIPlaygroundTabProps {
   serverConfig?: MCPServerConfig;
@@ -133,35 +132,6 @@ export function UIPlaygroundTab({
     setSelectedTool,
     setFormFields,
   });
-
-  // Search state
-  const [searchQuery, setSearchQuery] = useState("");
-
-  // Compute tool names - show ChatGPT/MCP apps (OpenAI SDK or MCP Apps metadata)
-  const toolNames = useMemo(() => {
-    return Object.keys(tools).filter((name) => {
-      const tool = tools[name];
-      const uiType = detectUiTypeFromTool(tool);
-      return uiType !== null;
-    });
-  }, [tools]);
-
-  // Filter tool names by search query
-  const filteredToolNames = useMemo(() => {
-    if (!searchQuery.trim()) return toolNames;
-    const query = searchQuery.trim().toLowerCase();
-    return toolNames.filter((name) => {
-      const tool = tools[name];
-      const haystack = `${name} ${tool?.description ?? ""}`.toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [toolNames, tools, searchQuery]);
-
-  // Filter saved requests by search query
-  const filteredSavedRequests = useMemo(
-    () => savedRequestsHook.getFilteredRequests(searchQuery),
-    [savedRequestsHook, searchQuery],
-  );
 
   // Fetch tools when server changes
   const fetchTools = useCallback(async () => {
@@ -264,12 +234,8 @@ export function UIPlaygroundTab({
             >
               <PlaygroundLeft
                 tools={tools}
-                toolNames={toolNames}
-                filteredToolNames={filteredToolNames}
                 selectedToolName={selectedTool}
                 fetchingTools={false}
-                searchQuery={searchQuery}
-                onSearchQueryChange={setSearchQuery}
                 onRefresh={fetchTools}
                 onSelectTool={setSelectedTool}
                 formFields={formFields}
@@ -279,7 +245,6 @@ export function UIPlaygroundTab({
                 onExecute={executeTool}
                 onSave={savedRequestsHook.openSaveDialog}
                 savedRequests={savedRequestsHook.savedRequests}
-                filteredSavedRequests={filteredSavedRequests}
                 highlightedRequestId={savedRequestsHook.highlightedRequestId}
                 onLoadRequest={savedRequestsHook.handleLoadRequest}
                 onRenameRequest={savedRequestsHook.handleRenameRequest}
