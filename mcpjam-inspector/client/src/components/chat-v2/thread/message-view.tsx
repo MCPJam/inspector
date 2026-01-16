@@ -1,5 +1,6 @@
 import { UIMessage } from "@ai-sdk/react";
 import { MessageCircle } from "lucide-react";
+import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
@@ -9,6 +10,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 export function MessageView({
   message,
@@ -17,6 +19,7 @@ export function MessageView({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  onModelContextUpdate,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
@@ -25,6 +28,7 @@ export function MessageView({
   onExitFullscreen,
   displayMode,
   onDisplayModeChange,
+  selectedProtocolOverrideIfBothExists,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -32,6 +36,13 @@ export function MessageView({
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  onModelContextUpdate?: (
+    toolCallId: string,
+    context: {
+      content?: ContentBlock[];
+      structuredContent?: Record<string, unknown>;
+    },
+  ) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
@@ -40,10 +51,14 @@ export function MessageView({
   onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  selectedProtocolOverrideIfBothExists?: UIType;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
+  // Hide widget state messages (these are internal and sent to the model)
   if (message.id?.startsWith("widget-state-")) return null;
+  // Hide model context messages (these are internal and sent to the model)
+  if (message.id?.startsWith("model-context-")) return null;
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;
 
@@ -59,6 +74,7 @@ export function MessageView({
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
             onWidgetStateChange={onWidgetStateChange}
+            onModelContextUpdate={onModelContextUpdate}
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={onRequestPip}
@@ -67,6 +83,9 @@ export function MessageView({
             onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            selectedProtocolOverrideIfBothExists={
+              selectedProtocolOverrideIfBothExists
+            }
           />
         ))}
       </UserMessageBubble>
@@ -100,6 +119,7 @@ export function MessageView({
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={onWidgetStateChange}
+                onModelContextUpdate={onModelContextUpdate}
                 pipWidgetId={pipWidgetId}
                 fullscreenWidgetId={fullscreenWidgetId}
                 onRequestPip={onRequestPip}
@@ -108,6 +128,9 @@ export function MessageView({
                 onExitFullscreen={onExitFullscreen}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocolOverrideIfBothExists
+                }
               />
             ))}
           </div>

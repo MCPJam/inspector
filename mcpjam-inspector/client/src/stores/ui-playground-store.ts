@@ -9,6 +9,7 @@
 import { create } from "zustand";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { FormField } from "@/lib/tool-form";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 export type DeviceType = "mobile" | "tablet" | "desktop" | "custom";
 
@@ -29,7 +30,6 @@ export interface CustomViewport {
 }
 export type DisplayMode = "inline" | "pip" | "fullscreen";
 export type CspMode = "permissive" | "widget-declared";
-export type AppProtocol = "openai-apps" | "mcp-apps" | null;
 
 export interface DeviceCapabilities {
   hover: boolean;
@@ -124,7 +124,7 @@ interface UIPlaygroundState {
   mcpAppsCspMode: CspMode;
 
   // Currently selected app protocol (detected from tool metadata)
-  selectedProtocol: AppProtocol;
+  selectedProtocol: UIType | null;
 
   // Device capabilities (hover/touch support)
   capabilities: DeviceCapabilities;
@@ -163,7 +163,7 @@ interface UIPlaygroundState {
   setPlaygroundActive: (active: boolean) => void;
   setCspMode: (mode: CspMode) => void;
   setMcpAppsCspMode: (mode: CspMode) => void;
-  setSelectedProtocol: (protocol: AppProtocol) => void;
+  setSelectedProtocol: (protocol: UIType | null) => void;
   setCapabilities: (capabilities: Partial<DeviceCapabilities>) => void;
   setSafeAreaPreset: (preset: SafeAreaPreset) => void;
   setSafeAreaInsets: (insets: Partial<SafeAreaInsets>) => void;
@@ -244,7 +244,7 @@ const initialState = {
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
   mcpAppsCspMode: "widget-declared" as CspMode,
-  selectedProtocol: null as AppProtocol,
+  selectedProtocol: null as UIType | null,
   capabilities: getDefaultCapabilities("desktop"),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],

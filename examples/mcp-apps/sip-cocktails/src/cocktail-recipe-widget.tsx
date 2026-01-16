@@ -90,7 +90,7 @@ function CocktailApp() {
   }, [app, cocktailId]);
 
   if (error) return <div className={styles.status}>Error: {error.message}</div>;
-  if (!app) return <div className={styles.status}>Connecting...</div>;
+  if (!app) return <div className={styles.status}>ChatGPT app not yet implemented.</div>;
 
   return (
     <CocktailAppInner

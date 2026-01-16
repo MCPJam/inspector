@@ -12,7 +12,11 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
-import { isMCPApp, isOpenAIApp } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  isMCPApp,
+  isOpenAIApp,
+  isOpenAIAppAndMCPApp,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
@@ -69,8 +73,13 @@ export function ServerInfoModal({
 
   // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
   const isOpenAIAppServer = isOpenAIApp(toolsData);
+
+  // Check if this is an OpenAI app and MCP app (has tools with openai/outputTemplate and ui.resourceUri metadata)
+  const isOpenAIAppAndMCPAppServer = isOpenAIAppAndMCPApp(toolsData);
+
   // Has any widget metadata (either MCP App or OpenAI App)
-  const hasWidgetMetadata = isMCPAppServer || isOpenAIAppServer;
+  const hasWidgetMetadata =
+    isMCPAppServer || isOpenAIAppServer || isOpenAIAppAndMCPAppServer;
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -226,7 +235,7 @@ export function ServerInfoModal({
                 v{version}
               </span>
             )}
-            {isOpenAIAppServer && (
+            {(isOpenAIAppServer || isOpenAIAppAndMCPAppServer) && (
               <img
                 src="/openai_logo.png"
                 alt="OpenAI App"
@@ -234,7 +243,7 @@ export function ServerInfoModal({
                 title="OpenAI App"
               />
             )}
-            {isMCPAppServer && !isOpenAIAppServer && (
+            {(isMCPAppServer || isOpenAIAppAndMCPAppServer) && (
               <img
                 src="/mcp.svg"
                 alt="MCP App"

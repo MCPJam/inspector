@@ -65,7 +65,7 @@ export function ToolPart({
     themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "csp" | null
+    "data" | "state" | "csp" | "context" | null
   >("data");
 
   const inputData = (part as any).input;
@@ -97,7 +97,7 @@ export function ToolPart({
 
   const debugOptions = useMemo(() => {
     const options: {
-      tab: "data" | "state" | "csp";
+      tab: "data" | "state" | "csp" | "context";
       icon: typeof Database;
       label: string;
       badge?: number;
@@ -105,6 +105,15 @@ export function ToolPart({
 
     if (uiType === UIType.OPENAI_SDK) {
       options.push({ tab: "state", icon: Box, label: "Widget State" });
+    }
+
+    // Add model context tab for MCP Apps
+    if (uiType === UIType.MCP_APPS && widgetDebugInfo?.modelContext) {
+      options.push({
+        tab: "context",
+        icon: MessageCircle,
+        label: "Model Context",
+      });
     }
 
     options.push({
@@ -115,9 +124,13 @@ export function ToolPart({
     });
 
     return options;
-  }, [uiType, widgetDebugInfo?.csp?.violations?.length]);
+  }, [
+    uiType,
+    widgetDebugInfo?.csp?.violations?.length,
+    widgetDebugInfo?.modelContext,
+  ]);
 
-  const handleDebugClick = (tab: "data" | "state" | "csp") => {
+  const handleDebugClick = (tab: "data" | "state" | "csp" | "context") => {
     if (activeDebugTab === tab) {
       setActiveDebugTab(null);
       setIsExpanded(false);
@@ -332,6 +345,61 @@ export function ToolPart({
               cspInfo={widgetDebugInfo.csp}
               protocol={widgetDebugInfo.protocol}
             />
+          )}
+          {hasWidgetDebug && activeDebugTab === "context" && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                  Model Context
+                </div>
+                {widgetDebugInfo.modelContext && (
+                  <div className="text-[9px] text-muted-foreground/50">
+                    Updated:{" "}
+                    {new Date(
+                      widgetDebugInfo.modelContext.updatedAt,
+                    ).toLocaleTimeString()}
+                  </div>
+                )}
+              </div>
+
+              {widgetDebugInfo.modelContext ? (
+                <div className="space-y-3">
+                  {widgetDebugInfo.modelContext.content && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-medium text-muted-foreground">
+                        Content (for model)
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[200px] overflow-auto">
+                        {safeStringify(widgetDebugInfo.modelContext.content)}
+                      </pre>
+                    </div>
+                  )}
+
+                  {widgetDebugInfo.modelContext.structuredContent && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-medium text-muted-foreground">
+                        Structured Content
+                      </div>
+                      <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed max-h-[200px] overflow-auto">
+                        {safeStringify(
+                          widgetDebugInfo.modelContext.structuredContent,
+                        )}
+                      </pre>
+                    </div>
+                  )}
+
+                  <div className="text-[9px] text-muted-foreground/50 mt-2">
+                    This context will be included in future turns with the
+                    model. Each update overwrites the previous context from this
+                    widget.
+                  </div>
+                </div>
+              ) : (
+                <div className="text-muted-foreground/70 text-[11px]">
+                  No model context set by this widget.
+                </div>
+              )}
+            </div>
           )}
           {!hasWidgetDebug && (
             <div className="space-y-4">

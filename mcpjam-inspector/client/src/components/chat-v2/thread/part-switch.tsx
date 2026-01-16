@@ -1,5 +1,6 @@
 import { ToolUIPart, DynamicToolUIPart, UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
+import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
@@ -39,6 +40,7 @@ export function PartSwitch({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  onModelContextUpdate,
   pipWidgetId,
   fullscreenWidgetId,
   onRequestPip,
@@ -47,6 +49,7 @@ export function PartSwitch({
   onExitFullscreen,
   displayMode,
   onDisplayModeChange,
+  selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -54,6 +57,13 @@ export function PartSwitch({
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  onModelContextUpdate?: (
+    toolCallId: string,
+    context: {
+      content?: ContentBlock[];
+      structuredContent?: Record<string, unknown>;
+    },
+  ) => void;
   pipWidgetId: string | null;
   fullscreenWidgetId: string | null;
   onRequestPip: (toolCallId: string) => void;
@@ -62,6 +72,7 @@ export function PartSwitch({
   onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  selectedProtocolOverrideIfBothExists?: UIType;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
@@ -84,7 +95,11 @@ export function PartSwitch({
         </>
       );
     }
-    if (uiType === UIType.OPENAI_SDK) {
+    if (
+      uiType === UIType.OPENAI_SDK ||
+      (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
+        selectedProtocolOverrideIfBothExists === UIType.OPENAI_SDK)
+    ) {
       if (toolInfo.toolState !== "output-available") {
         return (
           <>
@@ -147,7 +162,11 @@ export function PartSwitch({
       );
     }
 
-    if (uiType === UIType.MCP_APPS) {
+    if (
+      uiType === UIType.MCP_APPS ||
+      (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
+        selectedProtocolOverrideIfBothExists === UIType.MCP_APPS)
+    ) {
       if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
         return (
           <>
@@ -189,6 +208,7 @@ export function PartSwitch({
               callTool(serverId, toolName, params)
             }
             onWidgetStateChange={onWidgetStateChange}
+            onModelContextUpdate={onModelContextUpdate}
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={onRequestPip}
@@ -201,7 +221,6 @@ export function PartSwitch({
         </>
       );
     }
-
     return <ToolPart part={toolPart} uiType={uiType} />;
   }
 

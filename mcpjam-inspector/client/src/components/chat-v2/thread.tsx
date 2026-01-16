@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { UIMessage } from "@ai-sdk/react";
+import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 
 import { MessageView } from "./thread/message-view";
 import { ModelDefinition } from "@/shared/types";
@@ -7,6 +8,7 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicator";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -16,12 +18,20 @@ interface ThreadProps {
   toolsMetadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  onModelContextUpdate?: (
+    toolCallId: string,
+    context: {
+      content?: ContentBlock[];
+      structuredContent?: Record<string, unknown>;
+    },
+  ) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onFullscreenChange?: (isFullscreen: boolean) => void;
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
+  selectedProtocolOverrideIfBothExists?: UIType;
 }
 
 export function Thread({
@@ -32,12 +42,14 @@ export function Thread({
   toolsMetadata,
   toolServerMap,
   onWidgetStateChange,
+  onModelContextUpdate,
   displayMode,
   onDisplayModeChange,
   onFullscreenChange,
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
+  selectedProtocolOverrideIfBothExists,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -97,6 +109,7 @@ export function Thread({
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
             onWidgetStateChange={onWidgetStateChange}
+            onModelContextUpdate={onModelContextUpdate}
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={handleRequestPip}
@@ -105,6 +118,9 @@ export function Thread({
             onExitFullscreen={handleExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            selectedProtocolOverrideIfBothExists={
+              selectedProtocolOverrideIfBothExists
+            }
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}

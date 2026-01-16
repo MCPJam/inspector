@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState, useEffect, useCallback } from "react";
 import { ArrowDown } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
+import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
 import {
@@ -70,6 +71,15 @@ export function ChatTabV2({
   );
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
+  >([]);
+  const [modelContextQueue, setModelContextQueue] = useState<
+    {
+      toolCallId: string;
+      context: {
+        content?: ContentBlock[];
+        structuredContent?: Record<string, unknown>;
+      };
+    }[]
   >([]);
   const [elicitation, setElicitation] = useState<DialogElicitation | null>(
     null,
@@ -267,6 +277,24 @@ export function ChatTabV2({
     setWidgetStateQueue([]);
   }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
 
+  const handleModelContextUpdate = useCallback(
+    (
+      toolCallId: string,
+      context: {
+        content?: ContentBlock[];
+        structuredContent?: Record<string, unknown>;
+      },
+    ) => {
+      // Queue model context to be included in next message
+      setModelContextQueue((prev) => {
+        // Remove any existing context from same widget (overwrite pattern per SEP-1865)
+        const filtered = prev.filter((item) => item.toolCallId !== toolCallId);
+        return [...filtered, { toolCallId, context }];
+      });
+    },
+    [],
+  );
+
   // Elicitation SSE listener
   useEffect(() => {
     const es = new EventSource("/api/mcp/elicitation/stream");
@@ -368,9 +396,34 @@ export function ChatTabV2({
       if (promptMessages.length > 0) {
         setMessages((prev) => [...prev, ...promptMessages]);
       }
+
+      // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
+      // Sent as "user" messages for compatibility with model provider APIs
+      const contextMessages = modelContextQueue.map(
+        ({ toolCallId, context }) => ({
+          id: `model-context-${toolCallId}-${Date.now()}`,
+          role: "user" as const,
+          parts: [
+            {
+              type: "text" as const,
+              text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+            },
+          ],
+          metadata: {
+            source: "widget-model-context",
+            toolCallId,
+          },
+        }),
+      );
+
+      if (contextMessages.length > 0) {
+        setMessages((prev) => [...prev, ...contextMessages]);
+      }
+
       sendMessage({ text: input });
       setInput("");
       setMcpPromptResults([]);
+      setModelContextQueue([]); // Clear after sending
     }
   };
 
@@ -510,6 +563,7 @@ export function ChatTabV2({
                       toolsMetadata={toolsMetadata}
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}
+                      onModelContextUpdate={handleModelContextUpdate}
                       onFullscreenChange={setIsWidgetFullscreen}
                       enableFullscreenChatOverlay
                       fullscreenChatPlaceholder={placeholder}

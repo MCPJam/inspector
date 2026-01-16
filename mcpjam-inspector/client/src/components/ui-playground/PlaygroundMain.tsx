@@ -30,6 +30,7 @@ import {
   Settings2,
 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
+import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
@@ -55,7 +56,6 @@ import {
   type DeviceType,
   type DisplayMode,
   type CspMode,
-  type AppProtocol,
 } from "@/stores/ui-playground-store";
 import {
   Popover,
@@ -71,6 +71,7 @@ import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -253,6 +254,15 @@ export function PlaygroundMain({
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
+  const [modelContextQueue, setModelContextQueue] = useState<
+    {
+      toolCallId: string;
+      context: {
+        content?: ContentBlock[];
+        structuredContent?: Record<string, unknown>;
+      };
+    }[]
+  >([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
@@ -346,7 +356,6 @@ export function PlaygroundMain({
 
   // Currently selected protocol (detected from tool metadata)
   const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
-
   // Protocol-aware CSP mode: use the correct store based on detected protocol
   const activeCspMode =
     selectedProtocol === "mcp-apps" ? mcpAppsCspMode : cspMode;
@@ -359,9 +368,9 @@ export function PlaygroundMain({
 
   // Show ChatGPT Apps controls when: no protocol selected (default) or openai-apps
   const showChatGPTControls =
-    selectedProtocol === null || selectedProtocol === "openai-apps";
+    selectedProtocol === null || selectedProtocol === UIType.OPENAI_SDK;
   // Show MCP Apps controls when mcp-apps protocol is selected
-  const showMCPAppsControls = selectedProtocol === "mcp-apps";
+  const showMCPAppsControls = selectedProtocol === UIType.MCP_APPS;
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -418,6 +427,25 @@ export function PlaygroundMain({
     [sendMessage],
   );
 
+  // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
+  const handleModelContextUpdate = useCallback(
+    (
+      toolCallId: string,
+      context: {
+        content?: ContentBlock[];
+        structuredContent?: Record<string, unknown>;
+      },
+    ) => {
+      // Queue model context to be included in next message
+      setModelContextQueue((prev) => {
+        // Remove any existing context from same widget (overwrite pattern per SEP-1865)
+        const filtered = prev.filter((item) => item.toolCallId !== toolCallId);
+        return [...filtered, { toolCallId, context }];
+      });
+    },
+    [],
+  );
+
   // Handle clear chat
   const handleClearChat = useCallback(() => {
     resetChat();
@@ -462,9 +490,34 @@ export function PlaygroundMain({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
+
+      // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
+      // Sent as "user" messages for compatibility with model provider APIs
+      const contextMessages = modelContextQueue.map(
+        ({ toolCallId, context }) => ({
+          id: `model-context-${toolCallId}-${Date.now()}`,
+          role: "user" as const,
+          parts: [
+            {
+              type: "text" as const,
+              text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+            },
+          ],
+          metadata: {
+            source: "widget-model-context",
+            toolCallId,
+          },
+        }),
+      );
+
+      if (contextMessages.length > 0) {
+        setMessages((prev) => [...prev, ...contextMessages]);
+      }
+
       sendMessage({ text: input });
       setInput("");
       setMcpPromptResults([]);
+      setModelContextQueue([]); // Clear after sending
     }
   };
 
@@ -570,9 +623,13 @@ export function PlaygroundMain({
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={handleWidgetStateChange}
+                onModelContextUpdate={handleModelContextUpdate}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocol ?? undefined
+                }
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (

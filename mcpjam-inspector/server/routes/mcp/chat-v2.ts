@@ -200,15 +200,9 @@ chatV2.post("/", async (c) => {
               writer.write({
                 type: "finish",
                 messageMetadata: {
-                  inputTokens:
-                    json.messages[json.messages.length - 1].metadata
-                      .inputTokens,
-                  outputTokens:
-                    json.messages[json.messages.length - 1].metadata
-                      .outputTokens,
-                  totalTokens:
-                    json.messages[json.messages.length - 1].metadata
-                      .totalTokens,
+                  inputTokens: json.usage?.inputTokens ?? 0,
+                  outputTokens: json.usage?.outputTokens ?? 0,
+                  totalTokens: json.usage?.totalTokens ?? 0,
                 },
               });
               break;

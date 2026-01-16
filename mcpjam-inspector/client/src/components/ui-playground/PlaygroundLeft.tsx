@@ -7,7 +7,7 @@
  * - Device/display mode controls at bottom
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
@@ -25,15 +25,12 @@ import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
 import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
+import { detectUiTypeFromTool, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface PlaygroundLeftProps {
   tools: Record<string, Tool>;
-  toolNames: string[];
-  filteredToolNames: string[];
   selectedToolName: string | null;
   fetchingTools: boolean;
-  searchQuery: string;
-  onSearchQueryChange: (q: string) => void;
   onRefresh: () => void;
   onSelectTool: (name: string | null) => void;
   formFields: FormField[];
@@ -44,7 +41,6 @@ interface PlaygroundLeftProps {
   onSave: () => void;
   // Saved requests
   savedRequests: SavedRequest[];
-  filteredSavedRequests: SavedRequest[];
   highlightedRequestId: string | null;
   onLoadRequest: (req: SavedRequest) => void;
   onRenameRequest: (req: SavedRequest) => void;
@@ -56,12 +52,8 @@ interface PlaygroundLeftProps {
 
 export function PlaygroundLeft({
   tools,
-  toolNames,
-  filteredToolNames,
   selectedToolName,
   fetchingTools,
-  searchQuery,
-  onSearchQueryChange,
   onRefresh,
   onSelectTool,
   formFields,
@@ -71,7 +63,6 @@ export function PlaygroundLeft({
   onExecute,
   onSave,
   savedRequests,
-  filteredSavedRequests,
   highlightedRequestId,
   onLoadRequest,
   onRenameRequest,
@@ -79,9 +70,36 @@ export function PlaygroundLeft({
   onDeleteRequest,
   onClose,
 }: PlaygroundLeftProps) {
-  console.log("tools", tools);
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Get all tool names
+  const toolNames = useMemo(() => {
+    return Object.keys(tools);
+  }, [tools]);
+
+  // Filter tool names by search query (no UI filtering - show all tools)
+  const filteredToolNames = useMemo(() => {
+    if (!searchQuery.trim()) return toolNames;
+    const query = searchQuery.trim().toLowerCase();
+    return toolNames.filter((name) => {
+      const tool = tools[name];
+      const haystack = `${name} ${tool?.description ?? ""}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [toolNames, tools, searchQuery]);
+
+  // Filter saved requests by search query
+  const filteredSavedRequestsLocal = useMemo(() => {
+    if (!searchQuery.trim()) return savedRequests;
+    const query = searchQuery.trim().toLowerCase();
+    return savedRequests.filter((req) => {
+      const haystack =
+        `${req.title} ${req.description ?? ""} ${req.toolName}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [savedRequests, searchQuery]);
 
   // Sync list expansion with tool selection
   useEffect(() => {
@@ -111,14 +129,22 @@ export function PlaygroundLeft({
     onExecute();
   };
 
+  const shouldRenderUiTypeOverrideSelector = useMemo(() => {
+    if (!selectedToolName) return false;
+    return (
+      detectUiTypeFromTool(tools[selectedToolName!]) ===
+      UIType.OPENAI_SDK_AND_MCP_APPS
+    );
+  }, [selectedToolName, tools]);
+
   const mainContent = (
     <div className="h-full min-h-0">
       {activeTab === "saved" && !selectedToolName ? (
         <SavedRequestsTab
           searchQuery={searchQuery}
-          onSearchQueryChange={onSearchQueryChange}
+          onSearchQueryChange={setSearchQuery}
           savedRequests={savedRequests}
-          filteredSavedRequests={filteredSavedRequests}
+          filteredSavedRequests={filteredSavedRequestsLocal}
           highlightedRequestId={highlightedRequestId}
           onLoadRequest={handleLoadRequest}
           onRenameRequest={onRenameRequest}
@@ -133,7 +159,7 @@ export function PlaygroundLeft({
           selectedToolName={selectedToolName}
           fetchingTools={fetchingTools}
           searchQuery={searchQuery}
-          onSearchQueryChange={onSearchQueryChange}
+          onSearchQueryChange={setSearchQuery}
           onSelectTool={onSelectTool}
           onCollapseList={() => setIsListExpanded(false)}
         />
@@ -145,6 +171,9 @@ export function PlaygroundLeft({
           onClear={() => onSelectTool(null)}
           onFieldChange={onFieldChange}
           onToggleField={onToggleField}
+          shouldRenderUiTypeOverrideSelector={
+            shouldRenderUiTypeOverrideSelector
+          }
         />
       )}
     </div>
@@ -262,6 +291,7 @@ interface ToolParametersViewProps {
   onClear: () => void;
   onFieldChange: (name: string, value: unknown) => void;
   onToggleField: (name: string, isSet: boolean) => void;
+  shouldRenderUiTypeOverrideSelector: boolean;
 }
 
 function ToolParametersView({
@@ -271,6 +301,7 @@ function ToolParametersView({
   onClear,
   onFieldChange,
   onToggleField,
+  shouldRenderUiTypeOverrideSelector,
 }: ToolParametersViewProps) {
   return (
     <div className="h-full flex flex-col">
@@ -278,15 +309,13 @@ function ToolParametersView({
         toolName={selectedToolName}
         onExpand={onExpand}
         onClear={onClear}
+        showProtocolSelector={shouldRenderUiTypeOverrideSelector}
       />
-
-      <div className="flex-1 min-h-0 overflow-auto px-3 py-3">
-        <ParametersForm
-          fields={formFields}
-          onFieldChange={onFieldChange}
-          onToggleField={onToggleField}
-        />
-      </div>
+      <ParametersForm
+        fields={formFields}
+        onFieldChange={onFieldChange}
+        onToggleField={onToggleField}
+      />
     </div>
   );
 }

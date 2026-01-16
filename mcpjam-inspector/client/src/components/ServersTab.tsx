@@ -4,6 +4,7 @@ import { Button } from "./ui/button";
 import {
   Plus,
   FileText,
+  FileSymlink,
   Cable,
   Link,
   Loader2,
@@ -47,6 +48,7 @@ import {
 import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
+import { formatJsonConfig } from "@/lib/json-config-parser";
 import { Skeleton } from "./ui/skeleton";
 
 interface ServersTabProps {
@@ -153,6 +155,35 @@ export function ServersTab({
     });
     setIsImportingJson(true);
     setIsActionMenuOpen(false);
+  };
+
+  const downloadJson = (filename: string, data: any) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportAsJsonClick = () => {
+    posthog.capture("export_servers_to_json_button_clicked", {
+      location: "servers_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+    const formattedJson = formatJsonConfig(connectedServerConfigs);
+    const timestamp = new Date()
+      .toISOString()
+      .split(".")[0]
+      .replace(/[T:]/g, "-");
+    const fileName = `mcp-servers-config-${timestamp}.json`;
+    downloadJson(fileName, formattedJson);
   };
 
   const handleCreateTunnel = () => {
@@ -309,43 +340,56 @@ export function ServersTab({
   };
 
   const renderServerActionsMenu = () => (
-    <HoverCard
-      open={isActionMenuOpen}
-      onOpenChange={setIsActionMenuOpen}
-      openDelay={150}
-      closeDelay={100}
-    >
-      <HoverCardTrigger asChild>
+    <>
+      {Object.keys(connectedServerConfigs ?? {}).length > 0 && (
         <Button
+          variant="outline"
           size="sm"
-          onClick={handleAddServerClick}
-          className="cursor-pointer"
+          className="justify-start"
+          onClick={handleExportAsJsonClick}
         >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Server
+          <FileSymlink className="h-4 w-4 mr-2" />
+          Export Servers
         </Button>
-      </HoverCardTrigger>
-      <HoverCardContent align="end" sideOffset={8} className="w-56 p-3">
-        <div className="flex flex-col gap-2">
+      )}
+      <HoverCard
+        open={isActionMenuOpen}
+        onOpenChange={setIsActionMenuOpen}
+        openDelay={150}
+        closeDelay={100}
+      >
+        <HoverCardTrigger asChild>
           <Button
-            variant="ghost"
-            className="justify-start"
+            size="sm"
             onClick={handleAddServerClick}
+            className="cursor-pointer"
           >
             <Plus className="h-4 w-4 mr-2" />
-            Add manually
+            Add Server
           </Button>
-          <Button
-            variant="ghost"
-            className="justify-start"
-            onClick={handleImportJsonClick}
-          >
-            <FileText className="h-4 w-4 mr-2" />
-            Import JSON
-          </Button>
-        </div>
-      </HoverCardContent>
-    </HoverCard>
+        </HoverCardTrigger>
+        <HoverCardContent align="end" sideOffset={8} className="w-56 p-3">
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="ghost"
+              className="justify-start"
+              onClick={handleAddServerClick}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add manually
+            </Button>
+            <Button
+              variant="ghost"
+              className="justify-start"
+              onClick={handleImportJsonClick}
+            >
+              <FileText className="h-4 w-4 mr-2" />
+              Import JSON
+            </Button>
+          </div>
+        </HoverCardContent>
+      </HoverCard>
+    </>
   );
 
   const renderConnectedContent = () => (

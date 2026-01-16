@@ -32,6 +32,7 @@ import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
 
 // Constants
 import { PANEL_SIZES } from "./constants";
+import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface UIPlaygroundTabProps {
   serverConfig?: MCPServerConfig;
@@ -132,36 +133,6 @@ export function UIPlaygroundTab({
     setFormFields,
   });
 
-  // Search state
-  const [searchQuery, setSearchQuery] = useState("");
-
-  // Compute tool names - show ChatGPT/MCP apps (OpenAI SDK or MCP Apps metadata)
-  const toolNames = useMemo(() => {
-    return Object.keys(tools).filter((name) => {
-      const meta = toolsMetadata[name];
-      return (
-        meta?.["openai/outputTemplate"] != null || meta?.ui?.resourceUri != null
-      );
-    });
-  }, [tools, toolsMetadata]);
-
-  // Filter tool names by search query
-  const filteredToolNames = useMemo(() => {
-    if (!searchQuery.trim()) return toolNames;
-    const query = searchQuery.trim().toLowerCase();
-    return toolNames.filter((name) => {
-      const tool = tools[name];
-      const haystack = `${name} ${tool?.description ?? ""}`.toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [toolNames, tools, searchQuery]);
-
-  // Filter saved requests by search query
-  const filteredSavedRequests = useMemo(
-    () => savedRequestsHook.getFilteredRequests(searchQuery),
-    [savedRequestsHook, searchQuery],
-  );
-
   // Fetch tools when server changes
   const fetchTools = useCallback(async () => {
     if (!serverName) return;
@@ -207,13 +178,12 @@ export function UIPlaygroundTab({
   useEffect(() => {
     // If a specific tool is selected, detect its protocol
     if (selectedTool) {
-      const meta = toolsMetadata[selectedTool];
-      if (meta?.["openai/outputTemplate"] != null) {
-        setSelectedProtocol("openai-apps");
-      } else if (meta?.ui?.resourceUri != null) {
-        setSelectedProtocol("mcp-apps");
+      const tool = tools[selectedTool];
+      const uiType = detectUiTypeFromTool(tool);
+      if (uiType === UIType.OPENAI_SDK_AND_MCP_APPS) {
+        setSelectedProtocol(UIType.OPENAI_SDK);
       } else {
-        setSelectedProtocol(null);
+        setSelectedProtocol(uiType);
       }
       return;
     }
@@ -223,23 +193,6 @@ export function UIPlaygroundTab({
     if (toolMetaEntries.length === 0) {
       setSelectedProtocol(null);
       return;
-    }
-
-    const hasOpenAI = toolMetaEntries.some(
-      (meta) => meta?.["openai/outputTemplate"] != null,
-    );
-    const hasMCPApps = toolMetaEntries.some(
-      (meta) => meta?.ui?.resourceUri != null,
-    );
-
-    // If server only has one protocol type, use that
-    if (hasMCPApps && !hasOpenAI) {
-      setSelectedProtocol("mcp-apps");
-    } else if (hasOpenAI && !hasMCPApps) {
-      setSelectedProtocol("openai-apps");
-    } else {
-      // Mixed or no app tools - default to null (shows ChatGPT controls)
-      setSelectedProtocol(null);
     }
   }, [selectedTool, toolsMetadata, setSelectedProtocol]);
 
@@ -281,12 +234,8 @@ export function UIPlaygroundTab({
             >
               <PlaygroundLeft
                 tools={tools}
-                toolNames={toolNames}
-                filteredToolNames={filteredToolNames}
                 selectedToolName={selectedTool}
                 fetchingTools={false}
-                searchQuery={searchQuery}
-                onSearchQueryChange={setSearchQuery}
                 onRefresh={fetchTools}
                 onSelectTool={setSelectedTool}
                 formFields={formFields}
@@ -296,7 +245,6 @@ export function UIPlaygroundTab({
                 onExecute={executeTool}
                 onSave={savedRequestsHook.openSaveDialog}
                 savedRequests={savedRequestsHook.savedRequests}
-                filteredSavedRequests={filteredSavedRequests}
                 highlightedRequestId={savedRequestsHook.highlightedRequestId}
                 onLoadRequest={savedRequestsHook.handleLoadRequest}
                 onRenameRequest={savedRequestsHook.handleRenameRequest}

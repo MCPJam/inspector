@@ -1,4 +1,5 @@
 import { ServerFormData } from "@/shared/types.js";
+import { ServerWithName } from "@/state/app-types";
 
 export interface JsonServerConfig {
   command?: string;
@@ -10,6 +11,45 @@ export interface JsonServerConfig {
 
 export interface JsonConfig {
   mcpServers: Record<string, JsonServerConfig>;
+}
+
+/**
+ * Formats ServerWithName objects to JSON config format
+ * @param serversObj - Record of server names to ServerWithName objects
+ * @returns JsonConfig object ready for export
+ */
+export function formatJsonConfig(
+  serversObj: Record<string, ServerWithName>,
+): JsonConfig {
+  const mcpServers: Record<string, JsonServerConfig> = {};
+
+  for (const [key, server] of Object.entries(serversObj)) {
+    const { config } = server;
+
+    // Check if it's an SSE type (has URL) or stdio type (has command)
+    if ("url" in config && config.url) {
+      mcpServers[key] = {
+        type: "sse",
+        url: config.url.toString(),
+      };
+    } else if ("command" in config && config.command) {
+      const serverConfig: JsonServerConfig = {
+        command: config.command,
+        args: config.args || [],
+      };
+
+      // Only add env if it exists and has properties
+      if (config.env && Object.keys(config.env).length > 0) {
+        serverConfig.env = config.env;
+      }
+
+      mcpServers[key] = serverConfig;
+    } else {
+      console.warn(`Skipping server "${key}": missing required url or command`);
+    }
+  }
+
+  return { mcpServers };
 }
 
 /**

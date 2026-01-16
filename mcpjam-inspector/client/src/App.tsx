@@ -40,7 +40,11 @@ import LoadingScreen from "./components/LoadingScreen";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import { listTools } from "./lib/apis/mcp-tools-api";
-import { isMCPApp, isOpenAIApp } from "./lib/mcp-ui/mcp-apps-utils";
+import {
+  isMCPApp,
+  isOpenAIApp,
+  isOpenAIAppAndMCPApp,
+} from "./lib/mcp-ui/mcp-apps-utils";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
 
 export default function App() {
@@ -131,7 +135,11 @@ export default function App() {
         connectedServerNames.map(async (serverName) => {
           try {
             const toolsData = await listTools(serverName);
-            if (isOpenAIApp(toolsData) || isMCPApp(toolsData)) {
+            if (
+              isOpenAIApp(toolsData) ||
+              isMCPApp(toolsData) ||
+              isOpenAIAppAndMCPApp(toolsData)
+            ) {
               serversWithOpenAiAppOrMcpApps.add(serverName);
             }
           } catch (error) {

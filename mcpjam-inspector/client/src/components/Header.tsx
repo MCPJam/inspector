@@ -10,7 +10,7 @@ interface HeaderProps {
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
   onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => string;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   onLeaveWorkspace: (workspaceId: string) => void;

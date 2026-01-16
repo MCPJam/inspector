@@ -16,7 +16,7 @@ interface WorkspaceSelectorProps {
   activeWorkspaceId: string;
   workspaces: Record<string, Workspace>;
   onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => string;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoading?: boolean;
@@ -99,9 +99,7 @@ export function WorkspaceSelector({
               )}
               onClick={() => onSwitchWorkspace(workspace.id)}
             >
-              <span className="truncate flex-1">
-                {workspace.name}
-              </span>
+              <span className="truncate flex-1">{workspace.name}</span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();

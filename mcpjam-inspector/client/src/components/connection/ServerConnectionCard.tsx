@@ -37,7 +37,11 @@ import {
   type ListToolsResultWithMetadata,
 } from "@/lib/apis/mcp-tools-api";
 import { ServerInfoModal } from "./ServerInfoModal";
-import { isMCPApp, isOpenAIApp } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  isMCPApp,
+  isOpenAIApp,
+  isOpenAIAppAndMCPApp,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
@@ -103,6 +107,9 @@ export function ServerConnectionCard({
 
   // Check if this is an OpenAI app (has tools with openai/outputTemplate metadata)
   const isOpenAIAppServer = isOpenAIApp(toolsData);
+
+  // Check if this is an OpenAI app and MCP app (has tools with openai/outputTemplate and ui.resourceUri metadata)
+  const isOpenAIAppAndMCPAppServer = isOpenAIAppAndMCPApp(toolsData);
 
   // Compute the server-specific tunnel URL from the shared tunnel
   // Only show tunnel URL if server is connected
@@ -393,7 +400,7 @@ export function ServerConnectionCard({
                   className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
                   <span>{"View server info"}</span>
-                  {isOpenAIAppServer && (
+                  {(isOpenAIAppServer || isOpenAIAppAndMCPAppServer) && (
                     <img
                       src="/openai_logo.png"
                       alt="OpenAI App"
@@ -401,7 +408,7 @@ export function ServerConnectionCard({
                       title="OpenAI App"
                     />
                   )}
-                  {isMCPAppServer && !isOpenAIAppServer && (
+                  {(isMCPAppServer || isOpenAIAppAndMCPAppServer) && (
                     <img
                       src="/mcp.svg"
                       alt="MCP App"
