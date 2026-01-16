@@ -135,7 +135,10 @@ chatV2.post("/", async (c) => {
 
             if (!res.ok) {
               const errorText = await res.text().catch(() => "step failed");
-              logger.error(`[mcp/chat-v2] Backend step failed with status ${res.status}:`, errorText);
+              logger.error(
+                `[mcp/chat-v2] Backend step failed with status ${res.status}:`,
+                errorText,
+              );
               writer.write({ type: "error", errorText } as any);
               break;
             }

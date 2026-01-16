@@ -64,10 +64,10 @@ export function buildAvailableModels(params: {
 
   const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
     ? getOpenRouterSelectedModels().map((id) => ({
-      id,
-      name: id,
-      provider: "openrouter" as const,
-    }))
+        id,
+        name: id,
+        provider: "openrouter" as const,
+      }))
     : [];
 
   let models: ModelDefinition[] = cloud;

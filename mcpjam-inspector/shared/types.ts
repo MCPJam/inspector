@@ -711,12 +711,12 @@ export interface ConnectionTestResponse {
 
 export interface ChatStreamEvent {
   type:
-  | "text"
-  | "tool_call"
-  | "tool_result"
-  | "elicitation_request"
-  | "elicitation_complete"
-  | "error";
+    | "text"
+    | "tool_call"
+    | "tool_result"
+    | "elicitation_request"
+    | "elicitation_complete"
+    | "error";
   content?: string;
   toolCall?: ToolCall;
   toolResult?: {
