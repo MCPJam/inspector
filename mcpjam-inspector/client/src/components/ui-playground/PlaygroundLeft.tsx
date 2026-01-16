@@ -311,11 +311,13 @@ function ToolParametersView({
         onClear={onClear}
         showProtocolSelector={shouldRenderUiTypeOverrideSelector}
       />
-      <ParametersForm
-        fields={formFields}
-        onFieldChange={onFieldChange}
-        onToggleField={onToggleField}
-      />
+      <ScrollArea className="flex-1 min-h-0">
+        <ParametersForm
+          fields={formFields}
+          onFieldChange={onFieldChange}
+          onToggleField={onToggleField}
+        />
+      </ScrollArea>
     </div>
   );
 }
