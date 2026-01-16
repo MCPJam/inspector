@@ -7,7 +7,7 @@
  * - Device/display mode controls at bottom
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
@@ -25,6 +25,7 @@ import { TabHeader } from "./TabHeader";
 import { ToolList } from "./ToolList";
 import { SelectedToolHeader } from "./SelectedToolHeader";
 import { ParametersForm } from "./ParametersForm";
+import { detectUiTypeFromTool, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface PlaygroundLeftProps {
   tools: Record<string, Tool>;
@@ -79,7 +80,6 @@ export function PlaygroundLeft({
   onDeleteRequest,
   onClose,
 }: PlaygroundLeftProps) {
-  console.log("tools", tools);
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
 
@@ -110,6 +110,14 @@ export function PlaygroundLeft({
     e.preventDefault();
     onExecute();
   };
+
+  const shouldRenderUiTypeOverrideSelector = useMemo(() => {
+    if (!selectedToolName) return false;
+    return (
+      detectUiTypeFromTool(tools[selectedToolName!]) ===
+      UIType.OPENAI_SDK_AND_MCP_APPS
+    );
+  }, [selectedToolName, tools]);
 
   const mainContent = (
     <div className="h-full min-h-0">
@@ -145,6 +153,9 @@ export function PlaygroundLeft({
           onClear={() => onSelectTool(null)}
           onFieldChange={onFieldChange}
           onToggleField={onToggleField}
+          shouldRenderUiTypeOverrideSelector={
+            shouldRenderUiTypeOverrideSelector
+          }
         />
       )}
     </div>
@@ -262,6 +273,7 @@ interface ToolParametersViewProps {
   onClear: () => void;
   onFieldChange: (name: string, value: unknown) => void;
   onToggleField: (name: string, isSet: boolean) => void;
+  shouldRenderUiTypeOverrideSelector: boolean;
 }
 
 function ToolParametersView({
@@ -271,6 +283,7 @@ function ToolParametersView({
   onClear,
   onFieldChange,
   onToggleField,
+  shouldRenderUiTypeOverrideSelector,
 }: ToolParametersViewProps) {
   return (
     <div className="h-full flex flex-col">
@@ -278,15 +291,13 @@ function ToolParametersView({
         toolName={selectedToolName}
         onExpand={onExpand}
         onClear={onClear}
+        showProtocolSelector={shouldRenderUiTypeOverrideSelector}
       />
-
-      <div className="flex-1 min-h-0 overflow-auto px-3 py-3">
-        <ParametersForm
-          fields={formFields}
-          onFieldChange={onFieldChange}
-          onToggleField={onToggleField}
-        />
-      </div>
+      <ParametersForm
+        fields={formFields}
+        onFieldChange={onFieldChange}
+        onToggleField={onToggleField}
+      />
     </div>
   );
 }

@@ -49,6 +49,7 @@ export function PartSwitch({
   onExitFullscreen,
   displayMode,
   onDisplayModeChange,
+  selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -71,6 +72,7 @@ export function PartSwitch({
   onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  selectedProtocolOverrideIfBothExists?: UIType;
 }) {
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
@@ -93,7 +95,11 @@ export function PartSwitch({
         </>
       );
     }
-    if (uiType === UIType.OPENAI_SDK) {
+    if (
+      uiType === UIType.OPENAI_SDK ||
+      (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
+        selectedProtocolOverrideIfBothExists === UIType.OPENAI_SDK)
+    ) {
       if (toolInfo.toolState !== "output-available") {
         return (
           <>
@@ -156,7 +162,11 @@ export function PartSwitch({
       );
     }
 
-    if (uiType === UIType.MCP_APPS) {
+    if (
+      uiType === UIType.MCP_APPS ||
+      (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
+        selectedProtocolOverrideIfBothExists === UIType.MCP_APPS)
+    ) {
       if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
         return (
           <>
@@ -211,7 +221,6 @@ export function PartSwitch({
         </>
       );
     }
-
     return <ToolPart part={toolPart} uiType={uiType} />;
   }
 

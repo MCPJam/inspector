@@ -32,6 +32,8 @@ import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
 
 // Constants
 import { PANEL_SIZES } from "./constants";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface UIPlaygroundTabProps {
   serverConfig?: MCPServerConfig;
@@ -138,12 +140,11 @@ export function UIPlaygroundTab({
   // Compute tool names - show ChatGPT/MCP apps (OpenAI SDK or MCP Apps metadata)
   const toolNames = useMemo(() => {
     return Object.keys(tools).filter((name) => {
-      const meta = toolsMetadata[name];
-      return (
-        meta?.["openai/outputTemplate"] != null || meta?.ui?.resourceUri != null
-      );
+      const tool = tools[name];
+      const uiType = detectUiTypeFromTool(tool);
+      return uiType !== null;
     });
-  }, [tools, toolsMetadata]);
+  }, [tools]);
 
   // Filter tool names by search query
   const filteredToolNames = useMemo(() => {
@@ -207,13 +208,12 @@ export function UIPlaygroundTab({
   useEffect(() => {
     // If a specific tool is selected, detect its protocol
     if (selectedTool) {
-      const meta = toolsMetadata[selectedTool];
-      if (meta?.["openai/outputTemplate"] != null) {
-        setSelectedProtocol("openai-apps");
-      } else if (meta?.ui?.resourceUri != null) {
-        setSelectedProtocol("mcp-apps");
+      const tool = tools[selectedTool];
+      const uiType = detectUiTypeFromTool(tool);
+      if (uiType === UIType.OPENAI_SDK_AND_MCP_APPS) {
+        setSelectedProtocol(UIType.OPENAI_SDK);
       } else {
-        setSelectedProtocol(null);
+        setSelectedProtocol(uiType);
       }
       return;
     }
@@ -223,23 +223,6 @@ export function UIPlaygroundTab({
     if (toolMetaEntries.length === 0) {
       setSelectedProtocol(null);
       return;
-    }
-
-    const hasOpenAI = toolMetaEntries.some(
-      (meta) => meta?.["openai/outputTemplate"] != null,
-    );
-    const hasMCPApps = toolMetaEntries.some(
-      (meta) => meta?.ui?.resourceUri != null,
-    );
-
-    // If server only has one protocol type, use that
-    if (hasMCPApps && !hasOpenAI) {
-      setSelectedProtocol("mcp-apps");
-    } else if (hasOpenAI && !hasMCPApps) {
-      setSelectedProtocol("openai-apps");
-    } else {
-      // Mixed or no app tools - default to null (shows ChatGPT controls)
-      setSelectedProtocol(null);
     }
   }, [selectedTool, toolsMetadata, setSelectedProtocol]);
 

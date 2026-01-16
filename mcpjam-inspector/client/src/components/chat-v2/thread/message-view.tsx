@@ -10,6 +10,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 export function MessageView({
   message,
@@ -27,6 +28,7 @@ export function MessageView({
   onExitFullscreen,
   displayMode,
   onDisplayModeChange,
+  selectedProtocolOverrideIfBothExists,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -49,6 +51,7 @@ export function MessageView({
   onExitFullscreen: (toolCallId: string) => void;
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
+  selectedProtocolOverrideIfBothExists?: UIType;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -80,6 +83,9 @@ export function MessageView({
             onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            selectedProtocolOverrideIfBothExists={
+              selectedProtocolOverrideIfBothExists
+            }
           />
         ))}
       </UserMessageBubble>
@@ -122,6 +128,9 @@ export function MessageView({
                 onExitFullscreen={onExitFullscreen}
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocolOverrideIfBothExists
+                }
               />
             ))}
           </div>

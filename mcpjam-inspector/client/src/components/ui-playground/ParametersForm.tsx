@@ -22,14 +22,14 @@ export function ParametersForm({
 }: ParametersFormProps) {
   if (fields.length === 0) {
     return (
-      <p className="text-xs text-muted-foreground text-center py-4">
+      <p className="text-xs text-muted-foreground text-center py-8 px-3">
         No parameters required
       </p>
     );
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 px-3 py-3">
       {fields.map((field) => (
         <ParameterField
           key={field.name}

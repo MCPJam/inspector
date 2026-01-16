@@ -16,7 +16,7 @@ interface WorkspaceSelectorProps {
   activeWorkspaceId: string;
   workspaces: Record<string, Workspace>;
   onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => string;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoading?: boolean;

@@ -8,6 +8,7 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicator";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -30,6 +31,7 @@ interface ThreadProps {
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
+  selectedProtocolOverrideIfBothExists?: UIType;
 }
 
 export function Thread({
@@ -47,6 +49,7 @@ export function Thread({
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
+  selectedProtocolOverrideIfBothExists,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -115,6 +118,9 @@ export function Thread({
             onExitFullscreen={handleExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            selectedProtocolOverrideIfBothExists={
+              selectedProtocolOverrideIfBothExists
+            }
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}

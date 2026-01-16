@@ -56,7 +56,6 @@ import {
   type DeviceType,
   type DisplayMode,
   type CspMode,
-  type AppProtocol,
 } from "@/stores/ui-playground-store";
 import {
   Popover,
@@ -72,6 +71,7 @@ import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -356,7 +356,6 @@ export function PlaygroundMain({
 
   // Currently selected protocol (detected from tool metadata)
   const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
-
   // Protocol-aware CSP mode: use the correct store based on detected protocol
   const activeCspMode =
     selectedProtocol === "mcp-apps" ? mcpAppsCspMode : cspMode;
@@ -369,9 +368,9 @@ export function PlaygroundMain({
 
   // Show ChatGPT Apps controls when: no protocol selected (default) or openai-apps
   const showChatGPTControls =
-    selectedProtocol === null || selectedProtocol === "openai-apps";
+    selectedProtocol === null || selectedProtocol === UIType.OPENAI_SDK;
   // Show MCP Apps controls when mcp-apps protocol is selected
-  const showMCPAppsControls = selectedProtocol === "mcp-apps";
+  const showMCPAppsControls = selectedProtocol === UIType.MCP_APPS;
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -628,6 +627,9 @@ export function PlaygroundMain({
                 displayMode={displayMode}
                 onDisplayModeChange={onDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocol ?? undefined
+                }
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
