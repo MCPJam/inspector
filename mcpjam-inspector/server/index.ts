@@ -18,7 +18,10 @@ import {
   getSessionToken,
 } from "./services/session-token";
 import { isLocalhostRequest } from "./utils/localhost-check";
-import { sessionAuthMiddleware } from "./middleware/session-auth";
+import {
+  sessionAuthMiddleware,
+  scrubTokenFromUrl,
+} from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 
@@ -249,7 +252,13 @@ app.use("*", sessionAuthMiddleware);
 const enableHttpLogs =
   process.env.NODE_ENV !== "production" || process.env.VERBOSE_LOGS === "true";
 if (enableHttpLogs) {
-  app.use("*", logger());
+  // Use custom print function to scrub session tokens from logged URLs
+  app.use(
+    "*",
+    logger((message) => {
+      console.log(scrubTokenFromUrl(message));
+    }),
+  );
 }
 app.use(
   "*",

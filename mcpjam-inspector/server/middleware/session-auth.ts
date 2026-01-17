@@ -10,27 +10,50 @@
  *
  * The query parameter fallback is necessary because the EventSource API
  * does not support custom headers.
+ *
+ * SECURITY NOTE: When adding new routes, consider whether they should be protected.
+ * Only add routes to UNPROTECTED_* if they:
+ * - Are public health checks
+ * - Have their own authentication (OAuth endpoints)
+ * - Are loaded in sandboxed iframes that can't include auth headers
+ * - Are static assets that don't expose sensitive data
  */
 
 import type { Context, Next } from "hono";
 import { validateToken } from "../services/session-token.js";
 
-// Routes that don't require authentication
+/**
+ * Routes that don't require authentication.
+ *
+ * SECURITY: Each route here must have a documented reason for being unprotected.
+ */
 const UNPROTECTED_ROUTES = [
-  "/health",
-  "/api/mcp/health",
-  "/api/apps/health",
-  "/api/session-token",
+  "/health", // Health check - no sensitive data
+  "/api/mcp/health", // Health check - no sensitive data
+  "/api/apps/health", // Health check - no sensitive data
+  "/api/session-token", // Token endpoint - protected by localhost check instead
 ];
 
-// Prefixes for routes that don't require authentication
+/**
+ * Route prefixes that don't require authentication.
+ *
+ * SECURITY: Each prefix here must have a documented reason for being unprotected.
+ */
 const UNPROTECTED_PREFIXES = [
-  "/assets/", // Static assets (JS, CSS, images)
-  "/api/mcp/oauth/", // OAuth proxy endpoints (auth handled by OAuth protocol)
-  "/api/mcp/apps/", // MCP Apps endpoints (widgets loaded in sandboxed iframes)
-  "/api/apps/chatgpt/", // ChatGPT apps endpoints (widgets loaded in sandboxed iframes)
-  "/api/mcp/sandbox-proxy", // Sandbox proxy for widget isolation
+  "/assets/", // Static assets (JS, CSS, images) - no sensitive data
+  "/api/mcp/oauth/", // OAuth proxy - auth handled by OAuth protocol itself
+  "/api/mcp/apps/", // MCP Apps widgets - loaded in sandboxed iframes, can't send headers
+  "/api/apps/chatgpt/", // ChatGPT widgets - loaded in sandboxed iframes, can't send headers
+  "/api/mcp/sandbox-proxy", // Sandbox proxy - loaded in iframe, serves isolated content
 ];
+
+/**
+ * Scrub sensitive tokens from URLs for safe logging.
+ * Replaces _token query parameter values with [REDACTED].
+ */
+export function scrubTokenFromUrl(url: string): string {
+  return url.replace(/([?&])_token=[^&]*/g, "$1_token=[REDACTED]");
+}
 
 // Routes that typically use query param auth (SSE endpoints)
 const SSE_ROUTES = [
