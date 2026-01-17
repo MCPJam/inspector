@@ -1,7 +1,8 @@
 import { MCPServerConfig } from "@/sdk";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
+import { getAuthHeaders } from "@/lib/session-token";
 
-// Helper to add timeout to fetch requests
+// Helper to add timeout and auth headers to fetch requests
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
@@ -13,6 +14,10 @@ async function fetchWithTimeout(
   try {
     const response = await fetch(url, {
       ...options,
+      headers: {
+        ...getAuthHeaders(), // Add session auth headers
+        ...options.headers,
+      },
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -47,12 +52,15 @@ export async function testConnection(
 export async function deleteServer(serverId: string) {
   const res = await fetch(`/api/mcp/servers/${encodeURIComponent(serverId)}`, {
     method: "DELETE",
+    headers: getAuthHeaders(),
   });
   return res.json();
 }
 
 export async function listServers() {
-  const res = await fetch("/api/mcp/servers");
+  const res = await fetch("/api/mcp/servers", {
+    headers: getAuthHeaders(),
+  });
   return res.json();
 }
 
@@ -75,6 +83,9 @@ export async function reconnectServer(
 export async function getInitializationInfo(serverId: string) {
   const res = await fetch(
     `/api/mcp/servers/init-info/${encodeURIComponent(serverId)}`,
+    {
+      headers: getAuthHeaders(),
+    },
   );
   return res.json();
 }
@@ -85,7 +96,7 @@ export async function setServerLoggingLevel(
 ) {
   const res = await fetch("/api/mcp/log-level", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId, level }),
   });
   return res.json();

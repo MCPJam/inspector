@@ -1,4 +1,5 @@
 import type { MCPTask, MCPListTasksResult } from "@/sdk";
+import { getAuthHeaders } from "@/lib/session-token";
 
 // Re-export SDK types for convenience
 export type Task = MCPTask;
@@ -10,7 +11,7 @@ export async function listTasks(
 ): Promise<ListTasksResult> {
   const res = await fetch("/api/mcp/tasks/list", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId, cursor }),
   });
 
@@ -28,7 +29,7 @@ export async function listTasks(
 export async function getTask(serverId: string, taskId: string): Promise<Task> {
   const res = await fetch("/api/mcp/tasks/get", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId, taskId }),
   });
 
@@ -49,7 +50,7 @@ export async function getTaskResult(
 ): Promise<unknown> {
   const res = await fetch("/api/mcp/tasks/result", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId, taskId }),
   });
 
@@ -73,7 +74,7 @@ export async function cancelTask(
 ): Promise<Task> {
   const res = await fetch("/api/mcp/tasks/cancel", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId, taskId }),
   });
 
@@ -106,7 +107,7 @@ export async function getTaskCapabilities(
 ): Promise<TaskCapabilities> {
   const res = await fetch("/api/mcp/tasks/capabilities", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId }),
   });
 
@@ -139,7 +140,7 @@ export async function getLatestProgress(
 ): Promise<ProgressEvent | null> {
   const res = await fetch("/api/mcp/tasks/progress", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId }),
   });
 
@@ -160,7 +161,7 @@ export async function getAllProgress(
 ): Promise<ProgressEvent[]> {
   const res = await fetch("/api/mcp/tasks/progress/all", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId }),
   });
 
@@ -193,7 +194,7 @@ export async function respondToTaskElicitation(
 ): Promise<{ ok: boolean }> {
   const res = await fetch("/api/mcp/elicitation/respond", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ requestId, action, content }),
   });
 

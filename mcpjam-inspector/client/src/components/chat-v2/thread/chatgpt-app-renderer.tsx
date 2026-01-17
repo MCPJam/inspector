@@ -24,6 +24,7 @@ import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
+import { getAuthHeaders } from "@/lib/session-token";
 
 type ToolState =
   | "input-streaming"
@@ -337,7 +338,7 @@ function useWidgetFetch(
 
         const storeResponse = await fetch("/api/apps/chatgpt/widget/store", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             serverId,
             uri: outputTemplate,

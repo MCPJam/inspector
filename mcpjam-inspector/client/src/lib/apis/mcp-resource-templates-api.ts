@@ -1,11 +1,12 @@
 import type { MCPResourceTemplate } from "@/sdk";
+import { getAuthHeaders } from "@/lib/session-token";
 
 export async function listResourceTemplates(
   serverId: string,
 ): Promise<MCPResourceTemplate[]> {
   const res = await fetch("/api/mcp/resource-templates/list", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId }),
   });
 

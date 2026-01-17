@@ -13,6 +13,7 @@ import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { API_ENDPOINTS } from "./constants";
+import { getAuthHeaders } from "@/lib/session-token";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -161,7 +162,7 @@ export function useEvalHandlers({
 
         const response = await fetch("/api/mcp/evals/run", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             suiteId: suite._id,
             suiteName: suite.name,

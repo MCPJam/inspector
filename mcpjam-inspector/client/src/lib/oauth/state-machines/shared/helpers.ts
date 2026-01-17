@@ -10,6 +10,7 @@ import type {
   OAuthFlowState,
   OAuthFlowStep,
 } from "../types";
+import { getAuthHeaders } from "@/lib/session-token";
 
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
@@ -67,6 +68,7 @@ export async function proxyFetch(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...getAuthHeaders(),
     },
     body: JSON.stringify(proxyPayload),
   });

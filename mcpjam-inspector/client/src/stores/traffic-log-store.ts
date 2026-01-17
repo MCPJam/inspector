@@ -10,6 +10,7 @@
  */
 
 import { create } from "zustand";
+import { addTokenToUrl } from "@/lib/session-token";
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
 
@@ -85,7 +86,7 @@ export function subscribeToRpcStream(): () => void {
     params.set("_t", Date.now().toString());
 
     sseConnection = new EventSource(
-      `/api/mcp/servers/rpc/stream?${params.toString()}`,
+      addTokenToUrl(`/api/mcp/servers/rpc/stream?${params.toString()}`),
     );
 
     sseConnection.onmessage = (evt) => {

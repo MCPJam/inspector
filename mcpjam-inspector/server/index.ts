@@ -12,6 +12,16 @@ import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@/sdk";
 
+// Security imports (CVE-2026-23744, CVE-2025-49596 fix)
+import {
+  generateSessionToken,
+  getSessionToken,
+} from "./services/session-token";
+import { isLocalhostRequest } from "./utils/localhost-check";
+import { sessionAuthMiddleware } from "./middleware/session-auth";
+import { originValidationMiddleware } from "./middleware/origin-validation";
+import { securityHeadersMiddleware } from "./middleware/security-headers";
+
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
 // requests are pending - the SDK rejects pending promises on connection close
@@ -153,6 +163,10 @@ try {
   fixPath();
 } catch {}
 
+// Generate session token for API authentication (CVE-2026-23744, CVE-2025-49596 fix)
+generateSessionToken();
+appLogger.info("[Security] Session authentication enabled");
+
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -217,6 +231,20 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+// ===== SECURITY MIDDLEWARE STACK (CVE-2026-23744, CVE-2025-49596 fix) =====
+// Order matters: headers -> origin validation -> session auth
+
+// 1. Security headers (always applied)
+app.use("*", securityHeadersMiddleware);
+
+// 2. Origin validation (blocks CSRF/DNS rebinding)
+app.use("*", originValidationMiddleware);
+
+// 3. Session authentication (blocks unauthorized API requests)
+app.use("*", sessionAuthMiddleware);
+
+// ===== END SECURITY MIDDLEWARE =====
+
 // Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
 const enableHttpLogs =
   process.env.NODE_ENV !== "production" || process.env.VERBOSE_LOGS === "true";
@@ -254,6 +282,21 @@ app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Session token endpoint (for dev mode where HTML isn't served by this server)
+// Token is only served to localhost requests to prevent leakage to network attackers
+app.get("/api/session-token", (c) => {
+  const host = c.req.header("Host");
+
+  if (!isLocalhostRequest(host)) {
+    appLogger.warn(
+      `[Security] Token request denied - non-localhost Host: ${host}`,
+    );
+    return c.json({ error: "Token only available via localhost" }, 403);
+  }
+
+  return c.json({ token: getSessionToken() });
+});
+
 // API endpoint to get MCP CLI config (for development mode)
 app.get("/api/mcp-cli-config", (c) => {
   const mcpConfig = getMCPConfigFromEnv();
@@ -262,28 +305,63 @@ app.get("/api/mcp-cli-config", (c) => {
 
 // Static file serving (for production)
 if (process.env.NODE_ENV === "production") {
-  // Serve static assets (JS, CSS, images, etc.) - includes public assets bundled by Vite
-  app.use("/*", serveStatic({ root: "./dist/client" }));
+  const clientRoot = "./dist/client";
 
-  // SPA fallback - serve index.html for all non-API routes
+  // Serve static assets (JS, CSS, images) - no token injection needed
+  app.use("/assets/*", serveStatic({ root: clientRoot }));
+
+  // Serve all static files from client root (images, svgs, etc.)
+  // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
+  app.use("/*", serveStatic({ root: clientRoot }));
+
+  // SPA fallback - serve index.html with token injection for non-API routes
   app.get("*", async (c) => {
-    const path = c.req.path;
+    const reqPath = c.req.path;
     // Don't intercept API routes
-    if (path.startsWith("/api/")) {
+    if (reqPath.startsWith("/api/")) {
       return c.notFound();
     }
-    // Return index.html for SPA routes
-    const indexPath = join(process.cwd(), "dist", "client", "index.html");
-    let htmlContent = readFileSync(indexPath, "utf-8");
 
-    // Inject MCP server config if provided via CLI
-    const mcpConfig = getMCPConfigFromEnv();
-    if (mcpConfig) {
-      const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`;
-      htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
+    // Check if this looks like a static file request that wasn't found
+    const staticExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.css', '.js', '.woff', '.woff2', '.ttf'];
+    if (staticExtensions.some(ext => reqPath.endsWith(ext))) {
+      return c.notFound();
     }
 
-    return c.html(htmlContent);
+    try {
+      // Return index.html for SPA routes
+      const indexPath = join(process.cwd(), "dist", "client", "index.html");
+      let htmlContent = readFileSync(indexPath, "utf-8");
+
+      // SECURITY: Only inject token for localhost requests
+      // This prevents token leakage when bound to 0.0.0.0
+      const host = c.req.header("Host");
+
+      if (isLocalhostRequest(host)) {
+        const token = getSessionToken();
+        const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
+        htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);
+      } else {
+        // Non-localhost access - no token (security measure)
+        appLogger.warn(
+          `[Security] Token not injected - non-localhost Host: ${host}`,
+        );
+        const warningScript = `<script>console.error("MCPJam: Access via localhost required for full functionality");</script>`;
+        htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
+      }
+
+      // Inject MCP server config if provided via CLI
+      const mcpConfig = getMCPConfigFromEnv();
+      if (mcpConfig) {
+        const configScript = `<script>window.MCP_CLI_CONFIG = ${JSON.stringify(mcpConfig)};</script>`;
+        htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
+      }
+
+      return c.html(htmlContent);
+    } catch (error) {
+      appLogger.error("Error serving index.html:", error);
+      return c.text("Internal Server Error", 500);
+    }
   });
 } else {
   // Development mode - just API
@@ -298,13 +376,35 @@ if (process.env.NODE_ENV === "production") {
 
 // Use server configuration
 const displayPort = process.env.ENVIRONMENT === "dev" ? 5173 : SERVER_PORT;
-logBox(`http://${SERVER_HOSTNAME}:${displayPort}`, "🎵 MCPJam");
+
+/**
+ * Network binding strategy (CVE-2026-23744 fix):
+ *
+ * - Default: 127.0.0.1 (localhost only) - for native installs
+ * - BIND_ALL_INTERFACES=true: 0.0.0.0 (all interfaces) - for Docker
+ *
+ * With session token auth, 0.0.0.0 binding is safe because:
+ * 1. Token only served to localhost requests (Host header check)
+ * 2. All API calls require valid token
+ * 3. Origin validation blocks CSRF/DNS rebinding
+ */
+const bindAllInterfaces = process.env.BIND_ALL_INTERFACES === "true";
+const hostname = bindAllInterfaces ? "0.0.0.0" : "127.0.0.1";
+
+if (bindAllInterfaces) {
+  console.log("━".repeat(60));
+  console.log("[Security] Binding to 0.0.0.0 (all interfaces)");
+  console.log("           This is safe - session token auth blocks unauthorized access");
+  console.log("━".repeat(60));
+}
+
+logBox(`http://${bindAllInterfaces ? "localhost" : hostname}:${displayPort}`, "🎵 MCPJam");
 
 // Start the Hono server
 const server = serve({
   fetch: app.fetch,
   port: SERVER_PORT,
-  hostname: "127.0.0.1",
+  hostname,
 });
 
 // Handle graceful shutdown

@@ -3,6 +3,7 @@ import {
   TaskElicitationRequest,
   respondToTaskElicitation,
 } from "@/lib/apis/mcp-tasks-api";
+import { addTokenToUrl } from "@/lib/session-token";
 
 /**
  * Hook to subscribe to task-related elicitation events via SSE.
@@ -26,7 +27,7 @@ export function useTaskElicitation(enabled: boolean = true) {
       return;
     }
 
-    const es = new EventSource("/api/mcp/elicitation/stream");
+    const es = new EventSource(addTokenToUrl("/api/mcp/elicitation/stream"));
     eventSourceRef.current = es;
 
     es.onmessage = (ev) => {

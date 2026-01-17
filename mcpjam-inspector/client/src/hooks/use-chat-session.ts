@@ -46,6 +46,7 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
+import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -210,6 +211,10 @@ export function useChatSession({
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     const isGpt5 = isGPT5Model(selectedModel.id);
 
+    // Merge session auth headers with workos auth headers
+    const sessionHeaders = getSessionAuthHeaders();
+    const mergedHeaders = { ...sessionHeaders, ...authHeaders };
+
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
       body: {
@@ -219,7 +224,7 @@ export function useChatSession({
         systemPrompt,
         selectedServers,
       },
-      headers: authHeaders,
+      headers: Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
     });
   }, [
     selectedModel,

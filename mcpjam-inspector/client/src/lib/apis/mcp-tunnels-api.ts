@@ -2,6 +2,8 @@
  * API client for MCP server tunnel management
  */
 
+import { getAuthHeaders } from "@/lib/session-token";
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:6274";
 
 export interface TunnelResponse {
@@ -27,6 +29,7 @@ export async function createTunnel(
 ): Promise<TunnelResponse> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getAuthHeaders(),
   };
 
   if (accessToken) {
@@ -55,6 +58,7 @@ export async function getTunnel(
 ): Promise<TunnelResponse | null> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getAuthHeaders(),
   };
 
   if (accessToken) {
@@ -89,6 +93,7 @@ export async function getServerTunnel(
 ): Promise<ServerTunnelResponse | null> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getAuthHeaders(),
   };
 
   if (accessToken) {
@@ -122,6 +127,7 @@ export async function getServerTunnel(
 export async function closeTunnel(accessToken?: string): Promise<void> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getAuthHeaders(),
   };
 
   if (accessToken) {
@@ -148,6 +154,7 @@ export async function cleanupOrphanedTunnels(
 ): Promise<void> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...getAuthHeaders(),
   };
 
   if (accessToken) {

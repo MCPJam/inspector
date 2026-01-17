@@ -29,6 +29,7 @@ import {
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
+import { addTokenToUrl, getAuthHeaders } from "@/lib/session-token";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -297,7 +298,7 @@ export function ChatTabV2({
 
   // Elicitation SSE listener
   useEffect(() => {
-    const es = new EventSource("/api/mcp/elicitation/stream");
+    const es = new EventSource(addTokenToUrl("/api/mcp/elicitation/stream"));
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
@@ -334,7 +335,7 @@ export function ChatTabV2({
     try {
       await fetch("/api/mcp/elicitation/respond", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           requestId: elicitation.requestId,
           action,

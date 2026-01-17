@@ -28,6 +28,7 @@ import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
+import { getAuthHeaders } from "@/lib/session-token";
 import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import {
@@ -348,7 +349,7 @@ export function MCPAppsRenderer({
         // Store widget data first (same pattern as openai.ts)
         const storeResponse = await fetch("/api/mcp/apps/widget/store", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             serverId,
             resourceUri,

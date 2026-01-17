@@ -5,7 +5,7 @@ import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
 import dotenv from "dotenv";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 
@@ -18,6 +18,16 @@ import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
 import { CORS_ORIGINS } from "./config.js";
 import path from "path";
+
+// Security imports
+import {
+  generateSessionToken,
+  getSessionToken,
+} from "./services/session-token.js";
+import { isLocalhostRequest } from "./utils/localhost-check.js";
+import { sessionAuthMiddleware } from "./middleware/session-auth.js";
+import { originValidationMiddleware } from "./middleware/origin-validation.js";
+import { securityHeadersMiddleware } from "./middleware/security-headers.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -64,6 +74,11 @@ export function createHonoApp() {
   try {
     fixPath();
   } catch {}
+
+  // Generate session token for API authentication (CVE-2026-23744, CVE-2025-49596 fix)
+  generateSessionToken();
+  appLogger.info("[Security] Session authentication enabled");
+
   const app = new Hono();
 
   // Create the MCPJam client manager instance and wire RPC logging to SSE bus
@@ -112,6 +127,20 @@ export function createHonoApp() {
     await next();
   });
 
+  // ===== SECURITY MIDDLEWARE STACK (CVE-2026-23744, CVE-2025-49596 fix) =====
+  // Order matters: headers -> origin validation -> session auth
+
+  // 1. Security headers (always applied)
+  app.use("*", securityHeadersMiddleware);
+
+  // 2. Origin validation (blocks CSRF/DNS rebinding)
+  app.use("*", originValidationMiddleware);
+
+  // 3. Session authentication (blocks unauthorized API requests)
+  app.use("*", sessionAuthMiddleware);
+
+  // ===== END SECURITY MIDDLEWARE =====
+
   // Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
   const enableHttpLogs =
     process.env.NODE_ENV !== "production" ||
@@ -136,6 +165,19 @@ export function createHonoApp() {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
+  // Session token endpoint (for dev mode where HTML isn't served by this server)
+  // Token is only served to localhost requests to prevent leakage to network attackers
+  app.get("/api/session-token", (c) => {
+    const host = c.req.header("Host");
+
+    if (!isLocalhostRequest(host)) {
+      appLogger.warn(`[Security] Token request denied - non-localhost Host: ${host}`);
+      return c.json({ error: "Token only available via localhost" }, 403);
+    }
+
+    return c.json({ token: getSessionToken() });
+  });
+
   // Static hosting / dev redirect behavior
   const isElectron = process.env.ELECTRON_APP === "true";
   const isProduction = process.env.NODE_ENV === "production";
@@ -147,8 +189,45 @@ export function createHonoApp() {
     if (isElectron && isPackaged) {
       root = path.resolve(process.env.ELECTRON_RESOURCES_PATH!, "client");
     }
-    app.use("/*", serveStatic({ root }));
-    app.get("/*", serveStatic({ path: `${root}/index.html` }));
+
+    // Serve static assets (JS, CSS, images) - no token injection needed
+    app.use("/assets/*", serveStatic({ root }));
+    app.use("/favicon.ico", serveStatic({ root }));
+
+    // For HTML pages, inject the session token (only for localhost requests)
+    app.get("/*", (c) => {
+      const reqPath = c.req.path;
+
+      // Don't intercept API routes
+      if (reqPath.startsWith("/api/")) {
+        return c.notFound();
+      }
+
+      try {
+        const indexPath = path.join(root, "index.html");
+        let html = readFileSync(indexPath, "utf-8");
+
+        // SECURITY: Only inject token for localhost requests
+        // This prevents token leakage when bound to 0.0.0.0
+        const host = c.req.header("Host");
+
+        if (isLocalhostRequest(host)) {
+          const token = getSessionToken();
+          const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
+          html = html.replace("</head>", `${tokenScript}</head>`);
+        } else {
+          // Non-localhost access - no token (security measure)
+          appLogger.warn(`[Security] Token not injected - non-localhost Host: ${host}`);
+          const warningScript = `<script>console.error("MCPJam: Access via localhost required for full functionality");</script>`;
+          html = html.replace("</head>", `${warningScript}</head>`);
+        }
+
+        return c.html(html);
+      } catch (error) {
+        appLogger.error("Error serving index.html:", error);
+        return c.text("Internal Server Error", 500);
+      }
+    });
   } else if (isElectron && !isPackaged) {
     // Electron development: redirect any front-end route to the renderer dev server
     const rendererDevUrl = "http://localhost:8080";

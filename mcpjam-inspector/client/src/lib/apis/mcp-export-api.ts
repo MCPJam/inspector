@@ -1,7 +1,9 @@
+import { getAuthHeaders } from "@/lib/session-token";
+
 export async function exportServerApi(serverId: string) {
   const res = await fetch("/api/mcp/export/server", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify({ serverId }),
   });
   if (!res.ok) {
