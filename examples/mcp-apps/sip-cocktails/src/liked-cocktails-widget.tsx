@@ -77,6 +77,16 @@ function LikedCocktailsApp() {
   }, [app]);
 
   useEffect(() => {
+    const vars = hostContext?.styles?.variables;
+    if (!vars) return;
+    Object.entries(vars).forEach(([key, value]) => {
+      if (value != null) {
+        document.documentElement.style.setProperty(key, value);
+      }
+    });
+  }, [hostContext?.styles?.variables]);
+
+  useEffect(() => {
     if (!app || hasRequested) return;
     setHasRequested(true);
 
@@ -152,7 +162,6 @@ function LikedCocktailsApp() {
     <main
       className={styles.shell}
       style={{
-        ...(hostContext?.styles?.variables as CSSProperties),
         paddingTop: hostContext?.safeAreaInsets?.top,
         paddingRight: hostContext?.safeAreaInsets?.right,
         paddingBottom: hostContext?.safeAreaInsets?.bottom,

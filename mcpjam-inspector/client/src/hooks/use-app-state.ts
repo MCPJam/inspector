@@ -44,6 +44,46 @@ import { MCPServerConfig } from "@/sdk";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 export type { ServerWithName } from "@/state/app-types";
 
+/**
+ * Saves OAuth-related configuration to localStorage for reconnection purposes.
+ * This persists server URL, scopes, headers, and client credentials.
+ */
+function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
+  if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
+    return;
+  }
+
+  localStorage.setItem(`mcp-serverUrl-${formData.name}`, formData.url);
+
+  const oauthConfig: Record<string, unknown> = {};
+  if (formData.oauthScopes && formData.oauthScopes.length > 0) {
+    oauthConfig.scopes = formData.oauthScopes;
+  }
+  if (formData.headers && Object.keys(formData.headers).length > 0) {
+    oauthConfig.customHeaders = formData.headers;
+  }
+  if (Object.keys(oauthConfig).length > 0) {
+    localStorage.setItem(
+      `mcp-oauth-config-${formData.name}`,
+      JSON.stringify(oauthConfig),
+    );
+  }
+
+  if (formData.clientId || formData.clientSecret) {
+    const clientInfo: Record<string, string> = {};
+    if (formData.clientId) {
+      clientInfo.client_id = formData.clientId;
+    }
+    if (formData.clientSecret) {
+      clientInfo.client_secret = formData.clientSecret;
+    }
+    localStorage.setItem(
+      `mcp-client-${formData.name}`,
+      JSON.stringify(clientInfo),
+    );
+  }
+}
+
 export function useAppState() {
   const logger = useLogger("Connections");
 
@@ -522,22 +562,6 @@ export function useAppState() {
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
-              // Sync server config to Convex workspace (non-blocking)
-              const serverEntry: ServerWithName = {
-                name: serverName,
-                config: result.serverConfig,
-                lastConnectionTime: new Date(),
-                connectionStatus: "connected",
-                retryCount: 0,
-                enabled: true,
-                useOAuth: true,
-              };
-              syncServerToConvex(serverName, serverEntry).catch((err) =>
-                logger.warn("Background sync to Convex failed", {
-                  serverName,
-                  err,
-                }),
-              );
               fetchAndStoreInitInfo(serverName).catch((err) =>
                 logger.warn("Failed to fetch init info", { serverName, err }),
               );
@@ -589,7 +613,7 @@ export function useAppState() {
         localStorage.removeItem("mcp-oauth-pending");
       }
     },
-    [logger, syncServerToConvex, fetchAndStoreInitInfo],
+    [logger, fetchAndStoreInitInfo],
   );
 
   // Check for OAuth callback completion on mount
@@ -669,6 +693,43 @@ export function useAppState() {
       });
       const token = nextOpToken(formData.name);
 
+      // Save server config BEFORE attempting connection
+      // This ensures the config is persisted even if connection/OAuth fails
+      const serverEntryForSave: ServerWithName = {
+        name: formData.name,
+        config: mcpConfig,
+        lastConnectionTime: new Date(),
+        connectionStatus: "connecting",
+        retryCount: 0,
+        enabled: true,
+        useOAuth: formData.useOAuth ?? false,
+      };
+      // For authenticated users, sync to Convex
+      syncServerToConvex(formData.name, serverEntryForSave).catch((err) =>
+        logger.warn("Background sync to Convex failed (pre-connection)", {
+          serverName: formData.name,
+          err,
+        }),
+      );
+      // For unauthenticated users, update local workspace
+      if (!isAuthenticated) {
+        const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
+        if (activeWorkspace) {
+          dispatch({
+            type: "UPDATE_WORKSPACE",
+            workspaceId: appState.activeWorkspaceId,
+            updates: {
+              servers: {
+                ...activeWorkspace.servers,
+                [formData.name]: serverEntryForSave,
+              },
+            },
+          });
+        }
+      }
+
+      saveOAuthConfigToLocalStorage(formData);
+
       try {
         if (formData.type === "http" && formData.useOAuth && formData.url) {
           // Check if we already have valid OAuth tokens for this server
@@ -699,25 +760,8 @@ export function useAppState() {
                 config: serverConfig as MCPServerConfig,
                 tokens: existingTokens,
               });
-              // Sync server config to Convex workspace
-              const serverEntry: ServerWithName = {
-                name: formData.name,
-                config: serverConfig as MCPServerConfig,
-                lastConnectionTime: new Date(),
-                connectionStatus: "connected",
-                retryCount: 0,
-                enabled: true,
-                useOAuth: true,
-              };
               toast.success(
                 `Connected successfully with existing OAuth tokens!`,
-              );
-              // Background sync - don't block UI
-              syncServerToConvex(formData.name, serverEntry).catch((err) =>
-                logger.warn("Background sync to Convex failed", {
-                  serverName: formData.name,
-                  err,
-                }),
               );
               fetchAndStoreInitInfo(formData.name).catch((err) =>
                 logger.warn("Failed to fetch init info", {
@@ -775,24 +819,7 @@ export function useAppState() {
                   config: oauthResult.serverConfig,
                   tokens: getStoredTokens(formData.name),
                 });
-                // Sync server config to Convex workspace
-                const serverEntry: ServerWithName = {
-                  name: formData.name,
-                  config: oauthResult.serverConfig,
-                  lastConnectionTime: new Date(),
-                  connectionStatus: "connected",
-                  retryCount: 0,
-                  enabled: true,
-                  useOAuth: true,
-                };
                 toast.success(`Connected successfully with OAuth!`);
-                // Background sync - don't block UI
-                syncServerToConvex(formData.name, serverEntry).catch((err) =>
-                  logger.warn("Background sync to Convex failed", {
-                    serverName: formData.name,
-                    err,
-                  }),
-                );
                 fetchAndStoreInitInfo(formData.name).catch((err) =>
                   logger.warn("Failed to fetch init info", {
                     serverName: formData.name,
@@ -844,24 +871,8 @@ export function useAppState() {
             name: formData.name,
             config: mcpConfig,
           });
-          // Sync server config to Convex workspace
-          const serverEntry: ServerWithName = {
-            name: formData.name,
-            config: mcpConfig,
-            lastConnectionTime: new Date(),
-            connectionStatus: "connected",
-            retryCount: 0,
-            enabled: true,
-          };
           logger.info("Connection successful", { serverName: formData.name });
           toast.success(`Connected successfully!`);
-          // Background sync - don't block UI
-          syncServerToConvex(formData.name, serverEntry).catch((err) =>
-            logger.warn("Background sync to Convex failed", {
-              serverName: formData.name,
-              err,
-            }),
-          );
           fetchAndStoreInitInfo(formData.name).catch((err) =>
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,
@@ -896,7 +907,7 @@ export function useAppState() {
         toast.error(`Network error: ${errorMessage}`);
       }
     },
-    [appState.servers, logger, fetchAndStoreInitInfo, syncServerToConvex],
+    [appState.servers, appState.workspaces, appState.activeWorkspaceId, isAuthenticated, logger, fetchAndStoreInitInfo, syncServerToConvex],
   );
 
   const saveServerConfigWithoutConnecting = useCallback(
@@ -949,40 +960,7 @@ export function useAppState() {
         server: serverEntry,
       });
 
-      if (formData.type === "http") {
-        if (formData.useOAuth && formData.url) {
-          localStorage.setItem(`mcp-serverUrl-${serverName}`, formData.url);
-
-          const oauthConfig: Record<string, any> = {};
-          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
-            oauthConfig.scopes = formData.oauthScopes;
-          }
-          if (formData.headers && Object.keys(formData.headers).length > 0) {
-            oauthConfig.customHeaders = formData.headers;
-          }
-          if (Object.keys(oauthConfig).length > 0) {
-            localStorage.setItem(
-              `mcp-oauth-config-${serverName}`,
-              JSON.stringify(oauthConfig),
-            );
-          }
-
-          if (formData.clientId || formData.clientSecret) {
-            const clientInfo: Record<string, string> = {};
-            if (formData.clientId) {
-              clientInfo.client_id = formData.clientId;
-            }
-            if (formData.clientSecret) {
-              clientInfo.client_secret = formData.clientSecret;
-            }
-            localStorage.setItem(
-              `mcp-client-${serverName}`,
-              JSON.stringify(clientInfo),
-            );
-          }
-        }
-        // Note: OAuth data cleanup for non-OAuth servers is handled above via clearOAuthData
-      }
+      saveOAuthConfigToLocalStorage(formData);
 
       // Sync to Convex or local workspace
       if (isAuthenticated && effectiveActiveWorkspaceId) {
@@ -1113,22 +1091,6 @@ export function useAppState() {
             config: serverConfig as MCPServerConfig,
             tokens: getStoredTokens(serverName),
           });
-          // Sync server config to Convex (tokens stay in localStorage only)
-          const serverEntry: ServerWithName = {
-            name: serverName,
-            config: serverConfig as MCPServerConfig,
-            lastConnectionTime: new Date(),
-            connectionStatus: "connected",
-            retryCount: 0,
-            enabled: true,
-            useOAuth: true,
-          };
-          syncServerToConvex(serverName, serverEntry).catch((err) =>
-            logger.warn("Background sync to Convex failed", {
-              serverName,
-              err,
-            }),
-          );
           await fetchAndStoreInitInfo(serverName);
           return { success: true };
         } else {
@@ -1153,7 +1115,7 @@ export function useAppState() {
         return { success: false, error: errorMessage };
       }
     },
-    [fetchAndStoreInitInfo, syncServerToConvex, logger],
+    [fetchAndStoreInitInfo, logger],
   );
 
   // Connect a server with tokens from OAuth flow (for new connections)
@@ -1424,26 +1386,9 @@ export function useAppState() {
             config: oauthResult.serverConfig!,
             tokens: getStoredTokens(serverName),
           });
-          // Sync server config to Convex workspace
-          const serverEntry: ServerWithName = {
-            ...server,
-            config: oauthResult.serverConfig!,
-            lastConnectionTime: new Date(),
-            connectionStatus: "connected",
-            retryCount: 0,
-            enabled: true,
-            useOAuth: true,
-          };
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
           });
-          // Background sync - don't block UI
-          syncServerToConvex(serverName, serverEntry).catch((err) =>
-            logger.warn("Background sync to Convex failed", {
-              serverName,
-              err,
-            }),
-          );
           fetchAndStoreInitInfo(serverName).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
@@ -1484,23 +1429,7 @@ export function useAppState() {
             config: authResult.serverConfig,
             tokens: authResult.tokens,
           });
-          // Sync server config to Convex workspace
-          const serverEntry: ServerWithName = {
-            ...server,
-            config: authResult.serverConfig,
-            lastConnectionTime: new Date(),
-            connectionStatus: "connected",
-            retryCount: 0,
-            enabled: true,
-          };
           logger.info("Reconnection successful", { serverName, result });
-          // Background sync - don't block UI
-          syncServerToConvex(serverName, serverEntry).catch((err) =>
-            logger.warn("Background sync to Convex failed", {
-              serverName,
-              err,
-            }),
-          );
           fetchAndStoreInitInfo(serverName).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
@@ -1532,7 +1461,7 @@ export function useAppState() {
         throw error;
       }
     },
-    [effectiveServers, fetchAndStoreInitInfo, syncServerToConvex],
+    [effectiveServers, fetchAndStoreInitInfo, logger],
   );
 
   // Sync with centralized agent status on app startup only
@@ -1592,6 +1521,7 @@ export function useAppState() {
           name: originalServerName,
           config: mcpConfig,
         });
+        saveOAuthConfigToLocalStorage(formData);
         toast.success("Server configuration updated");
         return;
       }
@@ -1611,6 +1541,7 @@ export function useAppState() {
           name: originalServerName,
           config: mcpConfig,
         });
+        saveOAuthConfigToLocalStorage(formData);
         try {
           const result = await testConnection(
             originalServer.config,
@@ -1643,6 +1574,8 @@ export function useAppState() {
       if (hadOAuthTokens && !formData.useOAuth) {
         clearOAuthData(originalServerName);
       }
+
+      saveOAuthConfigToLocalStorage(formData);
 
       await handleDisconnect(originalServerName);
       await handleConnect(formData);

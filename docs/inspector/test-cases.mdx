@@ -1,0 +1,176 @@
+---
+title: "Test Cases"
+description: "Create test cases manually or generate them with AI, run them against your MCP servers, and analyze results"
+icon: "flask"
+---
+
+Test Cases provide a comprehensive testing environment for evaluating your MCP server's tool performance across different LLMs. Create test cases, generate tests automatically with AI, run evaluations, and analyze results with detailed metrics and visualizations.
+
+## Key Features
+
+The Test Cases feature provides everything you need to evaluate MCP server reliability:
+
+- **AI-Powered Test Generation** - Automatically generate comprehensive test cases from your tool definitions
+- **Negative Test Cases** - Test edge cases where tools should NOT be triggered
+- **Multi-Model Evaluation** - Run tests across different LLM providers and models
+- **Accuracy Metrics** - View test statistics, see how results change across runs, and compare performance between different LLMs
+- **Detailed Run Analysis** - View test duration, token consumption, and model performance breakdowns
+- **Batch Operations** - Run entire test cases or individual tests with a single click
+
+## Getting Started
+
+To start testing your MCP server:
+
+1. **Connect your MCP server** - Use the Servers tab to connect to your MCP server
+2. **Navigate to Test Cases** - Click the Test Cases tab in MCPJam Inspector
+3. **Create tests** - Either:
+   - Click the plus icon to manually create a test case and configure the scenario, user prompt, expected tools, and expected output
+   - Click the magic wand icon to auto-generate tests from your tools
+4. **Configure models** - Click Results & Runs in the sidebar, then use the Models dropdown to select which models to test against
+5. **Run Tests** - Click Run to execute all test cases, or run individual tests from the test case view
+
+<Info>
+  When using auto-generate, Claude Haiku creates realistic test scenarios from your tool definitions, including both positive cases (tools that should be called) and negative cases (tools that should NOT be called).
+</Info>
+
+## Test Case Structure
+
+Each test case contains:
+
+- **Scenario** - A description of the use case to test
+- **User Prompt** - The exact prompt or interaction to begin the test
+- **Tool Triggered** - Which tools should be called
+- **Expected Output** - The output or experience we should expect to receive back from the MCP server
+
+### Positive vs Negative Tests
+
+**Positive Tests** verify that your tools are correctly triggered when they should be.
+
+Examples include:
+
+- Single tool usage ("Get me the weather in Tokyo")
+- Multiple tools in one request ("Find flights to Paris and check the weather there")
+
+**Negative Tests** verify that tools are NOT called when they shouldn't be.
+
+Examples include:
+
+- Meta questions about tools ("What parameters does search accept?")
+- Similar keywords without action intent ("I was reading about file systems")
+- Ambiguous or conversational prompts
+
+Negative tests are marked with a "NEG" badge in the sidebar for easy identification.
+
+## Managing Test Cases
+
+Use the sidebar to manage your test cases:
+
+- **Create new tests** - Click the plus icon to add a test case manually
+- **Generate tests with AI** - Click the magic wand to auto-generate tests from your tools
+- **Duplicate tests** - Use the dropdown menu on any test to create a copy
+- **Delete tests** - Remove tests you no longer need
+
+## Running Tests
+
+You can run tests in two ways:
+
+- **Run a single test** - Choose which of your configured models to use and click Run
+- **Run all tests** - Click Results & Runs, configure your models, then click the Run button
+
+<Note>
+  Running tests requires connected MCP servers. If the Run button is disabled, check that your servers are connected in the Servers tab.
+</Note>
+
+## Analyzing Results
+
+### Results & Runs View
+
+Click Results & Runs in the sidebar to see overall analytics:
+
+- **Accuracy Donut** - Overall accuracy percentage
+- **Accuracy Chart** - Shows pass rates across runs (line connects multiple runs)
+- **Performance by Model** - Bar chart comparing models
+
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.youtube.com/embed/iglDMsuTwf4"
+  title="Test Cases demo"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+
+Use the dropdown to switch between "Runs" and "Test Cases" views:
+
+**Runs view:**
+- **Run History** - Shows all your runs with their metrics (Run ID, Start time, Duration, Passed, Failed, Accuracy, Tokens)
+
+**Test Cases view:**
+- **Test Cases Table** - List of all tests with Test Case Name, Iterations, Avg Accuracy, Avg Duration
+
+### Run Detail View
+
+When you click on a run:
+
+- **Metrics Summary** - Accuracy, Passed, Failed, Total, Duration
+- **All Iterations Table** - List of all test executions with:
+  - Test name
+  - Model used
+  - Tools called
+  - Tokens consumed
+  - Duration
+- **Run Summary Sidebar** - Click "View run summary" to see:
+  - Duration per Test (averaged across models)
+  - Tokens per Test (averaged across models)
+  - Performance by Model
+
+### Test Case Detail View
+
+When you click on a test case:
+
+- **Performance Across Runs** - Line chart showing how this test performs over time
+- **Performance by Model** - Bar chart comparing pass rates across models
+- **Iterations List** - All executions of this test with:
+  - Pass/fail status
+  - Model used
+  - Tool calls, tokens, duration
+  - Run ID
+- **Expanded Details** - Click an iteration to see:
+  - Expected vs Actual tool calls
+  - Full trace showing the conversation, model reasoning, and tool execution details
+
+## Debugging Tests
+
+Use the visual status indicators to quickly identify issues:
+
+- **Green border** - Test passed (expected tools were called)
+- **Red border** - Test failed (tools were not called as expected)
+- **Yellow border** - Test pending
+- **Gray border** - Test cancelled
+
+For failed tests, expand the iteration to view:
+
+- Expected vs Actual tool calls (see what's missing or unexpected)
+- Full conversation trace (understand why the model made different decisions)
+
+<Tip>
+  If tests are consistently failing, check that your expected tool calls match your tool definitions. The LLM may be calling tools with slightly different argument formats.
+</Tip>
+
+## Best Practices
+
+### Writing Effective Test Cases
+
+- **Be specific** - Include concrete values (dates, IDs, names) in prompts
+- **Test realistic scenarios** - Write prompts as real users would
+- **Cover edge cases** - Include negative tests for boundary conditions
+- **Review the trace** - When tests fail, view the full conversation to understand LLM reasoning
+- **Iterate before submission** - Ensure your test cases pass locally before submitting to app stores
+
+### For ChatGPT App Submission
+
+If you're building a ChatGPT app, OpenAI requires **5 positive test cases and 3 negative test cases**. Use the AI generation feature to quickly create these, then customize as needed.
+
+<Tip>
+  App store approval cycles can be lengthy. A single test case failure can cost you days of waiting - test thoroughly before submitting.
+</Tip>
+
