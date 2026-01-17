@@ -401,13 +401,13 @@ const bindAllInterfaces = process.env.BIND_ALL_INTERFACES === "true";
 const hostname = bindAllInterfaces ? "0.0.0.0" : "127.0.0.1";
 
 if (bindAllInterfaces) {
-  console.log("━".repeat(60));
-  console.log("[Security] Binding to 0.0.0.0 (all interfaces)");
-  console.log("           This is safe - session token auth blocks unauthorized access");
-  console.log("━".repeat(60));
+  appLogger.info("━".repeat(60));
+  appLogger.info("[Security] Binding to 0.0.0.0 (all interfaces)");
+  appLogger.info("           This is safe - session token auth blocks unauthorized access");
+  appLogger.info("━".repeat(60));
 }
 
-logBox(`http://${bindAllInterfaces ? "localhost" : hostname}:${displayPort}`, "🎵 MCPJam");
+appLogger.info(`🎵 MCPJam: http://${bindAllInterfaces ? "localhost" : hostname}:${displayPort}`);
 
 // Start the Hono server
 const server = serve({

@@ -10,6 +10,7 @@
 
 import type { Context, Next } from "hono";
 import { SERVER_PORT } from "../config.js";
+import { logger as appLogger } from "../utils/logger.js";
 
 /**
  * Get the list of allowed origins.
@@ -57,7 +58,7 @@ export async function originValidationMiddleware(
   const allowedOrigins = getAllowedOrigins();
 
   if (!allowedOrigins.includes(origin)) {
-    console.warn(`[Security] Blocked request from origin: ${origin}`);
+    appLogger.warn(`[Security] Blocked request from origin: ${origin}`);
     return c.json(
       {
         error: "Forbidden",
