@@ -256,7 +256,7 @@ if (enableHttpLogs) {
   app.use(
     "*",
     logger((message) => {
-      console.log(scrubTokenFromUrl(message));
+      appLogger.info(scrubTokenFromUrl(message));
     }),
   );
 }
