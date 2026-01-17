@@ -66,6 +66,9 @@ FROM base AS final
 # Use production node environment by default.
 ENV NODE_ENV production
 
+# Install socat for port forwarding (needed because app binds to 127.0.0.1)
+RUN apk add --no-cache socat
+
 # Run the application as a non-root user.
 USER node
 
@@ -82,8 +85,8 @@ COPY --from=build /usr/src/app/dist ./dist
 COPY --from=build /usr/src/app/sdk/dist ./sdk/dist
 COPY --from=build /usr/src/app/.env.production ./.env.production
 
-# Expose the port that the application listens on.
-EXPOSE 6274
+# Expose the port that socat listens on (forwards to app on 127.0.0.1:6274)
+EXPOSE 6275
 
-# Run the application.
-ENTRYPOINT ["npm", "start"]
+# Run socat to forward 0.0.0.0:6275 -> 127.0.0.1:6274, then start the app
+ENTRYPOINT ["sh", "-c", "socat TCP-LISTEN:6275,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:6274 & exec npm start"]

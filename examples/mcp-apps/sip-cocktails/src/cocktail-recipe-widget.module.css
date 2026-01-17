@@ -69,6 +69,38 @@
   color: var(--color-text-secondary, #444444);
 }
 
+.unitToggle {
+  display: flex;
+  gap: 0;
+  background: var(--color-background-secondary, #f0f0f0);
+  border-radius: var(--border-radius-md, 8px);
+  padding: 3px;
+  width: fit-content;
+  margin-left: auto;
+}
+
+.unitButton {
+  padding: 0.4rem 0.9rem;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary, #666666);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--border-radius-sm, 6px);
+  transition: background 0.15s, color 0.15s;
+}
+
+.unitButton:hover {
+  color: var(--color-text-primary, #333333);
+}
+
+.unitButtonActive {
+  background: var(--color-background-primary, #ffffff);
+  color: var(--color-text-primary, #111111);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
 .ingredientList {
   list-style: none;
   margin: 0;

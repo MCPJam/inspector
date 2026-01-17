@@ -62,9 +62,6 @@ export function createServer(options: ServerFactoryOptions = {}): McpServer {
       _meta: {
         ui: { resourceUri: cocktailRecipeWidgetResourceUri },
         visibility: ["model", "app"],
-        "openai/outputTemplate": "ui://widget/cocktail-recipe-widget-openai.html",
-        "openai/toolInvocation/invoking": "Cocktail recipe loading",
-        "openai/toolInvocation/invoked": "Cocktail recipe loaded",
       },
     },
     async ({ id }: { id: string }): Promise<CallToolResult> => {
@@ -98,18 +95,6 @@ export function createServer(options: ServerFactoryOptions = {}): McpServer {
       const html = await fs.readFile(path.join(DIST_DIR, "cocktail-recipe-widget.html"), "utf-8");
       return {
         contents: [{ uri: cocktailRecipeWidgetResourceUri, mimeType: RESOURCE_MIME_TYPE, text: html, _meta: sharedResourceMeta }],
-      };
-    },
-  );
-
-  server.registerResource(
-    "cocktail-recipe-widget",
-    "ui://widget/cocktail-recipe-widget-openai.html",
-    {},
-    async (): Promise<ReadResourceResult> => {
-      const html = await fs.readFile(path.join(DIST_DIR, "cocktail-recipe-widget.html"), "utf-8");
-      return {
-        contents: [{ uri: "ui://widget/cocktail-recipe-widget-openai.html", mimeType: "text/html+skybridge", text: html }],
       };
     },
   );

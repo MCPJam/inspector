@@ -112,18 +112,23 @@ function CocktailApp() {
 }
 
 
+type MeasurementUnit = "oz" | "ml" | "part";
+
 interface CocktailAppInnerProps {
   cocktail: CocktailData | null;
   status: string;
   hostContext?: McpUiHostContext;
 }
 function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerProps) {
+  const [selectedUnit, setSelectedUnit] = useState<MeasurementUnit>("oz");
+
   const ingredientRows = useMemo(() => {
     if (!cocktail) return [];
     return cocktail.ingredients.map((entry) => {
-      const measurements = formatMeasurements(
+      const measurements = formatMeasurement(
         entry.measurements,
         entry.displayOverrides,
+        selectedUnit,
       );
       return {
         key: entry.ingredientId,
@@ -134,7 +139,7 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
         optional: entry.optional,
       };
     });
-  }, [cocktail]);
+  }, [cocktail, selectedUnit]);
 
   return (
     <main
@@ -198,6 +203,17 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
                   </li>
                 ))}
               </ul>
+              <div className={styles.unitToggle}>
+                {(["oz", "ml", "part"] as const).map((unit) => (
+                  <button
+                    key={unit}
+                    className={`${styles.unitButton} ${selectedUnit === unit ? styles.unitButtonActive : ""}`}
+                    onClick={() => setSelectedUnit(unit)}
+                  >
+                    {unit}
+                  </button>
+                ))}
+              </div>
             </section>
 
             <section className={styles.section}>
@@ -221,15 +237,15 @@ function CocktailAppInner({ cocktail, status, hostContext }: CocktailAppInnerPro
   );
 }
 
-function formatMeasurements(
+function formatMeasurement(
   measurements: Record<string, number>,
   overrides?: Record<string, string>,
+  unit: MeasurementUnit = "oz",
 ) {
-  const order = ["oz", "ml", "part"];
-  const formatted = order
-    .filter((unit) => measurements[unit] !== undefined)
-    .map((unit) => overrides?.[unit] ?? `${measurements[unit]} ${unit}`);
-  return formatted.join(" / ");
+  if (measurements[unit] === undefined) {
+    return null;
+  }
+  return overrides?.[unit] ?? `${measurements[unit]} ${unit}`;
 }
 
 
