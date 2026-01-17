@@ -657,19 +657,32 @@ export function MCPAppsRenderer({
         // Check if tool is model-only (not callable by apps) per SEP-1865
         const calledToolMeta = toolsMetadataRef.current?.[name];
         if (isVisibleToModelOnly(calledToolMeta)) {
-          throw new Error(
+          const error = new Error(
             `Tool "${name}" is not callable by apps (visibility: model-only)`,
           );
+          bridge.sendToolCancelled({ reason: error.message });
+          throw error;
         }
 
         if (!onCallToolRef.current) {
-          throw new Error("Tool calls not supported");
+          const error = new Error("Tool calls not supported");
+          bridge.sendToolCancelled({ reason: error.message });
+          throw error;
         }
-        const result = await onCallToolRef.current(
-          name,
-          (args ?? {}) as Record<string, unknown>,
-        );
-        return result as CallToolResult;
+
+        try {
+          const result = await onCallToolRef.current(
+            name,
+            (args ?? {}) as Record<string, unknown>,
+          );
+          return result as CallToolResult;
+        } catch (error) {
+          // SEP-1865: Send tool-cancelled for failed app-initiated tool calls
+          bridge.sendToolCancelled({
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
       };
 
       bridge.onreadresource = async ({ uri }) => {
@@ -957,10 +970,9 @@ export function MCPAppsRenderer({
 
     if (lastToolErrorRef.current === errorMessage) return;
     lastToolErrorRef.current = errorMessage;
-    bridge.sendToolResult({
-      content: [{ type: "text", text: errorMessage }],
-      isError: true,
-    });
+
+    // SEP-1865: Send tool-cancelled for errors instead of tool-result with isError
+    bridge.sendToolCancelled({ reason: errorMessage });
   }, [isReady, toolErrorText, toolOutput, toolState]);
 
   useEffect(() => {
