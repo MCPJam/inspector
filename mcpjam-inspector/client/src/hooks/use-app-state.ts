@@ -907,7 +907,15 @@ export function useAppState() {
         toast.error(`Network error: ${errorMessage}`);
       }
     },
-    [appState.servers, appState.workspaces, appState.activeWorkspaceId, isAuthenticated, logger, fetchAndStoreInitInfo, syncServerToConvex],
+    [
+      appState.servers,
+      appState.workspaces,
+      appState.activeWorkspaceId,
+      isAuthenticated,
+      logger,
+      fetchAndStoreInitInfo,
+      syncServerToConvex,
+    ],
   );
 
   const saveServerConfigWithoutConnecting = useCallback(
