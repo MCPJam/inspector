@@ -25,7 +25,10 @@ import {
   getSessionToken,
 } from "./services/session-token.js";
 import { isLocalhostRequest } from "./utils/localhost-check.js";
-import { sessionAuthMiddleware } from "./middleware/session-auth.js";
+import {
+  sessionAuthMiddleware,
+  scrubTokenFromUrl,
+} from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
 
@@ -146,7 +149,13 @@ export function createHonoApp() {
     process.env.NODE_ENV !== "production" ||
     process.env.VERBOSE_LOGS === "true";
   if (enableHttpLogs) {
-    app.use("*", logger());
+    // Use custom print function to scrub session tokens from logged URLs
+    app.use(
+      "*",
+      logger((message) => {
+        console.log(scrubTokenFromUrl(message));
+      }),
+    );
   }
   app.use(
     "*",

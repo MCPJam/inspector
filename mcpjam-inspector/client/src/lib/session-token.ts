@@ -119,10 +119,18 @@ export function addTokenToUrl(url: string): string {
   }
 
   try {
-    // Try parsing as absolute URL
+    // Parse URL (uses origin as base for relative URLs)
     const parsed = new URL(url, window.location.origin);
     parsed.searchParams.set("_token", token);
-    return parsed.pathname + parsed.search;
+
+    // Check if this is a same-origin URL
+    if (parsed.origin === window.location.origin) {
+      // Same-origin: return relative path (pathname + search)
+      return parsed.pathname + parsed.search;
+    } else {
+      // Cross-origin: preserve the full absolute URL
+      return parsed.href;
+    }
   } catch {
     // Fallback for unusual URL formats
     const separator = url.includes("?") ? "&" : "?";

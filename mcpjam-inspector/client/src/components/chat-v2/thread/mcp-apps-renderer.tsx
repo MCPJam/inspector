@@ -689,7 +689,7 @@ export function MCPAppsRenderer({
       bridge.onreadresource = async ({ uri }) => {
         const response = await fetch(`/api/mcp/resources/read`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ serverId: serverIdRef.current, uri }),
         });
         if (!response.ok) {
@@ -702,7 +702,7 @@ export function MCPAppsRenderer({
       bridge.onlistresources = async (params) => {
         const response = await fetch(`/api/mcp/resources/list`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             serverId: serverIdRef.current,
             ...(params ?? {}),
@@ -717,7 +717,7 @@ export function MCPAppsRenderer({
       bridge.onlistresourcetemplates = async (params) => {
         const response = await fetch(`/api/mcp/resource-templates/list`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             serverId: serverIdRef.current,
             ...(params ?? {}),
@@ -734,7 +734,7 @@ export function MCPAppsRenderer({
       bridge.onlistprompts = async (params) => {
         const response = await fetch(`/api/mcp/prompts/list`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             serverId: serverIdRef.current,
             ...(params ?? {}),
