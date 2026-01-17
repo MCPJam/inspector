@@ -64,7 +64,25 @@ async function resolveCocktailDetails(
   };
 }
 
-async function getCurrentUser(ctx: {
+// Read-only version for queries - returns null if user doesn't exist
+async function getExistingUser(ctx: {
+  auth: { getUserIdentity: () => Promise<null | { tokenIdentifier: string; name?: string; email?: string; picture?: string }> };
+  db: any;
+}): Promise<Doc<"users"> | null> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    return null;
+  }
+  return await ctx.db
+    .query("users")
+    .withIndex("by_token", (q: any) =>
+      q.eq("tokenIdentifier", identity.tokenIdentifier),
+    )
+    .unique();
+}
+
+// Upsert version for mutations - creates user if they don't exist
+async function getOrCreateUser(ctx: {
   auth: { getUserIdentity: () => Promise<null | { tokenIdentifier: string; name?: string; email?: string; picture?: string }> };
   db: any;
 }): Promise<Doc<"users"> | null> {
@@ -185,7 +203,7 @@ export const getCocktailIdsAndNames = query({
 export const saveCocktailRecipeLikedList = mutation({
   args: { cocktailId: v.string() },
   handler: async (ctx, args) => {
-    const viewer = await getCurrentUser(ctx);
+    const viewer = await getOrCreateUser(ctx);
     if (!viewer) {
       throw new Error("Not authenticated.");
     }
@@ -219,7 +237,7 @@ export const saveCocktailRecipeLikedList = mutation({
 export const getLikedCocktailRecipes = query({
   args: {},
   handler: async (ctx) => {
-    const viewer = await getCurrentUser(ctx);
+    const viewer = await getExistingUser(ctx);
     if (!viewer) {
       return [];
     }
@@ -249,7 +267,7 @@ export const getLikedCocktailRecipes = query({
 export const getLikedCocktailIds = query({
   args: {},
   handler: async (ctx) => {
-    const viewer = await getCurrentUser(ctx);
+    const viewer = await getExistingUser(ctx);
     if (!viewer) {
       return [];
     }
