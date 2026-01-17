@@ -657,10 +657,10 @@ export function PlaygroundMain({
       {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
         <div
           className={cn(
-            "flex-shrink-0",
+            "flex-shrink-0 max-w-xl mx-auto w-full",
             isThreadEmpty
-              ? "px-4 pb-4 max-w-xl mx-auto w-full"
-              : "bg-background/80 backdrop-blur-sm border-t border-border p-3",
+              ? "px-4 pb-4"
+              : "bg-background/80 backdrop-blur-sm p-3",
           )}
         >
           <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
