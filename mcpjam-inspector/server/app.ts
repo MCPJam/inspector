@@ -176,18 +176,24 @@ export function createHonoApp() {
   // Session token endpoint (for dev mode where HTML isn't served by this server)
   // Token is only served to localhost requests OR in web mode (public deployment)
   app.get("/api/session-token", (c) => {
-    const host = c.req.header("Host");
-    const webMode = isWebMode();
+    console.log("[SessionToken] HANDLER ENTERED");
+    try {
+      const host = c.req.header("Host");
+      const webMode = isWebMode();
 
-    // Debug logging for Railway deployments (use console.log to bypass logger suppression in prod)
-    console.log(`[SessionToken] host=${host}, webMode=${webMode}, RAILWAY_ENVIRONMENT=${process.env.RAILWAY_ENVIRONMENT}, ALLOWED_ORIGINS=${process.env.ALLOWED_ORIGINS}`);
+      // Debug logging for Railway deployments (use console.log to bypass logger suppression in prod)
+      console.log(`[SessionToken] host=${host}, webMode=${webMode}, RAILWAY_ENVIRONMENT=${process.env.RAILWAY_ENVIRONMENT}, ALLOWED_ORIGINS=${process.env.ALLOWED_ORIGINS}`);
 
-    if (!isLocalhostRequest(host) && !webMode) {
-      appLogger.warn(`[Security] Token request denied - non-localhost Host: ${host}`);
-      return c.json({ error: "Token only available via localhost" }, 403);
+      if (!isLocalhostRequest(host) && !webMode) {
+        appLogger.warn(`[Security] Token request denied - non-localhost Host: ${host}`);
+        return c.json({ error: "Token only available via localhost" }, 403);
+      }
+
+      return c.json({ token: getSessionToken() });
+    } catch (error) {
+      console.log("[SessionToken] ERROR:", error);
+      return c.json({ error: "Internal error" }, 500);
     }
-
-    return c.json({ token: getSessionToken() });
   });
 
   // Static hosting / dev redirect behavior
