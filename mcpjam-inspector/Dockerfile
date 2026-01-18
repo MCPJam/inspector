@@ -16,12 +16,12 @@ FROM base AS deps
 # into this layer.
 RUN --mount=type=bind,source=package.json,target=package.json \
     --mount=type=bind,source=package-lock.json,target=package-lock.json \
-    --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,id=npm-cache,target=/root/.npm \
     npm ci --legacy-peer-deps
 
 RUN --mount=type=bind,source=sdk/package.json,target=sdk/package.json \
     --mount=type=bind,source=sdk/package-lock.json,target=sdk/package-lock.json \
-    --mount=type=cache,target=/root/.npm \
+    --mount=type=cache,id=npm-cache-sdk,target=/root/.npm \
     npm ci --legacy-peer-deps --prefix sdk
 ################################################################################
 # Create a stage for building the application.
