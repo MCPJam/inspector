@@ -1,38 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Hono } from "hono";
-import connect from "../connect.js";
-
-// Mock MCPClientManager
-const createMockMcpClientManager = (overrides: Record<string, any> = {}) => ({
-  connectToServer: vi.fn().mockResolvedValue(undefined),
-  disconnectServer: vi.fn().mockResolvedValue(undefined),
-  listTools: vi.fn().mockResolvedValue({ tools: [] }),
-  getClient: vi.fn().mockReturnValue({}),
-  listServers: vi.fn().mockReturnValue([]),
-  ...overrides,
-});
-
-function createApp(mcpClientManager: ReturnType<typeof createMockMcpClientManager>) {
-  const app = new Hono();
-
-  // Middleware to inject mock mcpClientManager
-  app.use("*", async (c, next) => {
-    (c as any).mcpClientManager = mcpClientManager;
-    await next();
-  });
-
-  app.route("/api/mcp/connect", connect);
-  return app;
-}
+import type { Hono } from "hono";
+import {
+  createMockMcpClientManager,
+  createTestApp,
+  type MockMCPClientManager,
+} from "./helpers/index.js";
 
 describe("POST /api/mcp/connect", () => {
-  let mcpClientManager: ReturnType<typeof createMockMcpClientManager>;
+  let mcpClientManager: MockMCPClientManager;
   let app: Hono;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mcpClientManager = createMockMcpClientManager();
-    app = createApp(mcpClientManager);
+    app = createTestApp(mcpClientManager, "connect");
   });
 
   describe("validation", () => {
