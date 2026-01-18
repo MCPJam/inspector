@@ -213,7 +213,16 @@ export function createHonoApp() {
 
     // Serve all static files from client root (images, svgs, etc.)
     // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
-    app.use("/*", serveStatic({ root }));
+    // IMPORTANT: Skip API routes - they should be handled by route handlers
+    app.use("/*", async (c, next) => {
+      // Don't serve static files for API routes
+      if (c.req.path.startsWith("/api/")) {
+        return next();
+      }
+      // Use serveStatic for non-API routes
+      const staticMiddleware = serveStatic({ root });
+      return staticMiddleware(c, next);
+    });
 
     // For HTML pages, inject the session token (only for localhost requests)
     app.get("/*", (c) => {
