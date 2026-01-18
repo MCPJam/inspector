@@ -74,7 +74,9 @@ if (isInIframe) {
       (import.meta.env.VITE_WORKOS_DISABLE_LOCAL_PROXY as
         | string
         | undefined) === "true";
-    if (!import.meta.env.DEV || disableProxy) return {};
+    if (disableProxy) return {};
+    // Always use the current host as proxy (both dev and production)
+    // This avoids CORS issues when calling WorkOS API directly from browser
     const { protocol, hostname, port } = window.location;
     const parsedPort = port ? Number(port) : undefined;
     return {

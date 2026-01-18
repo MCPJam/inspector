@@ -285,6 +285,79 @@ app.options("/sse/message", (c) => {
   });
 });
 
+// WorkOS API proxy - avoids CORS issues in production
+// Proxies /user_management/* requests to api.workos.com
+// SECURITY: Only allows requests from configured CORS_ORIGINS
+app.all("/user_management/*", async (c) => {
+  const origin = c.req.header("Origin");
+
+  // Validate origin against allowlist (CORS_ORIGINS from config)
+  // This prevents arbitrary websites from using our proxy
+  if (origin && !CORS_ORIGINS.includes(origin)) {
+    appLogger.warn(`[WorkOS Proxy] Blocked request from unauthorized origin: ${origin}`);
+    return c.json({ error: "Origin not allowed" }, 403);
+  }
+
+  const path = c.req.path;
+  const targetUrl = `https://api.workos.com${path}`;
+
+  try {
+    const headers = new Headers();
+    // Forward relevant headers
+    const contentType = c.req.header("Content-Type");
+    const authorization = c.req.header("Authorization");
+    if (contentType) headers.set("Content-Type", contentType);
+    if (authorization) headers.set("Authorization", authorization);
+
+    const response = await fetch(targetUrl, {
+      method: c.req.method,
+      headers,
+      body: c.req.method !== "GET" && c.req.method !== "HEAD"
+        ? await c.req.text()
+        : undefined,
+    });
+
+    // Forward response headers
+    const responseHeaders = new Headers();
+    response.headers.forEach((value, key) => {
+      // Skip headers that Hono will set
+      if (!["content-encoding", "transfer-encoding"].includes(key.toLowerCase())) {
+        responseHeaders.set(key, value);
+      }
+    });
+
+    // Add CORS headers - use validated origin or first allowed origin
+    const corsOrigin = origin && CORS_ORIGINS.includes(origin) ? origin : CORS_ORIGINS[0];
+    responseHeaders.set("Access-Control-Allow-Origin", corsOrigin);
+    responseHeaders.set("Access-Control-Allow-Credentials", "true");
+
+    const body = await response.text();
+    return c.body(body, response.status as any, Object.fromEntries(responseHeaders));
+  } catch (error) {
+    appLogger.error("[WorkOS Proxy] Error:", error);
+    return c.json({ error: "Proxy error" }, 502);
+  }
+});
+
+// CORS preflight for WorkOS proxy
+app.options("/user_management/*", (c) => {
+  const origin = c.req.header("Origin");
+
+  // Validate origin for preflight too
+  if (origin && !CORS_ORIGINS.includes(origin)) {
+    return c.body(null, 403);
+  }
+
+  const corsOrigin = origin && CORS_ORIGINS.includes(origin) ? origin : CORS_ORIGINS[0];
+  return c.body(null, 204, {
+    "Access-Control-Allow-Origin": corsOrigin,
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept",
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Max-Age": "86400",
+  });
+});
+
 // Health check
 app.get("/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -292,26 +365,17 @@ app.get("/health", (c) => {
 
 // Session token endpoint - Token is only served to localhost requests OR in web mode (public deployment)
 app.get("/api/session-token", (c) => {
-  console.log("[SessionToken] HANDLER ENTERED");
-  try {
-    const host = c.req.header("Host");
-    const webMode = isWebMode();
+  const host = c.req.header("Host");
+  const webMode = isWebMode();
 
-    // Debug logging for Railway deployments
-    console.log(`[SessionToken] host=${host}, webMode=${webMode}, RAILWAY_ENVIRONMENT=${process.env.RAILWAY_ENVIRONMENT}, ALLOWED_ORIGINS=${process.env.ALLOWED_ORIGINS}`);
-
-    if (!isLocalhostRequest(host) && !webMode) {
-      appLogger.warn(
-        `[Security] Token request denied - non-localhost Host: ${host}`,
-      );
-      return c.json({ error: "Token only available via localhost" }, 403);
-    }
-
-    return c.json({ token: getSessionToken() });
-  } catch (error) {
-    console.log("[SessionToken] ERROR:", error);
-    return c.json({ error: "Internal error" }, 500);
+  if (!isLocalhostRequest(host) && !webMode) {
+    appLogger.warn(
+      `[Security] Token request denied - non-localhost Host: ${host}`,
+    );
+    return c.json({ error: "Token only available via localhost" }, 403);
   }
+
+  return c.json({ token: getSessionToken() });
 });
 
 // API endpoint to get MCP CLI config (for development mode)
