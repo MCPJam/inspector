@@ -25,6 +25,7 @@ import {
   getSessionToken,
 } from "./services/session-token.js";
 import { isLocalhostRequest } from "./utils/localhost-check.js";
+import { isWebMode } from "./utils/web-mode.js";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -173,11 +174,12 @@ export function createHonoApp() {
   });
 
   // Session token endpoint (for dev mode where HTML isn't served by this server)
-  // Token is only served to localhost requests to prevent leakage to network attackers
+  // Token is only served to localhost requests OR in web mode (public deployment)
   app.get("/api/session-token", (c) => {
     const host = c.req.header("Host");
+    const webMode = isWebMode();
 
-    if (!isLocalhostRequest(host)) {
+    if (!isLocalhostRequest(host) && !webMode) {
       appLogger.warn(`[Security] Token request denied - non-localhost Host: ${host}`);
       return c.json({ error: "Token only available via localhost" }, 403);
     }
@@ -217,16 +219,18 @@ export function createHonoApp() {
         const indexPath = path.join(root, "index.html");
         let html = readFileSync(indexPath, "utf-8");
 
-        // SECURITY: Only inject token for localhost requests
-        // This prevents token leakage when bound to 0.0.0.0
+        // SECURITY: Only inject token for localhost requests OR web mode (public deployment)
+        // - Localhost: prevents token leakage when bound to 0.0.0.0
+        // - Web mode: allows public deployments (Railway, etc.) with proper ALLOWED_ORIGINS
         const host = c.req.header("Host");
+        const webMode = isWebMode();
 
-        if (isLocalhostRequest(host)) {
+        if (isLocalhostRequest(host) || webMode) {
           const token = getSessionToken();
           const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
           html = html.replace("</head>", `${tokenScript}</head>`);
         } else {
-          // Non-localhost access - no token (security measure)
+          // Non-localhost access without web mode - no token (security measure)
           appLogger.warn(`[Security] Token not injected - non-localhost Host: ${host}`);
           const warningScript = `<script>console.error("MCPJam: Access via localhost required for full functionality");</script>`;
           html = html.replace("</head>", `${warningScript}</head>`);
