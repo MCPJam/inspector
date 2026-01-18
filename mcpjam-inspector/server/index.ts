@@ -12,7 +12,7 @@ import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@/sdk";
 
-// Security imports (CVE-2026-23744, CVE-2025-49596 fix)
+// Security imports
 import {
   generateSessionToken,
   getSessionToken,
@@ -166,7 +166,7 @@ try {
   fixPath();
 } catch {}
 
-// Generate session token for API authentication (CVE-2026-23744, CVE-2025-49596 fix)
+// Generate session token for API authentication
 generateSessionToken();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
@@ -232,7 +232,7 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// ===== SECURITY MIDDLEWARE STACK (CVE-2026-23744, CVE-2025-49596 fix) =====
+// ===== SECURITY MIDDLEWARE STACK =====
 // Order matters: headers -> origin validation -> session auth
 
 // 1. Security headers (always applied)
@@ -379,7 +379,7 @@ if (process.env.NODE_ENV === "production") {
 const displayPort = process.env.ENVIRONMENT === "dev" ? 5173 : SERVER_PORT;
 
 /**
- * Network binding strategy (CVE-2026-23744, CVE-2025-49596 fix):
+ * Network binding strategy:
  *
  * - Native installs: Bind to 127.0.0.1 (localhost only)
  * - Docker: Bind to 0.0.0.0 (required for port forwarding), but Docker

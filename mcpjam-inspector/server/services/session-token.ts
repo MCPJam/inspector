@@ -2,7 +2,6 @@
  * Session Token Service
  *
  * Provides secure session token generation and validation for API authentication.
- * This is the primary security control for CVE-2026-23744 and CVE-2025-49596.
  *
  * Security features:
  * - 256-bit cryptographically random token (2^256 brute force resistance)

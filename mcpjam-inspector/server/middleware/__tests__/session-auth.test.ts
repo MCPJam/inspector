@@ -2,7 +2,7 @@
  * Session Authentication Middleware Tests
  *
  * Tests for the session authentication middleware that protects API routes.
- * This is a critical security component for CVE-2026-23744 and CVE-2025-49596.
+ * This is a critical security component.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";

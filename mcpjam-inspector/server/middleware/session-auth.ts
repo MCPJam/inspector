@@ -1,7 +1,6 @@
 /**
  * Session Authentication Middleware
  *
- * Primary security control for CVE-2026-23744 and CVE-2025-49596.
  * Requires a valid session token for all API requests (except health checks).
  *
  * Token delivery methods:

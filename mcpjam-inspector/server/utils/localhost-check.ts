@@ -1,5 +1,5 @@
 /**
- * Localhost Check Utility (CVE-2026-23744, CVE-2025-49596 fix)
+ * Localhost Check Utility
  *
  * Validates Host header to ensure tokens are only served to localhost requests.
  * Protects against DNS rebinding attacks where a malicious domain resolves to

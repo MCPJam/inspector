@@ -78,7 +78,7 @@ export function createHonoApp() {
     fixPath();
   } catch {}
 
-  // Generate session token for API authentication (CVE-2026-23744, CVE-2025-49596 fix)
+  // Generate session token for API authentication
   generateSessionToken();
   const app = new Hono();
 
@@ -128,7 +128,7 @@ export function createHonoApp() {
     await next();
   });
 
-  // ===== SECURITY MIDDLEWARE STACK (CVE-2026-23744, CVE-2025-49596 fix) =====
+  // ===== SECURITY MIDDLEWARE STACK =====
   // Order matters: headers -> origin validation -> session auth
 
   // 1. Security headers (always applied)
