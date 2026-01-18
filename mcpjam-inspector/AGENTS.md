@@ -47,3 +47,27 @@ verboseStep("Setup", "Initializing...");
 ### Client code
 
 Browser `console.*` is acceptable for client-side debugging.
+
+---
+
+## Testing
+
+**All changes should include tests.** Uses Vitest. Run with `npm run test` (or `test:watch`, `test:coverage`).
+
+### Structure
+
+Tests live in `__tests__/` directories next to source files. Use existing tests as examples:
+- **Components**: `client/src/components/*/__tests__/*.test.tsx`
+- **State**: `client/src/state/__tests__/app-reducer.test.ts`
+- **Server routes**: `server/routes/mcp/__tests__/*.test.ts`
+- **Utilities**: `shared/__tests__/*.test.ts`
+
+### Key Resources
+
+- **Factories** (`client/src/test/factories.ts`): `createServer()`, `createTool()`, `createMany()`, etc.
+- **Mock presets** (`client/src/test/mocks/`): `mcpApiPresets`, `storePresets`
+- **Server helpers** (`server/routes/mcp/__tests__/helpers/`): `createTestApp()`, `createMockMcpClientManager()`, `postJson()`, `expectError()`
+
+### Checklist
+
+Cover: happy path, validation errors, error handling, edge cases (null, empty, etc.).
