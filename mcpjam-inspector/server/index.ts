@@ -329,12 +329,6 @@ if (process.env.NODE_ENV === "production") {
       return c.notFound();
     }
 
-    // Check if this looks like a static file request that wasn't found
-    const staticExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.css', '.js', '.woff', '.woff2', '.ttf'];
-    if (staticExtensions.some(ext => reqPath.endsWith(ext))) {
-      return c.notFound();
-    }
-
     try {
       // Return index.html for SPA routes
       const indexPath = join(process.cwd(), "dist", "client", "index.html");

@@ -151,7 +151,7 @@ export function createHonoApp() {
     app.use(
       "*",
       logger((message) => {
-        console.log(scrubTokenFromUrl(message));
+        appLogger.info(scrubTokenFromUrl(message));
       }),
     );
   }
@@ -199,7 +199,10 @@ export function createHonoApp() {
 
     // Serve static assets (JS, CSS, images) - no token injection needed
     app.use("/assets/*", serveStatic({ root }));
-    app.use("/favicon.ico", serveStatic({ root }));
+
+    // Serve all static files from client root (images, svgs, etc.)
+    // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
+    app.use("/*", serveStatic({ root }));
 
     // For HTML pages, inject the session token (only for localhost requests)
     app.get("/*", (c) => {
