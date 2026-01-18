@@ -1090,6 +1090,56 @@ export function ChatGPTAppRenderer({
         setCheckoutSession(session);
         setCheckoutOpen(true);
       }
+
+      if (event.data?.type === "openai:callTool") {
+        const callId = event.data.callId;
+        const calledToolName = event.data.toolName;
+        if (!onCallTool) {
+          postToWidget(
+            {
+              type: "openai:callTool:response",
+              callId,
+              error: "callTool is not supported in this context",
+            },
+            true,
+          );
+          return;
+        }
+        (async () => {
+          try {
+            const result = await onCallTool(
+              calledToolName,
+              event.data.args || event.data.params || {},
+              event.data._meta || {},
+            );
+
+            // Check for OAuth challenge per OpenAI Apps SDK spec
+            const resultMeta = result?._meta || result?.meta;
+            const wwwAuth = resultMeta?.["mcp/www_authenticate"];
+            if (wwwAuth && typeof wwwAuth === "string") {
+              handleOAuthChallenge(wwwAuth, calledToolName);
+            }
+
+            postToWidget(
+              {
+                type: "openai:callTool:response",
+                callId,
+                result,
+              },
+              true,
+            );
+          } catch (err) {
+            postToWidget(
+              {
+                type: "openai:callTool:response",
+                callId,
+                error: err instanceof Error ? err.message : "Unknown error",
+              },
+              true,
+            );
+          }
+        })();
+      }
     },
     [
       addUiLog,
@@ -1099,6 +1149,7 @@ export function ChatGPTAppRenderer({
       onWidgetStateChange,
       checkoutCallId,
       postToWidget,
+      onCallTool,
     ],
   );
 
