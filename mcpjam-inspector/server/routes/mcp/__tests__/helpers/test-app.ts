@@ -7,6 +7,7 @@ import tools from "../../tools.js";
 import resources from "../../resources.js";
 import servers from "../../servers.js";
 import prompts from "../../prompts.js";
+import chatV2 from "../../chat-v2.js";
 
 /**
  * Route configuration for test app creation
@@ -16,7 +17,8 @@ export type RouteConfig =
   | "tools"
   | "resources"
   | "servers"
-  | "prompts";
+  | "prompts"
+  | "chat-v2";
 
 const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   connect: { path: "/api/mcp/connect", handler: connect },
@@ -24,6 +26,7 @@ const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   resources: { path: "/api/mcp/resources", handler: resources },
   servers: { path: "/api/mcp/servers", handler: servers },
   prompts: { path: "/api/mcp/prompts", handler: prompts },
+  "chat-v2": { path: "/api/mcp/chat-v2", handler: chatV2 },
 };
 
 /**
