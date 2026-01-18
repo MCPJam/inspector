@@ -164,16 +164,7 @@ export function createHonoApp() {
     }),
   );
 
-  // API Routes
-  app.route("/api/apps", appsRoutes);
-  app.route("/api/mcp", mcpRoutes);
-
-  // Health check
-  app.get("/health", (c) => {
-    return c.json({ status: "ok", timestamp: new Date().toISOString() });
-  });
-
-  // Session token endpoint (for dev mode where HTML isn't served by this server)
+  // Session token endpoint - MUST be defined BEFORE other API routes
   // Token is only served to localhost requests OR in web mode (public deployment)
   app.get("/api/session-token", (c) => {
     console.log("[SessionToken] HANDLER ENTERED");
@@ -194,6 +185,15 @@ export function createHonoApp() {
       console.log("[SessionToken] ERROR:", error);
       return c.json({ error: "Internal error" }, 500);
     }
+  });
+
+  // API Routes
+  app.route("/api/apps", appsRoutes);
+  app.route("/api/mcp", mcpRoutes);
+
+  // Health check
+  app.get("/health", (c) => {
+    return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
   // Static hosting / dev redirect behavior
