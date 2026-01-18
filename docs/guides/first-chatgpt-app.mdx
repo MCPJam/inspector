@@ -182,6 +182,10 @@ window.openai.openExternal("https://www.mcpjam.com");
 Without declaring a domain in your CSP, the sandbox will block the request. Only declare the domains you actually need.
 </Note>
 
+## A note on authentication
+
+Since the purpose of this guide is to get you building your first ChatGPT App, we've kept things simple and skipped authentication. For production apps that need to identify users or access protected resources, check out the [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth).
+
 ## Running Your App
 
 ### Start the server
@@ -207,7 +211,7 @@ To connect your app to ChatGPT:
 1. In MCPJam Inspector, click **Create ngrok tunnel** with your server connected
 2. Use the tunnel URL as your connector endpoint in ChatGPT
 
-For more information, see our [ngrok setup guide](https://www.mcpjam.com/blog/ngrok).
+For more information, see our [ngrok tunneling feature blog](https://www.mcpjam.com/blog/ngrok).
 
 ## What's next?
 
