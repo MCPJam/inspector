@@ -29,7 +29,7 @@ import {
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
-import { addTokenToUrl, getAuthHeaders } from "@/lib/session-token";
+import { addTokenToUrl, authFetch } from "@/lib/session-token";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -333,9 +333,9 @@ export function ChatTabV2({
     if (!elicitation) return;
     setElicitationLoading(true);
     try {
-      await fetch("/api/mcp/elicitation/respond", {
+      await authFetch("/api/mcp/elicitation/respond", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           requestId: elicitation.requestId,
           action,

@@ -42,7 +42,7 @@ import {
 } from "@/lib/oauth/mcp-oauth";
 import { MCPServerConfig } from "@/sdk";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 export type { ServerWithName } from "@/state/app-types";
 
 /**
@@ -1191,9 +1191,7 @@ export function useAppState() {
     if (!isLoading && !cliConfigProcessedRef.current) {
       cliConfigProcessedRef.current = true;
       // Fetch CLI config from API (both dev and production)
-      fetch("/api/mcp-cli-config", {
-        headers: getAuthHeaders(),
-      })
+      authFetch("/api/mcp-cli-config")
         .then((response) => response.json())
         .then((data) => {
           const cliConfig = data.config;

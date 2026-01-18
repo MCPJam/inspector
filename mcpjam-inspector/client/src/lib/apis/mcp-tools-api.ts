@@ -5,7 +5,7 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPTask, TaskOptions } from "@/sdk";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
@@ -46,9 +46,9 @@ export async function listTools(
   serverId: string,
   modelId?: string,
 ): Promise<ListToolsResultWithMetadata> {
-  const res = await fetch("/api/mcp/tools/list", {
+  const res = await authFetch("/api/mcp/tools/list", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId, modelId }),
   });
   let body: any = null;
@@ -68,9 +68,9 @@ export async function executeToolApi(
   parameters: Record<string, unknown>,
   taskOptions?: TaskOptions,
 ): Promise<ToolExecutionResponse> {
-  const res = await fetch("/api/mcp/tools/execute", {
+  const res = await authFetch("/api/mcp/tools/execute", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId, toolName, parameters, taskOptions }),
   });
   let body: any = null;
@@ -113,9 +113,9 @@ export async function respondToElicitationApi(
   requestId: string,
   response: ElicitResult,
 ): Promise<ToolExecutionResponse> {
-  const res = await fetch("/api/mcp/tools/respond", {
+  const res = await authFetch("/api/mcp/tools/respond", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ executionId, requestId, response }),
   });
   let body: any = null;

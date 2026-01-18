@@ -18,7 +18,7 @@ import {
 } from "@/sdk";
 import { LoggerView } from "./logger-view";
 import { listResources } from "@/lib/apis/mcp-resources-api";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -128,9 +128,9 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     setError("");
 
     try {
-      const response = await fetch("/api/mcp/resources/read", {
+      const response = await authFetch("/api/mcp/resources/read", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           serverId: serverName,
           uri: uri,

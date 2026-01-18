@@ -10,7 +10,7 @@ import type {
   OAuthFlowState,
   OAuthFlowStep,
 } from "../types";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
@@ -64,11 +64,10 @@ export async function proxyFetch(
     headers: mergedHeaders,
   };
 
-  const response = await fetch("/api/mcp/oauth/debug/proxy", {
+  const response = await authFetch("/api/mcp/oauth/debug/proxy", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...getAuthHeaders(),
     },
     body: JSON.stringify(proxyPayload),
   });

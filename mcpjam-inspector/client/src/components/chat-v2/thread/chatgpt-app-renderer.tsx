@@ -24,7 +24,7 @@ import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 
 type ToolState =
   | "input-streaming"
@@ -336,9 +336,9 @@ function useWidgetFetch(
         // Host-controlled values per SDK spec
         const userLocation = await getUserLocation(); // Coarse IP-based location
 
-        const storeResponse = await fetch("/api/apps/chatgpt/widget/store", {
+        const storeResponse = await authFetch("/api/apps/chatgpt/widget/store", {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             serverId,
             uri: outputTemplate,

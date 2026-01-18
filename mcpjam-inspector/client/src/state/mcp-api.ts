@@ -1,9 +1,9 @@
 import { MCPServerConfig } from "@/sdk";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 
-// Helper to add timeout and auth headers to fetch requests
-async function fetchWithTimeout(
+// Helper to add timeout to authFetch requests
+async function authFetchWithTimeout(
   url: string,
   options: RequestInit,
   timeoutMs: number = 10000,
@@ -12,12 +12,8 @@ async function fetchWithTimeout(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, {
+    const response = await authFetch(url, {
       ...options,
-      headers: {
-        ...getAuthHeaders(), // Add session auth headers
-        ...options.headers,
-      },
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -37,7 +33,7 @@ export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
 ) {
-  const res = await fetchWithTimeout(
+  const res = await authFetchWithTimeout(
     "/api/mcp/connect",
     {
       method: "POST",
@@ -50,17 +46,14 @@ export async function testConnection(
 }
 
 export async function deleteServer(serverId: string) {
-  const res = await fetch(`/api/mcp/servers/${encodeURIComponent(serverId)}`, {
+  const res = await authFetch(`/api/mcp/servers/${encodeURIComponent(serverId)}`, {
     method: "DELETE",
-    headers: getAuthHeaders(),
   });
   return res.json();
 }
 
 export async function listServers() {
-  const res = await fetch("/api/mcp/servers", {
-    headers: getAuthHeaders(),
-  });
+  const res = await authFetch("/api/mcp/servers");
   return res.json();
 }
 
@@ -68,7 +61,7 @@ export async function reconnectServer(
   serverId: string,
   serverConfig: MCPServerConfig,
 ) {
-  const res = await fetchWithTimeout(
+  const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",
     {
       method: "POST",
@@ -81,11 +74,8 @@ export async function reconnectServer(
 }
 
 export async function getInitializationInfo(serverId: string) {
-  const res = await fetch(
+  const res = await authFetch(
     `/api/mcp/servers/init-info/${encodeURIComponent(serverId)}`,
-    {
-      headers: getAuthHeaders(),
-    },
   );
   return res.json();
 }
@@ -94,9 +84,9 @@ export async function setServerLoggingLevel(
   serverId: string,
   level: LoggingLevel,
 ) {
-  const res = await fetch("/api/mcp/log-level", {
+  const res = await authFetch("/api/mcp/log-level", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId, level }),
   });
   return res.json();

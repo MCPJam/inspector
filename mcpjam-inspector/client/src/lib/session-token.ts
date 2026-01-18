@@ -137,3 +137,29 @@ export function addTokenToUrl(url: string): string {
     return `${url}${separator}_token=${encodeURIComponent(token)}`;
   }
 }
+
+/**
+ * Authenticated fetch wrapper.
+ * Automatically adds session auth headers to all requests.
+ * Use this instead of native fetch for API calls.
+ *
+ * @param input - URL or Request object
+ * @param init - Optional RequestInit configuration
+ * @returns Promise<Response>
+ */
+export function authFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const authHeaders = getAuthHeaders();
+
+  const mergedInit: RequestInit = {
+    ...init,
+    headers: {
+      ...authHeaders,
+      ...init?.headers,
+    },
+  };
+
+  return fetch(input, mergedInit);
+}

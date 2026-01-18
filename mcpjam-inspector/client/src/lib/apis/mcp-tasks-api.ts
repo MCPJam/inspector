@@ -1,5 +1,5 @@
 import type { MCPTask, MCPListTasksResult } from "@/sdk";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 
 // Re-export SDK types for convenience
 export type Task = MCPTask;
@@ -9,9 +9,9 @@ export async function listTasks(
   serverId: string,
   cursor?: string,
 ): Promise<ListTasksResult> {
-  const res = await fetch("/api/mcp/tasks/list", {
+  const res = await authFetch("/api/mcp/tasks/list", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId, cursor }),
   });
 
@@ -27,9 +27,9 @@ export async function listTasks(
 }
 
 export async function getTask(serverId: string, taskId: string): Promise<Task> {
-  const res = await fetch("/api/mcp/tasks/get", {
+  const res = await authFetch("/api/mcp/tasks/get", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId, taskId }),
   });
 
@@ -48,9 +48,9 @@ export async function getTaskResult(
   serverId: string,
   taskId: string,
 ): Promise<unknown> {
-  const res = await fetch("/api/mcp/tasks/result", {
+  const res = await authFetch("/api/mcp/tasks/result", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId, taskId }),
   });
 
@@ -72,9 +72,9 @@ export async function cancelTask(
   serverId: string,
   taskId: string,
 ): Promise<Task> {
-  const res = await fetch("/api/mcp/tasks/cancel", {
+  const res = await authFetch("/api/mcp/tasks/cancel", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId, taskId }),
   });
 
@@ -105,9 +105,9 @@ export interface TaskCapabilities {
 export async function getTaskCapabilities(
   serverId: string,
 ): Promise<TaskCapabilities> {
-  const res = await fetch("/api/mcp/tasks/capabilities", {
+  const res = await authFetch("/api/mcp/tasks/capabilities", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId }),
   });
 
@@ -138,9 +138,9 @@ export interface ProgressEvent {
 export async function getLatestProgress(
   serverId: string,
 ): Promise<ProgressEvent | null> {
-  const res = await fetch("/api/mcp/tasks/progress", {
+  const res = await authFetch("/api/mcp/tasks/progress", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId }),
   });
 
@@ -159,9 +159,9 @@ export async function getLatestProgress(
 export async function getAllProgress(
   serverId: string,
 ): Promise<ProgressEvent[]> {
-  const res = await fetch("/api/mcp/tasks/progress/all", {
+  const res = await authFetch("/api/mcp/tasks/progress/all", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ serverId }),
   });
 
@@ -192,9 +192,9 @@ export async function respondToTaskElicitation(
   action: "accept" | "decline" | "cancel",
   content?: Record<string, unknown>,
 ): Promise<{ ok: boolean }> {
-  const res = await fetch("/api/mcp/elicitation/respond", {
+  const res = await authFetch("/api/mcp/elicitation/respond", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ requestId, action, content }),
   });
 

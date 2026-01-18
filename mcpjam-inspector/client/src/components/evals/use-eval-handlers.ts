@@ -13,7 +13,7 @@ import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { API_ENDPOINTS } from "./constants";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -160,9 +160,9 @@ export function useEvalHandlers({
           suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-        const response = await fetch("/api/mcp/evals/run", {
+        const response = await authFetch("/api/mcp/evals/run", {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             suiteId: suite._id,
             suiteName: suite.name,

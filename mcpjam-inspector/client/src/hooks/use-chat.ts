@@ -17,7 +17,7 @@ import {
 } from "@/lib/ollama-utils";
 import { SSEvent } from "@/shared/sse";
 import { parseSSEStream } from "@/lib/sse";
-import { getAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 
 interface ElicitationRequest {
   requestId: string;
@@ -451,12 +451,11 @@ export function useChat(options: UseChatOptions = {}) {
           }
         }
 
-        const response = await fetch("/api/mcp/chat", {
+        const response = await authFetch("/api/mcp/chat", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            ...getAuthHeaders(),
             ...(authHeader ? { Authorization: authHeader } : {}),
           },
           body: JSON.stringify({
@@ -681,11 +680,10 @@ export function useChat(options: UseChatOptions = {}) {
           };
         }
 
-        const response = await fetch("/api/mcp/chat", {
+        const response = await authFetch("/api/mcp/chat", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...getAuthHeaders(),
           },
           body: JSON.stringify({
             action: "elicitation_response",
