@@ -3,9 +3,12 @@
  */
 
 // Server port - can be overridden via environment variable
-export const SERVER_PORT = process.env.SERVER_PORT
-  ? parseInt(process.env.SERVER_PORT, 10)
-  : 6274;
+// Railway and other PaaS providers use PORT, so check that first
+export const SERVER_PORT = process.env.PORT
+  ? parseInt(process.env.PORT, 10)
+  : process.env.SERVER_PORT
+    ? parseInt(process.env.SERVER_PORT, 10)
+    : 6274;
 
 // Server hostname
 export const SERVER_HOSTNAME =
