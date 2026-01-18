@@ -391,9 +391,23 @@ if (process.env.NODE_ENV === "production") {
   // Serve static assets (JS, CSS, images) - no token injection needed
   app.use("/assets/*", serveStatic({ root: clientRoot }));
 
-  // Serve all static files from client root (images, svgs, etc.)
-  // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
-  app.use("/*", serveStatic({ root: clientRoot }));
+  // Serve static files from client root (images, svgs, etc.)
+  // Skip routes without file extensions - those are SPA routes that need token injection
+  app.use("/*", async (c, next) => {
+    const path = c.req.path;
+    // Skip API routes
+    if (path.startsWith("/api/")) {
+      return next();
+    }
+    // Skip paths without file extensions (SPA routes like /, /tools, /servers)
+    // Let the SPA fallback handle them for token injection
+    if (!path.includes(".") || path.endsWith("/")) {
+      return next();
+    }
+    // Serve static files (images, svgs, etc.)
+    const staticMiddleware = serveStatic({ root: clientRoot });
+    return staticMiddleware(c, next);
+  });
 
   // SPA fallback - serve index.html with token injection for non-API routes
   app.get("*", async (c) => {
