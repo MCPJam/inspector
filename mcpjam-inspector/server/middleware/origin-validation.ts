@@ -59,6 +59,12 @@ export async function originValidationMiddleware(
   }
 
   const origin = c.req.header("Origin");
+  const path = c.req.path;
+
+  // Debug logging for all API requests
+  if (path.startsWith("/api/")) {
+    console.log(`[OriginValidation] path=${path}, origin=${origin}, ALLOWED_ORIGINS=${process.env.ALLOWED_ORIGINS}`);
+  }
 
   // No origin header = same-origin request or non-browser client (curl, etc.)
   // These still require valid token, so this is safe
@@ -67,8 +73,10 @@ export async function originValidationMiddleware(
   }
 
   const allowedOrigins = getAllowedOrigins();
+  console.log(`[OriginValidation] allowedOrigins=${JSON.stringify(allowedOrigins)}, checking origin=${origin}`);
 
   if (!allowedOrigins.includes(origin)) {
+    console.log(`[OriginValidation] BLOCKED - origin not in allowed list`);
     appLogger.warn(`[Security] Blocked request from origin: ${origin}`);
     const webMode = isWebMode();
     return c.json(
