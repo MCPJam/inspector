@@ -29,6 +29,7 @@ import { validateToken } from "../services/session-token.js";
 const UNPROTECTED_ROUTES = [
   "/health", // Health check - no sensitive data
   "/api/mcp/health", // Health check - no sensitive data
+  "/api/mcp/config", // Web mode config - needed before auth to adjust UI
   "/api/apps/health", // Health check - no sensitive data
   "/api/session-token", // Token endpoint - protected by localhost check instead
 ];

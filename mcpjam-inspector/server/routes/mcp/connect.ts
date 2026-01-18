@@ -1,5 +1,10 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import {
+  isWebMode,
+  validateTransport,
+  validateMcpServerUrl,
+} from "../../utils/web-mode";
 
 const connect = new Hono();
 
@@ -25,6 +30,43 @@ connect.post("/", async (c) => {
         },
         400,
       );
+    }
+
+    // Web mode security: validate transport type
+    if (isWebMode()) {
+      // Check if this is a stdio connection (has command)
+      if (serverConfig.command) {
+        const validation = validateTransport("stdio");
+        if (!validation.allowed) {
+          return c.json(
+            {
+              success: false,
+              error: validation.error,
+              webModeRestriction: true,
+            },
+            403,
+          );
+        }
+      }
+
+      // Check if this is an HTTP/HTTPS connection (has url)
+      if (serverConfig.url) {
+        const urlStr =
+          typeof serverConfig.url === "string"
+            ? serverConfig.url
+            : serverConfig.url.href;
+        const validation = validateMcpServerUrl(urlStr);
+        if (!validation.allowed) {
+          return c.json(
+            {
+              success: false,
+              error: validation.error,
+              webModeRestriction: true,
+            },
+            403,
+          );
+        }
+      }
     }
 
     if (serverConfig.url) {

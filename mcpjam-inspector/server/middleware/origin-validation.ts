@@ -6,29 +6,40 @@
  * - CSRF attacks from malicious websites
  *
  * This is defense-in-depth alongside session token auth.
+ *
+ * In web mode (public deployment):
+ * - ALLOWED_ORIGINS must be configured with the public domain(s)
+ * - Localhost origins are still allowed for local development
  */
 
 import type { Context, Next } from "hono";
 import { SERVER_PORT } from "../config.js";
 import { logger as appLogger } from "../utils/logger.js";
+import { isWebMode } from "../utils/web-mode.js";
 
 /**
  * Get the list of allowed origins.
  * Can be overridden via ALLOWED_ORIGINS environment variable.
+ *
+ * In web mode, both configured origins AND localhost are allowed.
+ * This allows the same deployment to work for both web and local access.
  */
 function getAllowedOrigins(): string[] {
-  // Allow override via environment variable
-  if (process.env.ALLOWED_ORIGINS) {
-    return process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
-  }
-
-  // Default: localhost origins on common dev ports
-  const ports = [SERVER_PORT, 5173, 8080];
   const origins: string[] = [];
 
+  // Always include localhost origins for local development
+  const ports = [SERVER_PORT, 5173, 8080];
   for (const port of ports) {
     origins.push(`http://localhost:${port}`);
     origins.push(`http://127.0.0.1:${port}`);
+  }
+
+  // Add configured origins (for web mode / public deployment)
+  if (process.env.ALLOWED_ORIGINS) {
+    const configuredOrigins = process.env.ALLOWED_ORIGINS.split(",").map((o) =>
+      o.trim(),
+    );
+    origins.push(...configuredOrigins);
   }
 
   return origins;
@@ -59,10 +70,14 @@ export async function originValidationMiddleware(
 
   if (!allowedOrigins.includes(origin)) {
     appLogger.warn(`[Security] Blocked request from origin: ${origin}`);
+    const webMode = isWebMode();
     return c.json(
       {
         error: "Forbidden",
         message: "Request origin not allowed.",
+        hint: webMode
+          ? `Configure ALLOWED_ORIGINS environment variable to include: ${origin}`
+          : "This endpoint only accepts requests from localhost.",
       },
       403,
     );
