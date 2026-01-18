@@ -92,8 +92,12 @@ export async function sessionAuthMiddleware(
     return next();
   }
 
+  // Debug logging
+  const isUnprotected = UNPROTECTED_ROUTES.some((route) => path === route);
+  console.log(`[SessionAuth] path=${path}, isUnprotected=${isUnprotected}, UNPROTECTED_ROUTES=${JSON.stringify(UNPROTECTED_ROUTES)}`);
+
   // Allow unprotected API routes without auth
-  if (UNPROTECTED_ROUTES.some((route) => path === route)) {
+  if (isUnprotected) {
     return next();
   }
 
