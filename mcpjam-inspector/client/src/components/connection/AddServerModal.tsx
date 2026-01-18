@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Globe } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
@@ -18,6 +18,7 @@ import { useServerForm } from "./hooks/use-server-form";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { CustomHeadersSection } from "./shared/CustomHeadersSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
+import { useWebMode, getDefaultTransport } from "@/hooks/use-web-mode";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -34,6 +35,17 @@ export function AddServerModal({
 }: AddServerModalProps) {
   const posthog = usePostHog();
   const formState = useServerForm();
+  const { config: webModeConfig } = useWebMode();
+
+  // Set default transport based on web mode when modal opens
+  useEffect(() => {
+    if (isOpen && !initialData?.type) {
+      const defaultTransport = getDefaultTransport(webModeConfig);
+      // Map to form type (stdio or http)
+      const formType = defaultTransport === "stdio" ? "stdio" : "http";
+      formState.setType(formType);
+    }
+  }, [isOpen, webModeConfig]);
 
   // Initialize form with initial data if provided
   useEffect(() => {
@@ -150,12 +162,22 @@ export function AddServerModal({
             />
           </div>
 
+          {/* Web Mode Indicator */}
+          {webModeConfig.webMode && (
+            <div className="flex items-center gap-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <Globe className="h-4 w-4 text-blue-500" />
+              <span className="text-sm text-blue-500">
+                Web Mode: Only HTTPS remote servers are supported
+              </span>
+            </div>
+          )}
+
           {/* Connection Type */}
           <div className="space-y-2">
             <label className="block text-sm font-medium text-foreground">
               Connection Type
             </label>
-            {formState.type === "stdio" ? (
+            {formState.type === "stdio" && webModeConfig.features.stdio ? (
               <div className="flex">
                 <Select
                   value={formState.type}
@@ -171,8 +193,12 @@ export function AddServerModal({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="stdio">STDIO</SelectItem>
-                    <SelectItem value="http">HTTP</SelectItem>
+                    {webModeConfig.features.stdio && (
+                      <SelectItem value="stdio">STDIO</SelectItem>
+                    )}
+                    <SelectItem value="http">
+                      {webModeConfig.webMode ? "HTTPS" : "HTTP"}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <Input
@@ -185,28 +211,40 @@ export function AddServerModal({
               </div>
             ) : (
               <div className="flex">
-                <Select
-                  value={formState.type}
-                  onValueChange={(value: "stdio" | "http") => {
-                    const currentValue = formState.url;
-                    formState.setType(value);
-                    if (value === "stdio" && currentValue) {
-                      formState.setCommandInput(currentValue);
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="stdio">STDIO</SelectItem>
-                    <SelectItem value="http">HTTP</SelectItem>
-                  </SelectContent>
-                </Select>
+                {!webModeConfig.webMode ? (
+                  <Select
+                    value={formState.type}
+                    onValueChange={(value: "stdio" | "http") => {
+                      const currentValue = formState.url;
+                      formState.setType(value);
+                      if (value === "stdio" && currentValue) {
+                        formState.setCommandInput(currentValue);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-22 rounded-r-none border-r-0 text-xs border-border">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {webModeConfig.features.stdio && (
+                        <SelectItem value="stdio">STDIO</SelectItem>
+                      )}
+                      <SelectItem value="http">HTTP</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex items-center px-3 bg-muted border border-r-0 border-border rounded-l-md text-xs text-muted-foreground">
+                    HTTPS
+                  </div>
+                )}
                 <Input
                   value={formState.url}
                   onChange={(e) => formState.setUrl(e.target.value)}
-                  placeholder="http://localhost:8080/mcp"
+                  placeholder={
+                    webModeConfig.webMode
+                      ? "https://your-mcp-server.com/sse"
+                      : "http://localhost:8080/mcp"
+                  }
                   required
                   className="flex-1 rounded-l-none"
                 />
@@ -214,8 +252,8 @@ export function AddServerModal({
             )}
           </div>
 
-          {/* STDIO: Environment Variables */}
-          {formState.type === "stdio" && (
+          {/* STDIO: Environment Variables (only in local mode) */}
+          {formState.type === "stdio" && webModeConfig.features.stdio && (
             <EnvVarsSection
               envVars={formState.envVars}
               showEnvVars={formState.showEnvVars}

@@ -25,6 +25,7 @@ import {
   getSessionToken,
 } from "./services/session-token.js";
 import { isLocalhostRequest } from "./utils/localhost-check.js";
+import { isWebMode } from "./utils/web-mode.js";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -163,6 +164,29 @@ export function createHonoApp() {
     }),
   );
 
+  // Session token endpoint - MUST be defined BEFORE other API routes
+  // Token is only served to localhost requests OR in web mode (public deployment)
+  app.get("/api/session-token", (c) => {
+    console.log("[SessionToken] HANDLER ENTERED");
+    try {
+      const host = c.req.header("Host");
+      const webMode = isWebMode();
+
+      // Debug logging for Railway deployments (use console.log to bypass logger suppression in prod)
+      console.log(`[SessionToken] host=${host}, webMode=${webMode}, RAILWAY_ENVIRONMENT=${process.env.RAILWAY_ENVIRONMENT}, ALLOWED_ORIGINS=${process.env.ALLOWED_ORIGINS}`);
+
+      if (!isLocalhostRequest(host) && !webMode) {
+        appLogger.warn(`[Security] Token request denied - non-localhost Host: ${host}`);
+        return c.json({ error: "Token only available via localhost" }, 403);
+      }
+
+      return c.json({ token: getSessionToken() });
+    } catch (error) {
+      console.log("[SessionToken] ERROR:", error);
+      return c.json({ error: "Internal error" }, 500);
+    }
+  });
+
   // API Routes
   app.route("/api/apps", appsRoutes);
   app.route("/api/mcp", mcpRoutes);
@@ -170,19 +194,6 @@ export function createHonoApp() {
   // Health check
   app.get("/health", (c) => {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
-  });
-
-  // Session token endpoint (for dev mode where HTML isn't served by this server)
-  // Token is only served to localhost requests to prevent leakage to network attackers
-  app.get("/api/session-token", (c) => {
-    const host = c.req.header("Host");
-
-    if (!isLocalhostRequest(host)) {
-      appLogger.warn(`[Security] Token request denied - non-localhost Host: ${host}`);
-      return c.json({ error: "Token only available via localhost" }, 403);
-    }
-
-    return c.json({ token: getSessionToken() });
   });
 
   // Static hosting / dev redirect behavior
@@ -202,7 +213,16 @@ export function createHonoApp() {
 
     // Serve all static files from client root (images, svgs, etc.)
     // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
-    app.use("/*", serveStatic({ root }));
+    // IMPORTANT: Skip API routes - they should be handled by route handlers
+    app.use("/*", async (c, next) => {
+      // Don't serve static files for API routes
+      if (c.req.path.startsWith("/api/")) {
+        return next();
+      }
+      // Use serveStatic for non-API routes
+      const staticMiddleware = serveStatic({ root });
+      return staticMiddleware(c, next);
+    });
 
     // For HTML pages, inject the session token (only for localhost requests)
     app.get("/*", (c) => {
@@ -217,16 +237,18 @@ export function createHonoApp() {
         const indexPath = path.join(root, "index.html");
         let html = readFileSync(indexPath, "utf-8");
 
-        // SECURITY: Only inject token for localhost requests
-        // This prevents token leakage when bound to 0.0.0.0
+        // SECURITY: Only inject token for localhost requests OR web mode (public deployment)
+        // - Localhost: prevents token leakage when bound to 0.0.0.0
+        // - Web mode: allows public deployments (Railway, etc.) with proper ALLOWED_ORIGINS
         const host = c.req.header("Host");
+        const webMode = isWebMode();
 
-        if (isLocalhostRequest(host)) {
+        if (isLocalhostRequest(host) || webMode) {
           const token = getSessionToken();
           const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
           html = html.replace("</head>", `${tokenScript}</head>`);
         } else {
-          // Non-localhost access - no token (security measure)
+          // Non-localhost access without web mode - no token (security measure)
           appLogger.warn(`[Security] Token not injected - non-localhost Host: ${host}`);
           const warningScript = `<script>console.error("MCPJam: Access via localhost required for full functionality");</script>`;
           html = html.replace("</head>", `${warningScript}</head>`);

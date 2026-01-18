@@ -29,6 +29,7 @@ import { validateToken } from "../services/session-token.js";
 const UNPROTECTED_ROUTES = [
   "/health", // Health check - no sensitive data
   "/api/mcp/health", // Health check - no sensitive data
+  "/api/mcp/config", // Web mode config - needed before auth to adjust UI
   "/api/apps/health", // Health check - no sensitive data
   "/api/session-token", // Token endpoint - protected by localhost check instead
 ];
@@ -91,8 +92,12 @@ export async function sessionAuthMiddleware(
     return next();
   }
 
+  // Debug logging
+  const isUnprotected = UNPROTECTED_ROUTES.some((route) => path === route);
+  console.log(`[SessionAuth] path=${path}, isUnprotected=${isUnprotected}, UNPROTECTED_ROUTES=${JSON.stringify(UNPROTECTED_ROUTES)}`);
+
   // Allow unprotected API routes without auth
-  if (UNPROTECTED_ROUTES.some((route) => path === route)) {
+  if (isUnprotected) {
     return next();
   }
 

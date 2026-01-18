@@ -21,6 +21,7 @@ import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
+import { getWebModeConfig } from "../../utils/web-mode";
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +39,12 @@ mcp.get("/health", (c) => {
     status: "ready",
     timestamp: new Date().toISOString(),
   });
+});
+
+// Web mode configuration - tells client what features are available
+// This is unprotected so the client can adjust UI before auth
+mcp.get("/config", (c) => {
+  return c.json(getWebModeConfig());
 });
 
 // Chat v2 endpoint
