@@ -1,12 +1,61 @@
 /**
- * Test utilities for client-side testing.
- * Provides helper functions for common testing patterns.
- *
- * Note: React component testing utilities (renderWithProviders, etc.)
- * require @testing-library/react to be installed. These utilities
- * are currently disabled. Install @testing-library/react to enable them.
+ * Test utilities for React component testing.
+ * Provides custom render functions with common providers.
  */
+import React, { ReactElement, ReactNode } from "react";
+import { render, RenderOptions, RenderResult } from "@testing-library/react";
 import { vi } from "vitest";
+
+// Re-export everything from testing-library
+export * from "@testing-library/react";
+export { default as userEvent } from "@testing-library/user-event";
+
+/**
+ * Options for customizing the test render
+ */
+interface CustomRenderOptions extends Omit<RenderOptions, "wrapper"> {
+  /** Additional providers to wrap the component */
+  providers?: Array<React.ComponentType<{ children: ReactNode }>>;
+}
+
+/**
+ * Creates a wrapper component with all specified providers
+ */
+function createWrapper(
+  providers: Array<React.ComponentType<{ children: ReactNode }>>
+) {
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return providers.reduceRight(
+      (acc, Provider) => <Provider>{acc}</Provider>,
+      children
+    );
+  };
+}
+
+/**
+ * Custom render function that wraps components with common providers.
+ * Use this instead of the default render from @testing-library/react.
+ *
+ * @example
+ * // Basic usage
+ * const { getByText } = renderWithProviders(<MyComponent />);
+ *
+ * @example
+ * // With custom providers
+ * const { getByText } = renderWithProviders(<MyComponent />, {
+ *   providers: [ThemeProvider, AuthProvider],
+ * });
+ */
+export function renderWithProviders(
+  ui: ReactElement,
+  options: CustomRenderOptions = {}
+): RenderResult {
+  const { providers = [], ...renderOptions } = options;
+
+  const Wrapper = providers.length > 0 ? createWrapper(providers) : undefined;
+
+  return render(ui, { wrapper: Wrapper, ...renderOptions });
+}
 
 /**
  * Helper to wait for async state updates.
@@ -14,6 +63,7 @@ import { vi } from "vitest";
  *
  * @example
  * await waitForLoadingToFinish();
+ * expect(screen.getByText("Data loaded")).toBeInTheDocument();
  */
 export async function waitForLoadingToFinish(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -25,7 +75,7 @@ export async function waitForLoadingToFinish(): Promise<void> {
  *
  * @example
  * const onSubmit = createAsyncMock();
- * somethingThatCallsOnSubmit();
+ * fireEvent.click(submitButton);
  * await onSubmit.waitForCall();
  * expect(onSubmit).toHaveBeenCalledWith({ name: "test" });
  */
@@ -43,36 +93,6 @@ export function createAsyncMock<T = unknown>() {
   return Object.assign(mockFn, {
     waitForCall: () => promise,
   });
-}
-
-/**
- * Generates a unique test ID for use in data-testid attributes.
- *
- * @example
- * const testId = generateTestId("button");
- * // Returns something like "button-abc123"
- */
-export function generateTestId(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/**
- * Helper to wait for an element to be removed from the DOM.
- *
- * @example
- * await waitForRemoval(() => document.querySelector(".loading"));
- */
-export async function waitForRemoval(
-  queryFn: () => Element | null,
-  timeout = 1000
-): Promise<void> {
-  const startTime = Date.now();
-  while (queryFn() !== null) {
-    if (Date.now() - startTime > timeout) {
-      throw new Error("Element was not removed within timeout");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
 }
 
 /**
@@ -123,4 +143,15 @@ export function delay(ms: number): Promise<void> {
  */
 export function spyOnConsole(method: "log" | "warn" | "error" | "info") {
   return vi.spyOn(console, method).mockImplementation(() => {});
+}
+
+/**
+ * Generates a unique test ID for use in data-testid attributes.
+ *
+ * @example
+ * const testId = generateTestId("button");
+ * // Returns something like "button-abc123"
+ */
+export function generateTestId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 }
