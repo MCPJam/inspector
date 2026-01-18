@@ -60,7 +60,7 @@
     "prettier-fix": "prettier --write .",
     "install:deps": "npm install --legacy-peer-deps && npm --prefix sdk install --legacy-peer-deps",
     "docker:build": "docker build -t mcpjam/mcp-inspector:local .",
-    "docker:start": "docker run -d -p 6274:6274 --name mcp-inspector --pull=never mcpjam/mcp-inspector:local",
+    "docker:start": "docker run -d -p 127.0.0.1:6274:6274 --name mcp-inspector --pull=never mcpjam/mcp-inspector:local",
     "docker:stop": "docker stop mcp-inspector && docker rm mcp-inspector || true",
     "docker:dev": "npm run docker:stop; npm run docker:build && npm run docker:start",
     "electron:start": "electron-forge start",
