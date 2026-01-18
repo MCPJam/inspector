@@ -179,8 +179,8 @@ export function createHonoApp() {
     const host = c.req.header("Host");
     const webMode = isWebMode();
 
-    // Debug logging for Railway deployments
-    appLogger.info(`[SessionToken] host=${host}, webMode=${webMode}, RAILWAY_ENVIRONMENT=${process.env.RAILWAY_ENVIRONMENT}, ALLOWED_ORIGINS=${process.env.ALLOWED_ORIGINS}`);
+    // Debug logging for Railway deployments (use console.log to bypass logger suppression in prod)
+    console.log(`[SessionToken] host=${host}, webMode=${webMode}, RAILWAY_ENVIRONMENT=${process.env.RAILWAY_ENVIRONMENT}, ALLOWED_ORIGINS=${process.env.ALLOWED_ORIGINS}`);
 
     if (!isLocalhostRequest(host) && !webMode) {
       appLogger.warn(`[Security] Token request denied - non-localhost Host: ${host}`);
