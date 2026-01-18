@@ -166,9 +166,10 @@ function jsonError(c: any, error: unknown, fallbackStatus = 500) {
 
 tools.post("/list", async (c) => {
   try {
-    const { serverId, modelId } = (await c.req.json()) as {
+    const { serverId, modelId, cursor } = (await c.req.json()) as {
       serverId?: string;
       modelId?: string;
+      cursor?: string;
     };
     if (!serverId) {
       return c.json({ error: "serverId is required" }, 400);
@@ -191,6 +192,7 @@ tools.post("/list", async (c) => {
 
     const result = (await c.mcpClientManager.listTools(
       normalizedServerId,
+      cursor ? { cursor } : undefined,
     )) as ListToolsResult;
 
     // Get cached metadata map for O(1) frontend lookups
@@ -203,7 +205,12 @@ tools.post("/list", async (c) => {
       tokenCount = await countToolsTokens(result.tools, modelId);
     }
 
-    return c.json({ ...result, toolsMetadata, tokenCount });
+    return c.json({
+      ...result,
+      toolsMetadata,
+      tokenCount,
+      nextCursor: result.nextCursor,
+    });
   } catch (error) {
     return jsonError(c, error, 500);
   }

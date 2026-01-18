@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CallToolResult,
   ElicitRequest,
@@ -116,7 +116,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     useState<"not_applicable" | "valid" | "invalid_json" | "schema_mismatch">(
       "not_applicable",
     );
-  const [loading, setLoading] = useState(false);
+  const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
   const [activeElicitation, setActiveElicitation] =
@@ -147,6 +147,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     useState<TaskCapabilities | null>(null);
   // TTL for task execution (milliseconds, 0 = no expiration)
   const [taskTtl, setTaskTtl] = useState<number>(0);
+  // Infinite scroll state
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
   const serverKey = useMemo(() => {
     if (!serverConfig) return "none";
     try {
@@ -217,6 +220,38 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     void fetchTaskCapabilities();
   }, [serverConfig, serverName]);
 
+  const toolNames = Object.keys(tools);
+  const filteredToolNames = searchQuery.trim()
+    ? toolNames.filter((name) => {
+        const tool = tools[name];
+        const haystack = `${name} ${tool?.description ?? ""}`.toLowerCase();
+        return haystack.includes(searchQuery.trim().toLowerCase());
+      })
+    : toolNames;
+
+  // IntersectionObserver for infinite scroll
+  useEffect(() => {
+    if (!sentinelRef.current) return;
+    if (activeTab !== "tools") return; // Only observe when tools tab is active
+
+    const element = sentinelRef.current;
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[0];
+      if (!entry.isIntersecting) return;
+      if (!cursor || fetchingTools) return;
+
+      // Load more tools
+      fetchTools();
+    });
+
+    observer.observe(element);
+
+    return () => {
+      observer.unobserve(element);
+      observer.disconnect();
+    };
+  }, [filteredToolNames.length, activeTab, cursor, activeTab, fetchingTools]);
+
   // Fetch task capabilities for the server
   const fetchTaskCapabilities = async () => {
     if (!serverName) return;
@@ -267,7 +302,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     setFetchingTools(true);
     setError("");
-    setTools({});
     setSelectedTool("");
     setFormFields([]);
     setResult(null);
@@ -277,12 +311,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setUnstructuredValidationResult("not_applicable");
 
     try {
-      const data = await listTools(serverName);
+      // Call to get all of the tools for server
+      const data = await listTools(serverName, undefined, cursor);
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),
       );
-      setTools(dictionary);
+      setTools((prev) => ({ ...prev, ...dictionary }));
+      setCursor(data.nextCursor);
       logger.info("Tools fetched", {
         serverId: serverName,
         toolCount: toolArray.length,
@@ -427,7 +463,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       return;
     }
 
-    setLoading(true);
+    setLoadingExecuteTool(true);
     setError("");
     setResult(null);
     setStructuredResult(null);
@@ -473,7 +509,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       });
       setError(message);
     } finally {
-      setLoading(false);
+      setLoadingExecuteTool(false);
     }
   };
 
@@ -481,7 +517,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Check if Enter is pressed (not Shift+Enter)
-      if (e.key === "Enter" && !e.shiftKey && selectedTool && !loading) {
+      if (
+        e.key === "Enter" &&
+        !e.shiftKey &&
+        selectedTool &&
+        !loadingExecuteTool
+      ) {
         // Don't trigger if user is typing in an input, textarea, or contenteditable
         const target = e.target as HTMLElement;
         const tagName = target.tagName;
@@ -498,7 +539,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedTool, loading]);
+  }, [selectedTool, loadingExecuteTool]);
 
   const handleElicitationResponse = async (
     action: "accept" | "decline" | "cancel",
@@ -567,15 +608,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setIsSaveDialogOpen(true);
   };
 
-  const toolNames = Object.keys(tools);
-  const filteredToolNames = searchQuery.trim()
-    ? toolNames.filter((name) => {
-        const tool = tools[name];
-        const haystack = `${name} ${tool?.description ?? ""}`.toLowerCase();
-        return haystack.includes(searchQuery.trim().toLowerCase());
-      })
-    : toolNames;
-
   const filteredSavedRequests = searchQuery.trim()
     ? savedRequests.filter((tool) => {
         const haystack =
@@ -588,11 +620,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     ? {
         requestId: activeElicitation.requestId,
         message: activeElicitation.request.message,
-        schema: (
-          activeElicitation.request as unknown as {
-            requestedSchema?: Record<string, unknown>;
-          }
-        ).requestedSchema as Record<string, unknown> | undefined,
+        schema: (activeElicitation.request as any).requestedSchema as
+          | Record<string, unknown>
+          | undefined,
         timestamp: activeElicitation.timestamp,
       }
     : null;
@@ -630,6 +660,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
               onRenameRequest={handleRenameRequest}
               onDuplicateRequest={handleDuplicateRequest}
               onDeleteRequest={handleDeleteRequest}
+              displayedToolCount={toolNames.length}
+              sentinelRef={sentinelRef}
+              loadingMore={fetchingTools}
+              cursor={cursor ?? ""}
             />
             <ResizableHandle withHandle />
             {selectedTool ? (
@@ -638,7 +672,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 toolDescription={tools[selectedTool]?.description}
                 formFields={formFields}
                 onToggleField={updateFieldIsSet}
-                loading={loading}
+                loading={loadingExecuteTool}
                 waitingOnElicitation={!!activeElicitation}
                 onExecute={executeTool}
                 onSave={handleSaveCurrent}

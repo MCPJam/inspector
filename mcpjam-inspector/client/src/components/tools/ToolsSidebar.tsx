@@ -1,5 +1,6 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench, RefreshCw } from "lucide-react";
+import type { RefObject } from "react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -28,6 +29,10 @@ interface ToolsSidebarProps {
   onRenameRequest: (req: SavedRequest) => void;
   onDuplicateRequest: (req: SavedRequest) => void;
   onDeleteRequest: (id: string) => void;
+  displayedToolCount: number;
+  sentinelRef: RefObject<HTMLDivElement | null>;
+  loadingMore: boolean;
+  cursor: string;
 }
 
 export function ToolsSidebar({
@@ -48,6 +53,10 @@ export function ToolsSidebar({
   onRenameRequest,
   onDuplicateRequest,
   onDeleteRequest,
+  displayedToolCount,
+  sentinelRef,
+  loadingMore,
+  cursor,
 }: ToolsSidebarProps) {
   const posthog = usePostHog();
   return (
@@ -146,17 +155,39 @@ export function ToolsSidebar({
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-2">
-                    {filteredToolNames.map((name) => (
-                      <ToolItem
-                        key={name}
-                        tool={tools[name]}
-                        name={name}
-                        isSelected={selectedToolName === name}
-                        onClick={() => onSelectTool(name)}
-                      />
-                    ))}
-                  </div>
+                  <>
+                    <div className="grid grid-cols-1 gap-2">
+                      {filteredToolNames
+                        .slice(0, displayedToolCount)
+                        .map((name) => (
+                          <ToolItem
+                            key={name}
+                            tool={tools[name]}
+                            name={name}
+                            isSelected={selectedToolName === name}
+                            onClick={() => onSelectTool(name)}
+                          />
+                        ))}
+                    </div>
+
+                    {/* Sentinel observed by IntersectionObserver */}
+                    <div ref={sentinelRef} className="h-4" />
+
+                    {loadingMore && (
+                      <div className="flex items-center justify-center py-3 text-xs text-muted-foreground gap-2">
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                        <span>Loading more tools…</span>
+                      </div>
+                    )}
+
+                    {!cursor &&
+                      filteredToolNames.length > 0 &&
+                      !loadingMore && (
+                        <div className="text-center py-3 text-xs text-muted-foreground">
+                          No more tools
+                        </div>
+                      )}
+                  </>
                 )}
               </div>
             </ScrollArea>
