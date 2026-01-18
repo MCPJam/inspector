@@ -80,8 +80,6 @@ export function createHonoApp() {
 
   // Generate session token for API authentication (CVE-2026-23744, CVE-2025-49596 fix)
   generateSessionToken();
-  appLogger.info("[Security] Session authentication enabled");
-
   const app = new Hono();
 
   // Create the MCPJam client manager instance and wire RPC logging to SSE bus
