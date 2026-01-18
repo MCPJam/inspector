@@ -65,13 +65,13 @@ export interface InspectorInstance {
 }
 
 /**
- * Waits for the inspector server to be ready by polling the config endpoint.
+ * Waits for the inspector server to be ready by polling the health endpoint.
  */
 async function waitForServer(port: number, timeout = 30000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     try {
-      const res = await fetch(`http://localhost:${port}/api/mcp-cli-config`);
+      const res = await fetch(`http://localhost:${port}/health`);
       if (res.ok) return;
     } catch {
       // Server not ready yet
