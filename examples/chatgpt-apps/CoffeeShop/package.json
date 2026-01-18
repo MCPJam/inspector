@@ -1,0 +1,19 @@
+{
+  "name": "coffee-shop",
+  "version": "1.0.0",
+  "description": "A beginner-friendly ChatGPT App example - an AI coffee shop widget",
+  "type": "module",
+  "main": "server.ts",
+  "scripts": {
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
