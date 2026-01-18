@@ -615,7 +615,7 @@ export function useEvalHandlers({
         }
 
         // Call generate tests API
-        const response = await fetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
+        const response = await authFetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
