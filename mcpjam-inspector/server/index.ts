@@ -379,27 +379,18 @@ if (process.env.NODE_ENV === "production") {
 const displayPort = process.env.ENVIRONMENT === "dev" ? 5173 : SERVER_PORT;
 
 /**
- * Network binding strategy (CVE-2026-23744 fix):
+ * Network binding strategy (CVE-2026-23744, CVE-2025-49596 fix):
  *
- * - Default: 127.0.0.1 (localhost only) - for native installs
- * - BIND_ALL_INTERFACES=true: 0.0.0.0 (all interfaces) - for Docker
+ * - Native installs: Bind to 127.0.0.1 (localhost only)
+ * - Docker: Bind to 0.0.0.0 (required for port forwarding), but Docker
+ *   must use -p 127.0.0.1:6274:6274 to restrict host-side access
  *
- * With session token auth, 0.0.0.0 binding is safe because:
- * 1. Token only served to localhost requests (Host header check)
- * 2. All API calls require valid token
- * 3. Origin validation blocks CSRF/DNS rebinding
+ * DOCKER_CONTAINER is set in Dockerfile. Do not set manually.
  */
-const bindAllInterfaces = process.env.BIND_ALL_INTERFACES === "true";
-const hostname = bindAllInterfaces ? "0.0.0.0" : "127.0.0.1";
+const isDocker = process.env.DOCKER_CONTAINER === "true";
+const hostname = isDocker ? "0.0.0.0" : "127.0.0.1";
 
-if (bindAllInterfaces) {
-  appLogger.info("━".repeat(60));
-  appLogger.info("[Security] Binding to 0.0.0.0 (all interfaces)");
-  appLogger.info("           This is safe - session token auth blocks unauthorized access");
-  appLogger.info("━".repeat(60));
-}
-
-appLogger.info(`🎵 MCPJam: http://${bindAllInterfaces ? "localhost" : hostname}:${displayPort}`);
+appLogger.info(`🎵 MCPJam: http://127.0.0.1:${displayPort}`);
 
 // Start the Hono server
 const server = serve({

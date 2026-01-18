@@ -66,9 +66,9 @@ FROM base AS final
 # Use production node environment by default.
 ENV NODE_ENV production
 
-# Allow binding to all interfaces in Docker container
-# Security is enforced via session token authentication, not network binding
-ENV BIND_ALL_INTERFACES true
+# Signal to server that we're in Docker (binds to 0.0.0.0 for port forwarding)
+# SECURITY: Users MUST run with -p 127.0.0.1:6274:6274 to prevent network exposure
+ENV DOCKER_CONTAINER true
 
 # Run the application as a non-root user.
 USER node

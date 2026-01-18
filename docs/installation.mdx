@@ -23,10 +23,14 @@ After installing the package, you should see a link to `localhost`. Open that li
 Run MCPJam Inspector using Docker:
 
 ```bash
-docker run -p 6274:6274 mcpjam/mcp-inspector
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
 ```
 
 The application will be available at **`http://127.0.0.1:6274`**.
+
+<Warning>
+**Security:** Always use `-p 127.0.0.1:6274:6274` (not `-p 6274:6274`) to ensure the inspector is only accessible from your local machine.
+</Warning>
 
 ### Docker with Arguments
 
@@ -34,10 +38,11 @@ You can pass command-line arguments to the Docker container:
 
 ```bash
 # Launch with STDIO server
-docker run -p 6274:6274 -- npx -y @modelcontextprotocol/server-everything
+docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector -- \
+  npx -y @modelcontextprotocol/server-everything
 
 # Launch with HTTP server
-docker run --rm -p 6274:6274 mcpjam/mcp-inspector -- \
+docker run --rm -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector -- \
   --url http://host.docker.internal:8080/mcp \
   --name "HTTP Server" \
   --tab tools
