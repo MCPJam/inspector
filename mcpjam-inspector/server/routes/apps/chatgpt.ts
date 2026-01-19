@@ -415,7 +415,8 @@ chatgpt.get("/sandbox-proxy", (c) => {
     "Content-Security-Policy",
     "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
   );
-  // Remove X-Frame-Options as it doesn't support multiple origins (CSP takes precedence)
+  // Remove X-Frame-Options as it doesn't support multiple origins (CSP frame-ancestors takes precedence)
+  c.res.headers.delete("X-Frame-Options");
   return c.body(html);
 });
 
@@ -640,8 +641,9 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
 
     // Apply the built CSP header
     c.header("Content-Security-Policy", cspConfig.headerString);
-    // Note: X-Frame-Options removed - CSP frame-ancestors handles this and
+    // Remove X-Frame-Options - CSP frame-ancestors handles this and
     // X-Frame-Options doesn't support multiple origins needed for cross-origin sandbox
+    c.res.headers.delete("X-Frame-Options");
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     c.header("Pragma", "no-cache");

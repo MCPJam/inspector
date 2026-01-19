@@ -76,6 +76,13 @@ mcp.get("/sandbox-proxy", (c) => {
   const sandboxProxyHtml = fs.readFileSync(sandboxProxyPath, "utf-8");
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+  // Allow cross-origin framing between localhost and 127.0.0.1 for double-iframe architecture
+  c.header(
+    "Content-Security-Policy",
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
+  );
+  // Remove X-Frame-Options as it doesn't support multiple origins (CSP frame-ancestors takes precedence)
+  c.res.headers.delete("X-Frame-Options");
   return c.body(sandboxProxyHtml);
 });
 
