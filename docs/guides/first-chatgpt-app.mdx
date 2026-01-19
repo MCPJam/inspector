@@ -4,11 +4,11 @@ description: "Build a simple Coffee Shop ChatGPT App"
 icon: "sparkles"
 ---
 
-We're going to create a simple Coffee Shop ChatGPT App where users can order and drink coffees through an interactive widget!
+We're going to create a simple Coffee Shop ChatGPT App where users can order and drink coffees!
 
 ## Getting Started
 
-The full code for this Coffee Shop app is available on GitHub:
+Clone the repo and navigate to the Coffee Shop example:
 
 ```bash
 git clone https://github.com/MCPJam/inspector.git
@@ -35,7 +35,6 @@ const server = new McpServer({
 Widget resources and tools work together. The resource provides the widget HTML, and tools reference it to display your UI:
 
 ```typescript
-// ...
 // Register the widget resource
 server.registerResource(
   "coffee-widget",
@@ -83,7 +82,6 @@ server.registerTool(
     };
   }
 );
-// ...
 ```
 
 ## Understanding the Widget
@@ -94,30 +92,52 @@ Widgets run inside a sandboxed iframe. The client injects `window.openai` into t
 
 ### The `window.openai` API
 
-The client injects `window.openai` into your widget's iframe - this is the bridge between your frontend and the client. It provides globals, methods for calling tools, sending follow-ups, managing layout, and much more.
+`window.openai` provides globals, methods for calling tools, sending follow-ups, managing layout, and much more. Here's a basic widget structure using the `window.openai` API:
 
-Here's how our Coffee Shop widget uses it:
+```typescript
+const WIDGET_HTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    /* Your widget styles... */
+  </style>
+</head>
+<body>
+  <h2>☕️ Coffee Shop</h2>
+  <div id="coffeeGrid"></div>
+  <button id="orderBtn">Order ☕️</button>
+  <button id="drinkBtn">Drink ☕️</button>
+  <div id="status"></div>
 
-```javascript
-// Read initial data when the widget loads
-const output = window.openai.toolOutput;
-render(output.coffeeCount, output.message);
+  <script>
+    function render(count, message) {
+      // Update your UI based on current state...
+    }
 
-// Call tools directly from button clicks (requires openai/widgetAccessible: true)
-document.getElementById("orderBtn").addEventListener("click", async () => {
-  const result = await window.openai.callTool("orderCoffee", {});
-  render(result.structuredContent.coffeeCount, result.structuredContent.message);
-});
+    // Read initial data when the widget loads
+    const output = window.openai.toolOutput;
+    render(output.coffeeCount, output.message);
 
-// Listen for updates when users trigger tools via chat
-window.addEventListener("openai:set_globals", (event) => {
-  const output = event.detail.globals.toolOutput;
-  render(output.coffeeCount, output.message);
-});
+    // Call tools directly from button clicks (requires openai/widgetAccessible: true)
+    document.getElementById("orderBtn").addEventListener("click", async () => {
+      const result = await window.openai.callTool("orderCoffee", {});
+      render(result.structuredContent.coffeeCount, result.structuredContent.message);
+    });
+
+    // Listen for updates when users trigger tools via chat
+    window.addEventListener("openai:set_globals", (event) => {
+      const output = event.detail.globals.toolOutput;
+      render(output.coffeeCount, output.message);
+    });
+  </script>
+</body>
+</html>
+`;
 ```
 
-- **`toolOutput`** - The `structuredContent` your server returned, available for your widget to read and render
-- **`callTool()`** - Lets widget buttons trigger server tools directly (requires `openai/widgetAccessible: true` in the tool's metadata)
+- **`window.openai.toolOutput`** - The `structuredContent` your server returned, available for your widget to read and render
+- **`window.openai.callTool()`** - Lets widget buttons trigger server tools directly (requires `openai/widgetAccessible: true` in the tool's metadata)
 - **`openai:set_globals`** - Event that fires when users trigger tools via chat (e.g., "order me a coffee"), keeping everything in sync
 
 <Note>
