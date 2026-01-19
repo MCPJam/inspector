@@ -37,12 +37,12 @@ describe("HTTP Adapters Security", () => {
     // Configure mock manager for http-adapters
     manager = createMockMcpClientManager({
       listServers: vi.fn().mockReturnValue(["test-server"]),
-      getClient: vi.fn().mockImplementation((id: string) =>
-        id === "test-server" ? {} : null,
-      ),
-      hasServer: vi.fn().mockImplementation((id: string) =>
-        id === "test-server",
-      ),
+      getClient: vi
+        .fn()
+        .mockImplementation((id: string) => (id === "test-server" ? {} : null)),
+      hasServer: vi
+        .fn()
+        .mockImplementation((id: string) => id === "test-server"),
       listTools: vi.fn().mockResolvedValue({ tools: [] }),
       listResources: vi.fn().mockResolvedValue({ resources: [] }),
       listPrompts: vi.fn().mockResolvedValue({ prompts: [] }),
@@ -357,7 +357,11 @@ describe("HTTP Adapters Security", () => {
           Origin: "http://evil-website.com",
           "X-MCP-Session-Auth": `Bearer ${validToken}`,
         },
-        body: JSON.stringify({ id: 1, method: "tools/call", params: { name: "dangerous_tool" } }),
+        body: JSON.stringify({
+          id: 1,
+          method: "tools/call",
+          params: { name: "dangerous_tool" },
+        }),
       });
 
       // Origin validation happens before auth, so still 403
