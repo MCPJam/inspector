@@ -311,4 +311,57 @@ describe("HTTP Adapters Security", () => {
       expect(data.result).toEqual({});
     });
   });
+
+  describe("regression: GHSA-39g4-cgq3-5763 PoC", () => {
+    /**
+     * This test reproduces the exact attack vector from the security report.
+     * The PoC demonstrated that any website could invoke MCP tools by making
+     * cross-origin requests to the HTTP bridge endpoints.
+     *
+     * Original PoC:
+     * ```html
+     * <script>
+     * const endpoint = "http://127.0.0.1:6274/api/mcp/manager-http/local";
+     * fetch(endpoint, {
+     *   method: "POST",
+     *   headers: {"Content-Type":"application/json"},
+     *   body: JSON.stringify({id:1, method:"resources/list", params:{}})
+     * }).then(r=>r.text()).then(console.log);
+     * </script>
+     * ```
+     */
+    it("blocks the exact attack vector from the security report", async () => {
+      // Simulate cross-origin fetch from malicious website without auth token
+      const res = await app.request("/api/mcp/manager-http/test-server", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://evil-website.com",
+        },
+        body: JSON.stringify({ id: 1, method: "resources/list", params: {} }),
+      });
+
+      // Should be blocked by origin validation (403) before auth check (401)
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toBe("Forbidden");
+      expect(data.message).toBe("Request origin not allowed.");
+    });
+
+    it("blocks cross-origin requests even if attacker guesses a valid token", async () => {
+      // Even with a valid token, cross-origin requests should be blocked
+      const res = await app.request("/api/mcp/manager-http/test-server", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://evil-website.com",
+          "X-MCP-Session-Auth": `Bearer ${validToken}`,
+        },
+        body: JSON.stringify({ id: 1, method: "tools/call", params: { name: "dangerous_tool" } }),
+      });
+
+      // Origin validation happens before auth, so still 403
+      expect(res.status).toBe(403);
+    });
+  });
 });
