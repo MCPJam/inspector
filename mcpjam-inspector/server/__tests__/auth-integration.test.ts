@@ -42,6 +42,12 @@ function createSecureTestApp(): Hono {
   app.post("/api/mcp/prompts/get", (c) => c.json({ prompt: null }));
   app.get("/api/mcp/servers/rpc/stream", (c) => c.json({ stream: true }));
 
+  // OAuth proxy routes - must be protected to prevent SSRF
+  // See: https://github.com/anthropics/claude-code/issues/XXX
+  app.post("/api/mcp/oauth/proxy", (c) => c.json({ proxied: true }));
+  app.post("/api/mcp/oauth/debug/proxy", (c) => c.json({ proxied: true }));
+  app.get("/api/mcp/oauth/metadata", (c) => c.json({ metadata: true }));
+
   // Routes that should be unprotected
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/api/mcp/health", (c) => c.json({ status: "ok" }));
