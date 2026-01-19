@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { MockMCPClientManager } from "./mock-mcp-client-manager.js";
 
 // Import route modules
@@ -8,6 +9,13 @@ import resources from "../../resources.js";
 import servers from "../../servers.js";
 import prompts from "../../prompts.js";
 import chatV2 from "../../chat-v2.js";
+import { adapterHttp, managerHttp } from "../../http-adapters.js";
+
+// Import security middleware
+import { sessionAuthMiddleware } from "../../../../middleware/session-auth.js";
+import { originValidationMiddleware } from "../../../../middleware/origin-validation.js";
+import { securityHeadersMiddleware } from "../../../../middleware/security-headers.js";
+import { CORS_ORIGINS } from "../../../../config.js";
 
 /**
  * Route configuration for test app creation
@@ -18,7 +26,9 @@ export type RouteConfig =
   | "resources"
   | "servers"
   | "prompts"
-  | "chat-v2";
+  | "chat-v2"
+  | "adapter-http"
+  | "manager-http";
 
 const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   connect: { path: "/api/mcp/connect", handler: connect },
@@ -27,7 +37,21 @@ const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   servers: { path: "/api/mcp/servers", handler: servers },
   prompts: { path: "/api/mcp/prompts", handler: prompts },
   "chat-v2": { path: "/api/mcp/chat-v2", handler: chatV2 },
+  "adapter-http": { path: "/api/mcp/adapter-http", handler: adapterHttp },
+  "manager-http": { path: "/api/mcp/manager-http", handler: managerHttp },
 };
+
+/**
+ * Options for creating a test app
+ */
+export interface CreateTestAppOptions {
+  /**
+   * Enable security middleware (origin validation, session auth, security headers).
+   * When enabled, requests must include valid authentication tokens.
+   * @default false
+   */
+  withSecurity?: boolean;
+}
 
 /**
  * Creates a test Hono app with the mock MCPClientManager injected.
@@ -40,10 +64,15 @@ const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
  * @example
  * // Create app with multiple routes
  * const app = createTestApp(mockManager, ["connect", "tools", "servers"]);
+ *
+ * @example
+ * // Create app with security middleware enabled
+ * const app = createTestApp(mockManager, "adapter-http", { withSecurity: true });
  */
 export function createTestApp(
   mcpClientManager: MockMCPClientManager,
   routes: RouteConfig | RouteConfig[],
+  options: CreateTestAppOptions = {},
 ): Hono {
   const app = new Hono();
 
@@ -52,6 +81,20 @@ export function createTestApp(
     (c as any).mcpClientManager = mcpClientManager;
     await next();
   });
+
+  // Apply security middleware if requested (same order as server/index.ts)
+  if (options.withSecurity) {
+    app.use("*", securityHeadersMiddleware);
+    app.use("*", originValidationMiddleware);
+    app.use("*", sessionAuthMiddleware);
+    app.use(
+      "*",
+      cors({
+        origin: CORS_ORIGINS,
+        credentials: true,
+      }),
+    );
+  }
 
   // Mount requested routes
   const routesToMount = Array.isArray(routes) ? routes : [routes];

@@ -16,28 +16,12 @@ const latestSessionByServer: Map<string, string> = new Map();
 function createHttpHandler(mode: BridgeMode, routePrefix: string) {
   const router = new Hono();
 
-  router.options("/:serverId", (c) =>
-    c.body(null, 204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-      "Access-Control-Allow-Headers":
-        "*, Authorization, Content-Type, Accept, Accept-Language",
-      "Access-Control-Expose-Headers": "*",
-      "Access-Control-Max-Age": "86400",
-    }),
-  );
+  // CORS preflight is handled by the global CORS middleware in server/index.ts
+  // These OPTIONS handlers just return 204 to complete the preflight
+  router.options("/:serverId", (c) => c.body(null, 204));
 
   // Wildcard variants to tolerate trailing paths (e.g., /mcp)
-  router.options("/:serverId/*", (c) =>
-    c.body(null, 204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET,POST,HEAD,OPTIONS",
-      "Access-Control-Allow-Headers":
-        "*, Authorization, Content-Type, Accept, Accept-Language",
-      "Access-Control-Expose-Headers": "*",
-      "Access-Control-Max-Age": "86400",
-    }),
-  );
+  router.options("/:serverId/*", (c) => c.body(null, 204));
 
   async function handleHttp(c: any) {
     const serverId = c.req.param("serverId");
@@ -49,7 +33,6 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*",
         "X-Accel-Buffering": "no",
       });
     }
@@ -131,8 +114,6 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Expose-Headers": "*",
         "X-Accel-Buffering": "no",
         "Transfer-Encoding": "chunked",
       });
@@ -173,13 +154,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     );
     if (!response) {
       // Notification → 202 Accepted
-      return c.body("Accepted", 202, { "Access-Control-Allow-Origin": "*" });
+      return c.body("Accepted", 202);
     }
-    return c.body(JSON.stringify(response), 200, {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Expose-Headers": "*",
-    });
+    return c.json(response);
   }
 
   // Endpoint to receive client messages for SSE transport: /:serverId/messages?sessionId=...
@@ -243,15 +220,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         } catch {}
       }
       // 202 Accepted per SSE transport semantics
-      return c.body("Accepted", 202, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Expose-Headers": "*",
-      });
+      return c.body("Accepted", 202);
     } catch (e: any) {
-      return c.body("Error", 400, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Expose-Headers": "*",
-      });
+      return c.body("Error", 400);
     }
   });
 

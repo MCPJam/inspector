@@ -27,4 +27,5 @@ export {
   expectSuccess,
   expectError,
   type RouteConfig,
+  type CreateTestAppOptions,
 } from "./test-app.js";
