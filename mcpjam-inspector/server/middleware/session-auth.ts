@@ -13,7 +13,6 @@
  * SECURITY NOTE: When adding new routes, consider whether they should be protected.
  * Only add routes to UNPROTECTED_* if they:
  * - Are public health checks
- * - Have their own authentication (OAuth endpoints)
  * - Are loaded in sandboxed iframes that can't include auth headers
  * - Are static assets that don't expose sensitive data
  */
@@ -40,7 +39,6 @@ const UNPROTECTED_ROUTES = [
  */
 const UNPROTECTED_PREFIXES = [
   "/assets/", // Static assets (JS, CSS, images) - no sensitive data
-  "/api/mcp/oauth/", // OAuth proxy - auth handled by OAuth protocol itself
   "/api/mcp/apps/", // MCP Apps widgets - loaded in sandboxed iframes, can't send headers
   "/api/apps/chatgpt/", // ChatGPT widgets - loaded in sandboxed iframes, can't send headers
   "/api/mcp/sandbox-proxy", // Sandbox proxy - loaded in iframe, serves isolated content

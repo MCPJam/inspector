@@ -110,7 +110,6 @@ describe("Auth Integration", () => {
     const unprotectedRoutes = [
       { path: "/health", description: "health check" },
       { path: "/api/mcp/health", description: "MCP health check" },
-      { path: "/api/mcp/oauth/callback", description: "OAuth callback" },
       { path: "/api/mcp/apps/widget", description: "MCP apps widget" },
       { path: "/api/apps/chatgpt/widget", description: "ChatGPT widget" },
     ];
