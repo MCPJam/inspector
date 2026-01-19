@@ -1,25 +1,18 @@
 ---
 title: "My First ChatGPT App"
-description: "Build a simple Coffee Shop ChatGPT App from scratch"
+description: "Build a simple Coffee Shop ChatGPT App"
 icon: "sparkles"
 ---
 
 We're going to create a simple Coffee Shop ChatGPT App where users can order and drink coffees through an interactive widget!
 
-## Setting up your environment
+## Getting Started
 
-### Initialize the project
-
-```bash
-mkdir coffee-shop
-cd coffee-shop
-npm init -y
-```
-
-### Install dependencies
+The full code for this Coffee Shop app is available on GitHub:
 
 ```bash
-npm install @modelcontextprotocol/sdk
+git clone https://github.com/MCPJam/inspector.git
+cd inspector/examples/chatgpt-apps/CoffeeShop
 ```
 
 ## Setting up the MCP Server
@@ -95,57 +88,43 @@ server.registerTool(
 
 ## Understanding the Widget
 
-ChatGPT Apps can display interactive widgets inside the chat. Widget resources are registered by your app and become available when the client connects to your MCP server. Your widget can be built using vanilla JavaScript or a framework like React (optionally with TypeScript), and is bundled into a self-contained HTML file. The client injects `window.openai` into the iframe, allowing the widget to communicate with ChatGPT and invoke tools exposed by your MCP server.
+ChatGPT Apps can display interactive widgets inside the chat. Widget resources are registered by your app and become available when the client connects to your MCP server. Your widget can be built using vanilla JavaScript or a framework like React (optionally with TypeScript), and is bundled into a self-contained HTML file.
+
+Widgets run inside a sandboxed iframe. The client injects `window.openai` into this iframe, which is how your widget communicates with the client and invokes tools on your MCP server.
 
 ### The `window.openai` API
 
-The `window.openai` object is how your widget talks to the client. Our Coffee Shop uses a few of its methods, but there's much more available - file uploads, modals, theming, and more. For the full API reference, see the [OpenAI Apps SDK docs](https://developers.openai.com/apps-sdk/reference#windowopenai-component-bridge).
+The client injects `window.openai` into your widget's iframe - this is the bridge between your frontend and the client. It provides globals, methods for calling tools, sending follow-ups, managing layout, and much more.
 
-### Reading data with `window.openai.toolOutput`
-
-When ChatGPT calls your tool, the server returns `structuredContent`. The client transforms this into `window.openai.toolOutput` for your widget:
+Here's how our Coffee Shop widget uses it:
 
 ```javascript
-// ...
+// Read initial data when the widget loads
 const output = window.openai.toolOutput;
-///
-const count = output.coffeeCount;
-const message = output.message;
-// ...
-```
+render(output.coffeeCount, output.message);
 
-<Note>
-Our Coffee Shop stores `coffeeCount` on the server, so the widget simply reads `toolOutput` and renders it.
+// Call tools directly from button clicks (requires openai/widgetAccessible: true)
+document.getElementById("orderBtn").addEventListener("click", async () => {
+  const result = await window.openai.callTool("orderCoffee", {});
+  render(result.structuredContent.coffeeCount, result.structuredContent.message);
+});
 
-If you need to track state in the widget without updating the server, use `window.openai.widgetState` and `window.openai.setWidgetState()`. Our Coffee Shop doesn't need this because every interaction calls the server.
-</Note>
-
-### Calling tools with `window.openai.callTool()`
-
-Widget buttons can call server tools directly. This requires `"openai/widgetAccessible": true` in your tool's metadata:
-
-```javascript
-// ...
-const result = await window.openai.callTool("orderCoffee", {});
-const { coffeeCount, message } = result.structuredContent;
-// ...
-```
-
-### Listening for updates with `openai:set_globals`
-
-When a user triggers a tool via chat (not button click), ChatGPT sends updated data to your widget via the `openai:set_globals` event:
-
-```javascript
-// ...
+// Listen for updates when users trigger tools via chat
 window.addEventListener("openai:set_globals", (event) => {
   const output = event.detail.globals.toolOutput;
+  render(output.coffeeCount, output.message);
 });
-// ...
 ```
 
+- **`toolOutput`** - The `structuredContent` your server returned, available for your widget to read and render
+- **`callTool()`** - Lets widget buttons trigger server tools directly (requires `openai/widgetAccessible: true` in the tool's metadata)
+- **`openai:set_globals`** - Event that fires when users trigger tools via chat (e.g., "order me a coffee"), keeping everything in sync
+
 <Note>
-This event fires when the user says something like "order me a coffee" in chat. Your widget stays in sync whether the user clicks buttons or types messages.
+Our Coffee Shop stores state on the server, so the widget just reads `toolOutput`. If you need to persist state in the widget and expose it to the client, use `window.openai.widgetState` and `window.openai.setWidgetState()`.
 </Note>
+
+For more on the `window.openai` component bridge (file uploads, modals, follow-up messages, and more), see the [OpenAI Apps SDK docs](https://developers.openai.com/apps-sdk/reference#windowopenai-component-bridge).
 
 ### Display Modes
 
@@ -175,26 +154,27 @@ Widgets run in a sandboxed iframe, so you need to declare which external domains
 Our Coffee Shop uses `redirect_domains` to allow the "Learn more" button to redirect users to mcpjam.com:
 
 ```javascript
-window.openai.openExternal("https://www.mcpjam.com");
+window.openai.openExternal({ href: "https://www.mcpjam.com" });
 ```
 
 <Note>
 Without declaring a domain in your CSP, the sandbox will block the request. Only declare the domains you actually need.
 </Note>
 
-## A note on authentication
+## A note on authentication and monetization
 
-Since the purpose of this guide is to get you building your first ChatGPT App, we've kept things simple and skipped authentication. For production apps that need to identify users or access protected resources, check out the [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth).
+Since the purpose of this guide is to get you building your first ChatGPT App, we've kept things simple and skipped authentication and monetization. For production apps, check out [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth) and [monetization docs](https://developers.openai.com/apps-sdk/build/monetization).
 
 ## Running Your App
 
 ### Start the server
 
 ```bash
+npm install
 npm start
 ```
 
-Your server is now running on `http://localhost:8787`.
+Your server is now running at `http://localhost:8787/mcp`.
 
 ### Testing with MCPJam Inspector
 
