@@ -30,6 +30,16 @@
       "types": "./dist/telemetry/index.d.ts",
       "import": "./dist/telemetry/index.js",
       "require": "./dist/telemetry/index.cjs"
+    },
+    "./evals": {
+      "types": "./dist/evals/index.d.ts",
+      "import": "./dist/evals/index.js",
+      "require": "./dist/evals/index.cjs"
+    },
+    "./oauth": {
+      "types": "./dist/oauth/index.d.ts",
+      "import": "./dist/oauth/index.js",
+      "require": "./dist/oauth/index.cjs"
     }
   },
   "files": [

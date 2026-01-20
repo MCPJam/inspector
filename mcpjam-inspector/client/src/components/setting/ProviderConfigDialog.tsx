@@ -20,6 +20,7 @@ interface ProviderConfig {
   description: string;
   placeholder: string;
   getApiKeyUrl: string;
+  defaultBaseUrl?: string;
 }
 
 interface ProviderConfigDialogProps {
@@ -28,6 +29,8 @@ interface ProviderConfigDialogProps {
   provider: ProviderConfig | null;
   value: string;
   onValueChange: (value: string) => void;
+  baseUrlValue?: string;
+  onBaseUrlChange?: (value: string) => void;
   onSave: () => void;
   onCancel: () => void;
 }
@@ -38,6 +41,8 @@ export function ProviderConfigDialog({
   provider,
   value,
   onValueChange,
+  baseUrlValue,
+  onBaseUrlChange,
   onSave,
   onCancel,
 }: ProviderConfigDialogProps) {
@@ -81,6 +86,25 @@ export function ProviderConfigDialog({
               className="mt-1"
             />
           </div>
+
+          {provider?.defaultBaseUrl && onBaseUrlChange && (
+            <div>
+              <label htmlFor="base-url" className="text-sm font-medium">
+                Base URL (Optional)
+              </label>
+              <Input
+                id="base-url"
+                type="text"
+                value={baseUrlValue || ""}
+                onChange={(e) => onBaseUrlChange(e.target.value)}
+                placeholder={provider.defaultBaseUrl}
+                className="mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Leave empty to use the default endpoint
+              </p>
+            </div>
+          )}
 
           <div className="flex items-center gap-2 p-3 bg-info/10 rounded-lg">
             <ExternalLink className="w-4 h-4 text-info" />

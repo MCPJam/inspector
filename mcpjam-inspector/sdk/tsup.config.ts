@@ -10,6 +10,8 @@ export default defineConfig({
     index: join(sdkDir, "src/index.ts"),
     "mcp-client-manager/index": join(sdkDir, "src/mcp-client-manager/index.ts"),
     "telemetry/index": join(sdkDir, "src/telemetry/index.ts"),
+    "evals/index": join(sdkDir, "src/evals/index.ts"),
+    "oauth/index": join(sdkDir, "src/oauth/index.ts"),
   },
   outDir: join(sdkDir, "dist"),
   tsconfig: join(sdkDir, "tsconfig.json"),

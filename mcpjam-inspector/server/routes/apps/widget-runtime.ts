@@ -504,13 +504,15 @@ const clampNumber = (value: unknown): number | null => {
       window.open(href, "_blank", "noopener,noreferrer");
     },
 
-    requestModal(options: any) {
+    requestModal(options?: any) {
+      const opts = options || {};
       window.parent.postMessage(
         {
           type: "openai:requestModal",
-          title: options.title,
-          params: options.params,
-          anchor: options.anchor,
+          title: opts.title,
+          params: opts.params,
+          anchor: opts.anchor,
+          template: opts.template,
         },
         "*",
       );

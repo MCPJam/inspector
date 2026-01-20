@@ -555,6 +555,17 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       if (vp) viewParams = JSON.parse(vp);
     } catch (e) {}
 
+    // Read optional template URI for modal views
+    const templateUri = c.req.query("template");
+
+    // Validate template URI if provided - must use ui:// protocol for security
+    if (templateUri && !templateUri.startsWith("ui://")) {
+      return c.html(
+        "<html><body>Error: Template must use ui:// protocol</body></html>",
+        400,
+      );
+    }
+
     const widgetData = widgetDataStore.get(toolId);
     if (!widgetData)
       return c.html(
@@ -594,7 +605,11 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
         404,
       );
 
-    const content = await mcpClientManager.readResource(resolved.id, { uri });
+    // Use template URI if provided, otherwise use the stored widget URI
+    const resourceUri = templateUri || uri;
+    const content = await mcpClientManager.readResource(resolved.id, {
+      uri: resourceUri,
+    });
     const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent)
       return c.html(

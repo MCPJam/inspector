@@ -9,12 +9,18 @@ import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
 
+export interface BaseUrls {
+  ollama?: string;
+  litellm?: string;
+  azure?: string;
+  anthropic?: string;
+  openai?: string;
+}
+
 export const createLlmModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
-  ollamaBaseUrl?: string,
-  litellmBaseUrl?: string,
-  azureBaseUrl?: string,
+  baseUrls?: BaseUrls,
 ) => {
   if (!modelDefinition?.id || !modelDefinition?.provider) {
     throw new Error(
@@ -23,15 +29,21 @@ export const createLlmModel = (
   }
   switch (modelDefinition.provider) {
     case "anthropic":
-      return createAnthropic({ apiKey })(modelDefinition.id);
+      return createAnthropic({
+        apiKey,
+        ...(baseUrls?.anthropic && { baseURL: baseUrls.anthropic }),
+      })(modelDefinition.id);
     case "openai":
-      return createOpenAI({ apiKey })(modelDefinition.id);
+      return createOpenAI({
+        apiKey,
+        ...(baseUrls?.openai && { baseURL: baseUrls.openai }),
+      })(modelDefinition.id);
     case "deepseek":
       return createDeepSeek({ apiKey })(modelDefinition.id);
     case "google":
       return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
     case "ollama": {
-      const raw = ollamaBaseUrl || "http://127.0.0.1:11434/api";
+      const raw = baseUrls?.ollama || "http://127.0.0.1:11434/api";
       const normalized = /\/api\/?$/.test(raw)
         ? raw
         : `${raw.replace(/\/+$/, "")}/api`;
@@ -41,7 +53,7 @@ export const createLlmModel = (
       return createMistral({ apiKey })(modelDefinition.id);
     case "litellm": {
       // LiteLLM uses OpenAI-compatible endpoints (standard chat completions API)
-      const baseURL = litellmBaseUrl || "http://localhost:4000";
+      const baseURL = baseUrls?.litellm || "http://localhost:4000";
       // LiteLLM may not require API key depending on setup - use env var or empty string
       const litellmApiKey = apiKey || process.env.LITELLM_API_KEY || "";
       const openai = createOpenAI({
@@ -56,7 +68,9 @@ export const createLlmModel = (
     case "xai":
       return createXai({ apiKey })(modelDefinition.id);
     case "azure":
-      return createAzure({ apiKey, baseURL: azureBaseUrl })(modelDefinition.id);
+      return createAzure({ apiKey, baseURL: baseUrls?.azure })(
+        modelDefinition.id,
+      );
     default:
       throw new Error(
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,

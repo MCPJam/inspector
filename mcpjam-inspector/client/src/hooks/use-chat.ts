@@ -48,6 +48,8 @@ export function useChat(options: UseChatOptions = {}) {
     getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getAzureBaseUrl,
+    getAnthropicBaseUrl,
+    getOpenAIBaseUrl,
   } = useAiProviderKeys();
   const posthog = usePostHog();
 
@@ -468,6 +470,8 @@ export function useChat(options: UseChatOptions = {}) {
             ollamaBaseUrl: getOllamaBaseUrl(),
             litellmBaseUrl: getLiteLLMBaseUrl(),
             azureBaseUrl: getAzureBaseUrl(),
+            anthropicBaseUrl: getAnthropicBaseUrl(),
+            openaiBaseUrl: getOpenAIBaseUrl(),
             sendMessagesToBackend: routeThroughBackend,
             selectedServers,
           }),
@@ -546,6 +550,8 @@ export function useChat(options: UseChatOptions = {}) {
       getOllamaBaseUrl,
       getLiteLLMBaseUrl,
       getAzureBaseUrl,
+      getAnthropicBaseUrl,
+      getOpenAIBaseUrl,
       sendMessagesToBackend,
       getAccessToken,
       selectedServers,

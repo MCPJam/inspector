@@ -35,7 +35,7 @@
       {
         "group": "Guides",
         "icon": "map",
-        "pages": ["guides/first-mcp-app"]
+        "pages": ["guides/first-mcp-app", "guides/first-chatgpt-app-react"]
       },
       {
         "group": "Troubleshooting",

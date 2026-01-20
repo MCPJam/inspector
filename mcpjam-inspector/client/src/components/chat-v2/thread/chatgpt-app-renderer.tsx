@@ -539,6 +539,7 @@ export function ChatGPTAppRenderer({
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, any>>({});
   const [modalTitle, setModalTitle] = useState<string>("");
+  const [modalTemplate, setModalTemplate] = useState<string | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutSession, setCheckoutSession] =
     useState<CheckoutSession | null>(null);
@@ -676,8 +677,11 @@ export function ChatGPTAppRenderer({
     const url = new URL(widgetUrl, "http://placeholder");
     url.searchParams.set("view_mode", "modal");
     url.searchParams.set("view_params", JSON.stringify(modalParams));
+    if (modalTemplate) {
+      url.searchParams.set("template", modalTemplate);
+    }
     return url.pathname + url.search;
-  }, [widgetUrl, modalOpen, modalParams]);
+  }, [widgetUrl, modalOpen, modalParams, modalTemplate]);
 
   const addUiLog = useTrafficLogStore((s) => s.addLog);
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
@@ -995,6 +999,7 @@ export function ChatGPTAppRenderer({
         case "openai:requestModal": {
           setModalTitle(event.data.title || "Modal");
           setModalParams(event.data.params || {});
+          setModalTemplate(event.data.template || null);
           setModalOpen(true);
           break;
         }
@@ -1163,6 +1168,7 @@ export function ChatGPTAppRenderer({
   useEffect(() => {
     if (!modalOpen) {
       setModalSandboxReady(false);
+      setModalTemplate(null);
     }
   }, [modalOpen]);
 
@@ -1419,11 +1425,11 @@ export function ChatGPTAppRenderer({
       )}
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="sm:max-w-6xl h-[70vh] flex flex-col">
+        <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{modalTitle}</DialogTitle>
           </DialogHeader>
-          <div className="flex-1 w-full h-full min-h-0">
+          <div className="flex-1 w-full h-full min-h-0 overflow-y-auto">
             {modalWidgetUrl && (
               <ChatGPTSandboxedIframe
                 ref={modalSandboxRef}

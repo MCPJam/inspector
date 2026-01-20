@@ -1,0 +1,216 @@
+---
+title: "My First ChatGPT App"
+description: "Build a simple Coffee Shop ChatGPT App with React"
+icon: "sparkles"
+---
+
+We're going to create a simple Coffee Shop ChatGPT App where users can order and drink coffees!
+
+## Getting Started
+
+Clone the repo and navigate to the Coffee Shop example:
+
+```bash
+git clone https://github.com/MCPJam/inspector.git
+cd inspector/examples/chatgpt-apps/CoffeeShop
+```
+
+## Setting up the MCP Server
+
+### Creating the MCP Server
+
+```typescript server.ts
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer, IncomingMessage, ServerResponse } from "http";
+
+const server = new McpServer({
+  name: "coffee-shop",
+  version: "1.0.0"
+});
+```
+
+### Registering Resources and Tools
+
+Widget resources and tools work together. The resource provides the widget HTML, and tools reference it to display your UI:
+
+```typescript server.ts
+// Register the widget resource
+server.registerResource(
+  "coffee-widget",
+  "ui://widget/coffee.html",                // Identifier that tools reference via openai/outputTemplate
+  { description: "Coffee Shop widget" },
+  async () => ({
+    contents: [{
+      uri: "ui://widget/coffee.html",
+      mimeType: "text/html+skybridge",      // Marks this as a widget that receives window.openai
+      text: WIDGET_HTML,
+      _meta: {
+        "openai/widgetPrefersBorder": true,  // Adds a border around your widget in the chat
+        "openai/widgetCSP": {
+          redirect_domains: ["https://www.mcpjam.com"]  // Domains users can be redirected to
+        }
+      }
+    }]
+  })
+);
+
+// Register a tool that uses this widget
+server.registerTool(
+  "orderCoffee",
+  {
+    title: "Order Coffee",
+    description: "Order a coffee to add to your collection.",
+    _meta: {
+      "openai/outputTemplate": "ui://widget/coffee.html",    // Which widget to display
+      "openai/widgetAccessible": true,                       // Allow widget buttons to call this tool
+      "openai/toolInvocation/invoking": "Brewing coffee...", // Loading message while tool runs
+      "openai/toolInvocation/invoked": "Coffee ready!"       // Success message when tool completes
+    }
+  },
+  async () => {
+    // ...
+    return {
+      structuredContent: {                                   // Data for widget + model reasoning
+        coffeeCount: coffeeCount,
+        message: "Here's your coffee! ☕️"
+      },
+      content: [{                                            // Text the model uses to craft its response
+        type: "text" as const,
+        text: `Ordered a coffee! You now have ${coffeeCount} coffees.`
+      }]
+    };
+  }
+);
+```
+
+## Understanding the Widget
+
+ChatGPT Apps can display interactive widgets inside the chat. Widget resources are registered by your app and become available when the client connects to your MCP server. Your widget can be built using vanilla JavaScript or a framework like React (optionally with TypeScript), and is bundled into a self-contained HTML file. When your tool is called, the client renders this HTML inside a sandboxed iframe and injects `window.openai` into it, which is how your widget communicates with the client and invokes tools on your MCP server.
+
+### The `window.openai` API
+
+`window.openai` provides globals, methods for calling tools, sending follow-ups, managing layout, and much more.
+
+Here's a basic React widget structure using the `window.openai` API:
+
+```tsx src/CoffeeShopWidget.tsx
+import { StrictMode, useState, useCallback, useRef, useEffect } from "react";
+import { createRoot } from "react-dom/client";
+import { useToolOutput } from "./hooks/useToolOutput"; // Listens for toolOutput changes via the openai:set_globals event
+import type { CoffeeToolOutput } from "./types"; // TypeScript types for window.openai and our tool's output
+
+function CoffeeShopWidget() {
+  const toolOutput = useToolOutput();
+  const [state, setState] = useState<CoffeeToolOutput>({
+    // ... fallback values for TypeScript
+  });
+
+  // Sync state when toolOutput changes (e.g., from chat commands)
+  const prevToolOutputRef = useRef<CoffeeToolOutput | undefined>(undefined);
+  useEffect(() => {
+    if (toolOutput && toolOutput !== prevToolOutputRef.current) {
+      prevToolOutputRef.current = toolOutput;
+      setState(toolOutput);
+    }
+  }, [toolOutput]);
+
+  // Call tools directly from button clicks (requires openai/widgetAccessible: true)
+  const handleOrder = useCallback(async () => {
+    const result = await window.openai?.callTool("orderCoffee", {});
+    if (result?.structuredContent) {
+      setState(result.structuredContent);
+    }
+  }, []);
+
+  // ... more handlers and JSX in the full example
+}
+```
+
+- **`window.openai.toolOutput`** - The `structuredContent` your MCP server returned. It's the data your tool sends to both the widget and the model for context
+- **`window.openai.callTool()`** - Lets widget buttons trigger server tools directly (requires `openai/widgetAccessible: true` in the tool's metadata)
+- **`openai:set_globals`** - Event that fires when users trigger tools via chat (e.g., "order me a coffee"), keeping everything in sync
+
+<Note>
+Our Coffee Shop stores state on the server, so the widget just reads `toolOutput`. If you need to persist state in the widget and expose it to the client, use `window.openai.widgetState` and `window.openai.setWidgetState()`.
+</Note>
+
+For more on the `window.openai` component bridge (file uploads, modals, follow-up messages, and more), see the [OpenAI Apps SDK docs](https://developers.openai.com/apps-sdk/reference#windowopenai-component-bridge).
+
+### Display Modes
+
+Widgets can request different display modes to optimize their presentation:
+
+- **Inline** (default) - Widget renders within the chat message flow
+- **Picture-in-Picture (PiP)** - Widget floats at the top of the screen, staying visible while scrolling
+- **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
+
+Widgets start in inline mode. To request a different mode:
+
+```javascript
+window.openai.requestDisplayMode({ mode: "pip" });
+window.openai.requestDisplayMode({ mode: "fullscreen" });
+```
+
+Users can exit PiP or fullscreen by clicking the close button, returning to inline. Our Coffee Shop uses the default inline mode, but you can test all three in MCPJam Inspector's App Builder.
+
+### Content Security Policy (CSP)
+
+Widgets run in a sandboxed iframe, so you need to declare which external domains your widget can interact with. Set `openai/widgetCSP` in your resource's `_meta` to configure these permissions:
+
+- **`connect_domains`** - Domains your widget can fetch from (API calls)
+- **`resource_domains`** - Domains for static assets (images, fonts, scripts)
+- **`redirect_domains`** - Domains for `window.openai.openExternal()` redirects
+
+Our Coffee Shop uses `redirect_domains` to allow the "Learn more" button to redirect users to mcpjam.com:
+
+```javascript src/CoffeeShopWidget.tsx
+window.openai.openExternal({ href: "https://www.mcpjam.com" });
+```
+
+<Note>
+Without declaring a domain in your CSP, the sandbox will block the request. Only declare the domains you actually need.
+</Note>
+
+## A note on authentication and monetization
+
+Since the purpose of this guide is to get you building your first ChatGPT App, we've kept things simple and skipped authentication and monetization. For production apps, check out [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth) and [monetization docs](https://developers.openai.com/apps-sdk/build/monetization).
+
+## Running Your App
+
+### Build and start the server
+
+```bash
+npm install
+npm start
+```
+
+This builds the React widget with Vite and starts the server at `http://localhost:8787/mcp`.
+
+### Testing with MCPJam Inspector
+
+The easiest way to test your app:
+
+1. Run the inspector: `npx @mcpjam/inspector@latest`
+2. Enter URL: `http://localhost:8787/mcp`
+3. Try your app in our Chat or App Builder!
+
+### Connecting to ChatGPT
+
+To connect your app to ChatGPT:
+
+1. In MCPJam Inspector, click **Create ngrok tunnel** with your server connected
+2. Use the tunnel URL as your connector endpoint in ChatGPT
+
+For more information, see our [ngrok tunneling feature blog](https://www.mcpjam.com/blog/ngrok).
+
+## What's next?
+
+Now that your Coffee Shop is running, you can:
+
+1. **Test the flow** - Call the `orderCoffee` tool to see your widget
+2. **Try the buttons** - Click "Order" and "Drink" to interact with your server
+3. **Chat naturally** - Say "order me 3 coffees" and watch the widget update
+4. **Iterate and expand** - Add more tools, improve the UI, or build something completely new!
+
+Congratulations! You've built your first ChatGPT App! 🎉

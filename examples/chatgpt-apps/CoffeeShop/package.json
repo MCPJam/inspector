@@ -1,0 +1,28 @@
+{
+  "name": "coffee-shop",
+  "version": "1.0.0",
+  "description": "A beginner-friendly ChatGPT App example - an AI coffee shop widget built with React",
+  "type": "module",
+  "main": "server.ts",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "start": "npm run build && tsx server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.0.3"
+  }
+}

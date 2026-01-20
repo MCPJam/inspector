@@ -2,9 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 
 export interface ProviderTokens {
   anthropic: string;
+  anthropicBaseUrl: string;
   azure: string;
   azureBaseUrl: string;
   openai: string;
+  openaiBaseUrl: string;
   deepseek: string;
   google: string;
   mistral: string;
@@ -35,14 +37,21 @@ export interface useAiProviderKeysReturn {
   setOpenRouterSelectedModels: (models: string[]) => void;
   getAzureBaseUrl: () => string;
   setAzureBaseUrl: (url: string) => void;
+  getAnthropicBaseUrl: () => string;
+  setAnthropicBaseUrl: (url: string) => void;
+  getOpenAIBaseUrl: () => string;
+  setOpenAIBaseUrl: (url: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
 
 const defaultTokens: ProviderTokens = {
   anthropic: "",
+  anthropicBaseUrl: "",
   azure: "",
+  azureBaseUrl: "",
   openai: "",
+  openaiBaseUrl: "",
   deepseek: "",
   google: "",
   mistral: "",
@@ -52,7 +61,6 @@ const defaultTokens: ProviderTokens = {
   litellm: "", // LiteLLM API key (optional, depends on proxy setup)
   litellmBaseUrl: "http://localhost:4000", // Default LiteLLM proxy URL
   litellmModelAlias: "", // Model name/alias to use with LiteLLM
-  azureBaseUrl: "",
   openrouter: "",
   openRouterSelectedModels: [],
 };
@@ -198,6 +206,28 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
+  const getAnthropicBaseUrl = useCallback(() => {
+    return tokens.anthropicBaseUrl || "";
+  }, [tokens.anthropicBaseUrl]);
+
+  const setAnthropicBaseUrl = useCallback((url: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      anthropicBaseUrl: url,
+    }));
+  }, []);
+
+  const getOpenAIBaseUrl = useCallback(() => {
+    return tokens.openaiBaseUrl || "";
+  }, [tokens.openaiBaseUrl]);
+
+  const setOpenAIBaseUrl = useCallback((url: string) => {
+    setTokens((prev) => ({
+      ...prev,
+      openaiBaseUrl: url,
+    }));
+  }, []);
+
   return {
     tokens,
     setToken,
@@ -215,5 +245,9 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     setOpenRouterSelectedModels,
     getAzureBaseUrl,
     setAzureBaseUrl,
+    getAnthropicBaseUrl,
+    setAnthropicBaseUrl,
+    getOpenAIBaseUrl,
+    setOpenAIBaseUrl,
   };
 }

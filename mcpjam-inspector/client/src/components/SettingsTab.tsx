@@ -15,6 +15,7 @@ interface ProviderConfig {
   description: string;
   placeholder: string;
   getApiKeyUrl: string;
+  defaultBaseUrl?: string;
 }
 
 export function SettingsTab() {
@@ -33,6 +34,10 @@ export function SettingsTab() {
     setOpenRouterSelectedModels,
     getAzureBaseUrl,
     setAzureBaseUrl,
+    getAnthropicBaseUrl,
+    setAnthropicBaseUrl,
+    getOpenAIBaseUrl,
+    setOpenAIBaseUrl,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -52,6 +57,7 @@ export function SettingsTab() {
   const [azureDialogOpen, setAzureDialogOpen] = useState(false);
   const [azureUrl, setAzureUrl] = useState("");
   const [azureApiKey, setAzureApiKey] = useState("");
+  const [editingBaseUrl, setEditingBaseUrl] = useState("");
   const providerConfigs: ProviderConfig[] = [
     {
       id: "openai",
@@ -61,6 +67,7 @@ export function SettingsTab() {
       description: "GPT-4, GPT-4o, GPT-4o-mini, GPT-4.1, GPT-5, etc.",
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.openai.com/api-keys",
+      defaultBaseUrl: "https://api.openai.com/v1",
     },
     {
       id: "anthropic",
@@ -70,6 +77,7 @@ export function SettingsTab() {
       description: "Claude 3.5, Claude 3.7, Claude Opus 4, etc.",
       placeholder: "sk-ant-...",
       getApiKeyUrl: "https://console.anthropic.com/",
+      defaultBaseUrl: "https://api.anthropic.com/v1",
     },
     {
       id: "deepseek",
@@ -109,6 +117,28 @@ export function SettingsTab() {
     },
   ];
 
+  const getBaseUrlForProvider = (providerId: string): string => {
+    switch (providerId) {
+      case "anthropic":
+        return getAnthropicBaseUrl();
+      case "openai":
+        return getOpenAIBaseUrl();
+      default:
+        return "";
+    }
+  };
+
+  const setBaseUrlForProvider = (providerId: string, url: string) => {
+    switch (providerId) {
+      case "anthropic":
+        setAnthropicBaseUrl(url);
+        break;
+      case "openai":
+        setOpenAIBaseUrl(url);
+        break;
+    }
+  };
+
   const handleEdit = (providerId: string) => {
     const provider = providerConfigs.find((p) => p.id === providerId);
     if (provider) {
@@ -117,6 +147,7 @@ export function SettingsTab() {
       setEditingValue(
         Array.isArray(tokenValue) ? tokenValue.join(", ") : tokenValue || "",
       );
+      setEditingBaseUrl(getBaseUrlForProvider(providerId));
       setDialogOpen(true);
     }
   };
@@ -124,9 +155,13 @@ export function SettingsTab() {
   const handleSave = () => {
     if (selectedProvider) {
       setToken(selectedProvider.id as keyof typeof tokens, editingValue);
+      if (selectedProvider.defaultBaseUrl) {
+        setBaseUrlForProvider(selectedProvider.id, editingBaseUrl);
+      }
       setDialogOpen(false);
       setSelectedProvider(null);
       setEditingValue("");
+      setEditingBaseUrl("");
     }
   };
 
@@ -134,6 +169,7 @@ export function SettingsTab() {
     setDialogOpen(false);
     setSelectedProvider(null);
     setEditingValue("");
+    setEditingBaseUrl("");
   };
 
   const handleDelete = (providerId: string) => {
@@ -268,6 +304,8 @@ export function SettingsTab() {
           provider={selectedProvider}
           value={editingValue}
           onValueChange={setEditingValue}
+          baseUrlValue={editingBaseUrl}
+          onBaseUrlChange={setEditingBaseUrl}
           onSave={handleSave}
           onCancel={handleCancel}
         />

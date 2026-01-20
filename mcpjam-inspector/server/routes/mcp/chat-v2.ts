@@ -214,13 +214,13 @@ chatV2.post("/", async (c) => {
       return createUIMessageStreamResponse({ stream });
     }
 
-    const llmModel = createLlmModel(
-      modelDefinition,
-      apiKey ?? "",
-      body.ollamaBaseUrl,
-      body.litellmBaseUrl,
-      body.azureBaseUrl,
-    );
+    const llmModel = createLlmModel(modelDefinition, apiKey ?? "", {
+      ollama: body.ollamaBaseUrl,
+      litellm: body.litellmBaseUrl,
+      azure: body.azureBaseUrl,
+      anthropic: body.anthropicBaseUrl,
+      openai: body.openaiBaseUrl,
+    });
 
     const result = streamText({
       model: llmModel,
