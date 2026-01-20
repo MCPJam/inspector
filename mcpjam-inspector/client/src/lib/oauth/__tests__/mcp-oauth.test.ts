@@ -80,10 +80,12 @@ describe("OAuth fetch interceptor", () => {
         statusText: "Unauthorized",
       });
 
-      authFetch.mockResolvedValue(authErrorResponse);
-
-      // Dynamically import to get fresh module with mocked dependencies
+      // Reset modules first, then re-import to get fresh mock reference
       vi.resetModules();
+      const sessionToken = await import("@/lib/session-token");
+      const freshAuthFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
+      freshAuthFetch.mockResolvedValue(authErrorResponse);
+
       const mcpOauth = await import("../mcp-oauth");
 
       const result = await mcpOauth.initiateOAuth({
@@ -104,9 +106,12 @@ describe("OAuth fetch interceptor", () => {
         { status: 200 },
       );
 
-      authFetch.mockResolvedValue(metadataResponse);
-
+      // Reset modules first, then re-import to get fresh mock reference
       vi.resetModules();
+      const sessionToken = await import("@/lib/session-token");
+      const freshAuthFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
+      freshAuthFetch.mockResolvedValue(metadataResponse);
+
       const mcpOauth = await import("../mcp-oauth");
 
       // This will fail later in the OAuth flow (no real auth server),
@@ -116,8 +121,12 @@ describe("OAuth fetch interceptor", () => {
         serverUrl: "https://example.com/mcp",
       });
 
-      // Should have attempted to fetch metadata via authFetch
-      expect(authFetch).toHaveBeenCalled();
+      // Verify metadata endpoint was actually requested with correct arguments
+      // The URL is proxied through /api/mcp/oauth/metadata with the target URL encoded as a query param
+      expect(freshAuthFetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/mcp\/oauth\/metadata\?url=.*oauth-protected-resource/),
+        expect.objectContaining({ method: "GET" }),
+      );
     });
   });
 });
