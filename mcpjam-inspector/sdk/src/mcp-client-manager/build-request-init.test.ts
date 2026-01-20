@@ -124,4 +124,94 @@ describe("buildRequestInit", () => {
       });
     });
   });
+
+  describe("headers normalization", () => {
+    it("handles Headers instance and merges with accessToken", () => {
+      const headersInstance = new Headers();
+      headersInstance.set("X-Custom-Header", "custom-value");
+      headersInstance.set("Content-Type", "application/json");
+
+      const originalRequestInit = {
+        headers: headersInstance,
+        cache: "no-store" as const,
+      };
+
+      const result = buildRequestInit("my-secret-token", originalRequestInit);
+
+      expect(result).toEqual({
+        headers: {
+          Authorization: "Bearer my-secret-token",
+          "x-custom-header": "custom-value",
+          "content-type": "application/json",
+        },
+        cache: "no-store",
+      });
+    });
+
+    it("handles string[][] array headers and merges with accessToken", () => {
+      const headersArray: [string, string][] = [
+        ["X-Custom-Header", "custom-value"],
+        ["Content-Type", "application/json"],
+      ];
+
+      const originalRequestInit = {
+        headers: headersArray,
+        credentials: "include" as const,
+      };
+
+      const result = buildRequestInit("my-secret-token", originalRequestInit);
+
+      expect(result).toEqual({
+        headers: {
+          Authorization: "Bearer my-secret-token",
+          "x-custom-header": "custom-value",
+          "content-type": "application/json",
+        },
+        credentials: "include",
+      });
+    });
+
+    it("Headers instance with existing Authorization is preserved over accessToken", () => {
+      const headersInstance = new Headers();
+      headersInstance.set("Authorization", "Bearer existing-token");
+      headersInstance.set("X-Custom-Header", "custom-value");
+
+      const originalRequestInit = {
+        headers: headersInstance,
+      };
+
+      const result = buildRequestInit("new-token", originalRequestInit);
+
+      // Existing Authorization from Headers instance overwrites the accessToken one
+      expect(result?.headers?.Authorization).toBe("Bearer existing-token");
+    });
+
+    it("handles empty Headers instance", () => {
+      const originalRequestInit = {
+        headers: new Headers(),
+      };
+
+      const result = buildRequestInit("my-token", originalRequestInit);
+
+      expect(result).toEqual({
+        headers: {
+          Authorization: "Bearer my-token",
+        },
+      });
+    });
+
+    it("handles empty string[][] array", () => {
+      const originalRequestInit = {
+        headers: [] as [string, string][],
+      };
+
+      const result = buildRequestInit("my-token", originalRequestInit);
+
+      expect(result).toEqual({
+        headers: {
+          Authorization: "Bearer my-token",
+        },
+      });
+    });
+  });
 });

@@ -90,6 +90,53 @@ import type { ToolCallOptions, ToolSet } from "ai";
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 
 /**
+ * Normalizes headers from various formats (Headers, string[][], or plain object)
+ * into a plain Record<string, string>.
+ *
+ * @param headers - Headers in any supported format
+ * @returns Plain object with header key-value pairs
+ */
+function normalizeHeaders(
+  headers: HeadersInit | undefined,
+): Record<string, string> {
+  if (!headers) {
+    return {};
+  }
+
+  // If it's already a plain object (not Headers or array), return as-is
+  if (
+    typeof headers === "object" &&
+    !Array.isArray(headers) &&
+    !(headers instanceof Headers)
+  ) {
+    return headers as Record<string, string>;
+  }
+
+  // Convert Headers or string[][] to a plain object by using the Headers constructor
+  // which accepts all HeadersInit formats, then iterate its entries
+  const normalized: Record<string, string> = {};
+  const headersObj = new Headers(headers);
+  headersObj.forEach((value, key) => {
+    normalized[key] = value;
+  });
+  return normalized;
+}
+
+/**
+ * Checks if headers contain an Authorization header (case-insensitive check).
+ *
+ * @param headers - Normalized headers object
+ * @returns The Authorization value if present, undefined otherwise
+ */
+function getExistingAuthorization(
+  headers: Record<string, string>,
+): string | undefined {
+  // Check for both common casings since Headers normalizes to lowercase
+  // but plain objects preserve original casing
+  return headers["Authorization"] ?? headers["authorization"];
+}
+
+/**
  * Builds the requestInit object, merging accessToken into Authorization header if provided.
  * Exported for testing purposes.
  *
@@ -105,11 +152,22 @@ export function buildRequestInit(
     return requestInit;
   }
 
+  // Normalize headers to a plain object to handle Headers instances and string[][] arrays
+  const existingHeaders = normalizeHeaders(requestInit?.headers);
+
+  // Check if existing headers already have Authorization (case-insensitive)
+  // If so, preserve existing value to maintain backward compatibility
+  const existingAuth = getExistingAuthorization(existingHeaders);
+
+  // Remove any lowercase 'authorization' key to avoid duplicate headers
+  // when merging with our 'Authorization' key
+  const { authorization: _, ...headersWithoutLowercaseAuth } = existingHeaders;
+
   return {
     ...requestInit,
     headers: {
-      Authorization: `Bearer ${accessToken}`,
-      ...(requestInit?.headers as Record<string, string>),
+      Authorization: existingAuth ?? `Bearer ${accessToken}`,
+      ...headersWithoutLowercaseAuth,
     },
   };
 }
