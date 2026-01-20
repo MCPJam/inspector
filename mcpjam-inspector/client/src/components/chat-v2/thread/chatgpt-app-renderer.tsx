@@ -673,10 +673,10 @@ export function ChatGPTAppRenderer({
 
   const modalWidgetUrl = useMemo(() => {
     if (!widgetUrl || !modalOpen) return null;
-    const url = new URL(widgetUrl, window.location.origin);
+    const url = new URL(widgetUrl, "http://placeholder");
     url.searchParams.set("view_mode", "modal");
     url.searchParams.set("view_params", JSON.stringify(modalParams));
-    return url.toString();
+    return url.pathname + url.search;
   }, [widgetUrl, modalOpen, modalParams]);
 
   const addUiLog = useTrafficLogStore((s) => s.addLog);

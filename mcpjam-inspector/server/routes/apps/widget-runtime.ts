@@ -580,7 +580,6 @@ const clampNumber = (value: unknown): number | null => {
   }, 0);
 
   // Listen for storage changes from other same-origin iframes (modal ↔ inline sync)
-  // The browser's storage event fires in OTHER windows/iframes when localStorage changes
   window.addEventListener("storage", (event: StorageEvent) => {
     if (event.key === widgetStateKey && event.newValue !== null) {
       try {
