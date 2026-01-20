@@ -1,6 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, IncomingMessage, ServerResponse } from "http";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let coffeeCount: number = 0;
 
@@ -9,150 +14,13 @@ const server = new McpServer({
   version: "1.0.0"
 });
 
-// Widget HTML - displayed inside an iframe in a client when a tool is called.
+// Widget HTML - built with React and bundled by Vite into a single file.
 // The client injects `window.openai` into the iframe, allowing the widget to
 // communicate with the chat and invoke tools exposed by your MCP server.
-const WIDGET_HTML: string = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            coffee: '#8B4513',
-            'coffee-dark': '#6d3610',
-            cream: '#F5E6D3',
-          }
-        }
-      }
-    }
-  </script>
-</head>
-<body class="bg-cream min-h-screen flex justify-center items-center p-5">
-  <div class="w-full max-w-[400px]">
-    <div class="flex items-center gap-3 pb-4 border-b border-gray-200 mb-6">
-      <span class="text-3xl">☕️</span>
-      <span class="text-2xl font-semibold text-gray-900">Coffee Shop</span>
-    </div>
-
-    <div class="grid grid-cols-5 gap-2 mb-6" id="coffeeGrid"></div>
-
-    <div class="flex gap-3">
-      <button id="orderBtn" class="flex-1 py-3.5 px-5 text-base font-semibold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-2 bg-coffee text-white hover:bg-coffee-dark active:scale-[0.98]">
-        <span>Order</span>
-        <span>☕️</span>
-      </button>
-      <button id="drinkBtn" class="flex-1 py-3.5 px-5 text-base font-semibold rounded-xl cursor-pointer transition-all flex items-center justify-center gap-2 bg-gray-100 text-gray-700 hover:bg-gray-200 active:scale-[0.98]">
-        <span>Drink</span>
-        <span>☕️</span>
-      </button>
-    </div>
-
-    <div id="status" class="text-center mt-4 p-2.5 text-sm font-medium text-gray-500 min-h-[20px] rounded-lg transition-all"></div>
-
-    <button id="learnMoreBtn" class="w-full mt-4 py-2 px-4 text-sm text-coffee hover:text-coffee-dark underline cursor-pointer transition-all">
-      Learn more at MCPJam
-    </button>
-  </div>
-
-  <script>
-    const MAX_COFFEES = 10;
-
-    function render(count, message = "") {
-      const grid = document.getElementById("coffeeGrid");
-      const status = document.getElementById("status");
-
-      grid.innerHTML = "";
-
-      for (let i = 0; i < MAX_COFFEES; i++) {
-        const slot = document.createElement("div");
-        const isFilled = i < count;
-
-        slot.className = "aspect-square flex items-center justify-center text-3xl rounded-xl transition-all";
-
-        if (isFilled) {
-          slot.className += " bg-orange-50";
-          slot.textContent = "☕️";
-        } else {
-          slot.className += " bg-gray-100 border-2 border-dashed border-gray-300";
-        }
-
-        grid.appendChild(slot);
-      }
-
-      status.textContent = message || "";
-      status.className = "text-center mt-4 p-2.5 text-sm font-medium min-h-[20px] rounded-lg transition-all";
-
-      if (message) {
-        const isError = message.toLowerCase().includes("sorry") ||
-                        message.toLowerCase().includes("no coffee");
-        status.className += isError
-          ? " bg-red-50 text-red-700"
-          : " bg-green-50 text-green-700";
-      } else {
-        status.className += " text-gray-500";
-      }
-    }
-
-    function getInitialState() {
-      if (window.openai && window.openai.toolOutput) {
-        const output = window.openai.toolOutput;
-        return {
-          count: output.coffeeCount || 0,
-          message: output.message || ""
-        };
-      }
-      return { count: 0, message: "Welcome to Coffee Shop!" };
-    }
-
-    document.getElementById("orderBtn").addEventListener("click", async () => {
-      if (window.openai && window.openai.callTool) {
-        const result = await window.openai.callTool("orderCoffee", {});
-        if (result && result.structuredContent) {
-          render(result.structuredContent.coffeeCount || 0, result.structuredContent.message || "");
-        }
-      } else {
-        console.log("Would call orderCoffee tool");
-      }
-    });
-
-    document.getElementById("drinkBtn").addEventListener("click", async () => {
-      if (window.openai && window.openai.callTool) {
-        const result = await window.openai.callTool("drinkCoffee", {});
-        if (result && result.structuredContent) {
-          render(result.structuredContent.coffeeCount || 0, result.structuredContent.message || "");
-        }
-      } else {
-        console.log("Would call drinkCoffee tool");
-      }
-    });
-
-    window.addEventListener("openai:set_globals", (event) => {
-      if (event.detail && event.detail.globals && event.detail.globals.toolOutput) {
-        const output = event.detail.globals.toolOutput;
-        render(output.coffeeCount || 0, output.message || "");
-      }
-    });
-
-    document.getElementById("learnMoreBtn").addEventListener("click", () => {
-      if (window.openai && window.openai.openExternal) {
-        window.openai.openExternal("https://www.mcpjam.com");
-      } else {
-        window.open("https://www.mcpjam.com", "_blank");
-      }
-    });
-
-    const initialState = getInitialState();
-    render(initialState.count, initialState.message);
-  </script>
-</body>
-</html>
-`;
+const WIDGET_HTML: string = readFileSync(
+  join(__dirname, "dist", "coffee-widget.html"),
+  "utf-8"
+);
 
 server.registerResource(
   "coffee-widget",

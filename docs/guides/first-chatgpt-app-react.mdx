@@ -1,6 +1,6 @@
 ---
 title: "My First ChatGPT App"
-description: "Build a simple Coffee Shop ChatGPT App"
+description: "Build a simple Coffee Shop ChatGPT App with React"
 icon: "sparkles"
 ---
 
@@ -86,57 +86,46 @@ server.registerTool(
 
 ## Understanding the Widget
 
-ChatGPT Apps can display interactive widgets inside the chat. Widget resources are registered by your app and become available when the client connects to your MCP server. Your widget can be built using vanilla JavaScript or a framework like React (optionally with TypeScript), and is bundled into a self-contained HTML file.
-
-Widgets run inside a sandboxed iframe. The client injects `window.openai` into this iframe, which is how your widget communicates with the client and invokes tools on your MCP server.
+ChatGPT Apps can display interactive widgets inside the chat. Widget resources are registered by your app and become available when the client connects to your MCP server. Your widget can be built using vanilla JavaScript or a framework like React (optionally with TypeScript), and is bundled into a self-contained HTML file. When your tool is called, the client renders this HTML inside a sandboxed iframe and injects `window.openai` into it, which is how your widget communicates with the client and invokes tools on your MCP server.
 
 ### The `window.openai` API
 
-`window.openai` provides globals, methods for calling tools, sending follow-ups, managing layout, and much more. Here's a basic widget structure using the `window.openai` API:
+`window.openai` provides globals, methods for calling tools, sending follow-ups, managing layout, and much more.
 
-```typescript
-const WIDGET_HTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    /* Your widget styles... */
-  </style>
-</head>
-<body>
-  <h2>☕️ Coffee Shop</h2>
-  <div id="coffeeGrid"></div>
-  <button id="orderBtn">Order ☕️</button>
-  <button id="drinkBtn">Drink ☕️</button>
-  <div id="status"></div>
+Here's a basic React widget structure using the `window.openai` API:
 
-  <script>
-    function render(count, message) {
-      // Update your UI based on current state...
+```tsx src/CoffeeShopWidget.tsx
+import { StrictMode, useState, useCallback } from "react";
+import { createRoot } from "react-dom/client";
+import { useToolOutput } from "./hooks/useToolOutput"; // Listens for toolOutput changes via the openai:set_globals event
+import type { CoffeeToolOutput } from "./types"; // TypeScript types for window.openai and our tool's output
+
+function CoffeeShopWidget() {
+  const toolOutput = useToolOutput();
+  const [state, setState] = useState<CoffeeToolOutput>({
+    // ... fallback values for TypeScript
+  });
+
+  // Sync state when toolOutput changes (e.g., from chat commands)
+  // ...
+  if (toolOutput && toolOutput !== prevToolOutput) {
+    // ...
+    setState(toolOutput);
+  }
+
+  // Call tools directly from button clicks (requires openai/widgetAccessible: true)
+  const handleOrder = useCallback(async () => {
+    const result = await window.openai?.callTool("orderCoffee", {});
+    if (result?.structuredContent) {
+      setState(result.structuredContent);
     }
+  }, []);
 
-    // Read initial data when the widget loads
-    const output = window.openai.toolOutput;
-    render(output.coffeeCount, output.message);
-
-    // Call tools directly from button clicks (requires openai/widgetAccessible: true)
-    document.getElementById("orderBtn").addEventListener("click", async () => {
-      const result = await window.openai.callTool("orderCoffee", {});
-      render(result.structuredContent.coffeeCount, result.structuredContent.message);
-    });
-
-    // Listen for updates when users trigger tools via chat
-    window.addEventListener("openai:set_globals", (event) => {
-      const output = event.detail.globals.toolOutput;
-      render(output.coffeeCount, output.message);
-    });
-  </script>
-</body>
-</html>
-`;
+  // ... more handlers and JSX in the full example
+}
 ```
 
-- **`window.openai.toolOutput`** - The `structuredContent` your server returned, available for your widget to read and render
+- **`window.openai.toolOutput`** - The `structuredContent` your MCP server returned. It's the data your tool sends to both the widget and the model for context
 - **`window.openai.callTool()`** - Lets widget buttons trigger server tools directly (requires `openai/widgetAccessible: true` in the tool's metadata)
 - **`openai:set_globals`** - Event that fires when users trigger tools via chat (e.g., "order me a coffee"), keeping everything in sync
 
@@ -187,14 +176,14 @@ Since the purpose of this guide is to get you building your first ChatGPT App, w
 
 ## Running Your App
 
-### Start the server
+### Build and start the server
 
 ```bash
 npm install
 npm start
 ```
 
-Your server is now running at `http://localhost:8787/mcp`.
+This builds the React widget with Vite and starts the server at `http://localhost:8787/mcp`.
 
 ### Testing with MCPJam Inspector
 
