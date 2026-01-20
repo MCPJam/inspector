@@ -16,7 +16,7 @@ export interface SetGlobalsEventDetail {
 export interface OpenAI {
   toolOutput?: CoffeeToolOutput;
   callTool: (toolName: string, args: Record<string, unknown>) => Promise<CallToolResult>;
-  openExternal: (url: string) => void;
+  openExternal: (options: { href: string }) => void;
   requestDisplayMode?: (options: { mode: "inline" | "pip" | "fullscreen" }) => void;
 }
 

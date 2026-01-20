@@ -36,6 +36,7 @@ server.registerResource(
       _meta: {
         "openai/widgetPrefersBorder": true,
         "openai/widgetCSP": {
+          connect_domains: [],
           redirect_domains: ["https://www.mcpjam.com"]
         }
       }

@@ -41,7 +41,7 @@ function CoffeeShopWidget() {
 
   const handleLearnMore = useCallback(() => {
     if (window.openai?.openExternal) {
-      window.openai.openExternal("https://www.mcpjam.com");
+      window.openai.openExternal({ href: "https://www.mcpjam.com" });
     } else {
       window.open("https://www.mcpjam.com", "_blank");
     }
