@@ -11,5 +11,11 @@ export interface ChatV2Request {
   ollamaBaseUrl?: string;
   litellmBaseUrl?: string;
   azureBaseUrl?: string;
+  anthropicBaseUrl?: string;
+  openaiBaseUrl?: string;
+  deepseekBaseUrl?: string;
+  googleBaseUrl?: string;
+  mistralBaseUrl?: string;
+  xaiBaseUrl?: string;
   selectedServers?: string[];
 }

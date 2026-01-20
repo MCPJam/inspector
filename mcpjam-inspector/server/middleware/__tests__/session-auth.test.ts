@@ -194,8 +194,16 @@ describe("sessionAuthMiddleware", () => {
       expect(res.status).toBe(200);
     });
 
-    it("allows /api/mcp/oauth/ without token", async () => {
+    it("requires token for /api/mcp/oauth/ routes", async () => {
       const res = await app.request("/api/mcp/oauth/callback");
+
+      expect(res.status).toBe(401);
+    });
+
+    it("allows /api/mcp/oauth/ with valid token", async () => {
+      const res = await app.request("/api/mcp/oauth/callback", {
+        headers: { "X-MCP-Session-Auth": `Bearer ${validToken}` },
+      });
 
       expect(res.status).toBe(200);
     });

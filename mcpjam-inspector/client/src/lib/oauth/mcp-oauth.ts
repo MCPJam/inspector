@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { HttpServerDefinition } from "@/shared/types.js";
 import { generateRandomString } from "./state-machines/shared/helpers";
+import { authFetch } from "@/lib/session-token";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -44,12 +45,12 @@ function createOAuthFetchInterceptor(): typeof fetch {
         : `/api/mcp/oauth/proxy`;
 
       if (isMetadata) {
-        return await originalFetch(proxyUrl, { ...init, method: "GET" });
+        return await authFetch(proxyUrl, { ...init, method: "GET" });
       }
 
       // For OAuth endpoints, serialize and proxy the full request
       const body = init?.body ? await serializeBody(init.body) : undefined;
-      const response = await originalFetch(proxyUrl, {
+      const response = await authFetch(proxyUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -61,6 +62,11 @@ function createOAuthFetchInterceptor(): typeof fetch {
           body,
         }),
       });
+
+      // If the proxy call itself failed (e.g., auth error), return that response directly
+      if (!response.ok) {
+        return response;
+      }
 
       const data = await response.json();
       return new Response(JSON.stringify(data.body), {

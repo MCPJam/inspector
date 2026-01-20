@@ -42,6 +42,12 @@ function createSecureTestApp(): Hono {
   app.post("/api/mcp/prompts/get", (c) => c.json({ prompt: null }));
   app.get("/api/mcp/servers/rpc/stream", (c) => c.json({ stream: true }));
 
+  // OAuth proxy routes - must be protected to prevent SSRF
+  // See: https://github.com/anthropics/claude-code/issues/XXX
+  app.post("/api/mcp/oauth/proxy", (c) => c.json({ proxied: true }));
+  app.post("/api/mcp/oauth/debug/proxy", (c) => c.json({ proxied: true }));
+  app.get("/api/mcp/oauth/metadata", (c) => c.json({ metadata: true }));
+
   // Routes that should be unprotected
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/api/mcp/health", (c) => c.json({ status: "ok" }));
@@ -52,7 +58,6 @@ function createSecureTestApp(): Hono {
     }
     return c.json({ token: getSessionToken() });
   });
-  app.get("/api/mcp/oauth/callback", (c) => c.json({ oauth: true }));
   app.get("/api/mcp/apps/widget", (c) => c.json({ widget: true }));
   app.get("/api/apps/chatgpt/widget", (c) => c.json({ chatgpt: true }));
 
@@ -76,6 +81,10 @@ describe("Auth Integration", () => {
       { method: "POST", path: "/api/mcp/tools/call" },
       { method: "POST", path: "/api/mcp/prompts/get" },
       { method: "GET", path: "/api/mcp/servers/rpc/stream" },
+      // OAuth proxy routes - protected to prevent unauthenticated SSRF
+      { method: "POST", path: "/api/mcp/oauth/proxy" },
+      { method: "POST", path: "/api/mcp/oauth/debug/proxy" },
+      { method: "GET", path: "/api/mcp/oauth/metadata" },
     ];
 
     for (const { method, path } of protectedRoutes) {
@@ -110,7 +119,6 @@ describe("Auth Integration", () => {
     const unprotectedRoutes = [
       { path: "/health", description: "health check" },
       { path: "/api/mcp/health", description: "MCP health check" },
-      { path: "/api/mcp/oauth/callback", description: "OAuth callback" },
       { path: "/api/mcp/apps/widget", description: "MCP apps widget" },
       { path: "/api/apps/chatgpt/widget", description: "ChatGPT widget" },
     ];

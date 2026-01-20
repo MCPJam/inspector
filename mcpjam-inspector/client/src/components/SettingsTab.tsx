@@ -15,6 +15,7 @@ interface ProviderConfig {
   description: string;
   placeholder: string;
   getApiKeyUrl: string;
+  defaultBaseUrl?: string;
 }
 
 export function SettingsTab() {
@@ -33,6 +34,18 @@ export function SettingsTab() {
     setOpenRouterSelectedModels,
     getAzureBaseUrl,
     setAzureBaseUrl,
+    getAnthropicBaseUrl,
+    setAnthropicBaseUrl,
+    getOpenAIBaseUrl,
+    setOpenAIBaseUrl,
+    getDeepSeekBaseUrl,
+    setDeepSeekBaseUrl,
+    getGoogleBaseUrl,
+    setGoogleBaseUrl,
+    getMistralBaseUrl,
+    setMistralBaseUrl,
+    getXaiBaseUrl,
+    setXaiBaseUrl,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -52,6 +65,7 @@ export function SettingsTab() {
   const [azureDialogOpen, setAzureDialogOpen] = useState(false);
   const [azureUrl, setAzureUrl] = useState("");
   const [azureApiKey, setAzureApiKey] = useState("");
+  const [editingBaseUrl, setEditingBaseUrl] = useState("");
   const providerConfigs: ProviderConfig[] = [
     {
       id: "openai",
@@ -61,6 +75,7 @@ export function SettingsTab() {
       description: "GPT-4, GPT-4o, GPT-4o-mini, GPT-4.1, GPT-5, etc.",
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.openai.com/api-keys",
+      defaultBaseUrl: "https://api.openai.com/v1",
     },
     {
       id: "anthropic",
@@ -70,6 +85,7 @@ export function SettingsTab() {
       description: "Claude 3.5, Claude 3.7, Claude Opus 4, etc.",
       placeholder: "sk-ant-...",
       getApiKeyUrl: "https://console.anthropic.com/",
+      defaultBaseUrl: "https://api.anthropic.com/v1",
     },
     {
       id: "deepseek",
@@ -79,6 +95,7 @@ export function SettingsTab() {
       description: "DeepSeek Chat, DeepSeek Reasoner, etc.",
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.deepseek.com/api_keys",
+      defaultBaseUrl: "https://api.deepseek.com/v1",
     },
     {
       id: "google",
@@ -88,6 +105,7 @@ export function SettingsTab() {
       description: "Gemini 2.5, Gemini 2.5 Flash, Gemini 2.5 Flash Lite",
       placeholder: "AI...",
       getApiKeyUrl: "https://aistudio.google.com/app/apikey",
+      defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
     },
     {
       id: "mistral",
@@ -97,6 +115,7 @@ export function SettingsTab() {
       description: "Mistral Large, Mistral Small, Codestral, etc.",
       placeholder: "...",
       getApiKeyUrl: "https://console.mistral.ai/api-keys/",
+      defaultBaseUrl: "https://api.mistral.ai/v1",
     },
     {
       id: "xai",
@@ -106,8 +125,51 @@ export function SettingsTab() {
       description: "Grok 3, Grok 3 Mini, Grok Code Fast 1, etc.",
       placeholder: "xai-...",
       getApiKeyUrl: "https://console.x.ai/",
+      defaultBaseUrl: "https://api.x.ai/v1",
     },
   ];
+
+  const getBaseUrlForProvider = (providerId: string): string => {
+    switch (providerId) {
+      case "anthropic":
+        return getAnthropicBaseUrl();
+      case "openai":
+        return getOpenAIBaseUrl();
+      case "deepseek":
+        return getDeepSeekBaseUrl();
+      case "google":
+        return getGoogleBaseUrl();
+      case "mistral":
+        return getMistralBaseUrl();
+      case "xai":
+        return getXaiBaseUrl();
+      default:
+        return "";
+    }
+  };
+
+  const setBaseUrlForProvider = (providerId: string, url: string) => {
+    switch (providerId) {
+      case "anthropic":
+        setAnthropicBaseUrl(url);
+        break;
+      case "openai":
+        setOpenAIBaseUrl(url);
+        break;
+      case "deepseek":
+        setDeepSeekBaseUrl(url);
+        break;
+      case "google":
+        setGoogleBaseUrl(url);
+        break;
+      case "mistral":
+        setMistralBaseUrl(url);
+        break;
+      case "xai":
+        setXaiBaseUrl(url);
+        break;
+    }
+  };
 
   const handleEdit = (providerId: string) => {
     const provider = providerConfigs.find((p) => p.id === providerId);
@@ -117,6 +179,7 @@ export function SettingsTab() {
       setEditingValue(
         Array.isArray(tokenValue) ? tokenValue.join(", ") : tokenValue || "",
       );
+      setEditingBaseUrl(getBaseUrlForProvider(providerId));
       setDialogOpen(true);
     }
   };
@@ -124,9 +187,13 @@ export function SettingsTab() {
   const handleSave = () => {
     if (selectedProvider) {
       setToken(selectedProvider.id as keyof typeof tokens, editingValue);
+      if (selectedProvider.defaultBaseUrl) {
+        setBaseUrlForProvider(selectedProvider.id, editingBaseUrl);
+      }
       setDialogOpen(false);
       setSelectedProvider(null);
       setEditingValue("");
+      setEditingBaseUrl("");
     }
   };
 
@@ -134,6 +201,7 @@ export function SettingsTab() {
     setDialogOpen(false);
     setSelectedProvider(null);
     setEditingValue("");
+    setEditingBaseUrl("");
   };
 
   const handleDelete = (providerId: string) => {
@@ -268,6 +336,8 @@ export function SettingsTab() {
           provider={selectedProvider}
           value={editingValue}
           onValueChange={setEditingValue}
+          baseUrlValue={editingBaseUrl}
+          onBaseUrlChange={setEditingBaseUrl}
           onSave={handleSave}
           onCancel={handleCancel}
         />
