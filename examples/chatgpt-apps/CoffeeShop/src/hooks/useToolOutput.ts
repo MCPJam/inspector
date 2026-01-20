@@ -5,7 +5,7 @@ export function useToolOutput(): CoffeeToolOutput | undefined {
   return useSyncExternalStore(
     (onChange) => {
       const handleSetGlobals = (event: CustomEvent) => {
-        if (event.detail?.globals?.toolOutput !== undefined) {
+        if (event.detail?.globals) {
           onChange();
         }
       };

@@ -1,4 +1,4 @@
-import { StrictMode, useState, useCallback } from "react";
+import { StrictMode, useState, useCallback, useRef, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { useToolOutput } from "./hooks/useToolOutput";
 import type { CoffeeToolOutput } from "./types";
@@ -19,11 +19,13 @@ function CoffeeShopWidget() {
   });
 
   // Sync state when toolOutput changes (e.g., from chat commands)
-  const prevToolOutput = useState<CoffeeToolOutput | undefined>(undefined);
-  if (toolOutput && toolOutput !== prevToolOutput[0]) {
-    prevToolOutput[1](toolOutput);
-    setState(toolOutput);
-  }
+  const prevToolOutputRef = useRef<CoffeeToolOutput | undefined>(undefined);
+  useEffect(() => {
+    if (toolOutput && toolOutput !== prevToolOutputRef.current) {
+      prevToolOutputRef.current = toolOutput;
+      setState(toolOutput);
+    }
+  }, [toolOutput]);
 
   const handleOrder = useCallback(async () => {
     const result = await window.openai?.callTool("orderCoffee", {});

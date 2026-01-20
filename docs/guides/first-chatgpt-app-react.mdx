@@ -19,7 +19,7 @@ cd inspector/examples/chatgpt-apps/CoffeeShop
 
 ### Creating the MCP Server
 
-```typescript
+```typescript server.ts
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, IncomingMessage, ServerResponse } from "http";
@@ -34,7 +34,7 @@ const server = new McpServer({
 
 Widget resources and tools work together. The resource provides the widget HTML, and tools reference it to display your UI:
 
-```typescript
+```typescript server.ts
 // Register the widget resource
 server.registerResource(
   "coffee-widget",
@@ -95,7 +95,7 @@ ChatGPT Apps can display interactive widgets inside the chat. Widget resources a
 Here's a basic React widget structure using the `window.openai` API:
 
 ```tsx src/CoffeeShopWidget.tsx
-import { StrictMode, useState, useCallback } from "react";
+import { StrictMode, useState, useCallback, useRef, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { useToolOutput } from "./hooks/useToolOutput"; // Listens for toolOutput changes via the openai:set_globals event
 import type { CoffeeToolOutput } from "./types"; // TypeScript types for window.openai and our tool's output
@@ -107,11 +107,13 @@ function CoffeeShopWidget() {
   });
 
   // Sync state when toolOutput changes (e.g., from chat commands)
-  // ...
-  if (toolOutput && toolOutput !== prevToolOutput) {
-    // ...
-    setState(toolOutput);
-  }
+  const prevToolOutputRef = useRef<CoffeeToolOutput | undefined>(undefined);
+  useEffect(() => {
+    if (toolOutput && toolOutput !== prevToolOutputRef.current) {
+      prevToolOutputRef.current = toolOutput;
+      setState(toolOutput);
+    }
+  }, [toolOutput]);
 
   // Call tools directly from button clicks (requires openai/widgetAccessible: true)
   const handleOrder = useCallback(async () => {
@@ -162,7 +164,7 @@ Widgets run in a sandboxed iframe, so you need to declare which external domains
 
 Our Coffee Shop uses `redirect_domains` to allow the "Learn more" button to redirect users to mcpjam.com:
 
-```javascript
+```javascript src/CoffeeShopWidget.tsx
 window.openai.openExternal({ href: "https://www.mcpjam.com" });
 ```
 
