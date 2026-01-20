@@ -8,13 +8,9 @@ export interface ProviderTokens {
   openai: string;
   openaiBaseUrl: string;
   deepseek: string;
-  deepseekBaseUrl: string;
   google: string;
-  googleBaseUrl: string;
   mistral: string;
-  mistralBaseUrl: string;
   xai: string;
-  xaiBaseUrl: string;
   ollama: string;
   ollamaBaseUrl: string;
   litellm: string;
@@ -45,14 +41,6 @@ export interface useAiProviderKeysReturn {
   setAnthropicBaseUrl: (url: string) => void;
   getOpenAIBaseUrl: () => string;
   setOpenAIBaseUrl: (url: string) => void;
-  getDeepSeekBaseUrl: () => string;
-  setDeepSeekBaseUrl: (url: string) => void;
-  getGoogleBaseUrl: () => string;
-  setGoogleBaseUrl: (url: string) => void;
-  getMistralBaseUrl: () => string;
-  setMistralBaseUrl: (url: string) => void;
-  getXaiBaseUrl: () => string;
-  setXaiBaseUrl: (url: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
@@ -65,13 +53,9 @@ const defaultTokens: ProviderTokens = {
   openai: "",
   openaiBaseUrl: "",
   deepseek: "",
-  deepseekBaseUrl: "",
   google: "",
-  googleBaseUrl: "",
   mistral: "",
-  mistralBaseUrl: "",
   xai: "",
-  xaiBaseUrl: "",
   ollama: "local", // Ollama runs locally, no API key needed
   ollamaBaseUrl: "http://127.0.0.1:11434/api",
   litellm: "", // LiteLLM API key (optional, depends on proxy setup)
@@ -244,50 +228,6 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
-  const getDeepSeekBaseUrl = useCallback(() => {
-    return tokens.deepseekBaseUrl || "";
-  }, [tokens.deepseekBaseUrl]);
-
-  const setDeepSeekBaseUrl = useCallback((url: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      deepseekBaseUrl: url,
-    }));
-  }, []);
-
-  const getGoogleBaseUrl = useCallback(() => {
-    return tokens.googleBaseUrl || "";
-  }, [tokens.googleBaseUrl]);
-
-  const setGoogleBaseUrl = useCallback((url: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      googleBaseUrl: url,
-    }));
-  }, []);
-
-  const getMistralBaseUrl = useCallback(() => {
-    return tokens.mistralBaseUrl || "";
-  }, [tokens.mistralBaseUrl]);
-
-  const setMistralBaseUrl = useCallback((url: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      mistralBaseUrl: url,
-    }));
-  }, []);
-
-  const getXaiBaseUrl = useCallback(() => {
-    return tokens.xaiBaseUrl || "";
-  }, [tokens.xaiBaseUrl]);
-
-  const setXaiBaseUrl = useCallback((url: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      xaiBaseUrl: url,
-    }));
-  }, []);
-
   return {
     tokens,
     setToken,
@@ -309,13 +249,5 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     setAnthropicBaseUrl,
     getOpenAIBaseUrl,
     setOpenAIBaseUrl,
-    getDeepSeekBaseUrl,
-    setDeepSeekBaseUrl,
-    getGoogleBaseUrl,
-    setGoogleBaseUrl,
-    getMistralBaseUrl,
-    setMistralBaseUrl,
-    getXaiBaseUrl,
-    setXaiBaseUrl,
   };
 }

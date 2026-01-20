@@ -50,10 +50,6 @@ export function useChat(options: UseChatOptions = {}) {
     getAzureBaseUrl,
     getAnthropicBaseUrl,
     getOpenAIBaseUrl,
-    getDeepSeekBaseUrl,
-    getGoogleBaseUrl,
-    getMistralBaseUrl,
-    getXaiBaseUrl,
   } = useAiProviderKeys();
   const posthog = usePostHog();
 
@@ -476,10 +472,6 @@ export function useChat(options: UseChatOptions = {}) {
             azureBaseUrl: getAzureBaseUrl(),
             anthropicBaseUrl: getAnthropicBaseUrl(),
             openaiBaseUrl: getOpenAIBaseUrl(),
-            deepseekBaseUrl: getDeepSeekBaseUrl(),
-            googleBaseUrl: getGoogleBaseUrl(),
-            mistralBaseUrl: getMistralBaseUrl(),
-            xaiBaseUrl: getXaiBaseUrl(),
             sendMessagesToBackend: routeThroughBackend,
             selectedServers,
           }),
@@ -560,10 +552,6 @@ export function useChat(options: UseChatOptions = {}) {
       getAzureBaseUrl,
       getAnthropicBaseUrl,
       getOpenAIBaseUrl,
-      getDeepSeekBaseUrl,
-      getGoogleBaseUrl,
-      getMistralBaseUrl,
-      getXaiBaseUrl,
       sendMessagesToBackend,
       getAccessToken,
       selectedServers,

@@ -38,14 +38,6 @@ export function SettingsTab() {
     setAnthropicBaseUrl,
     getOpenAIBaseUrl,
     setOpenAIBaseUrl,
-    getDeepSeekBaseUrl,
-    setDeepSeekBaseUrl,
-    getGoogleBaseUrl,
-    setGoogleBaseUrl,
-    getMistralBaseUrl,
-    setMistralBaseUrl,
-    getXaiBaseUrl,
-    setXaiBaseUrl,
   } = useAiProviderKeys();
 
   const [editingValue, setEditingValue] = useState("");
@@ -95,7 +87,6 @@ export function SettingsTab() {
       description: "DeepSeek Chat, DeepSeek Reasoner, etc.",
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.deepseek.com/api_keys",
-      defaultBaseUrl: "https://api.deepseek.com/v1",
     },
     {
       id: "google",
@@ -105,7 +96,6 @@ export function SettingsTab() {
       description: "Gemini 2.5, Gemini 2.5 Flash, Gemini 2.5 Flash Lite",
       placeholder: "AI...",
       getApiKeyUrl: "https://aistudio.google.com/app/apikey",
-      defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
     },
     {
       id: "mistral",
@@ -115,7 +105,6 @@ export function SettingsTab() {
       description: "Mistral Large, Mistral Small, Codestral, etc.",
       placeholder: "...",
       getApiKeyUrl: "https://console.mistral.ai/api-keys/",
-      defaultBaseUrl: "https://api.mistral.ai/v1",
     },
     {
       id: "xai",
@@ -125,7 +114,6 @@ export function SettingsTab() {
       description: "Grok 3, Grok 3 Mini, Grok Code Fast 1, etc.",
       placeholder: "xai-...",
       getApiKeyUrl: "https://console.x.ai/",
-      defaultBaseUrl: "https://api.x.ai/v1",
     },
   ];
 
@@ -135,14 +123,6 @@ export function SettingsTab() {
         return getAnthropicBaseUrl();
       case "openai":
         return getOpenAIBaseUrl();
-      case "deepseek":
-        return getDeepSeekBaseUrl();
-      case "google":
-        return getGoogleBaseUrl();
-      case "mistral":
-        return getMistralBaseUrl();
-      case "xai":
-        return getXaiBaseUrl();
       default:
         return "";
     }
@@ -155,18 +135,6 @@ export function SettingsTab() {
         break;
       case "openai":
         setOpenAIBaseUrl(url);
-        break;
-      case "deepseek":
-        setDeepSeekBaseUrl(url);
-        break;
-      case "google":
-        setGoogleBaseUrl(url);
-        break;
-      case "mistral":
-        setMistralBaseUrl(url);
-        break;
-      case "xai":
-        setXaiBaseUrl(url);
         break;
     }
   };

@@ -15,10 +15,6 @@ export interface BaseUrls {
   azure?: string;
   anthropic?: string;
   openai?: string;
-  deepseek?: string;
-  google?: string;
-  mistral?: string;
-  xai?: string;
 }
 
 export const createLlmModel = (
@@ -43,15 +39,9 @@ export const createLlmModel = (
         ...(baseUrls?.openai && { baseURL: baseUrls.openai }),
       })(modelDefinition.id);
     case "deepseek":
-      return createDeepSeek({
-        apiKey,
-        ...(baseUrls?.deepseek && { baseURL: baseUrls.deepseek }),
-      })(modelDefinition.id);
+      return createDeepSeek({ apiKey })(modelDefinition.id);
     case "google":
-      return createGoogleGenerativeAI({
-        apiKey,
-        ...(baseUrls?.google && { baseURL: baseUrls.google }),
-      })(modelDefinition.id);
+      return createGoogleGenerativeAI({ apiKey })(modelDefinition.id);
     case "ollama": {
       const raw = baseUrls?.ollama || "http://127.0.0.1:11434/api";
       const normalized = /\/api\/?$/.test(raw)
@@ -60,10 +50,7 @@ export const createLlmModel = (
       return createOllama({ baseURL: normalized })(modelDefinition.id);
     }
     case "mistral":
-      return createMistral({
-        apiKey,
-        ...(baseUrls?.mistral && { baseURL: baseUrls.mistral }),
-      })(modelDefinition.id);
+      return createMistral({ apiKey })(modelDefinition.id);
     case "litellm": {
       // LiteLLM uses OpenAI-compatible endpoints (standard chat completions API)
       const baseURL = baseUrls?.litellm || "http://localhost:4000";
@@ -79,10 +66,7 @@ export const createLlmModel = (
     case "openrouter":
       return createOpenRouter({ apiKey })(modelDefinition.id);
     case "xai":
-      return createXai({
-        apiKey,
-        ...(baseUrls?.xai && { baseURL: baseUrls.xai }),
-      })(modelDefinition.id);
+      return createXai({ apiKey })(modelDefinition.id);
     case "azure":
       return createAzure({ apiKey, baseURL: baseUrls?.azure })(
         modelDefinition.id,

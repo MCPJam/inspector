@@ -13,9 +13,5 @@ export interface ChatV2Request {
   azureBaseUrl?: string;
   anthropicBaseUrl?: string;
   openaiBaseUrl?: string;
-  deepseekBaseUrl?: string;
-  googleBaseUrl?: string;
-  mistralBaseUrl?: string;
-  xaiBaseUrl?: string;
   selectedServers?: string[];
 }

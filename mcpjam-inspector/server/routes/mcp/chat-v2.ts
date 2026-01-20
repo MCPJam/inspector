@@ -220,10 +220,6 @@ chatV2.post("/", async (c) => {
       azure: body.azureBaseUrl,
       anthropic: body.anthropicBaseUrl,
       openai: body.openaiBaseUrl,
-      deepseek: body.deepseekBaseUrl,
-      google: body.googleBaseUrl,
-      mistral: body.mistralBaseUrl,
-      xai: body.xaiBaseUrl,
     });
 
     const result = streamText({
