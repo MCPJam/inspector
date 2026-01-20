@@ -579,6 +579,24 @@ const clampNumber = (value: unknown): number | null => {
     }
   }, 0);
 
+  // Listen for storage changes from other same-origin iframes (modal ↔ inline sync)
+  // The browser's storage event fires in OTHER windows/iframes when localStorage changes
+  window.addEventListener("storage", (event: StorageEvent) => {
+    if (event.key === widgetStateKey && event.newValue !== null) {
+      try {
+        const newState = JSON.parse(event.newValue);
+        window.openai.widgetState = newState;
+        window.dispatchEvent(
+          new CustomEvent("openai:set_globals", {
+            detail: { globals: { widgetState: newState } },
+          }),
+        );
+      } catch (err) {
+        // no-op
+      }
+    }
+  });
+
   window.addEventListener("message", (event: MessageEvent<any>) => {
     const { type, callId, result, error, globals } = event.data || {};
     switch (type) {
@@ -621,29 +639,6 @@ const clampNumber = (value: unknown): number | null => {
           );
         } catch (err) {
           // no-op
-        }
-        break;
-      case "openai:pushWidgetState":
-        if (event.data.toolId === toolId) {
-          try {
-            const nextState = event.data.state ?? null;
-            window.openai.widgetState = nextState;
-            try {
-              localStorage.setItem(widgetStateKey, JSON.stringify(nextState));
-            } catch (err) {
-              // no-op
-            }
-            window.dispatchEvent(
-              new CustomEvent("openai:widget_state", {
-                detail: { state: nextState },
-              }),
-            );
-          } catch (err) {
-            console.error(
-              "[OpenAI Widget] Failed to apply pushed widget state:",
-              err,
-            );
-          }
         }
         break;
       case "openai:requestResize":

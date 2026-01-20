@@ -547,7 +547,6 @@ export function ChatGPTAppRenderer({
     "inline",
   );
   const previousWidgetStateRef = useRef<string | null>(null);
-  const [currentWidgetState, setCurrentWidgetState] = useState<unknown>(null);
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
   const lastAppliedHeightRef = useRef<number>(0);
 
@@ -847,19 +846,11 @@ export function ChatGPTAppRenderer({
             const newState = event.data.state;
             const newStateStr =
               newState === null ? null : JSON.stringify(newState);
+            // Just update debug store - localStorage events handle modal ↔ inline sync
             if (newStateStr !== previousWidgetStateRef.current) {
               previousWidgetStateRef.current = newStateStr;
-              setCurrentWidgetState(newState);
               setWidgetState(resolvedToolCallId, newState);
               onWidgetStateChange?.(resolvedToolCallId, newState);
-            }
-            // Push to modal if open and ready
-            if (modalOpen && modalSandboxReady) {
-              modalSandboxRef.current?.postMessage({
-                type: "openai:pushWidgetState",
-                toolId: resolvedToolCallId,
-                state: newState,
-              });
             }
           }
           break;
@@ -1023,8 +1014,6 @@ export function ChatGPTAppRenderer({
       onWidgetStateChange,
       resolvedToolCallId,
       pipWidgetId,
-      modalOpen,
-      modalSandboxReady,
       onRequestPip,
       onExitPip,
       addUiLog,
@@ -1056,18 +1045,12 @@ export function ChatGPTAppRenderer({
       ) {
         const newState = event.data.state;
         const newStateStr = newState === null ? null : JSON.stringify(newState);
+        // Just update debug store - localStorage events handle modal ↔ inline sync
         if (newStateStr !== previousWidgetStateRef.current) {
           previousWidgetStateRef.current = newStateStr;
-          setCurrentWidgetState(newState);
           setWidgetState(resolvedToolCallId, newState);
           onWidgetStateChange?.(resolvedToolCallId, newState);
         }
-        // Push to inline widget
-        sandboxRef.current?.postMessage({
-          type: "openai:pushWidgetState",
-          toolId: resolvedToolCallId,
-          state: newState,
-        });
       }
 
       if (event.data?.type === "openai:requestCheckout") {
@@ -1158,14 +1141,7 @@ export function ChatGPTAppRenderer({
 
   const handleModalReady = useCallback(() => {
     setModalSandboxReady(true);
-    // Push current widget state to modal on ready
-    if (currentWidgetState !== null) {
-      modalSandboxRef.current?.postMessage({
-        type: "openai:pushWidgetState",
-        toolId: resolvedToolCallId,
-        state: currentWidgetState,
-      });
-    }
+    // Widget state is loaded from localStorage by widget-runtime initialization
     // Push current globals
     modalSandboxRef.current?.postMessage({
       type: "openai:set_globals",
@@ -1181,15 +1157,7 @@ export function ChatGPTAppRenderer({
         },
       },
     });
-  }, [
-    currentWidgetState,
-    resolvedToolCallId,
-    themeMode,
-    locale,
-    deviceType,
-    capabilities,
-    safeAreaInsets,
-  ]);
+  }, [themeMode, locale, deviceType, capabilities, safeAreaInsets]);
 
   // Reset modal sandbox state when modal closes
   useEffect(() => {
