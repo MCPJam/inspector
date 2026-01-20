@@ -120,6 +120,12 @@ type StdioServerConfig = BaseServerConfig & {
 
 type HttpServerConfig = BaseServerConfig & {
   url: URL;
+  /**
+   * Access token for Bearer authentication.
+   * If provided, adds `Authorization: Bearer <accessToken>` header to requests.
+   * Obtain tokens via OAuth flow (e.g., MCPJam Inspector) or from the authorization server.
+   */
+  accessToken?: string;
   requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
   eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
   authProvider?: StreamableHTTPClientTransportOptions["authProvider"];
@@ -1136,13 +1142,24 @@ export class MCPClientManager {
     config: HttpServerConfig,
     timeout: number,
   ): Promise<Transport> {
+    // Merge accessToken into requestInit headers if provided
+    const requestInit = config.accessToken
+      ? {
+          ...config.requestInit,
+          headers: {
+            Authorization: `Bearer ${config.accessToken}`,
+            ...(config.requestInit?.headers as Record<string, string>),
+          },
+        }
+      : config.requestInit;
+
     const preferSSE = config.preferSSE ?? config.url.pathname.endsWith("/sse");
     let streamableError: unknown;
     if (!preferSSE) {
       const streamableTransport = new StreamableHTTPClientTransport(
         config.url,
         {
-          requestInit: config.requestInit,
+          requestInit,
           reconnectionOptions: config.reconnectionOptions,
           authProvider: config.authProvider,
           sessionId: config.sessionId,
@@ -1166,7 +1183,7 @@ export class MCPClientManager {
     }
 
     const sseTransport = new SSEClientTransport(config.url, {
-      requestInit: config.requestInit,
+      requestInit,
       eventSourceInit: config.eventSourceInit,
       authProvider: config.authProvider,
     });
