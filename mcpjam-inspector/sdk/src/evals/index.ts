@@ -32,28 +32,47 @@ export type {
   Validator,
   PromptType,
 
-  // Test case and configuration
-  TestCase,
-  TestAgentConfig,
-  EvalsSuiteConfig,
-
-  // Tool call related
+  // Tool call types (aligned with shared/eval-matching.ts)
   ToolCall,
+  ToolCallWithMetadata,
+  ArgumentMismatch,
+  ToolCallMatchResult,
+
+  // Test case types (aligned with backend and client)
+  ExpectedToolCall,
+  TestCase,
+  ModelConfig,
+
+  // Token usage (aligned with server types)
   Usage,
 
-  // Query and validation results
+  // Evaluation result (aligned with server types)
+  EvaluationResult,
+
+  // Query result
   QueryResult,
+
+  // Validation types
   ValidationResult,
   ExpectedValues,
   ActualValues,
 
-  // Iteration and suite results
+  // Iteration types (aligned with backend schema)
+  IterationStatus,
+  IterationResultStatus,
   IterationResult,
-  EvalsSuiteResult,
-  RetryDistribution,
 
-  // Latency metrics
+  // Suite result types (aligned with backend schema)
   LatencyMetrics,
+  SuiteRunSummary,
+  PassCriteria,
+  RetryDistribution,
+  EvalsSuiteResult,
+
+  // Configuration types
+  TestAgentConfig,
+  EvalsSuiteConfig,
+  EnvironmentConfig,
 
   // Function types
   EvalIterationFn,
@@ -65,3 +84,4 @@ export type {
 // export { TestAgent } from "./test-agent.js";
 // export { EvalsSuite } from "./evals-suite.js";
 // export { validate } from "./validators/index.js";
+// export { matchToolCalls, argumentsMatch } from "./validators/tool-matching.js";
