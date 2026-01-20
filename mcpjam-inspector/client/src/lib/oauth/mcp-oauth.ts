@@ -63,6 +63,11 @@ function createOAuthFetchInterceptor(): typeof fetch {
         }),
       });
 
+      // If the proxy call itself failed (e.g., auth error), return that response directly
+      if (!response.ok) {
+        return response;
+      }
+
       const data = await response.json();
       return new Response(JSON.stringify(data.body), {
         status: data.status,

@@ -58,7 +58,6 @@ function createSecureTestApp(): Hono {
     }
     return c.json({ token: getSessionToken() });
   });
-  app.get("/api/mcp/oauth/callback", (c) => c.json({ oauth: true }));
   app.get("/api/mcp/apps/widget", (c) => c.json({ widget: true }));
   app.get("/api/apps/chatgpt/widget", (c) => c.json({ chatgpt: true }));
 
@@ -82,6 +81,10 @@ describe("Auth Integration", () => {
       { method: "POST", path: "/api/mcp/tools/call" },
       { method: "POST", path: "/api/mcp/prompts/get" },
       { method: "GET", path: "/api/mcp/servers/rpc/stream" },
+      // OAuth proxy routes - protected to prevent unauthenticated SSRF
+      { method: "POST", path: "/api/mcp/oauth/proxy" },
+      { method: "POST", path: "/api/mcp/oauth/debug/proxy" },
+      { method: "GET", path: "/api/mcp/oauth/metadata" },
     ];
 
     for (const { method, path } of protectedRoutes) {
