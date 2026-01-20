@@ -607,7 +607,9 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
 
     // Use template URI if provided, otherwise use the stored widget URI
     const resourceUri = templateUri || uri;
-    const content = await mcpClientManager.readResource(resolved.id, { uri: resourceUri });
+    const content = await mcpClientManager.readResource(resolved.id, {
+      uri: resourceUri,
+    });
     const { html: htmlContent, firstContent } = extractHtmlContent(content);
     if (!htmlContent)
       return c.html(

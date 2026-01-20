@@ -1457,11 +1457,11 @@ export function ChatGPTAppRenderer({
       )}
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="sm:max-w-6xl h-[70vh] flex flex-col">
+        <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{modalTitle}</DialogTitle>
           </DialogHeader>
-          <div className="flex-1 w-full h-full min-h-0">
+          <div className="flex-1 w-full h-full min-h-0 overflow-y-auto">
             {modalWidgetUrl && (
               <ChatGPTSandboxedIframe
                 ref={modalSandboxRef}
