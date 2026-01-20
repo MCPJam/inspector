@@ -22,4 +22,11 @@ export default defineWorkspace([
       root: "./shared",
     },
   },
+  {
+    extends: "./sdk/vitest.config.ts",
+    test: {
+      name: "sdk",
+      root: "./sdk",
+    },
+  },
 ]);

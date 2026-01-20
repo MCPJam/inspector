@@ -89,6 +89,31 @@ import {
 import type { ToolCallOptions, ToolSet } from "ai";
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 
+/**
+ * Builds the requestInit object, merging accessToken into Authorization header if provided.
+ * Exported for testing purposes.
+ *
+ * @param accessToken - Optional access token for Bearer auth
+ * @param requestInit - Optional existing requestInit config
+ * @returns Merged requestInit with Authorization header if accessToken provided
+ */
+export function buildRequestInit(
+  accessToken: string | undefined,
+  requestInit: StreamableHTTPClientTransportOptions["requestInit"],
+): StreamableHTTPClientTransportOptions["requestInit"] {
+  if (!accessToken) {
+    return requestInit;
+  }
+
+  return {
+    ...requestInit,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(requestInit?.headers as Record<string, string>),
+    },
+  };
+}
+
 type BaseServerConfig = {
   capabilities?: ClientCapabilityOptions;
   timeout?: number;
@@ -1143,15 +1168,7 @@ export class MCPClientManager {
     timeout: number,
   ): Promise<Transport> {
     // Merge accessToken into requestInit headers if provided
-    const requestInit = config.accessToken
-      ? {
-          ...config.requestInit,
-          headers: {
-            Authorization: `Bearer ${config.accessToken}`,
-            ...(config.requestInit?.headers as Record<string, string>),
-          },
-        }
-      : config.requestInit;
+    const requestInit = buildRequestInit(config.accessToken, config.requestInit);
 
     const preferSSE = config.preferSSE ?? config.url.pathname.endsWith("/sse");
     let streamableError: unknown;
