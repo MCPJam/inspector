@@ -312,7 +312,11 @@ export type IterationStatus =
  * Result of a test iteration.
  * Aligned with backend testIteration.result.
  */
-export type IterationResultStatus = "pending" | "passed" | "failed" | "cancelled";
+export type IterationResultStatus =
+  | "pending"
+  | "passed"
+  | "failed"
+  | "cancelled";
 
 /**
  * Result from running an evaluation iteration.
@@ -506,4 +510,6 @@ export type EvalIterationFn = () => Promise<boolean> | boolean;
 /**
  * Function type for eval iteration with result - returns detailed result.
  */
-export type EvalIterationWithResultFn = () => Promise<IterationResult> | IterationResult;
+export type EvalIterationWithResultFn = () =>
+  | Promise<IterationResult>
+  | IterationResult;

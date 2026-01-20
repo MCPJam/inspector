@@ -29,7 +29,9 @@ export interface OAuthTokens {
  * Callback invoked when tokens are refreshed.
  * Use this to persist new tokens for future runs.
  */
-export type OnTokenRefreshCallback = (tokens: OAuthTokens) => void | Promise<void>;
+export type OnTokenRefreshCallback = (
+  tokens: OAuthTokens,
+) => void | Promise<void>;
 
 /**
  * Configuration for creating a token-based auth provider.
