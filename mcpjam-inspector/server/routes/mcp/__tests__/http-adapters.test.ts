@@ -57,7 +57,17 @@ describe("HTTP Adapters Security", () => {
     });
   });
 
-  describe("authentication required", () => {
+  describe("authentication not required (tunneling support)", () => {
+    /**
+     * HTTP adapter endpoints are intentionally unprotected to support tunneling.
+     * When users create an ngrok tunnel, external MCP clients (like Claude Desktop)
+     * need to access these endpoints without having a session token.
+     *
+     * Security is maintained through:
+     * 1. URL secrecy - tunnel URLs are randomly generated and rotated
+     * 2. Cross-origin protection - browser-based attacks are still blocked
+     * 3. User awareness - warning modal shown when creating tunnels
+     */
     const routes = [
       { prefix: "adapter-http", description: "adapter HTTP bridge" },
       { prefix: "manager-http", description: "manager HTTP bridge" },
@@ -65,7 +75,7 @@ describe("HTTP Adapters Security", () => {
 
     for (const { prefix, description } of routes) {
       describe(`${description}`, () => {
-        it("rejects POST without authentication token", async () => {
+        it("accepts POST without authentication token (for tunneled clients)", async () => {
           const res = await app.request(`/api/mcp/${prefix}/test-server`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -76,20 +86,21 @@ describe("HTTP Adapters Security", () => {
             }),
           });
 
-          expect(res.status).toBe(401);
-          const data = await res.json();
-          expect(data.error).toBe("Unauthorized");
+          // Should succeed - these endpoints are unprotected for tunneling
+          expect(res.status).toBe(200);
         });
 
-        it("rejects GET (SSE) without authentication token", async () => {
+        it("accepts GET (SSE) without authentication token (for tunneled clients)", async () => {
           const res = await app.request(`/api/mcp/${prefix}/test-server`, {
             method: "GET",
           });
 
-          expect(res.status).toBe(401);
+          // SSE returns 200 with streaming response
+          expect(res.status).toBe(200);
+          expect(res.headers.get("Content-Type")).toBe("text/event-stream");
         });
 
-        it("accepts POST with valid token in header", async () => {
+        it("also accepts POST with valid token in header", async () => {
           const res = await app.request(`/api/mcp/${prefix}/test-server`, {
             method: "POST",
             headers: {
@@ -106,7 +117,7 @@ describe("HTTP Adapters Security", () => {
           expect(res.status).toBe(200);
         });
 
-        it("accepts GET (SSE) with valid token in query param", async () => {
+        it("also accepts GET (SSE) with valid token in query param", async () => {
           const res = await app.request(
             `/api/mcp/${prefix}/test-server?_token=${validToken}`,
             {

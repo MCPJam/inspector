@@ -42,6 +42,8 @@ const UNPROTECTED_PREFIXES = [
   "/api/mcp/apps/", // MCP Apps widgets - loaded in sandboxed iframes, can't send headers
   "/api/apps/chatgpt/", // ChatGPT widgets - loaded in sandboxed iframes, can't send headers
   "/api/mcp/sandbox-proxy", // Sandbox proxy - loaded in iframe, serves isolated content
+  "/api/mcp/adapter-http/", // HTTP adapter for tunneled MCP clients - auth via URL secrecy
+  "/api/mcp/manager-http/", // HTTP manager for tunneled MCP clients - auth via URL secrecy
 ];
 
 /**
