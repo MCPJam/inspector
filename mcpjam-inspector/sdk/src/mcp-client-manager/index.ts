@@ -1168,7 +1168,10 @@ export class MCPClientManager {
     timeout: number,
   ): Promise<Transport> {
     // Merge accessToken into requestInit headers if provided
-    const requestInit = buildRequestInit(config.accessToken, config.requestInit);
+    const requestInit = buildRequestInit(
+      config.accessToken,
+      config.requestInit,
+    );
 
     const preferSSE = config.preferSSE ?? config.url.pathname.endsWith("/sse");
     let streamableError: unknown;
