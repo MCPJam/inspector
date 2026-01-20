@@ -124,7 +124,9 @@ describe("OAuth fetch interceptor", () => {
       // Verify metadata endpoint was actually requested with correct arguments
       // The URL is proxied through /api/mcp/oauth/metadata with the target URL encoded as a query param
       expect(freshAuthFetch).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/mcp\/oauth\/metadata\?url=.*oauth-protected-resource/),
+        expect.stringMatching(
+          /\/api\/mcp\/oauth\/metadata\?url=.*oauth-protected-resource/,
+        ),
         expect.objectContaining({ method: "GET" }),
       );
     });
