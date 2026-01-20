@@ -46,7 +46,7 @@ describe("OAuth fetch interceptor", () => {
           status: 401,
           statusText: "Unauthorized",
           headers: { "Content-Type": "application/json" },
-        }
+        },
       );
       authFetch.mockResolvedValue(authErrorResponse);
 
@@ -101,7 +101,7 @@ describe("OAuth fetch interceptor", () => {
         JSON.stringify({
           authorization_servers: ["https://auth.example.com"],
         }),
-        { status: 200 }
+        { status: 200 },
       );
 
       authFetch.mockResolvedValue(metadataResponse);
