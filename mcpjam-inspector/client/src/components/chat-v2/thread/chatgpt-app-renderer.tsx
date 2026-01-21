@@ -1270,7 +1270,7 @@ export function ChatGPTAppRenderer({
       <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
         {widgetClosedReason === "closed"
           ? "Widget closed."
-          : (invokedText || "Tool completed successfully.")}
+          : invokedText || "Tool completed successfully."}
       </div>
     );
   if (!outputTemplate) {

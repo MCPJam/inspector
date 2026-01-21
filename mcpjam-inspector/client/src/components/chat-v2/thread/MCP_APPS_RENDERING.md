@@ -70,7 +70,10 @@ The detection logic in `mcp-apps-utils.ts:19-58`:
 ```typescript
 export function detectUIType(toolMeta, toolResult): UIType | null {
   // 1. Check for both OpenAI SDK + MCP Apps
-  if (toolMeta?.["openai/outputTemplate"] && getToolUiResourceUri({ _meta: toolMeta })) {
+  if (
+    toolMeta?.["openai/outputTemplate"] &&
+    getToolUiResourceUri({ _meta: toolMeta })
+  ) {
     return UIType.OPENAI_SDK_AND_MCP_APPS;
   }
   // 2. OpenAI SDK only
@@ -144,9 +147,10 @@ const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
 
 // 2. Fetch widget content with CSP metadata
 const contentResponse = await fetch(
-  `/api/mcp/apps/widget-content/${toolCallId}?csp_mode=${cspMode}`
+  `/api/mcp/apps/widget-content/${toolCallId}?csp_mode=${cspMode}`,
 );
-const { html, csp, permissions, permissive, prefersBorder } = await contentResponse.json();
+const { html, csp, permissions, permissive, prefersBorder } =
+  await contentResponse.json();
 ```
 
 ---
@@ -175,7 +179,7 @@ And extracts CSP/permissions metadata:
 ```typescript
 // apps.ts:171-175
 const uiMeta = content._meta?.ui;
-const csp = uiMeta?.csp;         // { connectDomains, resourceDomains, frameDomains, baseUriDomains }
+const csp = uiMeta?.csp; // { connectDomains, resourceDomains, frameDomains, baseUriDomains }
 const permissions = uiMeta?.permissions; // { camera, microphone, geolocation, clipboardWrite }
 ```
 
@@ -192,7 +196,7 @@ const [sandboxProxyUrl] = useState(() => {
   // SEP-1865: Host and Sandbox MUST have different origins
   let sandboxHost: string;
   if (currentHost === "localhost") {
-    sandboxHost = "127.0.0.1";  // Swap to different origin
+    sandboxHost = "127.0.0.1"; // Swap to different origin
   } else if (currentHost === "127.0.0.1") {
     sandboxHost = "localhost";
   }
@@ -206,9 +210,9 @@ The outer iframe loads the sandbox proxy:
 // sandboxed-iframe.tsx:213-222
 <iframe
   ref={outerRef}
-  src={sandboxProxyUrl}  // Different origin!
+  src={sandboxProxyUrl} // Different origin!
   sandbox="allow-scripts allow-same-origin allow-forms allow-popups..."
-  allow={outerAllowAttribute}  // camera *, microphone *, etc.
+  allow={outerAllowAttribute} // camera *, microphone *, etc.
 />
 ```
 
@@ -221,11 +225,14 @@ The sandbox proxy (served from different origin) handles the handshake:
 ```javascript
 // sandbox-proxy.html:313-320
 // 1. Notify parent that sandbox is ready
-window.parent.postMessage({
-  jsonrpc: "2.0",
-  method: "ui/notifications/sandbox-proxy-ready",
-  params: {},
-}, "*");
+window.parent.postMessage(
+  {
+    jsonrpc: "2.0",
+    method: "ui/notifications/sandbox-proxy-ready",
+    params: {},
+  },
+  "*",
+);
 ```
 
 The host receives this and sends the HTML:
@@ -234,11 +241,14 @@ The host receives this and sends the HTML:
 // sandboxed-iframe.tsx:192-210
 useEffect(() => {
   if (!proxyReady || !html) return;
-  outerRef.current?.contentWindow?.postMessage({
-    jsonrpc: "2.0",
-    method: "ui/notifications/sandbox-resource-ready",
-    params: { html, sandbox, csp, permissions, permissive },
-  }, sandboxProxyOrigin);
+  outerRef.current?.contentWindow?.postMessage(
+    {
+      jsonrpc: "2.0",
+      method: "ui/notifications/sandbox-resource-ready",
+      params: { html, sandbox, csp, permissions, permissive },
+    },
+    sandboxProxyOrigin,
+  );
 }, [proxyReady, html, csp, permissions]);
 ```
 
@@ -302,11 +312,14 @@ const bridge = new AppBridge(
       permissions: widgetPermissions,
     },
   },
-  { hostContext: hostContextRef.current ?? {} }
+  { hostContext: hostContextRef.current ?? {} },
 );
 
 // Connect via PostMessageTransport
-const transport = new PostMessageTransport(iframe.contentWindow, iframe.contentWindow);
+const transport = new PostMessageTransport(
+  iframe.contentWindow,
+  iframe.contentWindow,
+);
 bridge.connect(transport);
 ```
 
@@ -375,6 +388,7 @@ useEffect(() => {
 ```
 
 These send SEP-1865 notifications:
+
 - `ui/notifications/tool-input` - The tool call arguments
 - `ui/notifications/tool-result` - The tool execution result
 
@@ -435,7 +449,7 @@ When theme, display mode, or other context changes:
 useEffect(() => {
   const bridge = bridgeRef.current;
   if (!bridge || !isReady) return;
-  bridge.setHostContext(hostContext);  // Sends ui/notifications/host-context-changed
+  bridge.setHostContext(hostContext); // Sends ui/notifications/host-context-changed
 }, [hostContext, isReady]);
 ```
 
@@ -443,15 +457,15 @@ useEffect(() => {
 
 ## Key Files Summary
 
-| File | Purpose |
-|------|---------|
-| `part-switch.tsx` | Routes tool parts to correct renderer based on UI type |
-| `mcp-apps-renderer.tsx` | Main MCP Apps renderer component |
-| `mcp-apps-renderer-helper.ts` | CSS variables for theming (SEP-1865 styles) |
-| `mcp-apps-utils.ts` | UI type detection, visibility checks |
-| `sandboxed-iframe.tsx` | Double-iframe sandbox wrapper |
-| `sandbox-proxy.html` | Cross-origin proxy that loads guest UI |
-| `apps.ts` (server) | Store widget data, serve HTML with CSP metadata |
+| File                          | Purpose                                                |
+| ----------------------------- | ------------------------------------------------------ |
+| `part-switch.tsx`             | Routes tool parts to correct renderer based on UI type |
+| `mcp-apps-renderer.tsx`       | Main MCP Apps renderer component                       |
+| `mcp-apps-renderer-helper.ts` | CSS variables for theming (SEP-1865 styles)            |
+| `mcp-apps-utils.ts`           | UI type detection, visibility checks                   |
+| `sandboxed-iframe.tsx`        | Double-iframe sandbox wrapper                          |
+| `sandbox-proxy.html`          | Cross-origin proxy that loads guest UI                 |
+| `apps.ts` (server)            | Store widget data, serve HTML with CSP metadata        |
 
 ---
 
@@ -478,7 +492,7 @@ The sandbox proxy injects CSP `<meta>` tags based on widget declarations:
 // Only allow declared domains
 const cspValue = buildCSP({
   connectDomains: ["https://api.example.com"],
-  resourceDomains: ["https://cdn.example.com"]
+  resourceDomains: ["https://cdn.example.com"],
 });
 ```
 
@@ -487,7 +501,7 @@ const cspValue = buildCSP({
 Sandbox permissions map to iframe `allow` attribute:
 
 ```html
-<iframe allow="camera *; microphone *; geolocation *">
+<iframe allow="camera *; microphone *; geolocation *"></iframe>
 ```
 
 ### 4. CSP Violation Tracking
@@ -548,33 +562,33 @@ Host                    Sandbox Proxy              Guest UI
 
 ### Host → Guest UI Notifications
 
-| Message | Description |
-|---------|-------------|
-| `ui/notifications/tool-input` | Tool call arguments |
-| `ui/notifications/tool-input-partial` | Streaming partial arguments (optional) |
-| `ui/notifications/tool-result` | Tool execution result |
-| `ui/notifications/tool-cancelled` | Tool execution was cancelled |
+| Message                                 | Description                                   |
+| --------------------------------------- | --------------------------------------------- |
+| `ui/notifications/tool-input`           | Tool call arguments                           |
+| `ui/notifications/tool-input-partial`   | Streaming partial arguments (optional)        |
+| `ui/notifications/tool-result`          | Tool execution result                         |
+| `ui/notifications/tool-cancelled`       | Tool execution was cancelled                  |
 | `ui/notifications/host-context-changed` | Theme, display mode, or other context changed |
-| `ui/resource-teardown` | Host notifies before teardown |
+| `ui/resource-teardown`                  | Host notifies before teardown                 |
 
 ### Guest UI → Host Requests
 
-| Message | Description |
-|---------|-------------|
-| `ui/initialize` | Initialize connection, receive capabilities |
-| `tools/call` | Execute a tool on the MCP server |
-| `resources/read` | Read a resource from the MCP server |
-| `ui/message` | Send message to chat interface |
-| `ui/open-link` | Request to open external URL |
+| Message                   | Description                                         |
+| ------------------------- | --------------------------------------------------- |
+| `ui/initialize`           | Initialize connection, receive capabilities         |
+| `tools/call`              | Execute a tool on the MCP server                    |
+| `resources/read`          | Read a resource from the MCP server                 |
+| `ui/message`              | Send message to chat interface                      |
+| `ui/open-link`            | Request to open external URL                        |
 | `ui/request-display-mode` | Request display mode change (inline/pip/fullscreen) |
-| `ui/update-model-context` | Update model context for future turns |
-| `notifications/message` | Log messages to host |
+| `ui/update-model-context` | Update model context for future turns               |
+| `notifications/message`   | Log messages to host                                |
 
 ### Guest UI → Host Notifications
 
-| Message | Description |
-|---------|-------------|
-| `ui/notifications/initialized` | Guest UI is ready |
+| Message                         | Description                            |
+| ------------------------------- | -------------------------------------- |
+| `ui/notifications/initialized`  | Guest UI is ready                      |
 | `ui/notifications/size-changed` | Content size changed (for auto-resize) |
 
 ---
@@ -589,15 +603,15 @@ interface McpUiHostContext {
   displayMode?: "inline" | "fullscreen" | "pip";
   availableDisplayModes?: string[];
   containerDimensions?: { maxHeight?: number; maxWidth?: number };
-  locale?: string;           // BCP 47, e.g., "en-US"
-  timeZone?: string;         // IANA, e.g., "America/New_York"
+  locale?: string; // BCP 47, e.g., "en-US"
+  timeZone?: string; // IANA, e.g., "America/New_York"
   userAgent?: string;
   platform?: "web" | "desktop" | "mobile";
   deviceCapabilities?: { touch?: boolean; hover?: boolean };
   safeAreaInsets?: { top: number; right: number; bottom: number; left: number };
   styles?: {
-    variables?: Record<string, string>;  // CSS custom properties
-    css?: { fonts?: string };             // @font-face rules
+    variables?: Record<string, string>; // CSS custom properties
+    css?: { fonts?: string }; // @font-face rules
   };
   toolInfo?: {
     id?: string;
@@ -614,7 +628,9 @@ The host provides CSS custom properties via `hostContext.styles.variables`:
 
 ```typescript
 // mcp-apps-renderer-helper.ts
-export const getMcpAppsStyleVariables = (themeMode: ThemeMode): McpUiStyles => ({
+export const getMcpAppsStyleVariables = (
+  themeMode: ThemeMode,
+): McpUiStyles => ({
   "--color-background-primary": isDark ? "#171717" : "#ffffff",
   "--color-background-secondary": isDark ? "#262626" : "#f5f5f5",
   "--color-text-primary": isDark ? "#fafafa" : "#171717",
