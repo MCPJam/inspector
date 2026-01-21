@@ -388,8 +388,24 @@ export function useAppState() {
     const serversWithRuntime: Record<string, ServerWithName> = {};
     for (const [name, server] of Object.entries(workspace.servers)) {
       const runtimeState = appState.servers[name];
+
+      // Load env vars from localStorage (not synced to cloud for security)
+      let envFromStorage: Record<string, string> | undefined;
+      try {
+        const stored = localStorage.getItem(`mcp-env-${name}`);
+        if (stored) envFromStorage = JSON.parse(stored);
+      } catch {
+        // Ignore parse errors
+      }
+
+      // Merge env vars into config if they exist in localStorage
+      const configWithEnv = envFromStorage
+        ? { ...server.config, env: envFromStorage }
+        : server.config;
+
       serversWithRuntime[name] = {
         ...server,
+        config: configWithEnv,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
@@ -872,6 +888,14 @@ export function useAppState() {
             name: formData.name,
             config: mcpConfig,
           });
+          // Save env vars to localStorage (local-only, not synced to cloud)
+          const env = (mcpConfig as any).env;
+          if (env && Object.keys(env).length > 0) {
+            localStorage.setItem(
+              `mcp-env-${formData.name}`,
+              JSON.stringify(env),
+            );
+          }
           logger.info("Connection successful", { serverName: formData.name });
           toast.success(`Connected successfully!`);
           fetchAndStoreInitInfo(formData.name).catch((err) =>
@@ -1325,6 +1349,8 @@ export function useAppState() {
     async (serverName: string) => {
       logger.info("Removing server", { serverName });
       clearOAuthData(serverName);
+      // Clean up env vars from localStorage
+      localStorage.removeItem(`mcp-env-${serverName}`);
       dispatch({ type: "REMOVE_SERVER", name: serverName });
       // Remove from Convex workspace if authenticated
       await removeServerFromConvex(serverName);
