@@ -31,7 +31,9 @@ export interface CreateModelOptions {
   apiKey: string;
   baseUrls?: BaseUrls;
   /** Custom providers registry (name -> config) */
-  customProviders?: Map<string, CustomProvider> | Record<string, CustomProvider>;
+  customProviders?:
+    | Map<string, CustomProvider>
+    | Record<string, CustomProvider>;
 }
 
 /** Built-in providers list */
@@ -104,7 +106,6 @@ export function parseLLMString(
   );
 }
 
-
 /**
  * Model type returned by provider factories.
  */
@@ -122,7 +123,9 @@ function createModelFromCustomProvider(
   const apiKey =
     runtimeApiKey ||
     customProvider.apiKey ||
-    (customProvider.apiKeyEnvVar ? process.env[customProvider.apiKeyEnvVar] : undefined) ||
+    (customProvider.apiKeyEnvVar
+      ? process.env[customProvider.apiKeyEnvVar]
+      : undefined) ||
     "";
 
   switch (customProvider.protocol) {
@@ -179,7 +182,9 @@ export function createModelFromString(
   if (parsed.type === "custom") {
     const customProvider = customProvidersMap.get(parsed.providerName);
     if (!customProvider) {
-      throw new Error(`Custom provider "${parsed.providerName}" not found in registry`);
+      throw new Error(
+        `Custom provider "${parsed.providerName}" not found in registry`
+      );
     }
     return createModelFromCustomProvider(customProvider, parsed.model, apiKey);
   }
@@ -301,7 +306,9 @@ export function createCustomProvider(config: {
     modelIds,
     ...(config.apiKey && { apiKey: config.apiKey }),
     ...(config.apiKeyEnvVar && { apiKeyEnvVar: config.apiKeyEnvVar }),
-    ...(config.useChatCompletions && { useChatCompletions: config.useChatCompletions }),
+    ...(config.useChatCompletions && {
+      useChatCompletions: config.useChatCompletions,
+    }),
   };
 }
 
@@ -311,7 +318,10 @@ export function createCustomProvider(config: {
  */
 export const PROVIDER_PRESETS = {
   /** LiteLLM proxy - requires useChatCompletions */
-  litellm: (baseUrl = "http://localhost:4000", modelIds: string[]): CustomProvider => ({
+  litellm: (
+    baseUrl = "http://localhost:4000",
+    modelIds: string[]
+  ): CustomProvider => ({
     name: "litellm",
     protocol: "openai-compatible",
     baseUrl,
