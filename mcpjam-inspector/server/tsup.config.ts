@@ -49,9 +49,8 @@ export default defineConfig({
   esbuildOptions(options) {
     options.platform = "node";
     options.mainFields = ["module", "main"];
-    // Configure path aliases for @/sdk and subpaths
+    // Configure path alias for @/sdk
     options.alias = {
-      "@/sdk/evals": join(rootDir, "sdk/dist/evals/index.js"),
       "@/sdk": join(rootDir, "sdk/dist/index.js"),
     };
   },

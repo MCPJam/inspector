@@ -89,89 +89,6 @@ import {
 import type { ToolCallOptions, ToolSet } from "ai";
 type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
 
-/**
- * Normalizes headers from various formats (Headers, string[][], or plain object)
- * into a plain Record<string, string>.
- *
- * @param headers - Headers in any supported format
- * @returns Plain object with header key-value pairs
- */
-function normalizeHeaders(
-  headers: HeadersInit | undefined,
-): Record<string, string> {
-  if (!headers) {
-    return {};
-  }
-
-  // If it's already a plain object (not Headers or array), return as-is
-  if (
-    typeof headers === "object" &&
-    !Array.isArray(headers) &&
-    !(headers instanceof Headers)
-  ) {
-    return headers as Record<string, string>;
-  }
-
-  // Convert Headers or string[][] to a plain object by using the Headers constructor
-  // which accepts all HeadersInit formats, then iterate its entries
-  const normalized: Record<string, string> = {};
-  const headersObj = new Headers(headers);
-  headersObj.forEach((value, key) => {
-    normalized[key] = value;
-  });
-  return normalized;
-}
-
-/**
- * Checks if headers contain an Authorization header (case-insensitive check).
- *
- * @param headers - Normalized headers object
- * @returns The Authorization value if present, undefined otherwise
- */
-function getExistingAuthorization(
-  headers: Record<string, string>,
-): string | undefined {
-  // Check for both common casings since Headers normalizes to lowercase
-  // but plain objects preserve original casing
-  return headers["Authorization"] ?? headers["authorization"];
-}
-
-/**
- * Builds the requestInit object, merging accessToken into Authorization header if provided.
- * Exported for testing purposes.
- *
- * @param accessToken - Optional access token for Bearer auth
- * @param requestInit - Optional existing requestInit config
- * @returns Merged requestInit with Authorization header if accessToken provided
- */
-export function buildRequestInit(
-  accessToken: string | undefined,
-  requestInit: StreamableHTTPClientTransportOptions["requestInit"],
-): StreamableHTTPClientTransportOptions["requestInit"] {
-  if (!accessToken) {
-    return requestInit;
-  }
-
-  // Normalize headers to a plain object to handle Headers instances and string[][] arrays
-  const existingHeaders = normalizeHeaders(requestInit?.headers);
-
-  // Check if existing headers already have Authorization (case-insensitive)
-  // If so, preserve existing value to maintain backward compatibility
-  const existingAuth = getExistingAuthorization(existingHeaders);
-
-  // Remove any lowercase 'authorization' key to avoid duplicate headers
-  // when merging with our 'Authorization' key
-  const { authorization: _, ...headersWithoutLowercaseAuth } = existingHeaders;
-
-  return {
-    ...requestInit,
-    headers: {
-      Authorization: existingAuth ?? `Bearer ${accessToken}`,
-      ...headersWithoutLowercaseAuth,
-    },
-  };
-}
-
 type BaseServerConfig = {
   capabilities?: ClientCapabilityOptions;
   timeout?: number;
@@ -203,12 +120,6 @@ type StdioServerConfig = BaseServerConfig & {
 
 type HttpServerConfig = BaseServerConfig & {
   url: URL;
-  /**
-   * Access token for Bearer authentication.
-   * If provided, adds `Authorization: Bearer <accessToken>` header to requests.
-   * Obtain tokens via OAuth flow (e.g., MCPJam Inspector) or from the authorization server.
-   */
-  accessToken?: string;
   requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
   eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
   authProvider?: StreamableHTTPClientTransportOptions["authProvider"];
@@ -1225,19 +1136,13 @@ export class MCPClientManager {
     config: HttpServerConfig,
     timeout: number,
   ): Promise<Transport> {
-    // Merge accessToken into requestInit headers if provided
-    const requestInit = buildRequestInit(
-      config.accessToken,
-      config.requestInit,
-    );
-
     const preferSSE = config.preferSSE ?? config.url.pathname.endsWith("/sse");
     let streamableError: unknown;
     if (!preferSSE) {
       const streamableTransport = new StreamableHTTPClientTransport(
         config.url,
         {
-          requestInit,
+          requestInit: config.requestInit,
           reconnectionOptions: config.reconnectionOptions,
           authProvider: config.authProvider,
           sessionId: config.sessionId,
@@ -1261,7 +1166,7 @@ export class MCPClientManager {
     }
 
     const sseTransport = new SSEClientTransport(config.url, {
-      requestInit,
+      requestInit: config.requestInit,
       eventSourceInit: config.eventSourceInit,
       authProvider: config.authProvider,
     });

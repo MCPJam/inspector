@@ -11,7 +11,6 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import type { MCPClientManager } from "@/sdk";
-import { extractToolCalls } from "@/sdk/evals";
 import { createLlmModel } from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
 import {
@@ -302,7 +301,72 @@ const runIterationWithAiSdk = async ({
       (result.response?.messages as ModelMessage[]) ?? baseMessages;
 
     // Extract all tool calls from all steps in the conversation
-    const toolsCalled = extractToolCalls(result);
+    const toolsCalled: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }> = [];
+
+    // First, extract from result.steps if available (more reliable for multi-step conversations)
+    if (result.steps && Array.isArray(result.steps)) {
+      for (const step of result.steps) {
+        const stepToolCalls = (step as any).toolCalls || [];
+        for (const call of stepToolCalls) {
+          if (call?.toolName || call?.name) {
+            toolsCalled.push({
+              toolName: call.toolName ?? call.name,
+              arguments: call.args ?? call.input ?? {},
+            });
+          }
+        }
+      }
+    }
+
+    // Fallback: also check messages (in case steps don't have all info)
+    for (const msg of finalMessages) {
+      if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
+        for (const item of (msg as any).content) {
+          if (item?.type === "tool-call") {
+            const name = item.toolName ?? item.name;
+            if (name) {
+              // Check if not already added from steps
+              const alreadyAdded = toolsCalled.some(
+                (tc) =>
+                  tc.toolName === name &&
+                  JSON.stringify(tc.arguments) ===
+                    JSON.stringify(
+                      item.input ?? item.parameters ?? item.args ?? {},
+                    ),
+              );
+              if (!alreadyAdded) {
+                toolsCalled.push({
+                  toolName: name,
+                  arguments: item.input ?? item.parameters ?? item.args ?? {},
+                });
+              }
+            }
+          }
+        }
+      }
+      // Also check legacy toolCalls array format
+      if (msg?.role === "assistant" && Array.isArray((msg as any).toolCalls)) {
+        for (const call of (msg as any).toolCalls) {
+          if (call?.toolName || call?.name) {
+            const alreadyAdded = toolsCalled.some(
+              (tc) =>
+                tc.toolName === (call.toolName ?? call.name) &&
+                JSON.stringify(tc.arguments) ===
+                  JSON.stringify(call.args ?? call.input ?? {}),
+            );
+            if (!alreadyAdded) {
+              toolsCalled.push({
+                toolName: call.toolName ?? call.name,
+                arguments: call.args ?? call.input ?? {},
+              });
+            }
+          }
+        }
+      }
+    }
 
     const evaluation = evaluateResults(
       expectedToolCalls,
