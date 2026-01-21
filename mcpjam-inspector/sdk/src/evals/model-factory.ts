@@ -61,21 +61,26 @@ export interface BaseUrls {
 /**
  * Parses a model string in the format "provider/model-id" or just "model-id".
  *
- * @param llm - Model string (e.g., "openai/gpt-4o" or "gpt-4o")
+ * Handles model IDs that contain slashes (e.g., OpenRouter's "meta/llama-3").
+ * For "openrouter/meta/llama-3", returns { provider: "openrouter", id: "meta/llama-3" }.
+ *
+ * @param llm - Model string (e.g., "openai/gpt-4o", "openrouter/meta/llama-3", or "gpt-4o")
  * @returns Parsed model definition
- * @throws Error if the format is invalid
+ * @throws Error if the format is invalid (empty string)
  */
 export function parseModelString(llm: string): ModelDefinition {
   const parts = llm.split("/");
 
-  if (parts.length === 2) {
-    // Format: "provider/model-id"
-    const [provider, id] = parts;
+  if (parts.length >= 2) {
+    // Format: "provider/model-id" or "provider/org/model-id" (e.g., OpenRouter)
+    // First part is the provider, rest is the model ID
+    const [provider, ...rest] = parts;
+    const id = rest.join("/");
     return {
       provider: provider as ModelProvider,
       id,
     };
-  } else if (parts.length === 1) {
+  } else if (parts.length === 1 && parts[0]) {
     // Format: "model-id" - try to infer provider from model name
     const id = parts[0];
     const provider = inferProvider(id);

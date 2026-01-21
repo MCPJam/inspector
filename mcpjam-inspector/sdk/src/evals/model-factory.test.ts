@@ -217,10 +217,44 @@ describe("parseModelString", () => {
       });
     });
 
-    it("throws error for invalid format with too many slashes", () => {
-      expect(() => parseModelString("a/b/c")).toThrow(
-        'Invalid model format: a/b/c. Expected "provider/model-id" or "model-id"',
+    it("throws error for empty string", () => {
+      expect(() => parseModelString("")).toThrow(
+        'Invalid model format: . Expected "provider/model-id" or "model-id"',
       );
+    });
+  });
+
+  describe("model IDs with slashes (OpenRouter)", () => {
+    it("parses openrouter/meta/llama-3 correctly", () => {
+      const result = parseModelString("openrouter/meta/llama-3");
+      expect(result).toEqual({
+        provider: "openrouter",
+        id: "meta/llama-3",
+      });
+    });
+
+    it("parses openrouter/anthropic/claude-3.5-sonnet correctly", () => {
+      const result = parseModelString("openrouter/anthropic/claude-3.5-sonnet");
+      expect(result).toEqual({
+        provider: "openrouter",
+        id: "anthropic/claude-3.5-sonnet",
+      });
+    });
+
+    it("parses openrouter/google/gemini-2.0-flash-001 correctly", () => {
+      const result = parseModelString("openrouter/google/gemini-2.0-flash-001");
+      expect(result).toEqual({
+        provider: "openrouter",
+        id: "google/gemini-2.0-flash-001",
+      });
+    });
+
+    it("parses model IDs with multiple slashes", () => {
+      const result = parseModelString("openrouter/org/sub/model-name");
+      expect(result).toEqual({
+        provider: "openrouter",
+        id: "org/sub/model-name",
+      });
     });
   });
 });
@@ -374,5 +408,21 @@ describe("createModelFromString", () => {
   it("creates model from gpt model with inferred provider", () => {
     const result = createModelFromString("gpt-4-turbo", testApiKey);
     expect(result).toEqual({ provider: "openai", modelId: "gpt-4-turbo" });
+  });
+
+  it("creates OpenRouter model with slash in model ID", () => {
+    const result = createModelFromString("openrouter/meta/llama-3", testApiKey);
+    expect(result).toEqual({ provider: "openrouter", modelId: "meta/llama-3" });
+  });
+
+  it("creates OpenRouter model with multiple slashes in model ID", () => {
+    const result = createModelFromString(
+      "openrouter/anthropic/claude-3.5-sonnet",
+      testApiKey,
+    );
+    expect(result).toEqual({
+      provider: "openrouter",
+      modelId: "anthropic/claude-3.5-sonnet",
+    });
   });
 });
