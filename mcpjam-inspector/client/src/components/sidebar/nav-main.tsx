@@ -12,6 +12,7 @@ interface NavMainItem {
   url: string;
   icon?: React.ElementType;
   isActive?: boolean;
+  highlightClass?: string;
 }
 
 interface NavMainProps {
@@ -38,11 +39,11 @@ export function NavMain({ items, onItemClick }: NavMainProps) {
                 tooltip={item.title}
                 isActive={isItemActive(item)}
                 onClick={() => handleClick(item.url)}
-                className={
+                className={`${
                   isItemActive(item)
                     ? "[&[data-active=true]]:bg-accent cursor-pointer"
                     : "cursor-pointer"
-                }
+                } ${item.highlightClass || ""}`}
               >
                 {item.icon && <item.icon className="h-4 w-4" />}
                 <span>{item.title}</span>

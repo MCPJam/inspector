@@ -340,3 +340,63 @@
 .animate-spin-pulse {
   animation: spin-pulse 1s ease-in-out infinite;
 }
+
+/* ===== Temporary Highlight Animations (for testing) ===== */
+
+/* Option 1: Pulse glow - pulsing background */
+@keyframes highlight-pulse {
+  0%, 100% {
+    background-color: oklch(from var(--primary) l c h / 0.1);
+  }
+  50% {
+    background-color: oklch(from var(--primary) l c h / 0.4);
+  }
+}
+.animate-highlight-pulse {
+  animation: highlight-pulse 0.6s ease-in-out 4;
+  border-radius: var(--radius);
+}
+
+/* Option 2: Ring pulse - expanding ring */
+@keyframes highlight-ring {
+  0% {
+    box-shadow: 0 0 0 0 oklch(from var(--primary) l c h / 0.7);
+  }
+  100% {
+    box-shadow: 0 0 0 8px oklch(from var(--primary) l c h / 0);
+  }
+}
+.animate-highlight-ring {
+  animation: highlight-ring 0.8s ease-out 3;
+  border-radius: var(--radius);
+}
+
+/* Option 3: Border flash - outline that appears/disappears */
+@keyframes highlight-border {
+  0%, 100% {
+    outline: 2px solid oklch(from var(--primary) l c h / 0);
+    outline-offset: 0px;
+  }
+  30%, 70% {
+    outline: 2px solid oklch(from var(--primary) l c h / 0.8);
+    outline-offset: 2px;
+  }
+}
+.animate-highlight-border {
+  animation: highlight-border 1s ease-in-out 3;
+  border-radius: var(--radius);
+}
+
+/* Option 4: Glow shadow - soft glowing shadow */
+@keyframes highlight-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 oklch(from var(--primary) l c h / 0), 0 0 0 0 oklch(from var(--primary) l c h / 0);
+  }
+  50% {
+    box-shadow: 0 0 12px 4px oklch(from var(--primary) l c h / 0.5), inset 0 0 8px oklch(from var(--primary) l c h / 0.15);
+  }
+}
+.animate-highlight-glow {
+  animation: highlight-glow 1s ease-in-out 3;
+  border-radius: var(--radius);
+}

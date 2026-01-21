@@ -41,6 +41,7 @@ const navigationSections = [
         title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
+        highlightClass: "animate-highlight-border", // Option 3: Border flash
       },
     ],
   },
