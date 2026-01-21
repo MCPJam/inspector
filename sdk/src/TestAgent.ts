@@ -41,7 +41,6 @@ export class TestAgent {
     this.temperature = config.temperature ?? 0.7;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async query(_prompt: string): Promise<QueryResult> {
     // TODO: Implement LLM query with tool calling
     // This would integrate with OpenAI, Anthropic, or other LLM providers

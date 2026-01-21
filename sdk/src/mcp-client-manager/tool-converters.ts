@@ -156,7 +156,7 @@ export async function convertMCPToolsToVercelTools(
           type: "object",
           properties: normalizedInputSchema.properties ?? {},
           additionalProperties:
-            (normalizedInputSchema as any).additionalProperties ?? false,
+            normalizedInputSchema.additionalProperties ?? false,
         }),
         execute,
       });

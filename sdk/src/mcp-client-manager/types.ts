@@ -19,7 +19,9 @@ export type { ElicitResult };
 /**
  * Client capability options extracted from MCP SDK ClientOptions
  */
-export type ClientCapabilityOptions = NonNullable<ClientOptions["capabilities"]>;
+export type ClientCapabilityOptions = NonNullable<
+  ClientOptions["capabilities"]
+>;
 
 // ============================================================================
 // Server Configuration Types
@@ -288,7 +290,9 @@ export type ListResourceTemplatesParams = Parameters<
   Client["listResourceTemplates"]
 >[0];
 export type ReadResourceParams = Parameters<Client["readResource"]>[0];
-export type SubscribeResourceParams = Parameters<Client["subscribeResource"]>[0];
+export type SubscribeResourceParams = Parameters<
+  Client["subscribeResource"]
+>[0];
 export type UnsubscribeResourceParams = Parameters<
   Client["unsubscribeResource"]
 >[0];
@@ -303,7 +307,9 @@ export type ListToolsResult = Awaited<ReturnType<Client["listTools"]>>;
 export type MCPPromptListResult = Awaited<ReturnType<Client["listPrompts"]>>;
 export type MCPPrompt = MCPPromptListResult["prompts"][number];
 export type MCPGetPromptResult = Awaited<ReturnType<Client["getPrompt"]>>;
-export type MCPResourceListResult = Awaited<ReturnType<Client["listResources"]>>;
+export type MCPResourceListResult = Awaited<
+  ReturnType<Client["listResources"]>
+>;
 export type MCPResource = MCPResourceListResult["resources"][number];
 export type MCPReadResourceResult = Awaited<ReturnType<Client["readResource"]>>;
 export type MCPResourceTemplateListResult = Awaited<

@@ -113,9 +113,7 @@ export class EvalsSuite {
     if (this.lastRunResult.iterations === 0) {
       return 0;
     }
-    return (
-      this.lastRunResult.tokenUsage.total / this.lastRunResult.iterations
-    );
+    return this.lastRunResult.tokenUsage.total / this.lastRunResult.iterations;
   }
 
   getResults(): EvalRunResult | null {

@@ -23,7 +23,7 @@ export function isMethodUnavailableError(
   // Build set of tokens from the method name
   const methodTokens = new Set<string>();
   methodTokens.add(method.toLowerCase());
-  for (const part of method.split(/[\/:._-]/)) {
+  for (const part of method.split(/[/:._-]/)) {
     if (part) {
       methodTokens.add(part.toLowerCase());
     }

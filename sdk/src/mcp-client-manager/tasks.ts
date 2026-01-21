@@ -5,7 +5,11 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { ServerCapabilities } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import type { MCPTask, MCPListTasksResult, ClientRequestOptions } from "./types.js";
+import type {
+  MCPTask,
+  MCPListTasksResult,
+  ClientRequestOptions,
+} from "./types.js";
 
 // ============================================================================
 // Zod Schemas
@@ -183,7 +187,7 @@ export function supportsTasksForToolCalls(
   const caps = capabilities as any;
   return Boolean(
     caps?.tasks?.requests?.tools?.call ||
-      caps?.experimental?.tasks?.requests?.tools?.call
+    caps?.experimental?.tasks?.requests?.tools?.call
   );
 }
 

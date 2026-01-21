@@ -16,7 +16,9 @@ describe("MCPClientManager", () => {
         }
       );
       expect(manager).toBeInstanceOf(MCPClientManager);
-      const result = await manager.executeTool("everything", "echo", { message: "Hello, world!" });
+      const result = await manager.executeTool("everything", "echo", {
+        message: "Hello, world!",
+      });
       expect((result as any).content[0].text).toBe("Echo: Hello, world!");
       await manager.disconnectServer("everything");
     });

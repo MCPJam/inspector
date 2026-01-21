@@ -634,7 +634,10 @@ export class MCPClientManager {
   ) {
     await this.ensureConnected(serverId);
     const client = this.getClientOrThrow(serverId);
-    return client.getPrompt(params, this.withProgressHandler(serverId, options));
+    return client.getPrompt(
+      params,
+      this.withProgressHandler(serverId, options)
+    );
   }
 
   // ===========================================================================
@@ -951,9 +954,19 @@ export class MCPClientManager {
 
       let transport: Transport;
       if (this.isStdioConfig(config)) {
-        transport = await this.connectViaStdio(serverId, client, config, timeout);
+        transport = await this.connectViaStdio(
+          serverId,
+          client,
+          config,
+          timeout
+        );
       } else {
-        transport = await this.connectViaHttp(serverId, client, config, timeout);
+        transport = await this.connectViaHttp(
+          serverId,
+          client,
+          config,
+          timeout
+        );
       }
 
       state.client = client;
@@ -998,7 +1011,10 @@ export class MCPClientManager {
     config: HttpServerConfig,
     timeout: number
   ): Promise<Transport> {
-    const requestInit = buildRequestInit(config.accessToken, config.requestInit);
+    const requestInit = buildRequestInit(
+      config.accessToken,
+      config.requestInit
+    );
     const preferSSE = config.preferSSE ?? config.url.pathname.endsWith("/sse");
     let streamableError: unknown;
 

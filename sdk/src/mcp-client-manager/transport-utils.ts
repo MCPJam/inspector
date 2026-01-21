@@ -168,11 +168,12 @@ export function createDefaultRpcLogger(): RpcLogger {
   return ({ direction, message, serverId }) => {
     let printable: string;
     try {
-      printable = typeof message === "string" ? message : JSON.stringify(message);
+      printable =
+        typeof message === "string" ? message : JSON.stringify(message);
     } catch {
       printable = String(message);
     }
-    // eslint-disable-next-line no-console
+
     console.debug(`[MCP:${serverId}] ${direction.toUpperCase()} ${printable}`);
   };
 }

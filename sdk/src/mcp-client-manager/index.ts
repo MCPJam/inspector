@@ -37,10 +37,7 @@ export type {
 } from "./types.js";
 
 // Types - Tool execution
-export type {
-  ExecuteToolArguments,
-  TaskOptions,
-} from "./types.js";
+export type { ExecuteToolArguments, TaskOptions } from "./types.js";
 
 // Types - Request options
 export type {
