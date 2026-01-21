@@ -35,7 +35,10 @@ describe("chat-helpers", () => {
     });
 
     it("passes baseUrls to SDK createModel", () => {
-      const modelDef = { id: "claude-3-opus-20240229", provider: "anthropic" as const };
+      const modelDef = {
+        id: "claude-3-opus-20240229",
+        provider: "anthropic" as const,
+      };
       const apiKey = "test-api-key";
       const baseUrls: BaseUrls = {
         anthropic: "https://custom-anthropic.example.com",
@@ -51,9 +54,9 @@ describe("chat-helpers", () => {
       // This test verifies that the extended type is compatible with SDK's simpler type
       const extendedModelDef = {
         id: "gpt-4o",
-        name: "GPT-4o",  // Extra field from shared's ModelDefinition
+        name: "GPT-4o", // Extra field from shared's ModelDefinition
         provider: "openai" as const,
-        description: "OpenAI's GPT-4o model",  // Another extra field
+        description: "OpenAI's GPT-4o model", // Another extra field
       };
       const apiKey = "test-api-key";
 
@@ -100,7 +103,9 @@ describe("chat-helpers", () => {
 
       // All fields should be optional
       const minimalBaseUrls: BaseUrls = {};
-      const partialBaseUrls: BaseUrls = { ollama: "http://localhost:11434/api" };
+      const partialBaseUrls: BaseUrls = {
+        ollama: "http://localhost:11434/api",
+      };
 
       expect(baseUrls.ollama).toBe("http://localhost:11434/api");
       expect(minimalBaseUrls).toEqual({});

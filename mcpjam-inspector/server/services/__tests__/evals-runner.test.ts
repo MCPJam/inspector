@@ -96,7 +96,10 @@ describe("evals-runner extractToolCalls integration", () => {
           { toolCalls: [{ toolName: "get_project", args: { id: "proj-1" } }] },
           {
             toolCalls: [
-              { toolName: "create_task", args: { projectId: "proj-1", title: "New Task" } },
+              {
+                toolName: "create_task",
+                args: { projectId: "proj-1", title: "New Task" },
+              },
             ],
           },
         ],
@@ -111,7 +114,11 @@ describe("evals-runner extractToolCalls integration", () => {
             {
               role: "assistant",
               content: [
-                { type: "tool-call", toolName: "get_project", input: { id: "proj-1" } },
+                {
+                  type: "tool-call",
+                  toolName: "get_project",
+                  input: { id: "proj-1" },
+                },
               ],
             },
             {
@@ -151,9 +158,7 @@ describe("evals-runner extractToolCalls integration", () => {
       const result: GenerateTextResult = {
         steps: [{ toolCalls: [] }],
         response: {
-          messages: [
-            { role: "assistant", content: "Just a text response" },
-          ],
+          messages: [{ role: "assistant", content: "Just a text response" }],
         },
       };
 
@@ -166,9 +171,7 @@ describe("evals-runner extractToolCalls integration", () => {
       const result: GenerateTextResult = {
         steps: [
           {
-            toolCalls: [
-              { name: "legacy_tool", input: { param: "value" } },
-            ],
+            toolCalls: [{ name: "legacy_tool", input: { param: "value" } }],
           },
         ],
       };
@@ -188,9 +191,7 @@ describe("evals-runner extractToolCalls integration", () => {
           messages: [
             {
               role: "assistant",
-              toolCalls: [
-                { toolName: "old_format_tool", args: { x: 1 } },
-              ],
+              toolCalls: [{ toolName: "old_format_tool", args: { x: 1 } }],
             },
           ],
         },
@@ -364,7 +365,11 @@ describe("evals-runner extractToolCalls integration", () => {
             {
               role: "assistant",
               content: [
-                { type: "tool-call", toolName: "duplicate_tool", input: { x: 1 } },
+                {
+                  type: "tool-call",
+                  toolName: "duplicate_tool",
+                  input: { x: 1 },
+                },
               ],
             },
           ],
@@ -386,7 +391,11 @@ describe("evals-runner extractToolCalls integration", () => {
             {
               role: "assistant",
               content: [
-                { type: "tool-call", toolName: "same_tool", input: { version: 2 } },
+                {
+                  type: "tool-call",
+                  toolName: "same_tool",
+                  input: { version: 2 },
+                },
               ],
             },
           ],
