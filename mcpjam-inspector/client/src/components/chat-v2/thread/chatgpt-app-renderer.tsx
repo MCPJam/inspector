@@ -295,6 +295,9 @@ function useWidgetFetch(
 ) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
+  const [widgetClosedReason, setWidgetClosedReason] = useState<
+    "completed" | "closed" | null
+  >(null);
   const [isStoringWidget, setIsStoringWidget] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
   const [prevCspMode, setPrevCspMode] = useState(cspMode);
@@ -385,6 +388,7 @@ function useWidgetFetch(
 
           if (data.closeWidget) {
             setWidgetClosed(true);
+            setWidgetClosedReason("completed");
             setIsStoringWidget(false);
             return;
           }
@@ -433,9 +437,12 @@ function useWidgetFetch(
   return {
     widgetUrl,
     widgetClosed,
+    widgetClosedReason,
     isStoringWidget,
     storeError,
     setWidgetUrl,
+    setWidgetClosed,
+    setWidgetClosedReason,
     prefersBorder,
   };
 }
@@ -599,8 +606,11 @@ export function ChatGPTAppRenderer({
   const {
     widgetUrl,
     widgetClosed,
+    widgetClosedReason,
     isStoringWidget,
     storeError,
+    setWidgetClosed,
+    setWidgetClosedReason,
     prefersBorder,
   } = useWidgetFetch(
     toolState,
@@ -935,7 +945,8 @@ export function ChatGPTAppRenderer({
           break;
         }
         case "openai:requestClose": {
-          setDisplayMode("inline");
+          setWidgetClosed(true);
+          setWidgetClosedReason("closed");
           if (pipWidgetId === resolvedToolCallId)
             onExitPip?.(resolvedToolCallId);
           break;
@@ -1028,6 +1039,8 @@ export function ChatGPTAppRenderer({
       applyMeasuredHeight,
       addCspViolation,
       checkoutCallId,
+      setWidgetClosed,
+      setWidgetClosedReason,
     ],
   );
 
@@ -1255,7 +1268,9 @@ export function ChatGPTAppRenderer({
   if (widgetClosed)
     return (
       <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-        {invokedText || "Tool completed successfully."}
+        {widgetClosedReason === "closed"
+          ? "Widget closed."
+          : (invokedText || "Tool completed successfully.")}
       </div>
     );
   if (!outputTemplate) {
