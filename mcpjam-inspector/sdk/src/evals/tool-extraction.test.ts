@@ -32,9 +32,7 @@ describe("extractToolCalls", () => {
       const result: GenerateTextResult = {
         steps: [
           {
-            toolCalls: [
-              { name: "search_tasks", input: { query: "bug" } },
-            ],
+            toolCalls: [{ name: "search_tasks", input: { query: "bug" } }],
           },
         ],
       };
@@ -58,7 +56,11 @@ describe("extractToolCalls", () => {
       const toolCalls = extractToolCalls(result);
 
       expect(toolCalls).toHaveLength(3);
-      expect(toolCalls.map((tc) => tc.toolName)).toEqual(["tool_a", "tool_b", "tool_c"]);
+      expect(toolCalls.map((tc) => tc.toolName)).toEqual([
+        "tool_a",
+        "tool_b",
+        "tool_c",
+      ]);
     });
 
     it("handles steps with no toolCalls", () => {
@@ -93,18 +95,14 @@ describe("extractToolCalls", () => {
       const result: GenerateTextResult = {
         steps: [
           {
-            toolCalls: [
-              { toolName: "no_args_tool" },
-            ],
+            toolCalls: [{ toolName: "no_args_tool" }],
           },
         ],
       };
 
       const toolCalls = extractToolCalls(result);
 
-      expect(toolCalls).toEqual([
-        { toolName: "no_args_tool", arguments: {} },
-      ]);
+      expect(toolCalls).toEqual([{ toolName: "no_args_tool", arguments: {} }]);
     });
   });
 
@@ -116,7 +114,11 @@ describe("extractToolCalls", () => {
             {
               role: "assistant",
               content: [
-                { type: "tool-call", toolName: "get_user", input: { id: "user-1" } },
+                {
+                  type: "tool-call",
+                  toolName: "get_user",
+                  input: { id: "user-1" },
+                },
               ],
             },
           ],
@@ -137,7 +139,11 @@ describe("extractToolCalls", () => {
             {
               role: "assistant",
               content: [
-                { type: "tool-call", name: "delete_item", parameters: { itemId: "123" } },
+                {
+                  type: "tool-call",
+                  name: "delete_item",
+                  parameters: { itemId: "123" },
+                },
               ],
             },
           ],
@@ -220,7 +226,11 @@ describe("extractToolCalls", () => {
             {
               role: "assistant",
               content: [
-                { type: "tool-call", toolName: "shared_tool", input: { key: "value" } },
+                {
+                  type: "tool-call",
+                  toolName: "shared_tool",
+                  input: { key: "value" },
+                },
               ],
             },
           ],
@@ -238,9 +248,7 @@ describe("extractToolCalls", () => {
 
     it("includes tool calls with same name but different arguments", () => {
       const result: GenerateTextResult = {
-        steps: [
-          { toolCalls: [{ toolName: "repeat_tool", args: { x: 1 } }] },
-        ],
+        steps: [{ toolCalls: [{ toolName: "repeat_tool", args: { x: 1 } }] }],
         response: {
           messages: [
             {
@@ -271,9 +279,7 @@ describe("extractToolCalls", () => {
               content: [
                 { type: "tool-call", toolName: "dup_tool", input: { a: 1 } },
               ],
-              toolCalls: [
-                { toolName: "dup_tool", args: { a: 1 } },
-              ],
+              toolCalls: [{ toolName: "dup_tool", args: { a: 1 } }],
             },
           ],
         },
@@ -295,14 +301,22 @@ describe("extractToolCalls", () => {
         steps: [
           { toolCalls: [{ toolName: "search", args: { query: "tasks" } }] },
           { toolCalls: [{ toolName: "get_task", args: { id: "1" } }] },
-          { toolCalls: [{ toolName: "update_task", args: { id: "1", status: "done" } }] },
+          {
+            toolCalls: [
+              { toolName: "update_task", args: { id: "1", status: "done" } },
+            ],
+          },
         ],
         response: {
           messages: [
             {
               role: "assistant",
               content: [
-                { type: "tool-call", toolName: "search", input: { query: "tasks" } },
+                {
+                  type: "tool-call",
+                  toolName: "search",
+                  input: { query: "tasks" },
+                },
               ],
             },
             {
@@ -314,7 +328,11 @@ describe("extractToolCalls", () => {
             {
               role: "assistant",
               content: [
-                { type: "tool-call", toolName: "update_task", input: { id: "1", status: "done" } },
+                {
+                  type: "tool-call",
+                  toolName: "update_task",
+                  input: { id: "1", status: "done" },
+                },
               ],
             },
           ],
@@ -340,7 +358,11 @@ describe("extractToolCalls", () => {
         {
           role: "assistant",
           content: [
-            { type: "tool-call", toolName: "from_messages", input: { extra: true } },
+            {
+              type: "tool-call",
+              toolName: "from_messages",
+              input: { extra: true },
+            },
           ],
         },
       ];

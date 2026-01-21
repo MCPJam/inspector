@@ -107,7 +107,8 @@ export function extractToolCalls(
   }
 
   // Get final messages from result or use provided messages
-  const finalMessages = messages ?? (result.response?.messages as MessageWithToolCalls[]) ?? [];
+  const finalMessages =
+    messages ?? (result.response?.messages as MessageWithToolCalls[]) ?? [];
 
   // Fallback: also check messages (in case steps don't have all info)
   for (const msg of finalMessages) {

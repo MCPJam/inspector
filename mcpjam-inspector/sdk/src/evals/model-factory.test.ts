@@ -9,7 +9,10 @@ import {
 
 // Mock all AI SDK providers to avoid requiring actual API keys
 vi.mock("@ai-sdk/anthropic", () => ({
-  createAnthropic: vi.fn(() => (modelId: string) => ({ provider: "anthropic", modelId })),
+  createAnthropic: vi.fn(() => (modelId: string) => ({
+    provider: "anthropic",
+    modelId,
+  })),
 }));
 
 vi.mock("@ai-sdk/openai", () => ({
@@ -21,19 +24,31 @@ vi.mock("@ai-sdk/openai", () => ({
 }));
 
 vi.mock("@ai-sdk/azure", () => ({
-  createAzure: vi.fn(() => (modelId: string) => ({ provider: "azure", modelId })),
+  createAzure: vi.fn(() => (modelId: string) => ({
+    provider: "azure",
+    modelId,
+  })),
 }));
 
 vi.mock("@ai-sdk/deepseek", () => ({
-  createDeepSeek: vi.fn(() => (modelId: string) => ({ provider: "deepseek", modelId })),
+  createDeepSeek: vi.fn(() => (modelId: string) => ({
+    provider: "deepseek",
+    modelId,
+  })),
 }));
 
 vi.mock("@ai-sdk/google", () => ({
-  createGoogleGenerativeAI: vi.fn(() => (modelId: string) => ({ provider: "google", modelId })),
+  createGoogleGenerativeAI: vi.fn(() => (modelId: string) => ({
+    provider: "google",
+    modelId,
+  })),
 }));
 
 vi.mock("@ai-sdk/mistral", () => ({
-  createMistral: vi.fn(() => (modelId: string) => ({ provider: "mistral", modelId })),
+  createMistral: vi.fn(() => (modelId: string) => ({
+    provider: "mistral",
+    modelId,
+  })),
 }));
 
 vi.mock("@ai-sdk/xai", () => ({
@@ -41,11 +56,17 @@ vi.mock("@ai-sdk/xai", () => ({
 }));
 
 vi.mock("@openrouter/ai-sdk-provider", () => ({
-  createOpenRouter: vi.fn(() => (modelId: string) => ({ provider: "openrouter", modelId })),
+  createOpenRouter: vi.fn(() => (modelId: string) => ({
+    provider: "openrouter",
+    modelId,
+  })),
 }));
 
 vi.mock("ollama-ai-provider-v2", () => ({
-  createOllama: vi.fn(() => (modelId: string) => ({ provider: "ollama", modelId })),
+  createOllama: vi.fn(() => (modelId: string) => ({
+    provider: "ollama",
+    modelId,
+  })),
 }));
 
 describe("parseModelString", () => {
@@ -198,7 +219,7 @@ describe("parseModelString", () => {
 
     it("throws error for invalid format with too many slashes", () => {
       expect(() => parseModelString("a/b/c")).toThrow(
-        'Invalid model format: a/b/c. Expected "provider/model-id" or "model-id"'
+        'Invalid model format: a/b/c. Expected "provider/model-id" or "model-id"',
       );
     });
   });
@@ -211,15 +232,18 @@ describe("createModel", () => {
     it("creates anthropic model", () => {
       const result = createModel(
         { provider: "anthropic", id: "claude-3-opus" },
-        testApiKey
+        testApiKey,
       );
-      expect(result).toEqual({ provider: "anthropic", modelId: "claude-3-opus" });
+      expect(result).toEqual({
+        provider: "anthropic",
+        modelId: "claude-3-opus",
+      });
     });
 
     it("creates openai model", () => {
       const result = createModel(
         { provider: "openai", id: "gpt-4o" },
-        testApiKey
+        testApiKey,
       );
       expect(result).toEqual({ provider: "openai", modelId: "gpt-4o" });
     });
@@ -227,7 +251,7 @@ describe("createModel", () => {
     it("creates azure model", () => {
       const result = createModel(
         { provider: "azure", id: "gpt-4" },
-        testApiKey
+        testApiKey,
       );
       expect(result).toEqual({ provider: "azure", modelId: "gpt-4" });
     });
@@ -235,15 +259,18 @@ describe("createModel", () => {
     it("creates deepseek model", () => {
       const result = createModel(
         { provider: "deepseek", id: "deepseek-chat" },
-        testApiKey
+        testApiKey,
       );
-      expect(result).toEqual({ provider: "deepseek", modelId: "deepseek-chat" });
+      expect(result).toEqual({
+        provider: "deepseek",
+        modelId: "deepseek-chat",
+      });
     });
 
     it("creates google model", () => {
       const result = createModel(
         { provider: "google", id: "gemini-pro" },
-        testApiKey
+        testApiKey,
       );
       expect(result).toEqual({ provider: "google", modelId: "gemini-pro" });
     });
@@ -251,7 +278,7 @@ describe("createModel", () => {
     it("creates ollama model", () => {
       const result = createModel(
         { provider: "ollama", id: "llama3" },
-        testApiKey
+        testApiKey,
       );
       expect(result).toEqual({ provider: "ollama", modelId: "llama3" });
     });
@@ -259,7 +286,7 @@ describe("createModel", () => {
     it("creates mistral model", () => {
       const result = createModel(
         { provider: "mistral", id: "mistral-large" },
-        testApiKey
+        testApiKey,
       );
       expect(result).toEqual({ provider: "mistral", modelId: "mistral-large" });
     });
@@ -267,24 +294,27 @@ describe("createModel", () => {
     it("creates litellm model (uses openai chat)", () => {
       const result = createModel(
         { provider: "litellm", id: "custom-model" },
-        testApiKey
+        testApiKey,
       );
-      expect(result).toEqual({ provider: "openai-chat", modelId: "custom-model" });
+      expect(result).toEqual({
+        provider: "openai-chat",
+        modelId: "custom-model",
+      });
     });
 
     it("creates openrouter model", () => {
       const result = createModel(
         { provider: "openrouter", id: "meta/llama-3" },
-        testApiKey
+        testApiKey,
       );
-      expect(result).toEqual({ provider: "openrouter", modelId: "meta/llama-3" });
+      expect(result).toEqual({
+        provider: "openrouter",
+        modelId: "meta/llama-3",
+      });
     });
 
     it("creates xai model", () => {
-      const result = createModel(
-        { provider: "xai", id: "grok-3" },
-        testApiKey
-      );
+      const result = createModel({ provider: "xai", id: "grok-3" }, testApiKey);
       expect(result).toEqual({ provider: "xai", modelId: "grok-3" });
     });
   });
@@ -292,25 +322,28 @@ describe("createModel", () => {
   describe("error handling", () => {
     it("throws error for invalid model definition (missing id)", () => {
       expect(() =>
-        createModel({ provider: "openai", id: "" } as ModelDefinition, testApiKey)
+        createModel(
+          { provider: "openai", id: "" } as ModelDefinition,
+          testApiKey,
+        ),
       ).toThrow("Invalid model definition");
     });
 
     it("throws error for invalid model definition (missing provider)", () => {
       expect(() =>
-        createModel({ provider: "" as ModelProvider, id: "gpt-4" }, testApiKey)
+        createModel({ provider: "" as ModelProvider, id: "gpt-4" }, testApiKey),
       ).toThrow("Invalid model definition");
     });
 
     it("throws error for null model definition", () => {
-      expect(() => createModel(null as unknown as ModelDefinition, testApiKey)).toThrow(
-        "Invalid model definition"
-      );
+      expect(() =>
+        createModel(null as unknown as ModelDefinition, testApiKey),
+      ).toThrow("Invalid model definition");
     });
 
     it("throws error for undefined model definition", () => {
       expect(() =>
-        createModel(undefined as unknown as ModelDefinition, testApiKey)
+        createModel(undefined as unknown as ModelDefinition, testApiKey),
       ).toThrow("Invalid model definition");
     });
 
@@ -318,8 +351,8 @@ describe("createModel", () => {
       expect(() =>
         createModel(
           { provider: "unknown-provider" as ModelProvider, id: "model" },
-          testApiKey
-        )
+          testApiKey,
+        ),
       ).toThrow("Unsupported provider: unknown-provider");
     });
   });

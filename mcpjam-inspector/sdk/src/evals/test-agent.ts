@@ -8,7 +8,10 @@
 import { generateText, stepCountIs, type ToolSet, type CoreMessage } from "ai";
 import { MCPClientManager } from "../mcp-client-manager/index.js";
 import { createModelFromString, type BaseUrls } from "./model-factory.js";
-import { extractToolCalls, type GenerateTextResult } from "./tool-extraction.js";
+import {
+  extractToolCalls,
+  type GenerateTextResult,
+} from "./tool-extraction.js";
 import { QueryResult } from "./query-result.js";
 import type { TestAgentConfig, ToolCallWithMetadata } from "./types.js";
 
@@ -96,7 +99,7 @@ export class TestAgent {
       maxSteps?: number;
       /** Abort signal for cancellation */
       abortSignal?: AbortSignal;
-    }
+    },
   ): Promise<QueryResult> {
     const startTime = performance.now();
 
@@ -108,7 +111,7 @@ export class TestAgent {
       const model = createModelFromString(
         this.options.llm,
         this.options.apiKey,
-        this.options.baseUrls
+        this.options.baseUrls,
       );
 
       // Build messages
@@ -148,10 +151,12 @@ export class TestAgent {
       const toolCalls = extractToolCalls(result as GenerateTextResult);
 
       // Convert to ToolCallWithMetadata
-      const toolCallsWithMetadata: ToolCallWithMetadata[] = toolCalls.map((tc) => ({
-        toolName: tc.toolName,
-        arguments: tc.arguments,
-      }));
+      const toolCallsWithMetadata: ToolCallWithMetadata[] = toolCalls.map(
+        (tc) => ({
+          toolName: tc.toolName,
+          arguments: tc.arguments,
+        }),
+      );
 
       return new QueryResult({
         query: prompt,

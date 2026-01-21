@@ -81,7 +81,9 @@ export function parseModelString(llm: string): ModelDefinition {
     const provider = inferProvider(id);
     return { provider, id };
   } else {
-    throw new Error(`Invalid model format: ${llm}. Expected "provider/model-id" or "model-id"`);
+    throw new Error(
+      `Invalid model format: ${llm}. Expected "provider/model-id" or "model-id"`,
+    );
   }
 }
 
@@ -94,7 +96,11 @@ function inferProvider(modelId: string): ModelProvider {
   if (lowerModelId.includes("claude")) {
     return "anthropic";
   }
-  if (lowerModelId.includes("gpt") || lowerModelId.startsWith("o1") || lowerModelId.startsWith("o3")) {
+  if (
+    lowerModelId.includes("gpt") ||
+    lowerModelId.startsWith("o1") ||
+    lowerModelId.startsWith("o3")
+  ) {
     return "openai";
   }
   if (lowerModelId.includes("gemini") || lowerModelId.includes("gemma")) {
@@ -103,7 +109,11 @@ function inferProvider(modelId: string): ModelProvider {
   if (lowerModelId.includes("deepseek")) {
     return "deepseek";
   }
-  if (lowerModelId.includes("mistral") || lowerModelId.includes("codestral") || lowerModelId.includes("ministral")) {
+  if (
+    lowerModelId.includes("mistral") ||
+    lowerModelId.includes("codestral") ||
+    lowerModelId.includes("ministral")
+  ) {
     return "mistral";
   }
   if (lowerModelId.includes("grok")) {

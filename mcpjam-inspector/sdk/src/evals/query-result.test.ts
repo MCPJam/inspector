@@ -4,13 +4,19 @@ import type { ToolCallWithMetadata } from "./types.js";
 
 function createQueryResult(
   toolCalls: ToolCallWithMetadata[] = [],
-  options: Partial<Parameters<typeof QueryResult.prototype["toJSON"]>[0]> = {}
+  options: Partial<
+    Parameters<(typeof QueryResult.prototype)["toJSON"]>[0]
+  > = {},
 ) {
   return new QueryResult({
     query: options.query ?? "test query",
     response: options.response ?? "test response",
     toolCalls,
-    usage: options.usage ?? { totalTokens: 100, inputTokens: 50, outputTokens: 50 },
+    usage: options.usage ?? {
+      totalTokens: 100,
+      inputTokens: 50,
+      outputTokens: 50,
+    },
     e2eLatencyMs: options.e2eLatencyMs ?? 1000,
     llmLatencyMs: options.llmLatencyMs,
     mcpLatencyMs: options.mcpLatencyMs,
@@ -40,7 +46,11 @@ describe("QueryResult", () => {
       expect(result.query).toBe("Create a task");
       expect(result.response).toBe("I created a task for you.");
       expect(result.toolCalls).toEqual(toolCalls);
-      expect(result.usage).toEqual({ totalTokens: 500, inputTokens: 100, outputTokens: 400 });
+      expect(result.usage).toEqual({
+        totalTokens: 500,
+        inputTokens: 100,
+        outputTokens: 400,
+      });
       expect(result.e2eLatencyMs).toBe(2000);
       expect(result.llmLatencyMs).toBe(1500);
       expect(result.mcpLatencyMs).toBe(300);
@@ -94,7 +104,11 @@ describe("QueryResult", () => {
         { toolName: "delete", arguments: {} },
       ]);
 
-      expect(result.uniqueToolsCalled()).toEqual(["search", "update", "delete"]);
+      expect(result.uniqueToolsCalled()).toEqual([
+        "search",
+        "update",
+        "delete",
+      ]);
     });
 
     it("returns empty array when no tools called", () => {
@@ -131,7 +145,10 @@ describe("QueryResult", () => {
   describe("hasToolCalls", () => {
     it("returns true when all expected tools were called with matching args", () => {
       const result = createQueryResult([
-        { toolName: "create_task", arguments: { title: "My Task", priority: "high" } },
+        {
+          toolName: "create_task",
+          arguments: { title: "My Task", priority: "high" },
+        },
         { toolName: "assign_task", arguments: { userId: "123" } },
       ]);
 
@@ -158,9 +175,7 @@ describe("QueryResult", () => {
     });
 
     it("returns false when expected tool is missing", () => {
-      const result = createQueryResult([
-        { toolName: "search", arguments: {} },
-      ]);
+      const result = createQueryResult([{ toolName: "search", arguments: {} }]);
 
       const passed = result.hasToolCalls([
         { toolName: "search", arguments: {} },
@@ -213,9 +228,7 @@ describe("QueryResult", () => {
     });
 
     it("returns false when expected tools are missing", () => {
-      const result = createQueryResult([
-        { toolName: "search", arguments: {} },
-      ]);
+      const result = createQueryResult([{ toolName: "search", arguments: {} }]);
 
       expect(result.hasExactToolCalls(["search", "update"])).toBe(false);
     });
@@ -247,9 +260,7 @@ describe("QueryResult", () => {
     });
 
     it("returns empty array when no matches", () => {
-      const result = createQueryResult([
-        { toolName: "search", arguments: {} },
-      ]);
+      const result = createQueryResult([{ toolName: "search", arguments: {} }]);
 
       expect(result.getToolCallsByName("nonexistent")).toEqual([]);
     });
@@ -268,9 +279,7 @@ describe("QueryResult", () => {
     });
 
     it("returns undefined when no match", () => {
-      const result = createQueryResult([
-        { toolName: "search", arguments: {} },
-      ]);
+      const result = createQueryResult([{ toolName: "search", arguments: {} }]);
 
       expect(result.getFirstToolCall("nonexistent")).toBeUndefined();
     });
@@ -395,7 +404,7 @@ describe("QueryResult", () => {
             toolName: "create",
             arguments: { config: { nested: { deep: true } } },
           },
-        ])
+        ]),
       ).toBe(true);
     });
 
@@ -410,7 +419,7 @@ describe("QueryResult", () => {
       expect(
         result.hasToolCalls([
           { toolName: "batch", arguments: { ids: [1, 2, 3] } },
-        ])
+        ]),
       ).toBe(true);
     });
 
@@ -425,7 +434,7 @@ describe("QueryResult", () => {
       expect(
         result.hasToolCalls([
           { toolName: "batch", arguments: { ids: [1, 2] } },
-        ])
+        ]),
       ).toBe(false);
     });
 
@@ -435,7 +444,7 @@ describe("QueryResult", () => {
       ]);
 
       expect(
-        result.hasToolCalls([{ toolName: "test", arguments: { value: null } }])
+        result.hasToolCalls([{ toolName: "test", arguments: { value: null } }]),
       ).toBe(true);
     });
   });

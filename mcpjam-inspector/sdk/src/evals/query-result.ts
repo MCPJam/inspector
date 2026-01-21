@@ -151,7 +151,7 @@ export class QueryResult implements QueryResultInterface {
   hasToolCalls(expected: ToolCall[]): boolean {
     for (const exp of expected) {
       const found = this.toolCalls.some((actual) =>
-        this.matchToolCall(exp, actual)
+        this.matchToolCall(exp, actual),
       );
       if (!found) {
         return false;
@@ -291,17 +291,17 @@ export class QueryResult implements QueryResultInterface {
    * Calculates MCP latency by summing tool call durations.
    */
   private calculateMcpLatency(): number {
-    return this.toolCalls.reduce(
-      (sum, tc) => sum + (tc.durationMs ?? 0),
-      0
-    );
+    return this.toolCalls.reduce((sum, tc) => sum + (tc.durationMs ?? 0), 0);
   }
 
   /**
    * Checks if an expected tool call matches an actual tool call.
    * Arguments are checked as a subset match.
    */
-  private matchToolCall(expected: ToolCall, actual: ToolCallWithMetadata): boolean {
+  private matchToolCall(
+    expected: ToolCall,
+    actual: ToolCallWithMetadata,
+  ): boolean {
     if (expected.toolName !== actual.toolName) {
       return false;
     }
@@ -345,7 +345,7 @@ export class QueryResult implements QueryResultInterface {
       const actualObj = actual as Record<string, unknown>;
       const expectedKeys = Object.keys(expectedObj);
       return expectedKeys.every((key) =>
-        this.valuesMatch(expectedObj[key], actualObj[key])
+        this.valuesMatch(expectedObj[key], actualObj[key]),
       );
     }
 

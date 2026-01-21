@@ -179,7 +179,7 @@ describe("TestAgent", () => {
             { role: "system", content: "You are a helpful assistant." },
             { role: "user", content: "Hello" },
           ],
-        })
+        }),
       );
     });
 
@@ -206,7 +206,7 @@ describe("TestAgent", () => {
             { role: "system", content: "Override prompt" },
             { role: "user", content: "Hello" },
           ],
-        })
+        }),
       );
     });
 
@@ -230,7 +230,7 @@ describe("TestAgent", () => {
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.8,
-        })
+        }),
       );
     });
 
@@ -254,7 +254,7 @@ describe("TestAgent", () => {
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           temperature: 0.2,
-        })
+        }),
       );
     });
 
@@ -266,7 +266,9 @@ describe("TestAgent", () => {
         apiKey: "test-key",
       });
 
-      mockGenerateText.mockRejectedValueOnce(new Error("API rate limit exceeded"));
+      mockGenerateText.mockRejectedValueOnce(
+        new Error("API rate limit exceeded"),
+      );
 
       const result = await agent.query("Hello");
 
@@ -302,11 +304,14 @@ describe("TestAgent", () => {
 
       await agent.query("Hello");
 
-      expect(mockManager.getToolsForAiSdk).toHaveBeenCalledWith(["server1", "server2"]);
+      expect(mockManager.getToolsForAiSdk).toHaveBeenCalledWith([
+        "server1",
+        "server2",
+      ]);
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           tools: mockToolSet,
-        })
+        }),
       );
     });
 
@@ -329,7 +334,7 @@ describe("TestAgent", () => {
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           stopWhen: expect.any(Function),
-        })
+        }),
       );
     });
 
@@ -352,7 +357,7 @@ describe("TestAgent", () => {
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           stopWhen: expect.any(Function),
-        })
+        }),
       );
     });
 
@@ -368,7 +373,11 @@ describe("TestAgent", () => {
         text: "I searched and updated the task.",
         steps: [
           { toolCalls: [{ toolName: "search_tasks", args: { query: "bug" } }] },
-          { toolCalls: [{ toolName: "update_task", args: { id: "123", status: "done" } }] },
+          {
+            toolCalls: [
+              { toolName: "update_task", args: { id: "123", status: "done" } },
+            ],
+          },
         ],
         usage: {
           promptTokens: 200,
