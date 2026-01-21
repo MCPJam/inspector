@@ -6,7 +6,6 @@ import {
   MOCK_RESOURCES,
   MOCK_PROMPTS,
 } from "./mock-servers";
-import type { Server as HttpServer } from "http";
 
 describe("MCPClientManager", () => {
   describe("constructor", () => {
@@ -83,13 +82,11 @@ describe("MCPClientManager", () => {
 
   describe("HTTP server", () => {
     let manager: MCPClientManager;
-    let httpServer: HttpServer;
     let serverUrl: URL;
     let stopServer: () => Promise<void>;
 
     beforeAll(async () => {
       const result = await startMockHttpServer();
-      httpServer = result.server;
       serverUrl = result.url;
       stopServer = result.stop;
       manager = new MCPClientManager();
@@ -338,13 +335,11 @@ describe("MCPClientManager", () => {
 
   describe("multiple servers", () => {
     let manager: MCPClientManager;
-    let httpServer: HttpServer;
     let serverUrl: URL;
     let stopServer: () => Promise<void>;
 
     beforeAll(async () => {
       const result = await startMockHttpServer();
-      httpServer = result.server;
       serverUrl = result.url;
       stopServer = result.stop;
     });

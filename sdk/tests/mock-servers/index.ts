@@ -267,8 +267,14 @@ export async function startMockHttpServer(
         body += chunk;
       });
       req.on("end", async () => {
+        const activeTransport = sseTransport;
+        if (!activeTransport) {
+          res.writeHead(400);
+          res.end("No SSE connection established");
+          return;
+        }
         try {
-          await sseTransport!.handlePostMessage(req, res, body);
+          await activeTransport.handlePostMessage(req, res, body);
         } catch (error) {
           res.writeHead(500);
           res.end(String(error));

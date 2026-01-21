@@ -116,12 +116,13 @@ function createMockServer(): Server {
           ],
         };
 
-      case "add":
+      case "add": {
         const a = Number((args as any)?.a ?? 0);
         const b = Number((args as any)?.b ?? 0);
         return {
           content: [{ type: "text", text: `Result: ${a + b}` }],
         };
+      }
 
       case "greet":
         return {
