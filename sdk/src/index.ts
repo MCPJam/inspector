@@ -100,6 +100,8 @@ export type { EvalsSuiteConfig, EvalRunResult } from "./EvalsSuite.js";
 // Core SDK types
 export type {
   LLMProvider,
+  CompatibleProtocol,
+  CustomProvider,
   LLMConfig,
   ToolCall,
   TokenUsage,
@@ -107,9 +109,16 @@ export type {
 } from "./types.js";
 
 // Model factory utilities
-export { parseLLMString, createModelFromString } from "./model-factory.js";
+export {
+  parseLLMString,
+  createModelFromString,
+  parseModelIds,
+  createCustomProvider,
+  PROVIDER_PRESETS,
+} from "./model-factory.js";
 export type {
   BaseUrls,
   CreateModelOptions,
+  ParsedLLMString,
   ProviderLanguageModel,
 } from "./model-factory.js";
