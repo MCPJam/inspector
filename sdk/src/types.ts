@@ -6,16 +6,16 @@
  * Supported LLM providers
  */
 export type LLMProvider =
-  | 'anthropic'
-  | 'openai'
-  | 'azure'
-  | 'deepseek'
-  | 'google'
-  | 'ollama'
-  | 'mistral'
-  | 'litellm'
-  | 'openrouter'
-  | 'xai';
+  | "anthropic"
+  | "openai"
+  | "azure"
+  | "deepseek"
+  | "google"
+  | "ollama"
+  | "mistral"
+  | "litellm"
+  | "openrouter"
+  | "xai";
 
 /**
  * Configuration for an LLM
