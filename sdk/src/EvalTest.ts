@@ -324,7 +324,10 @@ export class EvalTest {
 
         for (let attempt = 0; attempt <= retries; attempt++) {
           try {
-            const convResult = await withTimeout(conversation(agent), timeoutMs);
+            const convResult = await withTimeout(
+              conversation(agent),
+              timeoutMs
+            );
 
             const latencies = convResult.results.map((r) => r.getLatency());
             const tokens = convResult.results.reduce(
