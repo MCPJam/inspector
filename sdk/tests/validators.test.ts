@@ -236,6 +236,29 @@ describe("validators", () => {
     it("should return false for empty tool calls", () => {
       expect(matchToolCallWithArgs("add", { a: 2 }, [])).toBe(false);
     });
+
+    it("should match objects regardless of key order", () => {
+      // LLMs often return JSON with keys in arbitrary order
+      const calls: ToolCall[] = [{ toolName: "add", arguments: { b: 3, a: 2 } }];
+      expect(matchToolCallWithArgs("add", { a: 2, b: 3 }, calls)).toBe(true);
+      expect(matchToolCallWithArgs("add", { b: 3, a: 2 }, calls)).toBe(true);
+    });
+
+    it("should match nested objects regardless of key order", () => {
+      const calls: ToolCall[] = [
+        {
+          toolName: "config",
+          arguments: { settings: { size: 12, theme: "dark" }, name: "test" },
+        },
+      ];
+      expect(
+        matchToolCallWithArgs(
+          "config",
+          { name: "test", settings: { theme: "dark", size: 12 } },
+          calls
+        )
+      ).toBe(true);
+    });
   });
 
   describe("matchToolCallWithPartialArgs", () => {
