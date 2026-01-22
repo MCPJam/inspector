@@ -9,8 +9,18 @@ import {
   matchNoToolCalls,
 } from "./validators.js";
 
-export interface EvalsSuiteConfig {
-  name?: string;
+/**
+ * Configuration for a single EvalTest
+ */
+export interface EvalTestConfig {
+  name: string;
+  query?: string;
+  expectTools?: string[];
+  expectExactTools?: string[];
+  expectAnyTool?: string[];
+  expectNoTools?: boolean;
+  validator?: (result: QueryResult) => boolean | Promise<boolean>;
+  conversation?: (agent: TestAgent) => Promise<ConversationResult>;
 }
 
 /**
@@ -22,16 +32,14 @@ export interface ConversationResult {
 }
 
 /**
- * A single test case for multi-case batch testing
+ * Options for running an EvalTest
  */
-export interface TestCase {
-  name?: string;
-  query: string;
-  expectTools?: string[];
-  expectExactTools?: string[];
-  expectAnyTool?: string[];
-  expectNoTools?: boolean;
-  validator?: (result: QueryResult) => boolean | Promise<boolean>;
+export interface EvalTestRunOptions {
+  iterations: number;
+  concurrency?: number; // default: 5
+  retries?: number; // default: 0
+  timeoutMs?: number; // default: 30000
+  onProgress?: (completed: number, total: number) => void;
 }
 
 /**
@@ -46,47 +54,7 @@ export interface IterationResult {
 }
 
 /**
- * Result details for a single test case
- */
-export interface CaseResult {
-  name?: string;
-  query: string;
-  iterations: IterationResult[];
-  successes: number;
-  failures: number;
-  accuracy: number;
-}
-
-/**
- * Configuration for running an eval suite
- */
-export interface RunConfig {
-  agent: TestAgent;
-  iterations: number;
-
-  // === Single-turn ===
-  query?: string;
-  expectTools?: string[];
-  expectExactTools?: string[];
-  expectAnyTool?: string[];
-  expectNoTools?: boolean;
-  validator?: (result: QueryResult) => boolean | Promise<boolean>;
-
-  // === Multi-turn ===
-  conversation?: (agent: TestAgent) => Promise<ConversationResult>;
-
-  // === Multi-case ===
-  cases?: TestCase[];
-
-  // === DX options ===
-  concurrency?: number;
-  retries?: number;
-  timeoutMs?: number;
-  onProgress?: (completed: number, total: number) => void;
-}
-
-/**
- * Result of an eval run
+ * Result of running an EvalTest
  */
 export interface EvalRunResult {
   iterations: number;
@@ -94,7 +62,6 @@ export interface EvalRunResult {
   failures: number;
   results: boolean[];
   iterationDetails: IterationResult[];
-  caseResults?: CaseResult[];
   tokenUsage: {
     total: number;
     perIteration: number[];
@@ -141,7 +108,7 @@ class Semaphore {
  */
 function createValidator(
   config: Pick<
-    RunConfig | TestCase,
+    EvalTestConfig,
     | "expectTools"
     | "expectExactTools"
     | "expectAnyTool"
@@ -175,27 +142,6 @@ function createValidator(
 }
 
 /**
- * Check if config is for conversation mode
- */
-function isConversationConfig(config: RunConfig): boolean {
-  return "conversation" in config && typeof config.conversation === "function";
-}
-
-/**
- * Check if config is for multi-case mode
- */
-function isMultiCaseConfig(config: RunConfig): boolean {
-  return "cases" in config && Array.isArray(config.cases);
-}
-
-/**
- * Check if config is for single-turn mode
- */
-function isSingleTurnConfig(config: RunConfig): boolean {
-  return "query" in config && typeof config.query === "string";
-}
-
-/**
  * Timeout wrapper for promises
  */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -223,44 +169,59 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export class EvalsSuite {
-  private name: string;
+/**
+ * EvalTest - Runs a single test scenario with iterations
+ *
+ * Can be run standalone or as part of an EvalSuite.
+ *
+ * @example
+ * ```ts
+ * const test = new EvalTest({
+ *   name: "addition",
+ *   query: "Add 2+3",
+ *   expectTools: ["add"],
+ * });
+ * await test.run(agent, { iterations: 30 });
+ * console.log(test.accuracy()); // 0.97
+ * ```
+ */
+export class EvalTest {
+  private config: EvalTestConfig;
   private lastRunResult: EvalRunResult | null = null;
 
-  constructor(config?: EvalsSuiteConfig) {
-    this.name = config?.name ?? "EvalsSuite";
+  constructor(config: EvalTestConfig) {
+    this.config = config;
   }
 
-  async run(config: RunConfig): Promise<EvalRunResult> {
-    const concurrency = config.concurrency ?? 5;
-    const retries = config.retries ?? 0;
-    const timeoutMs = config.timeoutMs ?? 30000;
-    const onProgress = config.onProgress;
+  /**
+   * Run this test with the given agent and options
+   */
+  async run(
+    agent: TestAgent,
+    options: EvalTestRunOptions
+  ): Promise<EvalRunResult> {
+    const concurrency = options.concurrency ?? 5;
+    const retries = options.retries ?? 0;
+    const timeoutMs = options.timeoutMs ?? 30000;
+    const onProgress = options.onProgress;
 
     const semaphore = new Semaphore(concurrency);
     let completedCount = 0;
 
-    if (isMultiCaseConfig(config)) {
-      return this.runMultiCase(
-        config,
-        semaphore,
-        retries,
-        timeoutMs,
-        onProgress,
-        () => ++completedCount
-      );
-    } else if (isConversationConfig(config)) {
+    if (this.config.conversation) {
       return this.runConversation(
-        config,
+        agent,
+        options.iterations,
         semaphore,
         retries,
         timeoutMs,
         onProgress,
         () => ++completedCount
       );
-    } else if (isSingleTurnConfig(config)) {
+    } else if (this.config.query) {
       return this.runSingleTurn(
-        config,
+        agent,
+        options.iterations,
         semaphore,
         retries,
         timeoutMs,
@@ -268,24 +229,23 @@ export class EvalsSuite {
         () => ++completedCount
       );
     } else {
-      throw new Error(
-        "Invalid config: must provide 'query', 'conversation', or 'cases'"
-      );
+      throw new Error("Invalid config: must provide 'query' or 'conversation'");
     }
   }
 
   private async runSingleTurn(
-    config: RunConfig,
+    agent: TestAgent,
+    iterations: number,
     semaphore: Semaphore,
     retries: number,
     timeoutMs: number,
     onProgress: ((completed: number, total: number) => void) | undefined,
     incrementCompleted: () => number
   ): Promise<EvalRunResult> {
-    const query = config.query!;
-    const validator = createValidator(config);
-    const iterations: IterationResult[] = [];
-    const total = config.iterations;
+    const query = this.config.query!;
+    const validator = createValidator(this.config);
+    const iterationResults: IterationResult[] = [];
+    const total = iterations;
 
     const runSingleIteration = async (): Promise<IterationResult> => {
       await semaphore.acquire();
@@ -294,10 +254,7 @@ export class EvalsSuite {
 
         for (let attempt = 0; attempt <= retries; attempt++) {
           try {
-            const result = await withTimeout(
-              config.agent.query(query),
-              timeoutMs
-            );
+            const result = await withTimeout(agent.query(query), timeoutMs);
 
             const passed = await validator(result);
             const latency = result.getLatency();
@@ -338,26 +295,27 @@ export class EvalsSuite {
     };
 
     // Run iterations in parallel (limited by semaphore)
-    const promises = Array.from({ length: config.iterations }, () =>
+    const promises = Array.from({ length: iterations }, () =>
       runSingleIteration()
     );
     const results = await Promise.all(promises);
-    iterations.push(...results);
+    iterationResults.push(...results);
 
-    return this.aggregateResults(iterations);
+    return this.aggregateResults(iterationResults);
   }
 
   private async runConversation(
-    config: RunConfig,
+    agent: TestAgent,
+    iterations: number,
     semaphore: Semaphore,
     retries: number,
     timeoutMs: number,
     onProgress: ((completed: number, total: number) => void) | undefined,
     incrementCompleted: () => number
   ): Promise<EvalRunResult> {
-    const conversation = config.conversation!;
-    const iterations: IterationResult[] = [];
-    const total = config.iterations;
+    const conversation = this.config.conversation!;
+    const iterationResults: IterationResult[] = [];
+    const total = iterations;
 
     const runSingleIteration = async (): Promise<IterationResult> => {
       await semaphore.acquire();
@@ -366,10 +324,7 @@ export class EvalsSuite {
 
         for (let attempt = 0; attempt <= retries; attempt++) {
           try {
-            const convResult = await withTimeout(
-              conversation(config.agent),
-              timeoutMs
-            );
+            const convResult = await withTimeout(conversation(agent), timeoutMs);
 
             const latencies = convResult.results.map((r) => r.getLatency());
             const tokens = convResult.results.reduce(
@@ -408,108 +363,16 @@ export class EvalsSuite {
       }
     };
 
-    const promises = Array.from({ length: config.iterations }, () =>
+    const promises = Array.from({ length: iterations }, () =>
       runSingleIteration()
     );
     const results = await Promise.all(promises);
-    iterations.push(...results);
+    iterationResults.push(...results);
 
-    return this.aggregateResults(iterations);
+    return this.aggregateResults(iterationResults);
   }
 
-  private async runMultiCase(
-    config: RunConfig,
-    semaphore: Semaphore,
-    retries: number,
-    timeoutMs: number,
-    onProgress: ((completed: number, total: number) => void) | undefined,
-    incrementCompleted: () => number
-  ): Promise<EvalRunResult> {
-    const cases = config.cases!;
-    const caseResults: CaseResult[] = [];
-    const allIterations: IterationResult[] = [];
-    const total = cases.length * config.iterations;
-
-    for (const testCase of cases) {
-      const validator = createValidator(testCase);
-      const caseIterations: IterationResult[] = [];
-
-      const runSingleIteration = async (): Promise<IterationResult> => {
-        await semaphore.acquire();
-        try {
-          let lastError: string | undefined;
-
-          for (let attempt = 0; attempt <= retries; attempt++) {
-            try {
-              const result = await withTimeout(
-                config.agent.query(testCase.query),
-                timeoutMs
-              );
-
-              const passed = await validator(result);
-              const latency = result.getLatency();
-              const tokens = result.totalTokens();
-
-              return {
-                passed,
-                latencies: [latency],
-                tokens,
-                error: result.hasError() ? result.getError() : undefined,
-                retryCount: attempt,
-              };
-            } catch (error) {
-              lastError =
-                error instanceof Error ? error.message : String(error);
-
-              if (attempt < retries) {
-                await sleep(100 * Math.pow(2, attempt));
-              }
-            }
-          }
-
-          return {
-            passed: false,
-            latencies: [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
-            tokens: 0,
-            error: lastError,
-            retryCount: retries,
-          };
-        } finally {
-          semaphore.release();
-          const completed = incrementCompleted();
-          if (onProgress) {
-            onProgress(completed, total);
-          }
-        }
-      };
-
-      const promises = Array.from({ length: config.iterations }, () =>
-        runSingleIteration()
-      );
-      const results = await Promise.all(promises);
-      caseIterations.push(...results);
-      allIterations.push(...results);
-
-      const successes = caseIterations.filter((r) => r.passed).length;
-      const failures = caseIterations.filter((r) => !r.passed).length;
-
-      caseResults.push({
-        name: testCase.name,
-        query: testCase.query,
-        iterations: caseIterations,
-        successes,
-        failures,
-        accuracy: successes / config.iterations,
-      });
-    }
-
-    return this.aggregateResults(allIterations, caseResults);
-  }
-
-  private aggregateResults(
-    iterations: IterationResult[],
-    caseResults?: CaseResult[]
-  ): EvalRunResult {
+  private aggregateResults(iterations: IterationResult[]): EvalRunResult {
     const allLatencies = iterations.flatMap((r) => r.latencies);
 
     // Handle empty latencies array
@@ -535,7 +398,6 @@ export class EvalsSuite {
       failures,
       results: iterations.map((r) => r.passed),
       iterationDetails: iterations,
-      caseResults,
       tokenUsage: {
         total: iterations.reduce((sum, r) => sum + r.tokens, 0),
         perIteration: iterations.map((r) => r.tokens),
@@ -560,6 +422,9 @@ export class EvalsSuite {
     return this.lastRunResult;
   }
 
+  /**
+   * Get the accuracy of the last run (success rate)
+   */
   accuracy(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
@@ -567,41 +432,51 @@ export class EvalsSuite {
     return this.lastRunResult.successes / this.lastRunResult.iterations;
   }
 
+  /**
+   * Get the recall (true positive rate) of the last run
+   */
   recall(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
     // In a basic eval context, recall equals accuracy
-    // For more complex scenarios, this would need ground truth labels
     return this.accuracy();
   }
 
+  /**
+   * Get the precision of the last run
+   */
   precision(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
     // In a basic eval context, precision equals accuracy
-    // For more complex scenarios, this would need ground truth labels
     return this.accuracy();
   }
 
+  /**
+   * Get the true positive rate (same as recall)
+   */
   truePositiveRate(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    // TPR = TP / (TP + FN) = same as recall in basic context
     return this.recall();
   }
 
+  /**
+   * Get the false positive rate
+   */
   falsePositiveRate(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    // FPR = FP / (FP + TN)
-    // In basic eval context, we consider failures as false positives
     return this.lastRunResult.failures / this.lastRunResult.iterations;
   }
 
+  /**
+   * Get the average token use per iteration
+   */
   averageTokenUse(): number {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
@@ -612,11 +487,24 @@ export class EvalsSuite {
     return this.lastRunResult.tokenUsage.total / this.lastRunResult.iterations;
   }
 
+  /**
+   * Get the full results of the last run
+   */
   getResults(): EvalRunResult | null {
     return this.lastRunResult;
   }
 
+  /**
+   * Get the name of this test
+   */
   getName(): string {
-    return this.name;
+    return this.config.name;
+  }
+
+  /**
+   * Get the configuration of this test
+   */
+  getConfig(): EvalTestConfig {
+    return this.config;
   }
 }

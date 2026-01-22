@@ -117,17 +117,23 @@ export {
   matchToolArgumentWith,
 } from "./validators.js";
 
-// EvalsSuite
-export { EvalsSuite } from "./EvalsSuite.js";
+// EvalTest - Single test that can run standalone
+export { EvalTest } from "./EvalTest.js";
 export type {
-  EvalsSuiteConfig,
+  EvalTestConfig,
+  EvalTestRunOptions,
   EvalRunResult,
   ConversationResult,
-  TestCase,
   IterationResult,
-  CaseResult,
-  RunConfig,
-} from "./EvalsSuite.js";
+} from "./EvalTest.js";
+
+// EvalSuite - Groups multiple EvalTests
+export { EvalSuite } from "./EvalSuite.js";
+export type {
+  EvalSuiteConfig,
+  EvalSuiteResult,
+  TestResult,
+} from "./EvalSuite.js";
 
 // Core SDK types
 export type {

@@ -246,6 +246,7 @@ test('cocktail widget has the proper CSP configurations', () => {
 ```
 
 ## Evaluations
+
 MCP evals helps measure a MCP server's "tool ergonomics", designing MCP tools so that an LLM understands how to use them.
 
 Here's how MCP evals works:
@@ -318,55 +319,52 @@ result.getError();                       // string | undefined
 result.text;                             // LLM response text
 ```
 
-### `EvalsSuite`
+### `EvalTest` - Single Test Scenario
 
-`EvalsSuite` is used to run evals tests in many iterations. It supports three execution modes:
-
-#### Single-turn with declarative expectations
+`EvalTest` runs a single test scenario with multiple iterations. It can be run standalone or as part of an `EvalSuite`.
 
 ```ts
-const suite = new EvalsSuite({ name: "Math Operations" });
+import { EvalTest } from "@mcpjam/sdk";
 
-const result = await suite.run({
-  agent: testAgent,
-  query: "Add 2 and 3",
-  iterations: 30,
-  expectTools: ["add"],         // Tool must be called (subset match)
-  concurrency: 5,               // Run 5 iterations in parallel
+const test = new EvalTest({
+  name: "addition",
+  query: "Add 2+3",
+  expectTools: ["add"],
 });
 
-console.log("Accuracy:", suite.accuracy());
-console.log("E2E P50:", result.latency.e2e.p50, "ms");
+await test.run(agent, { iterations: 30 });
+console.log(test.accuracy()); // 0.97
 ```
 
-**Expectation options:**
+#### Expectation Options
+
 - `expectTools` - All expected tools must be called (any order)
 - `expectExactTools` - Exact tools in exact order
 - `expectAnyTool` - At least one of the expected tools called
 - `expectNoTools` - No tools should be called
 - `validator` - Custom validation function
 
-#### Single-turn with custom validator
+#### Custom Validator
 
 ```ts
-await suite.run({
-  agent: testAgent,
+const test = new EvalTest({
+  name: "addition-args",
   query: "What is 2 + 3?",
-  iterations: 30,
   validator: (result) => {
     const calls = result.getToolCalls();
     const addCall = calls.find(c => c.toolName === "add");
     return addCall?.arguments?.a === 2 && addCall?.arguments?.b === 3;
   },
 });
+
+await test.run(agent, { iterations: 30 });
 ```
 
-#### Multi-turn conversations
+#### Multi-turn Conversations
 
 ```ts
-await suite.run({
-  agent: testAgent,
-  iterations: 5,
+const test = new EvalTest({
+  name: "search-and-summarize",
   conversation: async (agent) => {
     const r1 = await agent.query("Search for X");
     if (!r1.toolsCalled().includes("search")) {
@@ -379,31 +377,14 @@ await suite.run({
     };
   },
 });
+
+await test.run(agent, { iterations: 5 });
 ```
 
-#### Multi-case batch testing
+#### Run Options
 
 ```ts
-const result = await suite.run({
-  agent: testAgent,
-  iterations: 10,
-  cases: [
-    { name: "addition", query: "Add 2+3", expectTools: ["add"] },
-    { name: "multiply", query: "Multiply 4*5", expectTools: ["multiply"] },
-  ],
-});
-
-// Per-case results
-const addCase = result.caseResults?.find(c => c.name === "addition");
-console.log("Addition accuracy:", addCase?.accuracy);
-```
-
-#### DX Options
-
-```ts
-await suite.run({
-  agent,
-  query: "...",
+await test.run(agent, {
   iterations: 30,
   concurrency: 5,              // Parallel iterations (default: 5)
   retries: 2,                  // Retry failed iterations (default: 0)
@@ -414,17 +395,35 @@ await suite.run({
 });
 ```
 
-### Metrics and Results
+### `EvalSuite` - Group Multiple Tests
 
-`EvalsSuite` provides these metrics:
+`EvalSuite` groups multiple `EvalTest` instances and provides aggregate metrics across all tests.
 
 ```ts
-suite.accuracy();              // Success rate
-suite.recall();                // True positive rate
-suite.precision();             // Precision
-suite.truePositiveRate();      // Same as recall
-suite.falsePositiveRate();     // False positive rate
-suite.averageTokenUse();       // Average tokens per iteration
+import { EvalSuite, EvalTest } from "@mcpjam/sdk";
+
+const suite = new EvalSuite({ name: "Math Operations" });
+suite.add(new EvalTest({ name: "addition", query: "Add 2+3", expectTools: ["add"] }));
+suite.add(new EvalTest({ name: "multiply", query: "Multiply 4*5", expectTools: ["multiply"] }));
+
+await suite.run(agent, { iterations: 30 });
+
+console.log(suite.accuracy());                 // Aggregate: 0.95
+console.log(suite.get("addition").accuracy()); // Individual: 0.97
+console.log(suite.get("multiply").accuracy()); // Individual: 0.93
+```
+
+### Metrics and Results
+
+Both `EvalTest` and `EvalSuite` provide these metrics after running:
+
+```ts
+test.accuracy();              // Success rate
+test.recall();                // True positive rate
+test.precision();             // Precision
+test.truePositiveRate();      // Same as recall
+test.falsePositiveRate();     // False positive rate
+test.averageTokenUse();       // Average tokens per iteration
 ```
 
 The `EvalRunResult` contains detailed data:
@@ -436,7 +435,6 @@ interface EvalRunResult {
   failures: number;
   results: boolean[];
   iterationDetails: IterationResult[];
-  caseResults?: CaseResult[];        // For multi-case runs
   tokenUsage: {
     total: number;
     perIteration: number[];
@@ -492,7 +490,7 @@ matchToolArgumentWith("echo", "message", (v) => typeof v === "string", result.ge
 ### Full Example
 
 ```ts
-import { MCPClientManager, TestAgent, EvalsSuite } from "@mcpjam/sdk";
+import { MCPClientManager, TestAgent, EvalTest, EvalSuite } from "@mcpjam/sdk";
 
 const manager = new MCPClientManager(
   {
@@ -519,66 +517,82 @@ const testAgent = new TestAgent({
   temperature: 0.8,
 });
 
-const suite = new EvalsSuite({ name: "Asana Evals" });
-
-const result = await suite.run({
-  agent: testAgent,
+// Single test standalone
+const createProjectTest = new EvalTest({
+  name: "create-project",
   query: "Create a new Asana project called 'Onboard Joe'",
-  iterations: 30,
   expectTools: ["asana_create_project"],
-  concurrency: 5,
 });
 
-console.log("Accuracy:", suite.accuracy());
-console.log("E2E P50:", result.latency.e2e.p50, "ms");
-console.log("LLM P95:", result.latency.llm.p95, "ms");
-console.log("Total tokens:", result.tokenUsage.total);
+await createProjectTest.run(testAgent, { iterations: 30, concurrency: 5 });
+
+console.log("Accuracy:", createProjectTest.accuracy());
+console.log("E2E P50:", createProjectTest.getResults()?.latency.e2e.p50, "ms");
+console.log("Total tokens:", createProjectTest.getResults()?.tokenUsage.total);
 ```
 
 ## Using with Jest
 
 ```ts
-import { MCPClientManager, TestAgent, EvalsSuite } from "@mcpjam/sdk";
+import { MCPClientManager, TestAgent, EvalTest, EvalSuite } from "@mcpjam/sdk";
 
-let manager: MCPClientManager;
-let testAgent: TestAgent;
+describe("Asana MCP Server Evals", () => {
+  let manager: MCPClientManager;
+  let testAgent: TestAgent;
+  let suite: EvalSuite;
 
-beforeAll(async () => {
-  manager = new MCPClientManager(
-    {
-      asana: {
-        url: new URL("https://mcp.asana.com/sse"),
-        requestInit: {
-          headers: { Authorization: "Bearer abCD2EfG" },
-        },
-      }
-    },
-    { name: 'mcpjam', version: '1.0.0' },
-    { capabilities: {} }
-  );
-  await manager.connectToServer("asana");
+  beforeAll(async () => {
+    manager = new MCPClientManager(
+      {
+        asana: {
+          url: new URL("https://mcp.asana.com/sse"),
+          requestInit: {
+            headers: { Authorization: "Bearer abCD2EfG" },
+          },
+        }
+      },
+      { name: 'mcpjam', version: '1.0.0' },
+      { capabilities: {} }
+    );
+    await manager.connectToServer("asana");
 
-  testAgent = new TestAgent({
-    tools: await manager.getToolsForAiSdk(["asana"]),
-    llm: "openai/gpt-4o",
-    apiKey: process.env.OPENAI_API_KEY,
+    testAgent = new TestAgent({
+      tools: await manager.getToolsForAiSdk(["asana"]),
+      llm: "openai/gpt-4o",
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+    // Set up the test suite
+    suite = new EvalSuite({ name: "Asana Operations" });
+    suite.add(new EvalTest({
+      name: "create-project",
+      query: "Create a new Asana project called 'Onboard Joe'",
+      expectTools: ["asana_create_project"],
+    }));
+    suite.add(new EvalTest({
+      name: "list-tasks",
+      query: "List all tasks in the Marketing project",
+      expectTools: ["asana_list_tasks"],
+    }));
+
+    // Run all tests once
+    await suite.run(testAgent, { iterations: 30 });
   });
-});
 
-afterAll(async () => {
-  await manager.disconnectServer("asana");
-});
-
-test('create new project calls the right tool', async () => {
-  const suite = new EvalsSuite();
-
-  await suite.run({
-    agent: testAgent,
-    query: "Create a new Asana project called 'Onboard Joe'",
-    iterations: 30,
-    expectTools: ["asana_create_project"],
+  afterAll(async () => {
+    await manager.disconnectServer("asana");
   });
 
-  expect(suite.accuracy()).toBeGreaterThan(0.9);
+  test("create project accuracy > 90%", () => {
+    expect(suite.get("create-project")!.accuracy()).toBeGreaterThan(0.9);
+  });
+
+  test("list tasks accuracy > 90%", () => {
+    expect(suite.get("list-tasks")!.accuracy()).toBeGreaterThan(0.9);
+  });
+
+  test("overall suite accuracy > 90%", () => {
+    expect(suite.accuracy()).toBeGreaterThan(0.9);
+  });
 });
 ```
