@@ -23,23 +23,31 @@ interface AISDKStep {
 }
 
 /**
+ * Token usage format from AI SDK.
+ * Supports both older (promptTokens/completionTokens) and newer (inputTokens/outputTokens) formats.
+ */
+export interface AISDKUsage {
+  // Older format
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  // Newer format (AI SDK v6+)
+  inputTokens?: number;
+  outputTokens?: number;
+}
+
+/**
  * Minimal interface for AI SDK's GenerateTextResult
  * We only extract what we need to avoid tight coupling.
- * Supports both older (promptTokens/completionTokens) and newer (inputTokens/outputTokens) formats.
  */
 export interface GenerateTextResultLike {
   text: string;
   steps?: AISDKStep[];
   toolCalls?: AISDKToolCall[];
-  usage?: {
-    // Older format
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-    // Newer format (AI SDK v6+)
-    inputTokens?: number;
-    outputTokens?: number;
-  };
+  /** Token usage for the final step */
+  usage?: AISDKUsage;
+  /** Total token usage across all steps (for multi-step generations) */
+  totalUsage?: AISDKUsage;
 }
 
 /**

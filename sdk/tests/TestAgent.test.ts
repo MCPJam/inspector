@@ -173,8 +173,8 @@ describe("TestAgent", () => {
           },
         ],
         usage: {
-          promptTokens: 10,
-          completionTokens: 5,
+          inputTokens: 10,
+          outputTokens: 5,
           totalTokens: 15,
         },
       } as any);
@@ -210,7 +210,7 @@ describe("TestAgent", () => {
             toolCalls: [{ toolName: "subtract", args: { a: 5, b: 3 } }],
           },
         ],
-        usage: { promptTokens: 20, completionTokens: 10, totalTokens: 30 },
+        usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },
       } as any);
 
       const agent = new TestAgent({
@@ -259,7 +259,7 @@ describe("TestAgent", () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "Done",
         steps: [],
-        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
       const agent = new TestAgent({
@@ -298,7 +298,7 @@ describe("TestAgent", () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "OK",
         steps: [],
-        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
       const agent = new TestAgent({
@@ -321,7 +321,7 @@ describe("TestAgent", () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "OK",
         steps: [],
-        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
       const agent = new TestAgent({
@@ -389,7 +389,7 @@ describe("TestAgent", () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "Done",
         steps: [{ toolCalls: [{ toolName: "add", args: {} }] }],
-        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
       const agent = new TestAgent({
@@ -408,12 +408,12 @@ describe("TestAgent", () => {
         .mockResolvedValueOnce({
           text: "Added",
           steps: [{ toolCalls: [{ toolName: "add", args: {} }] }],
-          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         } as any)
         .mockResolvedValueOnce({
           text: "Subtracted",
           steps: [{ toolCalls: [{ toolName: "subtract", args: {} }] }],
-          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         } as any);
 
       const agent = new TestAgent({
@@ -465,7 +465,7 @@ describe("TestAgent", () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "Original",
         steps: [{ toolCalls: [{ toolName: "add", args: {} }] }],
-        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       } as any);
 
       const agent = new TestAgent({
@@ -500,7 +500,7 @@ describe("TestAgent", () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "The answer",
         steps: [],
-        usage: { promptTokens: 5, completionTokens: 3, totalTokens: 8 },
+        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
       } as any);
 
       const agent = new TestAgent({

@@ -3,7 +3,7 @@
  */
 
 import { generateText, stepCountIs } from "ai";
-import type { ToolSet } from "ai";
+import type { LanguageModelUsage, ToolSet } from "ai";
 import { createModelFromString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
@@ -161,16 +161,14 @@ export class TestAgent {
 
       const e2eMs = Date.now() - startTime;
 
-      // Cast result to GenerateTextResultLike to extract tool calls
-      // This is needed because the AI SDK types are complex and version-dependent
-      const toolCalls = extractToolCalls(result as any);
+      // Extract tool calls from result steps
+      const toolCalls = extractToolCalls(result);
 
-      // Handle both old and new usage formats
-      const usage = result.usage;
-      const inputTokens =
-        (usage as any)?.inputTokens ?? (usage as any)?.promptTokens ?? 0;
-      const outputTokens =
-        (usage as any)?.outputTokens ?? (usage as any)?.completionTokens ?? 0;
+      // Use totalUsage for multi-step agents (aggregates tokens across all steps)
+      // Fall back to usage (final step only) for single-step queries
+      const usage: LanguageModelUsage = result.totalUsage ?? result.usage;
+      const inputTokens = usage.inputTokens ?? 0;
+      const outputTokens = usage.outputTokens ?? 0;
 
       this.lastResult = QueryResult.from({
         text: result.text,
@@ -178,8 +176,7 @@ export class TestAgent {
         usage: {
           inputTokens,
           outputTokens,
-          totalTokens:
-            (usage as any)?.totalTokens ?? inputTokens + outputTokens,
+          totalTokens: inputTokens + outputTokens,
         },
         latency: { e2eMs, llmMs: totalLlmMs, mcpMs: totalMcpMs },
       });
