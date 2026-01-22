@@ -3,7 +3,7 @@
  */
 
 import { generateText, stepCountIs } from "ai";
-import type { LanguageModelUsage, ToolSet } from "ai";
+import type { ToolSet } from "ai";
 import { createModelFromString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";

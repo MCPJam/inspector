@@ -239,7 +239,9 @@ describe("validators", () => {
 
     it("should match objects regardless of key order", () => {
       // LLMs often return JSON with keys in arbitrary order
-      const calls: ToolCall[] = [{ toolName: "add", arguments: { b: 3, a: 2 } }];
+      const calls: ToolCall[] = [
+        { toolName: "add", arguments: { b: 3, a: 2 } },
+      ];
       expect(matchToolCallWithArgs("add", { a: 2, b: 3 }, calls)).toBe(true);
       expect(matchToolCallWithArgs("add", { b: 3, a: 2 }, calls)).toBe(true);
     });

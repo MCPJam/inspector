@@ -119,7 +119,15 @@ export {
 
 // EvalsSuite
 export { EvalsSuite } from "./EvalsSuite.js";
-export type { EvalsSuiteConfig, EvalRunResult } from "./EvalsSuite.js";
+export type {
+  EvalsSuiteConfig,
+  EvalRunResult,
+  ConversationResult,
+  TestCase,
+  IterationResult,
+  CaseResult,
+  RunConfig,
+} from "./EvalsSuite.js";
 
 // Core SDK types
 export type {
