@@ -519,6 +519,71 @@ export function useAppState() {
     ],
   );
 
+  // Helper to rename a server within the active workspace (Convex or local)
+  const renameServerInWorkspace = useCallback(
+    async (
+      oldName: string,
+      newName: string,
+      serverEntry: ServerWithName,
+    ): Promise<{ success: boolean; error?: string }> => {
+      if (!effectiveActiveWorkspaceId) {
+        return { success: false, error: "No active workspace selected" };
+      }
+
+      // Authenticated path: update Convex and remove the old key
+      if (!useLocalFallback && isAuthenticated) {
+        const currentWorkspace =
+          effectiveWorkspaces[effectiveActiveWorkspaceId];
+        if (!currentWorkspace) {
+          return { success: false, error: "Workspace not found" };
+        }
+
+        const { [oldName]: _, ...restServers } = currentWorkspace.servers;
+        const updatedServers = { ...restServers, [newName]: serverEntry };
+
+        try {
+          await convexUpdateWorkspace({
+            workspaceId: effectiveActiveWorkspaceId,
+            servers: serializeServersForSharing(updatedServers),
+          });
+          return { success: true };
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown error";
+          logger.error("Failed to rename server in Convex", {
+            oldName,
+            newName,
+            error: message,
+          });
+          return { success: false, error: message };
+        }
+      }
+
+      // Local path: update workspace state directly
+      const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
+      if (!activeWorkspace) {
+        return { success: false, error: "Workspace not found" };
+      }
+      const { [oldName]: _, ...restServers } = activeWorkspace.servers;
+      dispatch({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: appState.activeWorkspaceId,
+        updates: { servers: { ...restServers, [newName]: serverEntry } },
+      });
+      return { success: true };
+    },
+    [
+      effectiveActiveWorkspaceId,
+      useLocalFallback,
+      isAuthenticated,
+      effectiveWorkspaces,
+      convexUpdateWorkspace,
+      logger,
+      appState.workspaces,
+      appState.activeWorkspaceId,
+    ],
+  );
+
   // Helper to fetch and store initialization info
   const fetchAndStoreInitInfo = useCallback(async (serverName: string) => {
     try {
@@ -1546,8 +1611,20 @@ export function useAppState() {
       formData: ServerFormData,
       skipAutoConnect?: boolean,
     ) => {
-      const originalServer = appState.servers[originalServerName];
+      const originalServer =
+        effectiveServers[originalServerName] ??
+        appState.servers[originalServerName];
       const nameChanged = formData.name !== originalServerName;
+
+      if (!originalServer) {
+        toast.error("Server not found");
+        return;
+      }
+
+      if (nameChanged && effectiveServers[formData.name]) {
+        toast.error("A server with that name already exists");
+        return;
+      }
 
       // If skipAutoConnect is true, just update the config without reconnecting
       if (skipAutoConnect) {
@@ -1616,6 +1693,36 @@ export function useAppState() {
       // When name changes, rename the server in place and reconnect
       if (nameChanged) {
         const mcpConfig = toMCPConfig(formData);
+        // Ensure runtime state knows about this server so selection updates work
+        if (!appState.servers[originalServerName]) {
+          dispatch({
+            type: "UPSERT_SERVER",
+            name: originalServerName,
+            server: originalServer,
+          });
+        }
+
+        // Update workspace server mapping (local or Convex) before reconnecting
+        const renamedServer: ServerWithName = {
+          ...originalServer,
+          name: formData.name,
+          config: mcpConfig,
+          connectionStatus: "disconnected",
+          retryCount: originalServer.retryCount ?? 0,
+          lastConnectionTime: originalServer.lastConnectionTime || new Date(),
+          enabled: originalServer.enabled ?? true,
+          useOAuth: formData.useOAuth ?? originalServer.useOAuth ?? false,
+        };
+        const renameResult = await renameServerInWorkspace(
+          originalServerName,
+          formData.name,
+          renamedServer,
+        );
+        if (!renameResult.success) {
+          toast.error(renameResult.error || "Failed to rename server");
+          return;
+        }
+
         // Rename the server entry in state (preserves all server data)
         dispatch({
           type: "RENAME_SERVER",
@@ -1668,8 +1775,10 @@ export function useAppState() {
     },
     [
       appState.servers,
+      effectiveServers,
       handleDisconnect,
       handleConnect,
+      renameServerInWorkspace,
     ],
   );
 

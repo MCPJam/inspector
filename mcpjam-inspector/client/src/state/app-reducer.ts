@@ -352,7 +352,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const renamedServer = { ...server, name: newName };
 
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
-      const { [oldName]: __, ...restWorkspaceServers } = activeWorkspace.servers;
+      const { [oldName]: __, ...restWorkspaceServers } =
+        activeWorkspace.servers;
 
       return {
         ...state,
