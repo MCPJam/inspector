@@ -103,7 +103,8 @@ export type AppAction =
   | { type: "SWITCH_WORKSPACE"; workspaceId: string }
   | { type: "SET_DEFAULT_WORKSPACE"; workspaceId: string }
   | { type: "IMPORT_WORKSPACE"; workspace: Workspace }
-  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string };
+  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string }
+  | { type: "RENAME_SERVER"; oldName: string; newName: string };
 
 export const initialAppState: AppState = {
   workspaces: {

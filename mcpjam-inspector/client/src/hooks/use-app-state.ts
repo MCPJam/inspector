@@ -1547,6 +1547,7 @@ export function useAppState() {
       skipAutoConnect?: boolean,
     ) => {
       const originalServer = appState.servers[originalServerName];
+      const nameChanged = formData.name !== originalServerName;
 
       // If skipAutoConnect is true, just update the config without reconnecting
       if (skipAutoConnect) {
@@ -1612,18 +1613,61 @@ export function useAppState() {
 
       saveOAuthConfigToLocalStorage(formData);
 
-      await handleDisconnect(originalServerName);
-      await handleConnect(formData);
-      if (
-        appState.selectedServer === originalServerName &&
-        formData.name !== originalServerName
-      ) {
-        setSelectedServer(formData.name);
+      // When name changes, rename the server in place and reconnect
+      if (nameChanged) {
+        const mcpConfig = toMCPConfig(formData);
+        // Rename the server entry in state (preserves all server data)
+        dispatch({
+          type: "RENAME_SERVER",
+          oldName: originalServerName,
+          newName: formData.name,
+        });
+        // Mark as connecting
+        dispatch({
+          type: "CONNECT_REQUEST",
+          name: formData.name,
+          config: mcpConfig,
+        });
+        // Disconnect from backend with old name
+        try {
+          await deleteServer(originalServerName);
+        } catch (error) {
+          // Continue even if backend disconnect fails
+        }
+        // Connect to backend with new name
+        try {
+          const result = await testConnection(mcpConfig, formData.name);
+          if (result.success) {
+            dispatch({
+              type: "CONNECT_SUCCESS",
+              name: formData.name,
+              config: mcpConfig,
+            });
+            await fetchAndStoreInitInfo(formData.name);
+            toast.success("Server renamed and reconnected");
+          } else {
+            dispatch({
+              type: "CONNECT_FAILURE",
+              name: formData.name,
+              error: result.error || "Connection failed",
+            });
+            toast.error(result.error || "Failed to reconnect after rename");
+          }
+        } catch (error) {
+          dispatch({
+            type: "CONNECT_FAILURE",
+            name: formData.name,
+            error: error instanceof Error ? error.message : "Connection failed",
+          });
+          toast.error("Failed to reconnect after rename");
+        }
+      } else {
+        await handleDisconnect(originalServerName);
+        await handleConnect(formData);
       }
     },
     [
       appState.servers,
-      appState.selectedServer,
       handleDisconnect,
       handleConnect,
     ],
