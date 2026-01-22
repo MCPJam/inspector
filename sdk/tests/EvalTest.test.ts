@@ -26,12 +26,21 @@ function createMockQueryResult(options: {
   });
 }
 
-// Create a mock TestAgent
+// Create a mock TestAgent with query history tracking
 function createMockAgent(
   queryFn: (prompt: string) => Promise<QueryResult>
 ): TestAgent {
+  let queryHistory: QueryResult[] = [];
   return {
-    query: queryFn,
+    query: async (prompt: string) => {
+      const result = await queryFn(prompt);
+      queryHistory.push(result);
+      return result;
+    },
+    resetQueryHistory: () => {
+      queryHistory = [];
+    },
+    getQueryHistory: () => [...queryHistory],
   } as TestAgent;
 }
 
@@ -146,7 +155,7 @@ describe("EvalTest", () => {
       expect(result.successes).toBe(2);
     });
 
-    it("should use custom validator when provided", async () => {
+    it("should use custom test function when provided", async () => {
       const agent = createMockAgent(async () => {
         return createMockQueryResult({
           text: "The answer is 42",
@@ -155,24 +164,24 @@ describe("EvalTest", () => {
       });
 
       const test = new EvalTest({
-        name: "validator",
+        name: "custom-test",
         query: "Test",
-        validator: (result) => result.text.includes("42"),
+        test: (result) => result.text.includes("42"),
       });
 
       const result = await test.run(agent, { iterations: 3 });
       expect(result.successes).toBe(3);
     });
 
-    it("should support async validators", async () => {
+    it("should support async test functions", async () => {
       const agent = createMockAgent(async () => {
         return createMockQueryResult({ text: "response" });
       });
 
       const test = new EvalTest({
-        name: "async-validator",
+        name: "async-test",
         query: "Test",
-        validator: async (result) => {
+        test: async (result) => {
           await new Promise((resolve) => setTimeout(resolve, 1));
           return result.text.length > 0;
         },
@@ -212,47 +221,42 @@ describe("EvalTest", () => {
   });
 
   describe("multi-turn conversation mode", () => {
-    it("should run conversation function and aggregate results", async () => {
+    it("should run test function and aggregate results", async () => {
       const agent = createMockAgent(async () => {
         return createMockQueryResult({ toolsCalled: ["search"] });
       });
 
       const test = new EvalTest({
         name: "conversation",
-        conversation: async (agent) => {
+        test: async (agent) => {
           const r1 = await agent.query("Search for X");
           const r2 = await agent.query("Summarize results");
-          return {
-            pass: r1.toolsCalled().includes("search"),
-            results: [r1, r2],
-          };
+          return r1.toolsCalled().includes("search");
         },
       });
 
-      const result = await test.run(agent, { iterations: 3 });
+      // Multi-turn tests should use concurrency: 1 to avoid shared state issues
+      const result = await test.run(agent, { iterations: 3, concurrency: 1 });
 
       expect(result.successes).toBe(3);
       // Should have 2 latencies per iteration (2 queries in conversation)
       expect(result.latency.perIteration.length).toBe(6);
     });
 
-    it("should handle conversation failures", async () => {
+    it("should handle test function failures", async () => {
       const agent = createMockAgent(async () => {
         return createMockQueryResult({ toolsCalled: [] });
       });
 
       const test = new EvalTest({
-        name: "failing-conversation",
-        conversation: async (agent) => {
+        name: "failing-test",
+        test: async (agent) => {
           const r1 = await agent.query("Search");
-          return {
-            pass: r1.toolsCalled().includes("search"), // Will fail
-            results: [r1],
-          };
+          return r1.toolsCalled().includes("search"); // Will fail
         },
       });
 
-      const result = await test.run(agent, { iterations: 2 });
+      const result = await test.run(agent, { iterations: 2, concurrency: 1 });
       expect(result.failures).toBe(2);
     });
   });
@@ -488,13 +492,14 @@ describe("EvalTest", () => {
 
       const test = new EvalTest({
         name: "multi-turn-latency",
-        conversation: async (agent) => {
-          const r1 = await agent.query("First");
-          const r2 = await agent.query("Second");
-          return { pass: true, results: [r1, r2] };
+        test: async (agent) => {
+          await agent.query("First");
+          await agent.query("Second");
+          return true;
         },
       });
 
+      // Multi-turn tests should use concurrency: 1 to avoid shared state issues
       const result = await test.run(agent, {
         iterations: 2,
         concurrency: 1,
@@ -530,14 +535,15 @@ describe("EvalTest", () => {
 
       const test = new EvalTest({
         name: "multi-turn-tokens",
-        conversation: async (agent) => {
-          const r1 = await agent.query("First");
-          const r2 = await agent.query("Second");
-          return { pass: true, results: [r1, r2] };
+        test: async (agent) => {
+          await agent.query("First");
+          await agent.query("Second");
+          return true;
         },
       });
 
-      const result = await test.run(agent, { iterations: 2 });
+      // Multi-turn tests should use concurrency: 1 to avoid shared state issues
+      const result = await test.run(agent, { iterations: 2, concurrency: 1 });
 
       // Each iteration has 2 queries of 50 tokens = 100 per iteration
       expect(result.tokenUsage.perIteration).toEqual([100, 100]);
@@ -565,7 +571,7 @@ describe("EvalTest", () => {
 
       const test = new EvalTest({
         name: "invalid-config",
-        // No query or conversation
+        // No query or test
       });
 
       await expect(test.run(agent, { iterations: 1 })).rejects.toThrow(
@@ -679,6 +685,116 @@ describe("EvalTest", () => {
       expect(results).not.toBeNull();
       expect(results?.iterations).toBe(3);
       expect(results?.iterationDetails).toHaveLength(3);
+    });
+  });
+
+  describe("iteration getters", () => {
+    it("should throw if getAllIterations called before run", () => {
+      const test = new EvalTest({
+        name: "no-run",
+        query: "Test",
+      });
+      expect(() => test.getAllIterations()).toThrow(
+        "No run results available. Call run() first."
+      );
+    });
+
+    it("should throw if getFailedIterations called before run", () => {
+      const test = new EvalTest({
+        name: "no-run",
+        query: "Test",
+      });
+      expect(() => test.getFailedIterations()).toThrow(
+        "No run results available. Call run() first."
+      );
+    });
+
+    it("should throw if getSuccessfulIterations called before run", () => {
+      const test = new EvalTest({
+        name: "no-run",
+        query: "Test",
+      });
+      expect(() => test.getSuccessfulIterations()).toThrow(
+        "No run results available. Call run() first."
+      );
+    });
+
+    it("should return all iterations", async () => {
+      const agent = createMockAgent(async () => {
+        return createMockQueryResult({});
+      });
+
+      const test = new EvalTest({
+        name: "all-iterations",
+        query: "Test",
+      });
+
+      await test.run(agent, { iterations: 5 });
+
+      const all = test.getAllIterations();
+      expect(all).toHaveLength(5);
+    });
+
+    it("should return only failed iterations", async () => {
+      let count = 0;
+      const agent = createMockAgent(async () => {
+        count++;
+        return createMockQueryResult({
+          toolsCalled: count <= 3 ? ["add"] : [],
+        });
+      });
+
+      const test = new EvalTest({
+        name: "failed-iterations",
+        query: "Test",
+        expectTools: ["add"],
+      });
+
+      await test.run(agent, { iterations: 5, concurrency: 1 });
+
+      const failed = test.getFailedIterations();
+      expect(failed).toHaveLength(2);
+      failed.forEach((iter) => expect(iter.passed).toBe(false));
+    });
+
+    it("should return only successful iterations", async () => {
+      let count = 0;
+      const agent = createMockAgent(async () => {
+        count++;
+        return createMockQueryResult({
+          toolsCalled: count <= 3 ? ["add"] : [],
+        });
+      });
+
+      const test = new EvalTest({
+        name: "successful-iterations",
+        query: "Test",
+        expectTools: ["add"],
+      });
+
+      await test.run(agent, { iterations: 5, concurrency: 1 });
+
+      const successful = test.getSuccessfulIterations();
+      expect(successful).toHaveLength(3);
+      successful.forEach((iter) => expect(iter.passed).toBe(true));
+    });
+
+    it("should return a copy of iterations array", async () => {
+      const agent = createMockAgent(async () => {
+        return createMockQueryResult({});
+      });
+
+      const test = new EvalTest({
+        name: "copy-test",
+        query: "Test",
+      });
+
+      await test.run(agent, { iterations: 3 });
+
+      const all1 = test.getAllIterations();
+      const all2 = test.getAllIterations();
+      expect(all1).not.toBe(all2);
+      expect(all1).toEqual(all2);
     });
   });
 });

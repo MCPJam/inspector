@@ -342,15 +342,15 @@ console.log(test.accuracy()); // 0.97
 - `expectExactTools` - Exact tools in exact order
 - `expectAnyTool` - At least one of the expected tools called
 - `expectNoTools` - No tools should be called
-- `validator` - Custom validation function
+- `test` - Custom test function (for single-turn or multi-turn)
 
-#### Custom Validator
+#### Custom Test (Single-turn)
 
 ```ts
 const test = new EvalTest({
   name: "addition-args",
   query: "What is 2 + 3?",
-  validator: (result) => {
+  test: (result) => {
     const calls = result.getToolCalls();
     const addCall = calls.find(c => c.toolName === "add");
     return addCall?.arguments?.a === 2 && addCall?.arguments?.b === 3;
@@ -365,20 +365,26 @@ await test.run(agent, { iterations: 30 });
 ```ts
 const test = new EvalTest({
   name: "search-and-summarize",
-  conversation: async (agent) => {
+  test: async (agent) => {
     const r1 = await agent.query("Search for X");
-    if (!r1.toolsCalled().includes("search")) {
-      return { pass: false, results: [r1] };
-    }
+    if (!r1.toolsCalled().includes("search")) return false;
     const r2 = await agent.query(`Summarize: ${r1.text}`);
-    return {
-      pass: r2.toolsCalled().includes("summarize"),
-      results: [r1, r2]
-    };
+    return r2.toolsCalled().includes("summarize");
   },
 });
 
 await test.run(agent, { iterations: 5 });
+```
+
+#### Accessing Iteration Results
+
+```ts
+await test.run(agent, { iterations: 10 });
+
+console.log("All:", test.getAllIterations().length);
+console.log("Failed:", test.getFailedIterations().length);
+console.log("Successful:", test.getSuccessfulIterations().length);
+console.log("Errors:", test.getFailedIterations().map(i => i.error));
 ```
 
 #### Run Options

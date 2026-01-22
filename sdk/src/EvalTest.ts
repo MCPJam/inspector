@@ -19,16 +19,15 @@ export interface EvalTestConfig {
   expectExactTools?: string[];
   expectAnyTool?: string[];
   expectNoTools?: boolean;
-  validator?: (result: QueryResult) => boolean | Promise<boolean>;
-  conversation?: (agent: TestAgent) => Promise<ConversationResult>;
-}
 
-/**
- * Result of a multi-turn conversation evaluation
- */
-export interface ConversationResult {
-  pass: boolean;
-  results: QueryResult[];
+  /**
+   * Unified test function for validation.
+   * - Single-turn (when `query` is provided): receives QueryResult, returns boolean
+   * - Multi-turn (when no `query`): receives TestAgent, returns boolean
+   */
+  test?:
+    | ((result: QueryResult) => boolean | Promise<boolean>)
+    | ((agent: TestAgent) => boolean | Promise<boolean>);
 }
 
 /**
@@ -109,16 +108,9 @@ class Semaphore {
 function createValidator(
   config: Pick<
     EvalTestConfig,
-    | "expectTools"
-    | "expectExactTools"
-    | "expectAnyTool"
-    | "expectNoTools"
-    | "validator"
+    "expectTools" | "expectExactTools" | "expectAnyTool" | "expectNoTools"
   >
 ): (result: QueryResult) => boolean | Promise<boolean> {
-  if (config.validator) {
-    return config.validator;
-  }
 
   return (result: QueryResult) => {
     const toolsCalled = result.toolsCalled();
@@ -208,17 +200,9 @@ export class EvalTest {
     const semaphore = new Semaphore(concurrency);
     let completedCount = 0;
 
-    if (this.config.conversation) {
-      return this.runConversation(
-        agent,
-        options.iterations,
-        semaphore,
-        retries,
-        timeoutMs,
-        onProgress,
-        () => ++completedCount
-      );
-    } else if (this.config.query) {
+    // Single-turn: has query string
+    // Multi-turn: has test function but no query
+    if (this.config.query) {
       return this.runSingleTurn(
         agent,
         options.iterations,
@@ -228,8 +212,18 @@ export class EvalTest {
         onProgress,
         () => ++completedCount
       );
+    } else if (this.config.test) {
+      return this.runConversation(
+        agent,
+        options.iterations,
+        semaphore,
+        retries,
+        timeoutMs,
+        onProgress,
+        () => ++completedCount
+      );
     } else {
-      throw new Error("Invalid config: must provide 'query' or 'conversation'");
+      throw new Error("Invalid config: must provide 'query' or 'test'");
     }
   }
 
@@ -243,7 +237,10 @@ export class EvalTest {
     incrementCompleted: () => number
   ): Promise<EvalRunResult> {
     const query = this.config.query!;
-    const validator = createValidator(this.config);
+    // Use config.test as validator if provided, otherwise use declarative expectations
+    const validator = this.config.test
+      ? (this.config.test as (result: QueryResult) => boolean | Promise<boolean>)
+      : createValidator(this.config);
     const iterationResults: IterationResult[] = [];
     const total = iterations;
 
@@ -313,7 +310,9 @@ export class EvalTest {
     onProgress: ((completed: number, total: number) => void) | undefined,
     incrementCompleted: () => number
   ): Promise<EvalRunResult> {
-    const conversation = this.config.conversation!;
+    const testFn = this.config.test! as (
+      agent: TestAgent
+    ) => boolean | Promise<boolean>;
     const iterationResults: IterationResult[] = [];
     const total = iterations;
 
@@ -324,20 +323,28 @@ export class EvalTest {
 
         for (let attempt = 0; attempt <= retries; attempt++) {
           try {
-            const convResult = await withTimeout(
-              conversation(agent),
+            // Clear query history before each test iteration
+            agent.resetQueryHistory();
+
+            const passed = await withTimeout(
+              Promise.resolve(testFn(agent)),
               timeoutMs
             );
 
-            const latencies = convResult.results.map((r) => r.getLatency());
-            const tokens = convResult.results.reduce(
+            // Get metrics from query history
+            const queryResults = agent.getQueryHistory();
+            const latencies = queryResults.map((r) => r.getLatency());
+            const tokens = queryResults.reduce(
               (sum, r) => sum + r.totalTokens(),
               0
             );
 
             return {
-              passed: convResult.pass,
-              latencies,
+              passed,
+              latencies:
+                latencies.length > 0
+                  ? latencies
+                  : [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
               tokens,
               retryCount: attempt,
             };
@@ -509,5 +516,35 @@ export class EvalTest {
    */
   getConfig(): EvalTestConfig {
     return this.config;
+  }
+
+  /**
+   * Get all iteration details from the last run
+   */
+  getAllIterations(): IterationResult[] {
+    if (!this.lastRunResult) {
+      throw new Error("No run results available. Call run() first.");
+    }
+    return [...this.lastRunResult.iterationDetails];
+  }
+
+  /**
+   * Get only the failed iterations from the last run
+   */
+  getFailedIterations(): IterationResult[] {
+    if (!this.lastRunResult) {
+      throw new Error("No run results available. Call run() first.");
+    }
+    return this.lastRunResult.iterationDetails.filter((r) => !r.passed);
+  }
+
+  /**
+   * Get only the successful iterations from the last run
+   */
+  getSuccessfulIterations(): IterationResult[] {
+    if (!this.lastRunResult) {
+      throw new Error("No run results available. Call run() first.");
+    }
+    return this.lastRunResult.iterationDetails.filter((r) => r.passed);
   }
 }

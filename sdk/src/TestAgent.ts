@@ -68,6 +68,9 @@ export class TestAgent {
   /** The result of the last query (for toolsCalled() convenience method) */
   private lastResult: QueryResult | undefined;
 
+  /** History of all query results during a test execution */
+  private queryHistory: QueryResult[] = [];
+
   /**
    * Create a new TestAgent
    * @param config - Agent configuration
@@ -181,6 +184,7 @@ export class TestAgent {
         latency: { e2eMs, llmMs: totalLlmMs, mcpMs: totalMcpMs },
       });
 
+      this.queryHistory.push(this.lastResult);
       return this.lastResult;
     } catch (error) {
       const e2eMs = Date.now() - startTime;
@@ -192,6 +196,7 @@ export class TestAgent {
         llmMs: totalLlmMs,
         mcpMs: totalMcpMs,
       });
+      this.queryHistory.push(this.lastResult);
       return this.lastResult;
     }
   }
@@ -292,5 +297,21 @@ export class TestAgent {
    */
   getLastResult(): QueryResult | undefined {
     return this.lastResult;
+  }
+
+  /**
+   * Reset the query history.
+   * Call this before each test iteration to clear previous results.
+   */
+  resetQueryHistory(): void {
+    this.queryHistory = [];
+  }
+
+  /**
+   * Get the history of all query results since the last reset.
+   * Returns a copy of the array to prevent external modification.
+   */
+  getQueryHistory(): QueryResult[] {
+    return [...this.queryHistory];
   }
 }

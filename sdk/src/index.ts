@@ -123,7 +123,6 @@ export type {
   EvalTestConfig,
   EvalTestRunOptions,
   EvalRunResult,
-  ConversationResult,
   IterationResult,
 } from "./EvalTest.js";
 
