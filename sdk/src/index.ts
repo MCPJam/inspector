@@ -110,6 +110,11 @@ export {
   matchAnyToolCall,
   matchToolCallCount,
   matchNoToolCalls,
+  // Argument-based validators (Phase 2.5)
+  matchToolCallWithArgs,
+  matchToolCallWithPartialArgs,
+  matchToolArgument,
+  matchToolArgumentWith,
 } from "./validators.js";
 
 // EvalsSuite

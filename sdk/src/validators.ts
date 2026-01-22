@@ -4,6 +4,8 @@
  * All matching is case-sensitive and uses exact strings only (no wildcards).
  */
 
+import type { ToolCall } from "./types.js";
+
 /**
  * Exact match - all expected tools must be present in exact order.
  * Case-sensitive exact string comparison.
@@ -121,4 +123,145 @@ export function matchToolCallCount(
  */
 export function matchNoToolCalls(actual: string[]): boolean {
   return actual.length === 0;
+}
+
+// === Argument-based validators (Phase 2.5) ===
+
+/**
+ * Deep equality check using JSON.stringify.
+ * Handles objects, arrays, and primitives.
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Check if tool was called with exact arguments (deep equality).
+ * Returns true if any call to the tool has exactly matching arguments.
+ * Case-sensitive for tool names.
+ *
+ * @param toolName - The tool name to match
+ * @param expectedArgs - The expected arguments (exact match)
+ * @param toolCalls - The actual tool calls made
+ * @returns true if any call to the tool has exactly matching arguments
+ *
+ * @example
+ * matchToolCallWithArgs('add', {a: 2, b: 3}, toolCalls) // true if add({a:2, b:3}) was called
+ * matchToolCallWithArgs('add', {a: 2}, [{toolName:'add', arguments:{a:2, b:3}}]) // false (extra arg)
+ */
+export function matchToolCallWithArgs(
+  toolName: string,
+  expectedArgs: Record<string, unknown>,
+  toolCalls: ToolCall[]
+): boolean {
+  for (const call of toolCalls) {
+    if (call.toolName === toolName && deepEqual(call.arguments, expectedArgs)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if tool was called with at least these arguments (partial match).
+ * Allows extra arguments in the actual call.
+ * Case-sensitive for tool names.
+ *
+ * @param toolName - The tool name to match
+ * @param expectedArgs - The expected arguments (partial match)
+ * @param toolCalls - The actual tool calls made
+ * @returns true if any call to the tool contains all expected arguments
+ *
+ * @example
+ * matchToolCallWithPartialArgs('add', {a: 2}, [{toolName:'add', arguments:{a:2, b:3}}]) // true
+ * matchToolCallWithPartialArgs('add', {a: 2, c: 5}, [{toolName:'add', arguments:{a:2, b:3}}]) // false
+ */
+export function matchToolCallWithPartialArgs(
+  toolName: string,
+  expectedArgs: Record<string, unknown>,
+  toolCalls: ToolCall[]
+): boolean {
+  for (const call of toolCalls) {
+    if (call.toolName !== toolName) {
+      continue;
+    }
+
+    let allMatch = true;
+    for (const [key, expectedValue] of Object.entries(expectedArgs)) {
+      if (
+        !(key in call.arguments) ||
+        !deepEqual(call.arguments[key], expectedValue)
+      ) {
+        allMatch = false;
+        break;
+      }
+    }
+
+    if (allMatch) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if a specific argument has a specific value in any call to the tool.
+ * Case-sensitive for tool names.
+ *
+ * @param toolName - The tool name to match
+ * @param argKey - The argument key to check
+ * @param expectedValue - The expected value for the argument
+ * @param toolCalls - The actual tool calls made
+ * @returns true if any call to the tool has the specified argument value
+ *
+ * @example
+ * matchToolArgument('add', 'a', 2, toolCalls) // true if any add() call had a=2
+ */
+export function matchToolArgument(
+  toolName: string,
+  argKey: string,
+  expectedValue: unknown,
+  toolCalls: ToolCall[]
+): boolean {
+  for (const call of toolCalls) {
+    if (
+      call.toolName === toolName &&
+      argKey in call.arguments &&
+      deepEqual(call.arguments[argKey], expectedValue)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if argument value matches a predicate function.
+ * Useful for partial matches, type checks, or range validation.
+ * Case-sensitive for tool names.
+ *
+ * @param toolName - The tool name to match
+ * @param argKey - The argument key to check
+ * @param predicate - Function that tests the argument value
+ * @param toolCalls - The actual tool calls made
+ * @returns true if any call to the tool has an argument value that passes the predicate
+ *
+ * @example
+ * matchToolArgumentWith('echo', 'message', (v) => typeof v === 'string' && v.includes('hello'), toolCalls)
+ * matchToolArgumentWith('add', 'a', (v) => typeof v === 'number' && v > 0, toolCalls)
+ */
+export function matchToolArgumentWith(
+  toolName: string,
+  argKey: string,
+  predicate: (value: unknown) => boolean,
+  toolCalls: ToolCall[]
+): boolean {
+  for (const call of toolCalls) {
+    if (call.toolName === toolName && argKey in call.arguments) {
+      if (predicate(call.arguments[argKey])) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
