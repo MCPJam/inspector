@@ -1,7 +1,4 @@
-import {
-  calculatePercentile,
-  calculateLatencyStats,
-} from "../src/percentiles";
+import { calculatePercentile, calculateLatencyStats } from "../src/percentiles";
 
 describe("percentiles", () => {
   describe("calculatePercentile", () => {
@@ -148,7 +145,16 @@ describe("percentiles", () => {
     it("should handle realistic latency values", () => {
       // Simulated realistic latency distribution
       const values = [
-        45, 52, 48, 55, 49, 51, 53, 47, 120, 46, // mostly 45-55ms with one outlier
+        45,
+        52,
+        48,
+        55,
+        49,
+        51,
+        53,
+        47,
+        120,
+        46, // mostly 45-55ms with one outlier
       ];
       const stats = calculateLatencyStats(values);
 
