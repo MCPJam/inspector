@@ -50,6 +50,8 @@ export interface IterationResult {
   tokens: number;
   error?: string;
   retryCount?: number;
+  /** The prompt results from this iteration (multi-turn tests only) */
+  prompts?: PromptResult[];
 }
 
 /**
@@ -327,16 +329,17 @@ export class EvalTest {
 
         for (let attempt = 0; attempt <= retries; attempt++) {
           try {
-            // Clear prompt history before each test iteration
-            agent.resetPromptHistory();
+            // Create a fresh agent clone for this iteration to avoid race conditions
+            // when multiple iterations run concurrently
+            const iterationAgent = agent.withOptions({});
 
             const passed = await withTimeout(
-              Promise.resolve(testFn(agent)),
+              Promise.resolve(testFn(iterationAgent)),
               timeoutMs
             );
 
-            // Get metrics from prompt history
-            const promptResults = agent.getPromptHistory();
+            // Get metrics from this iteration's prompt history
+            const promptResults = iterationAgent.getPromptHistory();
             const latencies = promptResults.map((r) => r.getLatency());
             const tokens = promptResults.reduce(
               (sum, r) => sum + r.totalTokens(),
@@ -351,6 +354,7 @@ export class EvalTest {
                   : [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
               tokens,
               retryCount: attempt,
+              prompts: promptResults,
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
