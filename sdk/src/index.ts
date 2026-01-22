@@ -129,8 +129,16 @@ export type {
   LLMConfig,
   ToolCall,
   TokenUsage,
+  LatencyBreakdown,
   QueryResultData,
 } from "./types.js";
+
+// Percentile utilities
+export {
+  calculatePercentile,
+  calculateLatencyStats,
+  type LatencyStats,
+} from "./percentiles.js";
 
 // Model factory utilities
 export {

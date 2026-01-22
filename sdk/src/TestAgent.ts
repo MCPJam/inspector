@@ -83,14 +83,48 @@ export class TestAgent {
   }
 
   /**
+   * Create instrumented tools that track execution latency.
+   * @param onLatency - Callback to report latency for each tool execution
+   * @returns ToolSet with instrumented execute functions
+   */
+  private createInstrumentedTools(onLatency: (ms: number) => void): ToolSet {
+    const instrumented: ToolSet = {};
+    for (const [name, tool] of Object.entries(this.tools)) {
+      // Only instrument tools that have an execute function
+      if (tool.execute) {
+        const originalExecute = tool.execute;
+        instrumented[name] = {
+          ...tool,
+          execute: async (args: any, options: any) => {
+            const start = Date.now();
+            try {
+              return await originalExecute(args, options);
+            } finally {
+              onLatency(Date.now() - start);
+            }
+          },
+        };
+      } else {
+        // Pass through tools without execute function unchanged
+        instrumented[name] = tool;
+      }
+    }
+    return instrumented;
+  }
+
+  /**
    * Run a query with the LLM, allowing tool calls.
    * Never throws - errors are returned in the QueryResult.
    *
    * @param prompt - The user prompt to send to the LLM
-   * @returns QueryResult with text response, tool calls, token usage, and latency
+   * @returns QueryResult with text response, tool calls, token usage, and latency breakdown
    */
   async query(prompt: string): Promise<QueryResult> {
     const startTime = Date.now();
+    let totalMcpMs = 0;
+    let lastStepEndTime = startTime;
+    let totalLlmMs = 0;
+    let stepMcpMs = 0; // MCP time within current step
 
     try {
       const modelOptions: CreateModelOptions = {
@@ -99,19 +133,33 @@ export class TestAgent {
       };
       const model = createModelFromString(this.llm, modelOptions);
 
+      // Instrument tools to track MCP execution time
+      const instrumentedTools = this.createInstrumentedTools((ms) => {
+        totalMcpMs += ms;
+        stepMcpMs += ms; // Accumulate per-step for LLM calculation
+      });
+
       // Cast model to any to handle AI SDK version compatibility
       const result = await generateText({
         model: model as any,
-        tools: this.tools,
+        tools: instrumentedTools,
         system: this.systemPrompt,
         prompt,
         temperature: this.temperature,
         // Use stopWhen with stepCountIs for controlling max agentic steps
         // AI SDK v6+ uses this instead of maxSteps
         stopWhen: stepCountIs(this.maxSteps),
+        onStepFinish: () => {
+          const now = Date.now();
+          const stepDuration = now - lastStepEndTime;
+          // LLM time for this step = step duration - MCP time in this step
+          totalLlmMs += Math.max(0, stepDuration - stepMcpMs);
+          lastStepEndTime = now;
+          stepMcpMs = 0; // Reset for next step
+        },
       });
 
-      const latencyMs = Date.now() - startTime;
+      const e2eMs = Date.now() - startTime;
 
       // Cast result to GenerateTextResultLike to extract tool calls
       // This is needed because the AI SDK types are complex and version-dependent
@@ -133,16 +181,20 @@ export class TestAgent {
           totalTokens:
             (usage as any)?.totalTokens ?? inputTokens + outputTokens,
         },
-        latencyMs,
+        latency: { e2eMs, llmMs: totalLlmMs, mcpMs: totalMcpMs },
       });
 
       return this.lastResult;
     } catch (error) {
-      const latencyMs = Date.now() - startTime;
+      const e2eMs = Date.now() - startTime;
       const errorMessage =
         error instanceof Error ? error.message : String(error);
 
-      this.lastResult = QueryResult.error(errorMessage, latencyMs);
+      this.lastResult = QueryResult.error(errorMessage, {
+        e2eMs,
+        llmMs: totalLlmMs,
+        mcpMs: totalMcpMs,
+      });
       return this.lastResult;
     }
   }

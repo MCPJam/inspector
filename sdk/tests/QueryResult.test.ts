@@ -1,5 +1,5 @@
 import { QueryResult } from "../src/QueryResult";
-import type { QueryResultData } from "../src/types";
+import type { QueryResultData, LatencyBreakdown } from "../src/types";
 
 describe("QueryResult", () => {
   const createMockData = (
@@ -15,7 +15,7 @@ describe("QueryResult", () => {
       outputTokens: 50,
       totalTokens: 150,
     },
-    latencyMs: 1234,
+    latency: { e2eMs: 1234, llmMs: 800, mcpMs: 400 },
     ...overrides,
   });
 
@@ -25,7 +25,7 @@ describe("QueryResult", () => {
       const result = new QueryResult(data);
 
       expect(result.text).toBe("Test response");
-      expect(result.e2eLatencyMs).toBe(1234);
+      expect(result.e2eLatencyMs()).toBe(1234);
     });
 
     it("should handle missing error", () => {
@@ -194,17 +194,70 @@ describe("QueryResult", () => {
         expect(result.hasError()).toBe(true);
         expect(result.getError()).toBe("Network error");
         expect(result.text).toBe("");
-        expect(result.e2eLatencyMs).toBe(0);
+        expect(result.e2eLatencyMs()).toBe(0);
+        expect(result.llmLatencyMs()).toBe(0);
+        expect(result.mcpLatencyMs()).toBe(0);
         expect(result.toolsCalled()).toEqual([]);
         expect(result.totalTokens()).toBe(0);
       });
 
-      it("should create error result with custom latency", () => {
+      it("should create error result with custom e2e latency", () => {
         const result = QueryResult.error("Timeout", 5000);
 
         expect(result.hasError()).toBe(true);
-        expect(result.e2eLatencyMs).toBe(5000);
+        expect(result.e2eLatencyMs()).toBe(5000);
+        expect(result.llmLatencyMs()).toBe(0);
+        expect(result.mcpLatencyMs()).toBe(0);
       });
+
+      it("should create error result with full latency breakdown", () => {
+        const latency: LatencyBreakdown = {
+          e2eMs: 5000,
+          llmMs: 3000,
+          mcpMs: 1500,
+        };
+        const result = QueryResult.error("Timeout", latency);
+
+        expect(result.hasError()).toBe(true);
+        expect(result.e2eLatencyMs()).toBe(5000);
+        expect(result.llmLatencyMs()).toBe(3000);
+        expect(result.mcpLatencyMs()).toBe(1500);
+      });
+    });
+  });
+
+  describe("latency methods", () => {
+    it("should return correct latency values", () => {
+      const result = new QueryResult(createMockData());
+
+      expect(result.e2eLatencyMs()).toBe(1234);
+      expect(result.llmLatencyMs()).toBe(800);
+      expect(result.mcpLatencyMs()).toBe(400);
+    });
+
+    it("should return copy of latency breakdown", () => {
+      const result = new QueryResult(createMockData());
+      const latency1 = result.getLatency();
+      const latency2 = result.getLatency();
+
+      expect(latency1).toEqual({
+        e2eMs: 1234,
+        llmMs: 800,
+        mcpMs: 400,
+      });
+      expect(latency1).not.toBe(latency2);
+    });
+
+    it("should handle zero latencies", () => {
+      const result = new QueryResult(
+        createMockData({
+          latency: { e2eMs: 0, llmMs: 0, mcpMs: 0 },
+        })
+      );
+
+      expect(result.e2eLatencyMs()).toBe(0);
+      expect(result.llmLatencyMs()).toBe(0);
+      expect(result.mcpLatencyMs()).toBe(0);
     });
   });
 });

@@ -2,7 +2,12 @@
  * QueryResult class - wraps the result of a TestAgent query
  */
 
-import type { ToolCall, TokenUsage, QueryResultData } from "./types.js";
+import type {
+  ToolCall,
+  TokenUsage,
+  QueryResultData,
+  LatencyBreakdown,
+} from "./types.js";
 
 /**
  * Represents the result of a TestAgent query.
@@ -12,8 +17,8 @@ export class QueryResult {
   /** The text response from the LLM */
   readonly text: string;
 
-  /** End-to-end latency in milliseconds */
-  readonly e2eLatencyMs: number;
+  /** Latency breakdown (e2e, llm, mcp) */
+  private readonly _latency: LatencyBreakdown;
 
   /** Tool calls made during the query */
   private readonly _toolCalls: ToolCall[];
@@ -30,10 +35,49 @@ export class QueryResult {
    */
   constructor(data: QueryResultData) {
     this.text = data.text;
-    this.e2eLatencyMs = data.latencyMs;
+    this._latency = data.latency;
     this._toolCalls = data.toolCalls;
     this._usage = data.usage;
     this._error = data.error;
+  }
+
+  /**
+   * Get the end-to-end latency in milliseconds.
+   * This is the total wall-clock time for the query.
+   *
+   * @returns End-to-end latency in milliseconds
+   */
+  e2eLatencyMs(): number {
+    return this._latency.e2eMs;
+  }
+
+  /**
+   * Get the LLM API latency in milliseconds.
+   * This is the time spent waiting for LLM responses (excluding tool execution).
+   *
+   * @returns LLM latency in milliseconds
+   */
+  llmLatencyMs(): number {
+    return this._latency.llmMs;
+  }
+
+  /**
+   * Get the MCP tool execution latency in milliseconds.
+   * This is the time spent executing MCP tools.
+   *
+   * @returns MCP tool latency in milliseconds
+   */
+  mcpLatencyMs(): number {
+    return this._latency.mcpMs;
+  }
+
+  /**
+   * Get the full latency breakdown.
+   *
+   * @returns LatencyBreakdown object with e2eMs, llmMs, and mcpMs
+   */
+  getLatency(): LatencyBreakdown {
+    return { ...this._latency };
   }
 
   /**
@@ -149,15 +193,23 @@ export class QueryResult {
    * Factory method for error cases.
    *
    * @param error - The error message
-   * @param latencyMs - The time taken before the error
+   * @param latency - The latency breakdown or e2e time in milliseconds
    * @returns A new QueryResult instance with error state
    */
-  static error(error: string, latencyMs: number = 0): QueryResult {
+  static error(
+    error: string,
+    latency: LatencyBreakdown | number = 0
+  ): QueryResult {
+    const latencyBreakdown: LatencyBreakdown =
+      typeof latency === "number"
+        ? { e2eMs: latency, llmMs: 0, mcpMs: 0 }
+        : latency;
+
     return new QueryResult({
       text: "",
       toolCalls: [],
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      latencyMs,
+      latency: latencyBreakdown,
       error,
     });
   }

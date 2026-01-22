@@ -72,12 +72,24 @@ export interface TokenUsage {
 }
 
 /**
+ * Latency breakdown for query execution
+ */
+export interface LatencyBreakdown {
+  /** Total wall-clock time in milliseconds */
+  e2eMs: number;
+  /** LLM API time in milliseconds */
+  llmMs: number;
+  /** MCP tool execution time in milliseconds */
+  mcpMs: number;
+}
+
+/**
  * Raw query result data (used internally)
  */
 export interface QueryResultData {
   text: string;
   toolCalls: ToolCall[];
   usage: TokenUsage;
-  latencyMs: number;
+  latency: LatencyBreakdown;
   error?: string;
 }
