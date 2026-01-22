@@ -1,16 +1,16 @@
 import { EvalTest } from "../src/EvalTest";
-import { QueryResult } from "../src/QueryResult";
+import { PromptResult } from "../src/PromptResult";
 import type { TestAgent } from "../src/TestAgent";
 
-// Mock QueryResult factory
-function createMockQueryResult(options: {
+// Mock PromptResult factory
+function createMockPromptResult(options: {
   text?: string;
   toolsCalled?: string[];
   tokens?: number;
   latency?: { e2eMs: number; llmMs: number; mcpMs: number };
   error?: string;
-}): QueryResult {
-  return QueryResult.from({
+}): PromptResult {
+  return PromptResult.from({
     text: options.text ?? "Test response",
     toolCalls: (options.toolsCalled ?? []).map((name) => ({
       toolName: name,
@@ -26,35 +26,35 @@ function createMockQueryResult(options: {
   });
 }
 
-// Create a mock TestAgent with query history tracking
+// Create a mock TestAgent with prompt history tracking
 function createMockAgent(
-  queryFn: (prompt: string) => Promise<QueryResult>
+  promptFn: (message: string) => Promise<PromptResult>
 ): TestAgent {
-  let queryHistory: QueryResult[] = [];
+  let promptHistory: PromptResult[] = [];
   return {
-    query: async (prompt: string) => {
-      const result = await queryFn(prompt);
-      queryHistory.push(result);
+    prompt: async (message: string) => {
+      const result = await promptFn(message);
+      promptHistory.push(result);
       return result;
     },
-    resetQueryHistory: () => {
-      queryHistory = [];
+    resetPromptHistory: () => {
+      promptHistory = [];
     },
-    getQueryHistory: () => [...queryHistory],
+    getPromptHistory: () => [...promptHistory],
   } as TestAgent;
 }
 
 describe("EvalTest", () => {
   describe("constructor", () => {
     it("should create an instance with name", () => {
-      const test = new EvalTest({ name: "test-name", query: "Test query" });
+      const test = new EvalTest({ name: "test-name", prompt: "Test prompt" });
       expect(test.getName()).toBe("test-name");
     });
 
     it("should store config", () => {
       const config = {
         name: "test",
-        query: "Test query",
+        prompt: "Test prompt",
         expectTools: ["add"],
       };
       const test = new EvalTest(config);
@@ -63,17 +63,17 @@ describe("EvalTest", () => {
   });
 
   describe("single-turn mode", () => {
-    it("should run iterations with query and track results", async () => {
+    it("should run iterations with prompt and track results", async () => {
       let callCount = 0;
 
       const agent = createMockAgent(async () => {
         callCount++;
-        return createMockQueryResult({ toolsCalled: ["add"] });
+        return createMockPromptResult({ toolsCalled: ["add"] });
       });
 
       const test = new EvalTest({
         name: "addition",
-        query: "Add 2 and 3",
+        prompt: "Add 2 and 3",
         expectTools: ["add"],
       });
 
@@ -88,12 +88,12 @@ describe("EvalTest", () => {
 
     it("should use expectTools with matchToolCallsSubset", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ toolsCalled: ["add", "multiply"] });
+        return createMockPromptResult({ toolsCalled: ["add", "multiply"] });
       });
 
       const test = new EvalTest({
         name: "test",
-        query: "Add and multiply",
+        prompt: "Add and multiply",
         expectTools: ["add"], // Should pass even with extra tools
       });
 
@@ -103,13 +103,13 @@ describe("EvalTest", () => {
 
     it("should use expectExactTools with matchToolCalls", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ toolsCalled: ["add", "multiply"] });
+        return createMockPromptResult({ toolsCalled: ["add", "multiply"] });
       });
 
       // Exact match - wrong order
       const test1 = new EvalTest({
         name: "wrong-order",
-        query: "Test",
+        prompt: "Test",
         expectExactTools: ["multiply", "add"],
       });
       const result1 = await test1.run(agent, { iterations: 2 });
@@ -118,7 +118,7 @@ describe("EvalTest", () => {
       // Exact match - correct order
       const test2 = new EvalTest({
         name: "correct-order",
-        query: "Test",
+        prompt: "Test",
         expectExactTools: ["add", "multiply"],
       });
       const result2 = await test2.run(agent, { iterations: 2 });
@@ -127,12 +127,12 @@ describe("EvalTest", () => {
 
     it("should use expectAnyTool with matchAnyToolCall", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ toolsCalled: ["add"] });
+        return createMockPromptResult({ toolsCalled: ["add"] });
       });
 
       const test = new EvalTest({
         name: "any-tool",
-        query: "Test",
+        prompt: "Test",
         expectAnyTool: ["subtract", "add", "multiply"],
       });
 
@@ -142,12 +142,12 @@ describe("EvalTest", () => {
 
     it("should use expectNoTools with matchNoToolCalls", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ toolsCalled: [] });
+        return createMockPromptResult({ toolsCalled: [] });
       });
 
       const test = new EvalTest({
         name: "no-tools",
-        query: "Just respond",
+        prompt: "Just respond",
         expectNoTools: true,
       });
 
@@ -157,7 +157,7 @@ describe("EvalTest", () => {
 
     it("should use custom test function when provided", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({
+        return createMockPromptResult({
           text: "The answer is 42",
           toolsCalled: ["add"],
         });
@@ -165,7 +165,7 @@ describe("EvalTest", () => {
 
       const test = new EvalTest({
         name: "custom-test",
-        query: "Test",
+        prompt: "Test",
         test: (result) => result.text.includes("42"),
       });
 
@@ -175,12 +175,12 @@ describe("EvalTest", () => {
 
     it("should support async test functions", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ text: "response" });
+        return createMockPromptResult({ text: "response" });
       });
 
       const test = new EvalTest({
         name: "async-test",
-        query: "Test",
+        prompt: "Test",
         test: async (result) => {
           await new Promise((resolve) => setTimeout(resolve, 1));
           return result.text.length > 0;
@@ -193,12 +193,12 @@ describe("EvalTest", () => {
 
     it("should default to pass if no error when no expectations set", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "no-expectations",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, { iterations: 2 });
@@ -207,12 +207,12 @@ describe("EvalTest", () => {
 
     it("should fail when there is an error and no expectations", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ error: "Something went wrong" });
+        return createMockPromptResult({ error: "Something went wrong" });
       });
 
       const test = new EvalTest({
         name: "with-error",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, { iterations: 2 });
@@ -223,14 +223,14 @@ describe("EvalTest", () => {
   describe("multi-turn conversation mode", () => {
     it("should run test function and aggregate results", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ toolsCalled: ["search"] });
+        return createMockPromptResult({ toolsCalled: ["search"] });
       });
 
       const test = new EvalTest({
         name: "conversation",
         test: async (agent) => {
-          const r1 = await agent.query("Search for X");
-          const r2 = await agent.query("Summarize results");
+          const r1 = await agent.prompt("Search for X");
+          const r2 = await agent.prompt("Summarize results");
           return r1.toolsCalled().includes("search");
         },
       });
@@ -239,19 +239,19 @@ describe("EvalTest", () => {
       const result = await test.run(agent, { iterations: 3, concurrency: 1 });
 
       expect(result.successes).toBe(3);
-      // Should have 2 latencies per iteration (2 queries in conversation)
+      // Should have 2 latencies per iteration (2 prompts in conversation)
       expect(result.latency.perIteration.length).toBe(6);
     });
 
     it("should handle test function failures", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ toolsCalled: [] });
+        return createMockPromptResult({ toolsCalled: [] });
       });
 
       const test = new EvalTest({
         name: "failing-test",
         test: async (agent) => {
-          const r1 = await agent.query("Search");
+          const r1 = await agent.prompt("Search");
           return r1.toolsCalled().includes("search"); // Will fail
         },
       });
@@ -271,12 +271,12 @@ describe("EvalTest", () => {
         maxConcurrent = Math.max(maxConcurrent, concurrent);
         await new Promise((resolve) => setTimeout(resolve, 10));
         concurrent--;
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "concurrency-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       await test.run(agent, {
@@ -296,12 +296,12 @@ describe("EvalTest", () => {
         maxConcurrent = Math.max(maxConcurrent, concurrent);
         await new Promise((resolve) => setTimeout(resolve, 5));
         concurrent--;
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "default-concurrency",
-        query: "Test",
+        prompt: "Test",
       });
 
       await test.run(agent, { iterations: 15 });
@@ -319,12 +319,12 @@ describe("EvalTest", () => {
         if (attempts < 3) {
           throw new Error("Temporary failure");
         }
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "retry-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, {
@@ -347,7 +347,7 @@ describe("EvalTest", () => {
 
       const test = new EvalTest({
         name: "exhausted-retries",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, {
@@ -367,14 +367,14 @@ describe("EvalTest", () => {
       const agent = createMockAgent(async () => {
         attemptCount++;
         if (attemptCount === 2) {
-          return createMockQueryResult({});
+          return createMockPromptResult({});
         }
         throw new Error("Fail first time");
       });
 
       const test = new EvalTest({
         name: "retry-count-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, {
@@ -391,12 +391,12 @@ describe("EvalTest", () => {
     it("should timeout after timeoutMs", async () => {
       const agent = createMockAgent(async () => {
         await new Promise((resolve) => setTimeout(resolve, 200));
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "timeout-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, {
@@ -412,12 +412,12 @@ describe("EvalTest", () => {
     it("should use default timeout of 30000ms", async () => {
       const agent = createMockAgent(async () => {
         // This should complete before 30s timeout
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "default-timeout",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, { iterations: 1 });
@@ -430,12 +430,12 @@ describe("EvalTest", () => {
       const progressCalls: [number, number][] = [];
 
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "progress-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       await test.run(agent, {
@@ -458,7 +458,7 @@ describe("EvalTest", () => {
 
       const agent = createMockAgent(async () => {
         callCount++;
-        return createMockQueryResult({
+        return createMockPromptResult({
           latency: {
             e2eMs: callCount * 100,
             llmMs: callCount * 80,
@@ -469,7 +469,7 @@ describe("EvalTest", () => {
 
       const test = new EvalTest({
         name: "latency-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, {
@@ -485,7 +485,7 @@ describe("EvalTest", () => {
 
     it("should flatten multi-turn latencies for stats", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({
+        return createMockPromptResult({
           latency: { e2eMs: 100, llmMs: 80, mcpMs: 20 },
         });
       });
@@ -493,8 +493,8 @@ describe("EvalTest", () => {
       const test = new EvalTest({
         name: "multi-turn-latency",
         test: async (agent) => {
-          await agent.query("First");
-          await agent.query("Second");
+          await agent.prompt("First");
+          await agent.prompt("Second");
           return true;
         },
       });
@@ -505,7 +505,7 @@ describe("EvalTest", () => {
         concurrency: 1,
       });
 
-      // 2 iterations * 2 queries = 4 latency entries
+      // 2 iterations * 2 prompts = 4 latency entries
       expect(result.latency.perIteration).toHaveLength(4);
       expect(result.latency.e2e.count).toBe(4);
     });
@@ -514,12 +514,12 @@ describe("EvalTest", () => {
   describe("token usage", () => {
     it("should aggregate token usage across iterations", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ tokens: 100 });
+        return createMockPromptResult({ tokens: 100 });
       });
 
       const test = new EvalTest({
         name: "token-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, { iterations: 5 });
@@ -530,14 +530,14 @@ describe("EvalTest", () => {
 
     it("should aggregate tokens from multi-turn conversations", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ tokens: 50 });
+        return createMockPromptResult({ tokens: 50 });
       });
 
       const test = new EvalTest({
         name: "multi-turn-tokens",
         test: async (agent) => {
-          await agent.query("First");
-          await agent.query("Second");
+          await agent.prompt("First");
+          await agent.prompt("Second");
           return true;
         },
       });
@@ -545,7 +545,7 @@ describe("EvalTest", () => {
       // Multi-turn tests should use concurrency: 1 to avoid shared state issues
       const result = await test.run(agent, { iterations: 2, concurrency: 1 });
 
-      // Each iteration has 2 queries of 50 tokens = 100 per iteration
+      // Each iteration has 2 prompts of 50 tokens = 100 per iteration
       expect(result.tokenUsage.perIteration).toEqual([100, 100]);
       expect(result.tokenUsage.total).toBe(200);
     });
@@ -554,12 +554,12 @@ describe("EvalTest", () => {
   describe("error handling", () => {
     it("should preserve error messages in iteration details", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ error: "Tool execution failed" });
+        return createMockPromptResult({ error: "Tool execution failed" });
       });
 
       const test = new EvalTest({
         name: "error-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       const result = await test.run(agent, { iterations: 1 });
@@ -567,11 +567,11 @@ describe("EvalTest", () => {
     });
 
     it("should throw if invalid config provided", async () => {
-      const agent = createMockAgent(async () => createMockQueryResult({}));
+      const agent = createMockAgent(async () => createMockPromptResult({}));
 
       const test = new EvalTest({
         name: "invalid-config",
-        // No query or test
+        // No prompt or test
       });
 
       await expect(test.run(agent, { iterations: 1 })).rejects.toThrow(
@@ -586,14 +586,14 @@ describe("EvalTest", () => {
 
       const agent = createMockAgent(async () => {
         counter++;
-        return createMockQueryResult({
+        return createMockPromptResult({
           toolsCalled: counter <= 8 ? ["add"] : [],
         });
       });
 
       const test = new EvalTest({
         name: "accuracy-test",
-        query: "Test",
+        prompt: "Test",
         expectTools: ["add"],
       });
 
@@ -608,7 +608,7 @@ describe("EvalTest", () => {
     it("should throw if metrics called before run", () => {
       const test = new EvalTest({
         name: "no-run",
-        query: "Test",
+        prompt: "Test",
       });
 
       expect(() => test.accuracy()).toThrow(
@@ -630,12 +630,12 @@ describe("EvalTest", () => {
 
     it("should calculate falsePositiveRate correctly", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ toolsCalled: [] });
+        return createMockPromptResult({ toolsCalled: [] });
       });
 
       const test = new EvalTest({
         name: "fpr-test",
-        query: "Test",
+        prompt: "Test",
         expectTools: ["add"], // Will all fail
       });
 
@@ -646,12 +646,12 @@ describe("EvalTest", () => {
 
     it("should calculate averageTokenUse correctly", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ tokens: 150 });
+        return createMockPromptResult({ tokens: 150 });
       });
 
       const test = new EvalTest({
         name: "avg-tokens",
-        query: "Test",
+        prompt: "Test",
       });
 
       await test.run(agent, { iterations: 4 });
@@ -664,19 +664,19 @@ describe("EvalTest", () => {
     it("should return null before run", () => {
       const test = new EvalTest({
         name: "no-results",
-        query: "Test",
+        prompt: "Test",
       });
       expect(test.getResults()).toBeNull();
     });
 
     it("should return results after run", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "with-results",
-        query: "Test",
+        prompt: "Test",
       });
 
       await test.run(agent, { iterations: 3 });
@@ -692,7 +692,7 @@ describe("EvalTest", () => {
     it("should throw if getAllIterations called before run", () => {
       const test = new EvalTest({
         name: "no-run",
-        query: "Test",
+        prompt: "Test",
       });
       expect(() => test.getAllIterations()).toThrow(
         "No run results available. Call run() first."
@@ -702,7 +702,7 @@ describe("EvalTest", () => {
     it("should throw if getFailedIterations called before run", () => {
       const test = new EvalTest({
         name: "no-run",
-        query: "Test",
+        prompt: "Test",
       });
       expect(() => test.getFailedIterations()).toThrow(
         "No run results available. Call run() first."
@@ -712,7 +712,7 @@ describe("EvalTest", () => {
     it("should throw if getSuccessfulIterations called before run", () => {
       const test = new EvalTest({
         name: "no-run",
-        query: "Test",
+        prompt: "Test",
       });
       expect(() => test.getSuccessfulIterations()).toThrow(
         "No run results available. Call run() first."
@@ -721,12 +721,12 @@ describe("EvalTest", () => {
 
     it("should return all iterations", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "all-iterations",
-        query: "Test",
+        prompt: "Test",
       });
 
       await test.run(agent, { iterations: 5 });
@@ -739,14 +739,14 @@ describe("EvalTest", () => {
       let count = 0;
       const agent = createMockAgent(async () => {
         count++;
-        return createMockQueryResult({
+        return createMockPromptResult({
           toolsCalled: count <= 3 ? ["add"] : [],
         });
       });
 
       const test = new EvalTest({
         name: "failed-iterations",
-        query: "Test",
+        prompt: "Test",
         expectTools: ["add"],
       });
 
@@ -761,14 +761,14 @@ describe("EvalTest", () => {
       let count = 0;
       const agent = createMockAgent(async () => {
         count++;
-        return createMockQueryResult({
+        return createMockPromptResult({
           toolsCalled: count <= 3 ? ["add"] : [],
         });
       });
 
       const test = new EvalTest({
         name: "successful-iterations",
-        query: "Test",
+        prompt: "Test",
         expectTools: ["add"],
       });
 
@@ -781,12 +781,12 @@ describe("EvalTest", () => {
 
     it("should return a copy of iterations array", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const test = new EvalTest({
         name: "copy-test",
-        query: "Test",
+        prompt: "Test",
       });
 
       await test.run(agent, { iterations: 3 });

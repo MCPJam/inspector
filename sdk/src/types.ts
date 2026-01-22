@@ -72,7 +72,7 @@ export interface TokenUsage {
 }
 
 /**
- * Latency breakdown for query execution
+ * Latency breakdown for prompt execution
  */
 export interface LatencyBreakdown {
   /** Total wall-clock time in milliseconds */
@@ -84,9 +84,9 @@ export interface LatencyBreakdown {
 }
 
 /**
- * Raw query result data (used internally)
+ * Raw prompt result data (used internally)
  */
-export interface QueryResultData {
+export interface PromptResultData {
   text: string;
   toolCalls: ToolCall[];
   usage: TokenUsage;

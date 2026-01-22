@@ -1,5 +1,5 @@
 import { TestAgent } from "../src/TestAgent";
-import { QueryResult } from "../src/QueryResult";
+import { PromptResult } from "../src/PromptResult";
 import type { ToolSet } from "ai";
 
 // Mock the ai module
@@ -163,8 +163,8 @@ describe("TestAgent", () => {
     });
   });
 
-  describe("query()", () => {
-    it("should return a QueryResult on success", async () => {
+  describe("prompt()", () => {
+    it("should return a PromptResult on success", async () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "The result is 5",
         steps: [
@@ -185,9 +185,9 @@ describe("TestAgent", () => {
         apiKey: "test-api-key",
       });
 
-      const result = await agent.query("Add 2 and 3");
+      const result = await agent.prompt("Add 2 and 3");
 
-      expect(result).toBeInstanceOf(QueryResult);
+      expect(result).toBeInstanceOf(PromptResult);
       expect(result.text).toBe("The result is 5");
       expect(result.toolsCalled()).toEqual(["add"]);
       expect(result.hasError()).toBe(false);
@@ -219,7 +219,7 @@ describe("TestAgent", () => {
         apiKey: "test-api-key",
       });
 
-      const result = await agent.query("Do some math");
+      const result = await agent.prompt("Do some math");
 
       expect(result.toolsCalled()).toEqual(["add", "subtract"]);
       expect(result.getToolCalls()).toHaveLength(2);
@@ -244,9 +244,9 @@ describe("TestAgent", () => {
         apiKey: "test-api-key",
       });
 
-      const result = await agent.query("Test query");
+      const result = await agent.prompt("Test prompt");
 
-      expect(result).toBeInstanceOf(QueryResult);
+      expect(result).toBeInstanceOf(PromptResult);
       expect(result.hasError()).toBe(true);
       expect(result.getError()).toBe("API rate limit exceeded");
       expect(result.text).toBe("");
@@ -268,7 +268,7 @@ describe("TestAgent", () => {
         apiKey: "test-api-key",
       });
 
-      const result = await agent.query("Test");
+      const result = await agent.prompt("Test");
 
       const latency = result.getLatency();
       expect(latency).toHaveProperty("e2eMs");
@@ -288,7 +288,7 @@ describe("TestAgent", () => {
         apiKey: "test-api-key",
       });
 
-      const result = await agent.query("Test query");
+      const result = await agent.prompt("Test prompt");
 
       expect(result.hasError()).toBe(true);
       expect(result.getError()).toBe("String error");
@@ -307,7 +307,7 @@ describe("TestAgent", () => {
         apiKey: "my-api-key",
       });
 
-      await agent.query("Test");
+      await agent.prompt("Test");
 
       expect(mockCreateModel).toHaveBeenCalledWith(
         "anthropic/claude-3-5-sonnet-20241022",
@@ -333,7 +333,7 @@ describe("TestAgent", () => {
         maxSteps: 15,
       });
 
-      await agent.query("What is 2+2?");
+      await agent.prompt("What is 2+2?");
 
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -366,7 +366,7 @@ describe("TestAgent", () => {
         apiKey: "test-key",
       });
 
-      const result = await agent.query("Test");
+      const result = await agent.prompt("Test");
 
       expect(result.inputTokens()).toBe(0);
       expect(result.outputTokens()).toBe(0);
@@ -375,7 +375,7 @@ describe("TestAgent", () => {
   });
 
   describe("toolsCalled()", () => {
-    it("should return empty array if no query has been run", () => {
+    it("should return empty array if no prompt has been run", () => {
       const agent = new TestAgent({
         tools: {},
         llm: "openai/gpt-4o",
@@ -385,7 +385,7 @@ describe("TestAgent", () => {
       expect(agent.toolsCalled()).toEqual([]);
     });
 
-    it("should return tools from last query", async () => {
+    it("should return tools from last prompt", async () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "Done",
         steps: [{ toolCalls: [{ toolName: "add", args: {} }] }],
@@ -398,12 +398,12 @@ describe("TestAgent", () => {
         apiKey: "test-key",
       });
 
-      await agent.query("Add numbers");
+      await agent.prompt("Add numbers");
 
       expect(agent.toolsCalled()).toEqual(["add"]);
     });
 
-    it("should update with each query", async () => {
+    it("should update with each prompt", async () => {
       mockGenerateText
         .mockResolvedValueOnce({
           text: "Added",
@@ -422,10 +422,10 @@ describe("TestAgent", () => {
         apiKey: "test-key",
       });
 
-      await agent.query("Add");
+      await agent.prompt("Add");
       expect(agent.toolsCalled()).toEqual(["add"]);
 
-      await agent.query("Subtract");
+      await agent.prompt("Subtract");
       expect(agent.toolsCalled()).toEqual(["subtract"]);
     });
   });
@@ -476,7 +476,7 @@ describe("TestAgent", () => {
 
       const newAgent = agent.withOptions({ temperature: 0.5 });
 
-      await agent.query("Test");
+      await agent.prompt("Test");
 
       // Original agent has the result
       expect(agent.toolsCalled()).toEqual(["add"]);
@@ -486,7 +486,7 @@ describe("TestAgent", () => {
   });
 
   describe("getLastResult()", () => {
-    it("should return undefined if no query has been run", () => {
+    it("should return undefined if no prompt has been run", () => {
       const agent = new TestAgent({
         tools: {},
         llm: "openai/gpt-4o",
@@ -496,7 +496,7 @@ describe("TestAgent", () => {
       expect(agent.getLastResult()).toBeUndefined();
     });
 
-    it("should return the last query result", async () => {
+    it("should return the last prompt result", async () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "The answer",
         steps: [],
@@ -509,10 +509,10 @@ describe("TestAgent", () => {
         apiKey: "test-key",
       });
 
-      const queryResult = await agent.query("Question");
+      const promptResult = await agent.prompt("Question");
       const lastResult = agent.getLastResult();
 
-      expect(lastResult).toBe(queryResult);
+      expect(lastResult).toBe(promptResult);
       expect(lastResult?.text).toBe("The answer");
     });
   });

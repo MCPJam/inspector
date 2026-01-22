@@ -1,39 +1,39 @@
 /**
- * QueryResult class - wraps the result of a TestAgent query
+ * PromptResult class - wraps the result of a TestAgent prompt
  */
 
 import type {
   ToolCall,
   TokenUsage,
-  QueryResultData,
+  PromptResultData,
   LatencyBreakdown,
 } from "./types.js";
 
 /**
- * Represents the result of a TestAgent query.
+ * Represents the result of a TestAgent prompt.
  * Provides convenient methods to inspect tool calls, token usage, and errors.
  */
-export class QueryResult {
+export class PromptResult {
   /** The text response from the LLM */
   readonly text: string;
 
   /** Latency breakdown (e2e, llm, mcp) */
   private readonly _latency: LatencyBreakdown;
 
-  /** Tool calls made during the query */
+  /** Tool calls made during the prompt */
   private readonly _toolCalls: ToolCall[];
 
   /** Token usage statistics */
   private readonly _usage: TokenUsage;
 
-  /** Error message if the query failed */
+  /** Error message if the prompt failed */
   private readonly _error?: string;
 
   /**
-   * Create a new QueryResult
-   * @param data - The raw query result data
+   * Create a new PromptResult
+   * @param data - The raw prompt result data
    */
-  constructor(data: QueryResultData) {
+  constructor(data: PromptResultData) {
     this.text = data.text;
     this._latency = data.latency;
     this._toolCalls = data.toolCalls;
@@ -43,7 +43,7 @@ export class QueryResult {
 
   /**
    * Get the end-to-end latency in milliseconds.
-   * This is the total wall-clock time for the query.
+   * This is the total wall-clock time for the prompt.
    *
    * @returns End-to-end latency in milliseconds
    */
@@ -81,7 +81,7 @@ export class QueryResult {
   }
 
   /**
-   * Get the names of all tools that were called during this query.
+   * Get the names of all tools that were called during this prompt.
    * Returns a standard string[] that can be used with .includes().
    *
    * @returns Array of tool names
@@ -91,7 +91,7 @@ export class QueryResult {
   }
 
   /**
-   * Check if a specific tool was called during this query.
+   * Check if a specific tool was called during this prompt.
    * Case-sensitive exact match.
    *
    * @param toolName - The name of the tool to check for
@@ -160,7 +160,7 @@ export class QueryResult {
   }
 
   /**
-   * Check if this query resulted in an error.
+   * Check if this prompt resulted in an error.
    *
    * @returns true if there was an error
    */
@@ -169,7 +169,7 @@ export class QueryResult {
   }
 
   /**
-   * Get the error message if the query failed.
+   * Get the error message if the prompt failed.
    *
    * @returns The error message or undefined
    */
@@ -178,34 +178,34 @@ export class QueryResult {
   }
 
   /**
-   * Create a QueryResult from raw data.
+   * Create a PromptResult from raw data.
    * Factory method for convenience.
    *
-   * @param data - The raw query result data
-   * @returns A new QueryResult instance
+   * @param data - The raw prompt result data
+   * @returns A new PromptResult instance
    */
-  static from(data: QueryResultData): QueryResult {
-    return new QueryResult(data);
+  static from(data: PromptResultData): PromptResult {
+    return new PromptResult(data);
   }
 
   /**
-   * Create an error QueryResult.
+   * Create an error PromptResult.
    * Factory method for error cases.
    *
    * @param error - The error message
    * @param latency - The latency breakdown or e2e time in milliseconds
-   * @returns A new QueryResult instance with error state
+   * @returns A new PromptResult instance with error state
    */
   static error(
     error: string,
     latency: LatencyBreakdown | number = 0
-  ): QueryResult {
+  ): PromptResult {
     const latencyBreakdown: LatencyBreakdown =
       typeof latency === "number"
         ? { e2eMs: latency, llmMs: 0, mcpMs: 0 }
         : latency;
 
-    return new QueryResult({
+    return new PromptResult({
       text: "",
       toolCalls: [],
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },

@@ -1,5 +1,5 @@
 import type { TestAgent } from "./TestAgent.js";
-import type { QueryResult } from "./QueryResult.js";
+import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import {
@@ -14,7 +14,7 @@ import {
  */
 export interface EvalTestConfig {
   name: string;
-  query?: string;
+  prompt?: string;
   expectTools?: string[];
   expectExactTools?: string[];
   expectAnyTool?: string[];
@@ -22,11 +22,11 @@ export interface EvalTestConfig {
 
   /**
    * Unified test function for validation.
-   * - Single-turn (when `query` is provided): receives QueryResult, returns boolean
-   * - Multi-turn (when no `query`): receives TestAgent, returns boolean
+   * - Single-turn (when `prompt` is provided): receives PromptResult, returns boolean
+   * - Multi-turn (when no `prompt`): receives TestAgent, returns boolean
    */
   test?:
-    | ((result: QueryResult) => boolean | Promise<boolean>)
+    | ((result: PromptResult) => boolean | Promise<boolean>)
     | ((agent: TestAgent) => boolean | Promise<boolean>);
 }
 
@@ -110,9 +110,8 @@ function createValidator(
     EvalTestConfig,
     "expectTools" | "expectExactTools" | "expectAnyTool" | "expectNoTools"
   >
-): (result: QueryResult) => boolean | Promise<boolean> {
-
-  return (result: QueryResult) => {
+): (result: PromptResult) => boolean | Promise<boolean> {
+  return (result: PromptResult) => {
     const toolsCalled = result.toolsCalled();
 
     if (config.expectTools) {
@@ -170,7 +169,7 @@ function sleep(ms: number): Promise<void> {
  * ```ts
  * const test = new EvalTest({
  *   name: "addition",
- *   query: "Add 2+3",
+ *   prompt: "Add 2+3",
  *   expectTools: ["add"],
  * });
  * await test.run(agent, { iterations: 30 });
@@ -200,9 +199,9 @@ export class EvalTest {
     const semaphore = new Semaphore(concurrency);
     let completedCount = 0;
 
-    // Single-turn: has query string
-    // Multi-turn: has test function but no query
-    if (this.config.query) {
+    // Single-turn: has prompt string
+    // Multi-turn: has test function but no prompt
+    if (this.config.prompt) {
       return this.runSingleTurn(
         agent,
         options.iterations,
@@ -223,7 +222,7 @@ export class EvalTest {
         () => ++completedCount
       );
     } else {
-      throw new Error("Invalid config: must provide 'query' or 'test'");
+      throw new Error("Invalid config: must provide 'prompt' or 'test'");
     }
   }
 
@@ -236,10 +235,12 @@ export class EvalTest {
     onProgress: ((completed: number, total: number) => void) | undefined,
     incrementCompleted: () => number
   ): Promise<EvalRunResult> {
-    const query = this.config.query!;
+    const promptMsg = this.config.prompt!;
     // Use config.test as validator if provided, otherwise use declarative expectations
     const validator = this.config.test
-      ? (this.config.test as (result: QueryResult) => boolean | Promise<boolean>)
+      ? (this.config.test as (
+          result: PromptResult
+        ) => boolean | Promise<boolean>)
       : createValidator(this.config);
     const iterationResults: IterationResult[] = [];
     const total = iterations;
@@ -251,7 +252,10 @@ export class EvalTest {
 
         for (let attempt = 0; attempt <= retries; attempt++) {
           try {
-            const result = await withTimeout(agent.query(query), timeoutMs);
+            const result = await withTimeout(
+              agent.prompt(promptMsg),
+              timeoutMs
+            );
 
             const passed = await validator(result);
             const latency = result.getLatency();
@@ -323,18 +327,18 @@ export class EvalTest {
 
         for (let attempt = 0; attempt <= retries; attempt++) {
           try {
-            // Clear query history before each test iteration
-            agent.resetQueryHistory();
+            // Clear prompt history before each test iteration
+            agent.resetPromptHistory();
 
             const passed = await withTimeout(
               Promise.resolve(testFn(agent)),
               timeoutMs
             );
 
-            // Get metrics from query history
-            const queryResults = agent.getQueryHistory();
-            const latencies = queryResults.map((r) => r.getLatency());
-            const tokens = queryResults.reduce(
+            // Get metrics from prompt history
+            const promptResults = agent.getPromptHistory();
+            const latencies = promptResults.map((r) => r.getLatency());
+            const tokens = promptResults.reduce(
               (sum, r) => sum + r.totalTokens(),
               0
             );

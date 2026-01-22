@@ -1,17 +1,17 @@
 import { EvalSuite } from "../src/EvalSuite";
 import { EvalTest } from "../src/EvalTest";
-import { QueryResult } from "../src/QueryResult";
+import { PromptResult } from "../src/PromptResult";
 import type { TestAgent } from "../src/TestAgent";
 
-// Mock QueryResult factory
-function createMockQueryResult(options: {
+// Mock PromptResult factory
+function createMockPromptResult(options: {
   text?: string;
   toolsCalled?: string[];
   tokens?: number;
   latency?: { e2eMs: number; llmMs: number; mcpMs: number };
   error?: string;
-}): QueryResult {
-  return QueryResult.from({
+}): PromptResult {
+  return PromptResult.from({
     text: options.text ?? "Test response",
     toolCalls: (options.toolsCalled ?? []).map((name) => ({
       toolName: name,
@@ -29,10 +29,10 @@ function createMockQueryResult(options: {
 
 // Create a mock TestAgent
 function createMockAgent(
-  queryFn: (prompt: string) => Promise<QueryResult>
+  promptFn: (message: string) => Promise<PromptResult>
 ): TestAgent {
   return {
-    query: queryFn,
+    prompt: promptFn,
   } as TestAgent;
 }
 
@@ -52,8 +52,8 @@ describe("EvalSuite", () => {
   describe("add and get tests", () => {
     it("should add tests and retrieve by name", () => {
       const suite = new EvalSuite();
-      const test1 = new EvalTest({ name: "addition", query: "Add 2+3" });
-      const test2 = new EvalTest({ name: "multiply", query: "Multiply 4*5" });
+      const test1 = new EvalTest({ name: "addition", prompt: "Add 2+3" });
+      const test2 = new EvalTest({ name: "multiply", prompt: "Multiply 4*5" });
 
       suite.add(test1);
       suite.add(test2);
@@ -65,17 +65,17 @@ describe("EvalSuite", () => {
 
     it("should throw when adding duplicate test name", () => {
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test", query: "Query 1" }));
+      suite.add(new EvalTest({ name: "test", prompt: "Prompt 1" }));
 
       expect(() => {
-        suite.add(new EvalTest({ name: "test", query: "Query 2" }));
+        suite.add(new EvalTest({ name: "test", prompt: "Prompt 2" }));
       }).toThrow('Test with name "test" already exists in suite');
     });
 
     it("should return all tests with getAll", () => {
       const suite = new EvalSuite();
-      const test1 = new EvalTest({ name: "test1", query: "Query 1" });
-      const test2 = new EvalTest({ name: "test2", query: "Query 2" });
+      const test1 = new EvalTest({ name: "test1", prompt: "Prompt 1" });
+      const test2 = new EvalTest({ name: "test2", prompt: "Prompt 2" });
 
       suite.add(test1);
       suite.add(test2);
@@ -90,35 +90,35 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       expect(suite.size()).toBe(0);
 
-      suite.add(new EvalTest({ name: "test1", query: "Query 1" }));
+      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
       expect(suite.size()).toBe(1);
 
-      suite.add(new EvalTest({ name: "test2", query: "Query 2" }));
+      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
       expect(suite.size()).toBe(2);
     });
   });
 
   describe("run", () => {
     it("should run all tests and aggregate results", async () => {
-      const agent = createMockAgent(async (prompt) => {
-        if (prompt.includes("Add")) {
-          return createMockQueryResult({ toolsCalled: ["add"] });
+      const agent = createMockAgent(async (message) => {
+        if (message.includes("Add")) {
+          return createMockPromptResult({ toolsCalled: ["add"] });
         }
-        return createMockQueryResult({ toolsCalled: ["multiply"] });
+        return createMockPromptResult({ toolsCalled: ["multiply"] });
       });
 
       const suite = new EvalSuite({ name: "Math" });
       suite.add(
         new EvalTest({
           name: "addition",
-          query: "Add 2+3",
+          prompt: "Add 2+3",
           expectTools: ["add"],
         })
       );
       suite.add(
         new EvalTest({
           name: "multiply",
-          query: "Multiply 4*5",
+          prompt: "Multiply 4*5",
           expectTools: ["multiply"],
         })
       );
@@ -133,25 +133,25 @@ describe("EvalSuite", () => {
     });
 
     it("should allow access to individual test results", async () => {
-      const agent = createMockAgent(async (prompt) => {
-        if (prompt.includes("Add")) {
-          return createMockQueryResult({ toolsCalled: ["add"] });
+      const agent = createMockAgent(async (message) => {
+        if (message.includes("Add")) {
+          return createMockPromptResult({ toolsCalled: ["add"] });
         }
-        return createMockQueryResult({ toolsCalled: [] }); // Multiply fails
+        return createMockPromptResult({ toolsCalled: [] }); // Multiply fails
       });
 
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
           name: "addition",
-          query: "Add 2+3",
+          prompt: "Add 2+3",
           expectTools: ["add"],
         })
       );
       suite.add(
         new EvalTest({
           name: "multiply",
-          query: "Multiply 4*5",
+          prompt: "Multiply 4*5",
           expectTools: ["multiply"],
         })
       );
@@ -173,12 +173,12 @@ describe("EvalSuite", () => {
       const progressCalls: [number, number][] = [];
 
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", query: "Query 1" }));
-      suite.add(new EvalTest({ name: "test2", query: "Query 2" }));
+      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
+      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
 
       await suite.run(agent, {
         iterations: 2,
@@ -196,12 +196,12 @@ describe("EvalSuite", () => {
 
     it("should aggregate token usage across tests", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ tokens: 100 });
+        return createMockPromptResult({ tokens: 100 });
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", query: "Query 1" }));
-      suite.add(new EvalTest({ name: "test2", query: "Query 2" }));
+      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
+      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
 
       const result = await suite.run(agent, { iterations: 3 });
 
@@ -216,7 +216,7 @@ describe("EvalSuite", () => {
 
       const agent = createMockAgent(async () => {
         callCount++;
-        return createMockQueryResult({
+        return createMockPromptResult({
           latency: {
             e2eMs: callCount * 10,
             llmMs: callCount * 8,
@@ -226,8 +226,8 @@ describe("EvalSuite", () => {
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", query: "Query 1" }));
-      suite.add(new EvalTest({ name: "test2", query: "Query 2" }));
+      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
+      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
 
       const result = await suite.run(agent, {
         iterations: 2,
@@ -245,7 +245,7 @@ describe("EvalSuite", () => {
   describe("metrics", () => {
     it("should throw if metrics called before run", () => {
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test", query: "Query" }));
+      suite.add(new EvalTest({ name: "test", prompt: "Prompt" }));
 
       expect(() => suite.accuracy()).toThrow(
         "No run results available. Call run() first."
@@ -270,7 +270,7 @@ describe("EvalSuite", () => {
       const agent = createMockAgent(async () => {
         counter++;
         // First 3 pass, last 1 fails
-        return createMockQueryResult({
+        return createMockPromptResult({
           toolsCalled: counter <= 3 ? ["tool"] : [],
         });
       });
@@ -279,7 +279,7 @@ describe("EvalSuite", () => {
       suite.add(
         new EvalTest({
           name: "test",
-          query: "Query",
+          prompt: "Prompt",
           expectTools: ["tool"],
         })
       );
@@ -291,14 +291,14 @@ describe("EvalSuite", () => {
 
     it("should calculate falsePositiveRate", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ toolsCalled: [] });
+        return createMockPromptResult({ toolsCalled: [] });
       });
 
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
           name: "test",
-          query: "Query",
+          prompt: "Prompt",
           expectTools: ["tool"], // Will all fail
         })
       );
@@ -310,12 +310,12 @@ describe("EvalSuite", () => {
 
     it("should calculate averageTokenUse", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({ tokens: 200 });
+        return createMockPromptResult({ tokens: 200 });
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", query: "Query 1" }));
-      suite.add(new EvalTest({ name: "test2", query: "Query 2" }));
+      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
+      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
 
       await suite.run(agent, { iterations: 5 });
 
@@ -328,18 +328,18 @@ describe("EvalSuite", () => {
   describe("getResults", () => {
     it("should return null before run", () => {
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test", query: "Query" }));
+      suite.add(new EvalTest({ name: "test", prompt: "Prompt" }));
       expect(suite.getResults()).toBeNull();
     });
 
     it("should return results after run", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", query: "Query 1" }));
-      suite.add(new EvalTest({ name: "test2", query: "Query 2" }));
+      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
+      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
 
       await suite.run(agent, { iterations: 2 });
 
@@ -354,11 +354,11 @@ describe("EvalSuite", () => {
 
   describe("Jest integration pattern", () => {
     it("should work with Jest test structure", async () => {
-      const agent = createMockAgent(async (prompt) => {
-        if (prompt.includes("Add")) {
-          return createMockQueryResult({ toolsCalled: ["add"] });
+      const agent = createMockAgent(async (message) => {
+        if (message.includes("Add")) {
+          return createMockPromptResult({ toolsCalled: ["add"] });
         }
-        return createMockQueryResult({ toolsCalled: ["multiply"] });
+        return createMockPromptResult({ toolsCalled: ["multiply"] });
       });
 
       // Simulate Jest beforeAll
@@ -366,14 +366,14 @@ describe("EvalSuite", () => {
       suite.add(
         new EvalTest({
           name: "addition",
-          query: "Add 2+3",
+          prompt: "Add 2+3",
           expectTools: ["add"],
         })
       );
       suite.add(
         new EvalTest({
           name: "multiply",
-          query: "Multiply 4*5",
+          prompt: "Multiply 4*5",
           expectTools: ["multiply"],
         })
       );
@@ -390,7 +390,7 @@ describe("EvalSuite", () => {
   describe("empty suite handling", () => {
     it("should handle running empty suite", async () => {
       const agent = createMockAgent(async () => {
-        return createMockQueryResult({});
+        return createMockPromptResult({});
       });
 
       const suite = new EvalSuite();

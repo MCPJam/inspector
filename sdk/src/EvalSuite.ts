@@ -51,8 +51,8 @@ export interface EvalSuiteResult {
  * @example
  * ```ts
  * const suite = new EvalSuite({ name: "Math" });
- * suite.add(new EvalTest({ name: "addition", query: "Add 2+3", expectTools: ["add"] }));
- * suite.add(new EvalTest({ name: "multiply", query: "Multiply 4*5", expectTools: ["multiply"] }));
+ * suite.add(new EvalTest({ name: "addition", prompt: "Add 2+3", expectTools: ["add"] }));
+ * suite.add(new EvalTest({ name: "multiply", prompt: "Multiply 4*5", expectTools: ["multiply"] }));
  *
  * await suite.run(agent, { iterations: 30 });
  * console.log(suite.accuracy());                 // Aggregate: 0.95

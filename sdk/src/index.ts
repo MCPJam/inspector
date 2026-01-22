@@ -93,8 +93,8 @@ export {
 export { TestAgent } from "./TestAgent.js";
 export type { TestAgentConfig } from "./TestAgent.js";
 
-// QueryResult class (preferred over TestAgent's interface)
-export { QueryResult } from "./QueryResult.js";
+// PromptResult class (preferred over TestAgent's interface)
+export { PromptResult } from "./PromptResult.js";
 
 // Tool extraction utilities
 export {
@@ -143,7 +143,7 @@ export type {
   ToolCall,
   TokenUsage,
   LatencyBreakdown,
-  QueryResultData,
+  PromptResultData,
 } from "./types.js";
 
 // Percentile utilities

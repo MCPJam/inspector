@@ -1,5 +1,5 @@
 /**
- * TestAgent - Runs LLM queries with tool calling for evals
+ * TestAgent - Runs LLM prompts with tool calling for evals
  */
 
 import { generateText, stepCountIs } from "ai";
@@ -7,7 +7,7 @@ import type { ToolSet } from "ai";
 import { createModelFromString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
-import { QueryResult } from "./QueryResult.js";
+import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider } from "./types.js";
 
 /**
@@ -33,7 +33,7 @@ export interface TestAgentConfig {
 }
 
 /**
- * Agent for running LLM queries with tool calling.
+ * Agent for running LLM prompts with tool calling.
  * Wraps the AI SDK generateText function with proper tool integration.
  *
  * @example
@@ -49,7 +49,7 @@ export interface TestAgentConfig {
  *   apiKey: process.env.OPENAI_API_KEY!,
  * });
  *
- * const result = await agent.query("Add 2 and 3");
+ * const result = await agent.prompt("Add 2 and 3");
  * console.log(result.toolsCalled()); // ["add"]
  * console.log(result.text); // "The result of adding 2 and 3 is 5."
  * ```
@@ -65,11 +65,11 @@ export class TestAgent {
     | Map<string, CustomProvider>
     | Record<string, CustomProvider>;
 
-  /** The result of the last query (for toolsCalled() convenience method) */
-  private lastResult: QueryResult | undefined;
+  /** The result of the last prompt (for toolsCalled() convenience method) */
+  private lastResult: PromptResult | undefined;
 
-  /** History of all query results during a test execution */
-  private queryHistory: QueryResult[] = [];
+  /** History of all prompt results during a test execution */
+  private promptHistory: PromptResult[] = [];
 
   /**
    * Create a new TestAgent
@@ -116,13 +116,13 @@ export class TestAgent {
   }
 
   /**
-   * Run a query with the LLM, allowing tool calls.
-   * Never throws - errors are returned in the QueryResult.
+   * Run a prompt with the LLM, allowing tool calls.
+   * Never throws - errors are returned in the PromptResult.
    *
-   * @param prompt - The user prompt to send to the LLM
-   * @returns QueryResult with text response, tool calls, token usage, and latency breakdown
+   * @param message - The user message to send to the LLM
+   * @returns PromptResult with text response, tool calls, token usage, and latency breakdown
    */
-  async query(prompt: string): Promise<QueryResult> {
+  async prompt(message: string): Promise<PromptResult> {
     const startTime = Date.now();
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
@@ -147,7 +147,7 @@ export class TestAgent {
         model: model as any,
         tools: instrumentedTools,
         system: this.systemPrompt,
-        prompt,
+        prompt: message,
         temperature: this.temperature,
         // Use stopWhen with stepCountIs for controlling max agentic steps
         // AI SDK v6+ uses this instead of maxSteps
@@ -168,12 +168,12 @@ export class TestAgent {
       const toolCalls = extractToolCalls(result);
 
       // Use totalUsage for multi-step agents (aggregates tokens across all steps)
-      // Fall back to usage (final step only) for single-step queries
+      // Fall back to usage (final step only) for single-step prompts
       const usage = result.totalUsage ?? result.usage;
       const inputTokens = usage?.inputTokens ?? 0;
       const outputTokens = usage?.outputTokens ?? 0;
 
-      this.lastResult = QueryResult.from({
+      this.lastResult = PromptResult.from({
         text: result.text,
         toolCalls,
         usage: {
@@ -184,28 +184,28 @@ export class TestAgent {
         latency: { e2eMs, llmMs: totalLlmMs, mcpMs: totalMcpMs },
       });
 
-      this.queryHistory.push(this.lastResult);
+      this.promptHistory.push(this.lastResult);
       return this.lastResult;
     } catch (error) {
       const e2eMs = Date.now() - startTime;
       const errorMessage =
         error instanceof Error ? error.message : String(error);
 
-      this.lastResult = QueryResult.error(errorMessage, {
+      this.lastResult = PromptResult.error(errorMessage, {
         e2eMs,
         llmMs: totalLlmMs,
         mcpMs: totalMcpMs,
       });
-      this.queryHistory.push(this.lastResult);
+      this.promptHistory.push(this.lastResult);
       return this.lastResult;
     }
   }
 
   /**
-   * Get the names of tools called in the last query.
+   * Get the names of tools called in the last prompt.
    * Convenience method for quick checks in eval functions.
    *
-   * @returns Array of tool names from the last query, or empty array if no query has been run
+   * @returns Array of tool names from the last prompt, or empty array if no prompt has been run
    */
   toolsCalled(): string[] {
     if (!this.lastResult) {
@@ -293,25 +293,25 @@ export class TestAgent {
   }
 
   /**
-   * Get the result of the last query
+   * Get the result of the last prompt
    */
-  getLastResult(): QueryResult | undefined {
+  getLastResult(): PromptResult | undefined {
     return this.lastResult;
   }
 
   /**
-   * Reset the query history.
+   * Reset the prompt history.
    * Call this before each test iteration to clear previous results.
    */
-  resetQueryHistory(): void {
-    this.queryHistory = [];
+  resetPromptHistory(): void {
+    this.promptHistory = [];
   }
 
   /**
-   * Get the history of all query results since the last reset.
+   * Get the history of all prompt results since the last reset.
    * Returns a copy of the array to prevent external modification.
    */
-  getQueryHistory(): QueryResult[] {
-    return [...this.queryHistory];
+  getPromptHistory(): PromptResult[] {
+    return [...this.promptHistory];
   }
 }

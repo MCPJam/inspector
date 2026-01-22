@@ -254,7 +254,7 @@ Here's how MCP evals works:
 1. A mock agent is launched and connected to your MCP server, simulating how clients like Claude Code, Cursor, or ChatGPT would interact with it.
 2. The agent is exposed to your server's entire toolset.
 3. We give the agent a prompt, simulating a user asking the LLM a real-world question.
-4. The agent runs the query, makes decisions on whether or not to call a tool. Executes tools and spits an output.
+4. The agent runs the prompt, makes decisions on whether or not to call a tool. Executes tools and spits an output.
 5. We examine the agent's output, evaluate whether or not the right tool was called.
 
 ### `TestAgent`
@@ -287,12 +287,12 @@ The SDK supports 9 built-in providers:
 
 Custom providers (OpenAI-compatible or Anthropic-compatible endpoints) are also supported via the `customProviders` option.
 
-### `QueryResult`
+### `PromptResult`
 
-When you call `testAgent.query()`, you get back a `QueryResult` object with rich information:
+When you call `testAgent.prompt()`, you get back a `PromptResult` object with rich information:
 
 ```ts
-const result = await testAgent.query("Add 2 and 3");
+const result = await testAgent.prompt("Add 2 and 3");
 
 // Tool calls
 result.toolsCalled();                    // string[] - e.g., ["add"]
@@ -328,7 +328,7 @@ import { EvalTest } from "@mcpjam/sdk";
 
 const test = new EvalTest({
   name: "addition",
-  query: "Add 2+3",
+  prompt: "Add 2+3",
   expectTools: ["add"],
 });
 
@@ -349,7 +349,7 @@ console.log(test.accuracy()); // 0.97
 ```ts
 const test = new EvalTest({
   name: "addition-args",
-  query: "What is 2 + 3?",
+  prompt: "What is 2 + 3?",
   test: (result) => {
     const calls = result.getToolCalls();
     const addCall = calls.find(c => c.toolName === "add");
@@ -366,9 +366,9 @@ await test.run(agent, { iterations: 30 });
 const test = new EvalTest({
   name: "search-and-summarize",
   test: async (agent) => {
-    const r1 = await agent.query("Search for X");
+    const r1 = await agent.prompt("Search for X");
     if (!r1.toolsCalled().includes("search")) return false;
-    const r2 = await agent.query(`Summarize: ${r1.text}`);
+    const r2 = await agent.prompt(`Summarize: ${r1.text}`);
     return r2.toolsCalled().includes("summarize");
   },
 });
@@ -409,8 +409,8 @@ await test.run(agent, {
 import { EvalSuite, EvalTest } from "@mcpjam/sdk";
 
 const suite = new EvalSuite({ name: "Math Operations" });
-suite.add(new EvalTest({ name: "addition", query: "Add 2+3", expectTools: ["add"] }));
-suite.add(new EvalTest({ name: "multiply", query: "Multiply 4*5", expectTools: ["multiply"] }));
+suite.add(new EvalTest({ name: "addition", prompt: "Add 2+3", expectTools: ["add"] }));
+suite.add(new EvalTest({ name: "multiply", prompt: "Multiply 4*5", expectTools: ["multiply"] }));
 
 await suite.run(agent, { iterations: 30 });
 
@@ -526,7 +526,7 @@ const testAgent = new TestAgent({
 // Single test standalone
 const createProjectTest = new EvalTest({
   name: "create-project",
-  query: "Create a new Asana project called 'Onboard Joe'",
+  prompt: "Create a new Asana project called 'Onboard Joe'",
   expectTools: ["asana_create_project"],
 });
 
@@ -572,12 +572,12 @@ describe("Asana MCP Server Evals", () => {
     suite = new EvalSuite({ name: "Asana Operations" });
     suite.add(new EvalTest({
       name: "create-project",
-      query: "Create a new Asana project called 'Onboard Joe'",
+      prompt: "Create a new Asana project called 'Onboard Joe'",
       expectTools: ["asana_create_project"],
     }));
     suite.add(new EvalTest({
       name: "list-tasks",
-      query: "List all tasks in the Marketing project",
+      prompt: "List all tasks in the Marketing project",
       expectTools: ["asana_list_tasks"],
     }));
 
