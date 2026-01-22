@@ -13,6 +13,7 @@ interface NavMainItem {
   icon?: React.ElementType;
   isActive?: boolean;
   highlightClass?: string;
+  highlightKey?: number;
 }
 
 interface NavMainProps {
@@ -34,7 +35,13 @@ export function NavMain({ items, onItemClick }: NavMainProps) {
       <SidebarGroupContent>
         <SidebarMenu>
           {items.map((item) => (
-            <SidebarMenuItem key={item.title}>
+            <SidebarMenuItem
+              key={
+                item.highlightKey
+                  ? `${item.title}-${item.highlightKey}`
+                  : item.title
+              }
+            >
               <SidebarMenuButton
                 tooltip={item.title}
                 isActive={isItemActive(item)}

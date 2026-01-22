@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Hammer,
   MessageCircle,
@@ -41,7 +42,6 @@ const navigationSections = [
         title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
-        highlightClass: "animate-highlight-border", // Option 3: Border flash
       },
     ],
   },
@@ -125,14 +125,33 @@ const navigationSections = [
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
+  openAiAppOrMcpAppsServers?: Set<string>;
 }
 
 export function MCPSidebar({
   onNavigate,
   activeTab,
+  openAiAppOrMcpAppsServers,
   ...props
 }: MCPSidebarProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const [highlightKey, setHighlightKey] = useState(0);
+  const [isHighlighting, setIsHighlighting] = useState(false);
+  const prevAppServersCount = useRef(0);
+
+  // Trigger highlight when a new app server connects
+  useEffect(() => {
+    const currentCount = openAiAppOrMcpAppsServers?.size ?? 0;
+    if (currentCount > prevAppServersCount.current) {
+      // Increment key to force animation restart even if already animating
+      setHighlightKey((k) => k + 1);
+      setIsHighlighting(true);
+      const timer = setTimeout(() => setIsHighlighting(false), 1000);
+      prevAppServersCount.current = currentCount;
+      return () => clearTimeout(timer);
+    }
+    prevAppServersCount.current = currentCount;
+  }, [openAiAppOrMcpAppsServers]);
 
   const handleNavClick = (url: string) => {
     if (onNavigate && url.startsWith("#")) {
@@ -165,6 +184,12 @@ export function MCPSidebar({
               items={section.items.map((item) => ({
                 ...item,
                 isActive: item.url === `#${activeTab}`,
+                highlightClass:
+                  item.url === "#app-builder" && isHighlighting
+                    ? "animate-highlight-border"
+                    : undefined,
+                highlightKey:
+                  item.url === "#app-builder" ? highlightKey : undefined,
               }))}
               onItemClick={handleNavClick}
             />
