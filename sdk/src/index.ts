@@ -91,8 +91,74 @@ export {
 
 // TestAgent
 export { TestAgent } from "./TestAgent.js";
-export type { TestAgentConfig, QueryResult } from "./TestAgent.js";
+export type { TestAgentConfig } from "./TestAgent.js";
+
+// QueryResult class (preferred over TestAgent's interface)
+export { QueryResult } from "./QueryResult.js";
+
+// Tool extraction utilities
+export {
+  extractToolCalls,
+  extractToolNames,
+  type GenerateTextResultLike,
+} from "./tool-extraction.js";
+
+// Validators for tool call matching
+export {
+  matchToolCalls,
+  matchToolCallsSubset,
+  matchAnyToolCall,
+  matchToolCallCount,
+  matchNoToolCalls,
+  // Argument-based validators (Phase 2.5)
+  matchToolCallWithArgs,
+  matchToolCallWithPartialArgs,
+  matchToolArgument,
+  matchToolArgumentWith,
+} from "./validators.js";
 
 // EvalsSuite
 export { EvalsSuite } from "./EvalsSuite.js";
-export type { EvalsSuiteConfig, EvalRunResult } from "./EvalsSuite.js";
+export type {
+  EvalsSuiteConfig,
+  EvalRunResult,
+  ConversationResult,
+  TestCase,
+  IterationResult,
+  CaseResult,
+  RunConfig,
+} from "./EvalsSuite.js";
+
+// Core SDK types
+export type {
+  LLMProvider,
+  CompatibleProtocol,
+  CustomProvider,
+  LLMConfig,
+  ToolCall,
+  TokenUsage,
+  LatencyBreakdown,
+  QueryResultData,
+} from "./types.js";
+
+// Percentile utilities
+export {
+  calculatePercentile,
+  calculateLatencyStats,
+  type LatencyStats,
+} from "./percentiles.js";
+
+// Model factory utilities
+export {
+  parseLLMString,
+  createModelFromString,
+  parseModelIds,
+  createCustomProvider,
+  PROVIDER_PRESETS,
+} from "./model-factory.js";
+export type {
+  BaseUrls,
+  CreateModelOptions,
+  ParsedLLMString,
+  ProviderLanguageModel,
+} from "./model-factory.js";

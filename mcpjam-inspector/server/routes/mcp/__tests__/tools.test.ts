@@ -69,7 +69,7 @@ describe("POST /api/mcp/tools/list", () => {
       });
 
       expect(res.status).toBe(200);
-      expect(manager.listTools).toHaveBeenCalledWith("Test-Server");
+      expect(manager.listTools).toHaveBeenCalledWith("Test-Server", undefined);
     });
   });
 

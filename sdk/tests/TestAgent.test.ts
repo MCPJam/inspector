@@ -1,10 +1,65 @@
 import { TestAgent } from "../src/TestAgent";
+import { QueryResult } from "../src/QueryResult";
+import type { ToolSet } from "ai";
+
+// Mock the ai module
+jest.mock("ai", () => ({
+  generateText: jest.fn(),
+  stepCountIs: jest.fn((n: number) => ({ type: "stepCount", value: n })),
+}));
+
+// Mock the model factory
+jest.mock("../src/model-factory", () => ({
+  createModelFromString: jest.fn(() => ({})),
+}));
+
+import { generateText } from "ai";
+import { createModelFromString } from "../src/model-factory";
+
+const mockGenerateText = generateText as jest.MockedFunction<
+  typeof generateText
+>;
+const mockCreateModel = createModelFromString as jest.MockedFunction<
+  typeof createModelFromString
+>;
 
 describe("TestAgent", () => {
+  // Create a mock ToolSet for testing
+  const mockToolSet: ToolSet = {
+    add: {
+      description: "Add two numbers",
+      parameters: {
+        type: "object",
+        properties: {
+          a: { type: "number" },
+          b: { type: "number" },
+        },
+        required: ["a", "b"],
+      },
+      execute: async ({ a, b }: { a: number; b: number }) => a + b,
+    },
+    subtract: {
+      description: "Subtract two numbers",
+      parameters: {
+        type: "object",
+        properties: {
+          a: { type: "number" },
+          b: { type: "number" },
+        },
+        required: ["a", "b"],
+      },
+      execute: async ({ a, b }: { a: number; b: number }) => a - b,
+    },
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   describe("constructor", () => {
     it("should create an instance with config", () => {
       const agent = new TestAgent({
-        tools: [],
+        tools: {},
         llm: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
@@ -14,60 +69,451 @@ describe("TestAgent", () => {
 
     it("should accept optional parameters", () => {
       const agent = new TestAgent({
-        tools: [],
+        tools: mockToolSet,
         llm: "openai/gpt-4o",
         apiKey: "test-api-key",
         systemPrompt: "You are a test assistant.",
         temperature: 0.5,
+        maxSteps: 5,
       });
 
       expect(agent).toBeInstanceOf(TestAgent);
+      expect(agent.getSystemPrompt()).toBe("You are a test assistant.");
+      expect(agent.getTemperature()).toBe(0.5);
+      expect(agent.getMaxSteps()).toBe(5);
+    });
+
+    it("should use default values for optional parameters", () => {
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      expect(agent.getSystemPrompt()).toBe("You are a helpful assistant.");
+      expect(agent.getTemperature()).toBe(0.7);
+      expect(agent.getMaxSteps()).toBe(10);
     });
   });
 
   describe("configuration", () => {
     it("should return the configured tools", () => {
-      const mockTools = [
-        {
-          name: "test_tool",
-          description: "A test tool",
-          inputSchema: { type: "object" as const, properties: {} },
-        },
-      ];
-
       const agent = new TestAgent({
-        tools: mockTools,
+        tools: mockToolSet,
         llm: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      expect(agent.getTools()).toEqual(mockTools);
+      expect(agent.getTools()).toBe(mockToolSet);
+    });
+
+    it("should return the configured LLM", () => {
+      const agent = new TestAgent({
+        tools: {},
+        llm: "anthropic/claude-3-5-sonnet-20241022",
+        apiKey: "test-api-key",
+      });
+
+      expect(agent.getLlm()).toBe("anthropic/claude-3-5-sonnet-20241022");
+    });
+
+    it("should return the configured API key", () => {
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "my-secret-key",
+      });
+
+      expect(agent.getApiKey()).toBe("my-secret-key");
     });
 
     it("should update system prompt", () => {
       const agent = new TestAgent({
-        tools: [],
+        tools: {},
         llm: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
-      expect(() => agent.setSystemPrompt("New prompt")).not.toThrow();
+      agent.setSystemPrompt("New prompt");
+      expect(agent.getSystemPrompt()).toBe("New prompt");
     });
 
     it("should validate temperature range", () => {
       const agent = new TestAgent({
-        tools: [],
+        tools: {},
         llm: "openai/gpt-4o",
         apiKey: "test-api-key",
       });
 
       expect(() => agent.setTemperature(0.5)).not.toThrow();
+      expect(agent.getTemperature()).toBe(0.5);
+
+      expect(() => agent.setTemperature(0)).not.toThrow();
+      expect(agent.getTemperature()).toBe(0);
+
+      expect(() => agent.setTemperature(2)).not.toThrow();
+      expect(agent.getTemperature()).toBe(2);
+
       expect(() => agent.setTemperature(-1)).toThrow(
         "Temperature must be between 0 and 2"
       );
       expect(() => agent.setTemperature(3)).toThrow(
         "Temperature must be between 0 and 2"
       );
+    });
+  });
+
+  describe("query()", () => {
+    it("should return a QueryResult on success", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "The result is 5",
+        steps: [
+          {
+            toolCalls: [{ toolName: "add", args: { a: 2, b: 3 } }],
+          },
+        ],
+        usage: {
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+        },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        llm: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      const result = await agent.query("Add 2 and 3");
+
+      expect(result).toBeInstanceOf(QueryResult);
+      expect(result.text).toBe("The result is 5");
+      expect(result.toolsCalled()).toEqual(["add"]);
+      expect(result.hasError()).toBe(false);
+      expect(result.inputTokens()).toBe(10);
+      expect(result.outputTokens()).toBe(5);
+      expect(result.totalTokens()).toBe(15);
+      expect(result.e2eLatencyMs()).toBeGreaterThanOrEqual(0);
+      expect(result.llmLatencyMs()).toBeGreaterThanOrEqual(0);
+      expect(result.mcpLatencyMs()).toBeGreaterThanOrEqual(0);
+    });
+
+    it("should extract tool calls from result steps", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Done",
+        steps: [
+          {
+            toolCalls: [{ toolName: "add", args: { a: 1, b: 2 } }],
+          },
+          {
+            toolCalls: [{ toolName: "subtract", args: { a: 5, b: 3 } }],
+          },
+        ],
+        usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        llm: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      const result = await agent.query("Do some math");
+
+      expect(result.toolsCalled()).toEqual(["add", "subtract"]);
+      expect(result.getToolCalls()).toHaveLength(2);
+      expect(result.getToolCalls()[0]).toEqual({
+        toolName: "add",
+        arguments: { a: 1, b: 2 },
+      });
+      expect(result.getToolCalls()[1]).toEqual({
+        toolName: "subtract",
+        arguments: { a: 5, b: 3 },
+      });
+    });
+
+    it("should return error result on LLM failure", async () => {
+      mockGenerateText.mockRejectedValueOnce(
+        new Error("API rate limit exceeded")
+      );
+
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      const result = await agent.query("Test query");
+
+      expect(result).toBeInstanceOf(QueryResult);
+      expect(result.hasError()).toBe(true);
+      expect(result.getError()).toBe("API rate limit exceeded");
+      expect(result.text).toBe("");
+      expect(result.toolsCalled()).toEqual([]);
+      // Verify latency is tracked even on error
+      expect(result.e2eLatencyMs()).toBeGreaterThanOrEqual(0);
+    });
+
+    it("should provide latency breakdown with getLatency()", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Done",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      const result = await agent.query("Test");
+
+      const latency = result.getLatency();
+      expect(latency).toHaveProperty("e2eMs");
+      expect(latency).toHaveProperty("llmMs");
+      expect(latency).toHaveProperty("mcpMs");
+      expect(latency.e2eMs).toBeGreaterThanOrEqual(0);
+      expect(latency.llmMs).toBeGreaterThanOrEqual(0);
+      expect(latency.mcpMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("should handle non-Error exceptions", async () => {
+      mockGenerateText.mockRejectedValueOnce("String error");
+
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      const result = await agent.query("Test query");
+
+      expect(result.hasError()).toBe(true);
+      expect(result.getError()).toBe("String error");
+    });
+
+    it("should call createModelFromString with correct options", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: {},
+        llm: "anthropic/claude-3-5-sonnet-20241022",
+        apiKey: "my-api-key",
+      });
+
+      await agent.query("Test");
+
+      expect(mockCreateModel).toHaveBeenCalledWith(
+        "anthropic/claude-3-5-sonnet-20241022",
+        expect.objectContaining({
+          apiKey: "my-api-key",
+        })
+      );
+    });
+
+    it("should pass system prompt and temperature to generateText", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        llm: "openai/gpt-4o",
+        apiKey: "test-key",
+        systemPrompt: "You are a math tutor.",
+        temperature: 0.3,
+        maxSteps: 15,
+      });
+
+      await agent.query("What is 2+2?");
+
+      expect(mockGenerateText).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: "You are a math tutor.",
+          prompt: "What is 2+2?",
+          temperature: 0.3,
+          stopWhen: { type: "stepCount", value: 15 },
+        })
+      );
+
+      // Verify tools are passed (instrumented for latency tracking)
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.tools).toBeDefined();
+      expect(Object.keys(callArgs.tools)).toEqual(Object.keys(mockToolSet));
+
+      // Verify onStepFinish callback is provided for latency tracking
+      expect(callArgs.onStepFinish).toBeInstanceOf(Function);
+    });
+
+    it("should handle empty usage data", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Response",
+        steps: [],
+        // No usage data
+      } as any);
+
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      const result = await agent.query("Test");
+
+      expect(result.inputTokens()).toBe(0);
+      expect(result.outputTokens()).toBe(0);
+      expect(result.totalTokens()).toBe(0);
+    });
+  });
+
+  describe("toolsCalled()", () => {
+    it("should return empty array if no query has been run", () => {
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      expect(agent.toolsCalled()).toEqual([]);
+    });
+
+    it("should return tools from last query", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Done",
+        steps: [{ toolCalls: [{ toolName: "add", args: {} }] }],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        llm: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.query("Add numbers");
+
+      expect(agent.toolsCalled()).toEqual(["add"]);
+    });
+
+    it("should update with each query", async () => {
+      mockGenerateText
+        .mockResolvedValueOnce({
+          text: "Added",
+          steps: [{ toolCalls: [{ toolName: "add", args: {} }] }],
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        } as any)
+        .mockResolvedValueOnce({
+          text: "Subtracted",
+          steps: [{ toolCalls: [{ toolName: "subtract", args: {} }] }],
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        llm: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.query("Add");
+      expect(agent.toolsCalled()).toEqual(["add"]);
+
+      await agent.query("Subtract");
+      expect(agent.toolsCalled()).toEqual(["subtract"]);
+    });
+  });
+
+  describe("withOptions()", () => {
+    it("should create a new agent with merged options", () => {
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        llm: "openai/gpt-4o",
+        apiKey: "original-key",
+        systemPrompt: "Original prompt",
+        temperature: 0.7,
+        maxSteps: 10,
+      });
+
+      const newAgent = agent.withOptions({
+        llm: "anthropic/claude-3-5-sonnet-20241022",
+        temperature: 0.3,
+      });
+
+      // New agent has updated values
+      expect(newAgent.getLlm()).toBe("anthropic/claude-3-5-sonnet-20241022");
+      expect(newAgent.getTemperature()).toBe(0.3);
+
+      // New agent inherits unchanged values
+      expect(newAgent.getTools()).toBe(mockToolSet);
+      expect(newAgent.getApiKey()).toBe("original-key");
+      expect(newAgent.getSystemPrompt()).toBe("Original prompt");
+      expect(newAgent.getMaxSteps()).toBe(10);
+
+      // Original agent is unchanged
+      expect(agent.getLlm()).toBe("openai/gpt-4o");
+      expect(agent.getTemperature()).toBe(0.7);
+    });
+
+    it("should create independent instances", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Original",
+        steps: [{ toolCalls: [{ toolName: "add", args: {} }] }],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        llm: "openai/gpt-4o",
+        apiKey: "key",
+      });
+
+      const newAgent = agent.withOptions({ temperature: 0.5 });
+
+      await agent.query("Test");
+
+      // Original agent has the result
+      expect(agent.toolsCalled()).toEqual(["add"]);
+      // New agent does not
+      expect(newAgent.toolsCalled()).toEqual([]);
+    });
+  });
+
+  describe("getLastResult()", () => {
+    it("should return undefined if no query has been run", () => {
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      expect(agent.getLastResult()).toBeUndefined();
+    });
+
+    it("should return the last query result", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "The answer",
+        steps: [],
+        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: {},
+        llm: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      const queryResult = await agent.query("Question");
+      const lastResult = agent.getLastResult();
+
+      expect(lastResult).toBe(queryResult);
+      expect(lastResult?.text).toBe("The answer");
     });
   });
 });
