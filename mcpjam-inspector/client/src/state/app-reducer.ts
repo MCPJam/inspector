@@ -348,16 +348,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const server = state.servers[oldName];
       if (!server || oldName === newName) return state;
 
-      const { [oldName]: _, ...restServers } = state.servers;
       const renamedServer = { ...server, name: newName };
+      const orderedServers = Object.entries(state.servers).map(([name, srv]) =>
+        name === oldName ? [newName, renamedServer] : [name, srv],
+      );
+      const newServers = Object.fromEntries(orderedServers);
 
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
-      const { [oldName]: __, ...restWorkspaceServers } =
-        activeWorkspace.servers;
+      const orderedWorkspaceServers = Object.entries(
+        activeWorkspace.servers,
+      ).map(([name, srv]) =>
+        name === oldName ? [newName, renamedServer] : [name, srv],
+      );
+      const newWorkspaceServers = Object.fromEntries(orderedWorkspaceServers);
 
       return {
         ...state,
-        servers: { ...restServers, [newName]: renamedServer },
+        servers: newServers,
         selectedServer:
           state.selectedServer === oldName ? newName : state.selectedServer,
         selectedMultipleServers: state.selectedMultipleServers.map((n) =>
@@ -367,7 +374,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.workspaces,
           [state.activeWorkspaceId]: {
             ...activeWorkspace,
-            servers: { ...restWorkspaceServers, [newName]: renamedServer },
+            servers: newWorkspaceServers,
             updatedAt: new Date(),
           },
         },

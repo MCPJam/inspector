@@ -530,6 +530,15 @@ export function useAppState() {
         return { success: false, error: "No active workspace selected" };
       }
 
+      const replaceKeyPreserveOrder = (
+        serversMap: Record<string, ServerWithName>,
+      ) =>
+        Object.fromEntries(
+          Object.entries(serversMap).map(([name, srv]) =>
+            name === oldName ? [newName, serverEntry] : [name, srv],
+          ),
+        );
+
       // Authenticated path: update Convex and remove the old key
       if (!useLocalFallback && isAuthenticated) {
         const currentWorkspace =
@@ -538,8 +547,9 @@ export function useAppState() {
           return { success: false, error: "Workspace not found" };
         }
 
-        const { [oldName]: _, ...restServers } = currentWorkspace.servers;
-        const updatedServers = { ...restServers, [newName]: serverEntry };
+        const updatedServers = replaceKeyPreserveOrder(
+          currentWorkspace.servers,
+        );
 
         try {
           await convexUpdateWorkspace({
@@ -564,11 +574,11 @@ export function useAppState() {
       if (!activeWorkspace) {
         return { success: false, error: "Workspace not found" };
       }
-      const { [oldName]: _, ...restServers } = activeWorkspace.servers;
+      const updatedServers = replaceKeyPreserveOrder(activeWorkspace.servers);
       dispatch({
         type: "UPDATE_WORKSPACE",
         workspaceId: appState.activeWorkspaceId,
-        updates: { servers: { ...restServers, [newName]: serverEntry } },
+        updates: { servers: updatedServers },
       });
       return { success: true };
     },
@@ -1693,6 +1703,10 @@ export function useAppState() {
       // When name changes, rename the server in place and reconnect
       if (nameChanged) {
         const mcpConfig = toMCPConfig(formData);
+        const wasConnected =
+          originalServer.connectionStatus === "connected" ||
+          originalServer.connectionStatus === "connecting";
+
         // Ensure runtime state knows about this server so selection updates work
         if (!appState.servers[originalServerName]) {
           dispatch({
@@ -1702,12 +1716,19 @@ export function useAppState() {
           });
         }
 
+        // Keep runtime state config in sync before rename
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: originalServerName,
+          server: { ...originalServer, config: mcpConfig },
+        });
+
         // Update workspace server mapping (local or Convex) before reconnecting
         const renamedServer: ServerWithName = {
           ...originalServer,
           name: formData.name,
           config: mcpConfig,
-          connectionStatus: "disconnected",
+          connectionStatus: originalServer.connectionStatus,
           retryCount: originalServer.retryCount ?? 0,
           lastConnectionTime: originalServer.lastConnectionTime || new Date(),
           enabled: originalServer.enabled ?? true,
@@ -1729,44 +1750,59 @@ export function useAppState() {
           oldName: originalServerName,
           newName: formData.name,
         });
-        // Mark as connecting
-        dispatch({
-          type: "CONNECT_REQUEST",
-          name: formData.name,
-          config: mcpConfig,
-        });
-        // Disconnect from backend with old name
-        try {
-          await deleteServer(originalServerName);
-        } catch (error) {
-          // Continue even if backend disconnect fails
-        }
-        // Connect to backend with new name
-        try {
-          const result = await testConnection(mcpConfig, formData.name);
-          if (result.success) {
-            dispatch({
-              type: "CONNECT_SUCCESS",
-              name: formData.name,
-              config: mcpConfig,
-            });
-            await fetchAndStoreInitInfo(formData.name);
-            toast.success("Server renamed and reconnected");
-          } else {
+        // If previously connected, reconnect under the new name
+        if (wasConnected) {
+          // Mark as connecting
+          dispatch({
+            type: "CONNECT_REQUEST",
+            name: formData.name,
+            config: mcpConfig,
+          });
+          // Disconnect from backend with old name
+          try {
+            await deleteServer(originalServerName);
+          } catch (error) {
+            // Continue even if backend disconnect fails
+          }
+          // Connect to backend with new name
+          try {
+            const result = await testConnection(mcpConfig, formData.name);
+            if (result.success) {
+              dispatch({
+                type: "CONNECT_SUCCESS",
+                name: formData.name,
+                config: mcpConfig,
+              });
+              await fetchAndStoreInitInfo(formData.name);
+              toast.success("Server renamed and reconnected");
+            } else {
+              dispatch({
+                type: "CONNECT_FAILURE",
+                name: formData.name,
+                error: result.error || "Connection failed",
+              });
+              toast.error(result.error || "Failed to reconnect after rename");
+            }
+          } catch (error) {
             dispatch({
               type: "CONNECT_FAILURE",
               name: formData.name,
-              error: result.error || "Connection failed",
+              error:
+                error instanceof Error ? error.message : "Connection failed",
             });
-            toast.error(result.error || "Failed to reconnect after rename");
+            toast.error("Failed to reconnect after rename");
           }
-        } catch (error) {
+        } else {
+          // Preserve disconnected/failed state without forcing a new connection
           dispatch({
-            type: "CONNECT_FAILURE",
+            type: "UPSERT_SERVER",
             name: formData.name,
-            error: error instanceof Error ? error.message : "Connection failed",
+            server: {
+              ...renamedServer,
+              connectionStatus: originalServer.connectionStatus,
+            },
           });
-          toast.error("Failed to reconnect after rename");
+          toast.success("Server renamed");
         }
       } else {
         await handleDisconnect(originalServerName);
