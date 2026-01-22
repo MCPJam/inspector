@@ -594,6 +594,28 @@ export function useAppState() {
     ],
   );
 
+  // Move per-server localStorage entries to the new server name
+  const migrateLocalStorageForRename = useCallback(
+    (oldName: string, newName: string) => {
+      const moveKey = (suffix: string) => {
+        const oldKey = `mcp-${suffix}-${oldName}`;
+        const newKey = `mcp-${suffix}-${newName}`;
+        const value = localStorage.getItem(oldKey);
+        if (value !== null) {
+          localStorage.setItem(newKey, value);
+          localStorage.removeItem(oldKey);
+        }
+      };
+
+      moveKey("tokens");
+      moveKey("env");
+      moveKey("oauth-config");
+      moveKey("client");
+      moveKey("serverUrl");
+    },
+    [],
+  );
+
   // Helper to fetch and store initialization info
   const fetchAndStoreInitInfo = useCallback(async (serverName: string) => {
     try {
@@ -1743,6 +1765,7 @@ export function useAppState() {
           toast.error(renameResult.error || "Failed to rename server");
           return;
         }
+        migrateLocalStorageForRename(originalServerName, formData.name);
 
         // Rename the server entry in state (preserves all server data)
         dispatch({
@@ -1815,6 +1838,7 @@ export function useAppState() {
       handleDisconnect,
       handleConnect,
       renameServerInWorkspace,
+      migrateLocalStorageForRename,
     ],
   );
 
