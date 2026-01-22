@@ -166,9 +166,9 @@ export class TestAgent {
 
       // Use totalUsage for multi-step agents (aggregates tokens across all steps)
       // Fall back to usage (final step only) for single-step queries
-      const usage: LanguageModelUsage = result.totalUsage ?? result.usage;
-      const inputTokens = usage.inputTokens ?? 0;
-      const outputTokens = usage.outputTokens ?? 0;
+      const usage = result.totalUsage ?? result.usage;
+      const inputTokens = usage?.inputTokens ?? 0;
+      const outputTokens = usage?.outputTokens ?? 0;
 
       this.lastResult = QueryResult.from({
         text: result.text,
