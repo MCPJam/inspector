@@ -38,6 +38,8 @@ export type {
 
 // Tool and task types
 export type {
+  Tool,
+  AiSdkTools,
   ExecuteToolArguments,
   TaskOptions,
   ClientCapabilityOptions,
@@ -67,9 +69,6 @@ export {
   type ConvertedToolSet,
   type CallToolExecutor,
 } from "./mcp-client-manager/index.js";
-
-// Re-export ToolSet from AI SDK for convenience
-export type { ToolSet as AiSdkTool } from "ai";
 
 // Utility functions
 export {

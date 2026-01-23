@@ -64,7 +64,7 @@ export type {
 } from "./types.js";
 
 // Types - Executable tools
-export type { MCPTool, MCPToolsResult } from "./types.js";
+export type { Tool, AiSdkTools } from "./types.js";
 
 // Tool converters
 export {

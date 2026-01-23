@@ -20,7 +20,6 @@ import type {
   ServerCapabilities,
   CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { ToolSet } from "ai";
 
 import type {
   MCPClientManagerConfig,
@@ -48,7 +47,8 @@ import type {
   ElicitResult,
   ProgressHandler,
   RpcLogger,
-  MCPToolsResult,
+  Tool,
+  AiSdkTools,
 } from "./types.js";
 
 import {
@@ -370,7 +370,7 @@ export class MCPClientManager {
    * Returns tools with execute functions pre-wired to call this manager.
    *
    * @param serverIds - Server IDs to get tools from (or all if omitted)
-   * @returns MCPToolsResult with executable tools
+   * @returns Array of executable tools
    *
    * @example
    * ```typescript
@@ -378,7 +378,7 @@ export class MCPClientManager {
    * const agent = new TestAgent({ tools, model: "openai/gpt-4o", apiKey });
    * ```
    */
-  async getTools(serverIds?: string[]): Promise<MCPToolsResult> {
+  async getTools(serverIds?: string[]): Promise<Tool[]> {
     const targetIds = serverIds?.length ? serverIds : this.listServers();
 
     const toolLists = await Promise.all(
@@ -390,15 +390,21 @@ export class MCPClientManager {
         return result.tools.map((tool) => ({
           ...tool,
           _meta: { ...tool._meta, _serverId: serverId },
-          execute: async (args: Record<string, unknown>): Promise<CallToolResult> => {
+          execute: async (
+            args: Record<string, unknown>
+          ): Promise<CallToolResult> => {
             // When called without taskOptions, executeTool always returns CallToolResult
-            return this.executeTool(serverId, tool.name, args) as Promise<CallToolResult>;
+            return this.executeTool(
+              serverId,
+              tool.name,
+              args
+            ) as Promise<CallToolResult>;
           },
         }));
       })
     );
 
-    return { tools: toolLists.flat() };
+    return toolLists.flat();
   }
 
   /**
@@ -414,12 +420,12 @@ export class MCPClientManager {
    *
    * @param serverIds - Server IDs to get tools from (or all if omitted)
    * @param options - Schema options
-   * @returns ToolSet compatible with Vercel AI SDK
+   * @returns AiSdkTools compatible with Vercel AI SDK's generateText()
    */
   async getToolsForAiSdk(
     serverIds?: string[] | string,
     options: { schemas?: ToolSchemaOverrides | "automatic" } = {}
-  ): Promise<ToolSet> {
+  ): Promise<AiSdkTools> {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
@@ -467,7 +473,7 @@ export class MCPClientManager {
           return tools;
         } catch (error) {
           if (isMethodUnavailableError(error, "tools/list")) {
-            return {} as ToolSet;
+            return {} as AiSdkTools;
           }
           throw error;
         }
@@ -475,7 +481,7 @@ export class MCPClientManager {
     );
 
     // Flatten (last-in wins for name collisions)
-    const flattened: ToolSet = {};
+    const flattened: AiSdkTools = {};
     for (const toolset of perServerTools) {
       Object.assign(flattened, toolset);
     }
