@@ -196,7 +196,7 @@ export class MCPClientManager {
   /**
    * Gets the configuration for a server.
    */
-  getServerConfig(serverId: string): MCPServerConfig | undefined {
+  getServerConfigs(serverId: string): MCPServerConfig | undefined {
     return this.clientStates.get(serverId)?.config;
   }
 

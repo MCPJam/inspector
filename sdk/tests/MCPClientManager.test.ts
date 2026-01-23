@@ -248,7 +248,7 @@ describe("MCPClientManager", () => {
         timeout: 5000,
       });
 
-      const config = manager.getServerConfig("configured");
+      const config = manager.getServerConfigs("configured");
       expect(config).toBeDefined();
       expect((config as any).command).toBe("npx");
       expect((config as any).timeout).toBe(5000);
@@ -313,7 +313,7 @@ describe("MCPClientManager", () => {
     });
 
     it("should return undefined for unknown server config", () => {
-      expect(manager.getServerConfig("unknown")).toBeUndefined();
+      expect(manager.getServerConfigs("unknown")).toBeUndefined();
     });
 
     it("should throw when connecting to already connected server", async () => {
