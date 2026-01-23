@@ -438,19 +438,7 @@ export class MCPClientManager {
           await this.ensureConnected(id);
           const listToolsResult = await this.listTools(id);
 
-          // Filter out app-only tools (visibility: ["app"]) per SEP-1865
-          const filteredTools = {
-            ...listToolsResult,
-            tools: listToolsResult.tools.filter((tool) => {
-              const visibility = (tool._meta?.ui as any)?.visibility as
-                | Array<"model" | "app">
-                | undefined;
-              if (!visibility) return true;
-              return !(visibility.length === 1 && visibility[0] === "app");
-            }),
-          };
-
-          const tools = await convertMCPToolsToVercelTools(filteredTools, {
+          const tools = await convertMCPToolsToVercelTools(listToolsResult, {
             schemas: options.schemas,
             callTool: async ({ name, args, options: callOptions }) => {
               const requestOptions = callOptions?.abortSignal

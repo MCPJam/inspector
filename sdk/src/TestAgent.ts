@@ -48,6 +48,14 @@ function isToolArray(tools: Tool[] | AiSdkTool): tools is Tool[] {
 function convertToToolSet(tools: Tool[]): ToolSet {
   const toolSet: ToolSet = {};
   for (const tool of tools) {
+    // Filter out app-only tools (visibility: ["app"]) per SEP-1865
+    const visibility = (tool._meta?.ui as any)?.visibility as
+      | Array<"model" | "app">
+      | undefined;
+    if (visibility && visibility.length === 1 && visibility[0] === "app") {
+      continue;
+    }
+
     toolSet[tool.name] = dynamicTool({
       description: tool.description,
       inputSchema: jsonSchema(ensureJsonSchemaObject(tool.inputSchema)),

@@ -1,11 +1,17 @@
 import { TestAgent } from "../src/TestAgent";
 import { PromptResult } from "../src/PromptResult";
 import type { ToolSet } from "ai";
+import type { Tool } from "../src/mcp-client-manager/types";
 
 // Mock the ai module
 jest.mock("ai", () => ({
   generateText: jest.fn(),
   stepCountIs: jest.fn((n: number) => ({ type: "stepCount", value: n })),
+  dynamicTool: jest.fn((config: any) => ({
+    ...config,
+    type: "dynamic",
+  })),
+  jsonSchema: jest.fn((schema: any) => schema),
 }));
 
 // Mock the model factory
@@ -514,6 +520,125 @@ describe("TestAgent", () => {
 
       expect(lastResult).toBe(promptResult);
       expect(lastResult?.text).toBe("The answer");
+    });
+  });
+
+  describe("app-only tool filtering", () => {
+    // Helper to create a mock Tool with visibility
+    const createMockTool = (
+      name: string,
+      visibility?: Array<"model" | "app">
+    ): Tool => ({
+      name,
+      description: `Mock ${name} tool`,
+      inputSchema: { type: "object", properties: {} },
+      execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+      _meta: visibility
+        ? { _serverId: "test", ui: { visibility } }
+        : { _serverId: "test" },
+    });
+
+    it("should filter out app-only tools (visibility: ['app'])", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [
+        createMockTool("modelTool", ["model"]),
+        createMockTool("appOnlyTool", ["app"]),
+        createMockTool("noVisibilityTool"),
+      ];
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test");
+
+      // Verify the tools passed to generateText
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      const toolNames = Object.keys(callArgs.tools);
+
+      expect(toolNames).toContain("modelTool");
+      expect(toolNames).not.toContain("appOnlyTool");
+      expect(toolNames).toContain("noVisibilityTool");
+    });
+
+    it("should include tools with visibility: ['model', 'app']", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [
+        createMockTool("bothVisibilityTool", ["model", "app"]),
+        createMockTool("appOnlyTool", ["app"]),
+      ];
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      const toolNames = Object.keys(callArgs.tools);
+
+      expect(toolNames).toContain("bothVisibilityTool");
+      expect(toolNames).not.toContain("appOnlyTool");
+    });
+
+    it("should include tools with visibility: ['model']", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [createMockTool("modelOnlyTool", ["model"])];
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      const toolNames = Object.keys(callArgs.tools);
+
+      expect(toolNames).toContain("modelOnlyTool");
+    });
+
+    it("should include tools with no _meta.ui.visibility", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [createMockTool("noVisibilityTool")];
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      const toolNames = Object.keys(callArgs.tools);
+
+      expect(toolNames).toContain("noVisibilityTool");
     });
   });
 });
