@@ -63,6 +63,9 @@ export type {
   ListToolsResult,
 } from "./types.js";
 
+// Types - Executable tools
+export type { MCPTool, MCPToolsResult } from "./types.js";
+
 // Tool converters
 export {
   convertMCPToolsToVercelTools,

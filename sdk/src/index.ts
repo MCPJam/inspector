@@ -68,6 +68,9 @@ export {
   type CallToolExecutor,
 } from "./mcp-client-manager/index.js";
 
+// Re-export ToolSet from AI SDK for convenience
+export type { ToolSet as AiSdkTool } from "ai";
+
 // Utility functions
 export {
   buildRequestInit,

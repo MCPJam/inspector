@@ -18,6 +18,7 @@ import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.j
 import type {
   LoggingLevel,
   ServerCapabilities,
+  CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolSet } from "ai";
 
@@ -47,6 +48,7 @@ import type {
   ElicitResult,
   ProgressHandler,
   RpcLogger,
+  MCPToolsResult,
 } from "./types.js";
 
 import {
@@ -365,19 +367,38 @@ export class MCPClientManager {
 
   /**
    * Gets tools from multiple servers (or all servers if none specified).
+   * Returns tools with execute functions pre-wired to call this manager.
+   *
+   * @param serverIds - Server IDs to get tools from (or all if omitted)
+   * @returns MCPToolsResult with executable tools
+   *
+   * @example
+   * ```typescript
+   * const tools = await manager.getTools(["asana"]);
+   * const agent = new TestAgent({ tools, model: "openai/gpt-4o", apiKey });
+   * ```
    */
-  async getTools(serverIds?: string[]): Promise<ListToolsResult> {
+  async getTools(serverIds?: string[]): Promise<MCPToolsResult> {
     const targetIds = serverIds?.length ? serverIds : this.listServers();
 
     const toolLists = await Promise.all(
       targetIds.map(async (serverId) => {
         await this.ensureConnected(serverId);
         const result = await this.listTools(serverId);
-        return result.tools;
+
+        // Attach execute function to each tool
+        return result.tools.map((tool) => ({
+          ...tool,
+          _meta: { ...tool._meta, _serverId: serverId },
+          execute: async (args: Record<string, unknown>): Promise<CallToolResult> => {
+            // When called without taskOptions, executeTool always returns CallToolResult
+            return this.executeTool(serverId, tool.name, args) as Promise<CallToolResult>;
+          },
+        }));
       })
     );
 
-    return { tools: toolLists.flat() } as ListToolsResult;
+    return { tools: toolLists.flat() };
   }
 
   /**

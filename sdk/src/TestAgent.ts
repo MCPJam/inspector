@@ -2,20 +2,23 @@
  * TestAgent - Runs LLM prompts with tool calling for evals
  */
 
-import { generateText, stepCountIs } from "ai";
+import { generateText, stepCountIs, dynamicTool, jsonSchema } from "ai";
 import type { ToolSet, CoreMessage, CoreUserMessage } from "ai";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createModelFromString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider } from "./types.js";
+import type { MCPToolsResult } from "./mcp-client-manager/types.js";
+import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
 
 /**
  * Configuration for creating a TestAgent
  */
 export interface TestAgentConfig {
-  /** Tools to provide to the LLM (AI SDK ToolSet format from manager.getToolsForAiSdk()) */
-  tools: ToolSet;
+  /** Tools to provide to the LLM (MCPToolsResult from manager.getTools() or AI SDK ToolSet) */
+  tools: MCPToolsResult | ToolSet;
   /** LLM provider and model string (e.g., "openai/gpt-4o", "anthropic/claude-3-5-sonnet-20241022") */
   model: string;
   /** API key for the LLM provider */
@@ -30,6 +33,39 @@ export interface TestAgentConfig {
   customProviders?:
     | Map<string, CustomProvider>
     | Record<string, CustomProvider>;
+}
+
+/**
+ * Type guard to check if tools is MCPToolsResult
+ */
+function isMCPToolsResult(
+  tools: MCPToolsResult | ToolSet
+): tools is MCPToolsResult {
+  return (
+    tools !== null &&
+    typeof tools === "object" &&
+    "tools" in tools &&
+    Array.isArray((tools as MCPToolsResult).tools)
+  );
+}
+
+/**
+ * Converts MCPToolsResult to AI SDK ToolSet format
+ */
+function convertToToolSet(mcpTools: MCPToolsResult): ToolSet {
+  const toolSet: ToolSet = {};
+  for (const tool of mcpTools.tools) {
+    toolSet[tool.name] = dynamicTool({
+      description: tool.description,
+      inputSchema: jsonSchema(ensureJsonSchemaObject(tool.inputSchema)),
+      execute: async (args, options) => {
+        options?.abortSignal?.throwIfAborted?.();
+        const result = await tool.execute(args as Record<string, unknown>);
+        return CallToolResultSchema.parse(result);
+      },
+    });
+  }
+  return toolSet;
 }
 
 /**
@@ -76,7 +112,10 @@ export class TestAgent {
    * @param config - Agent configuration
    */
   constructor(config: TestAgentConfig) {
-    this.tools = config.tools;
+    // Convert MCPToolsResult to ToolSet if needed
+    this.tools = isMCPToolsResult(config.tools)
+      ? convertToToolSet(config.tools)
+      : config.tools;
     this.model = config.model;
     this.apiKey = config.apiKey;
     this.systemPrompt = config.systemPrompt ?? "You are a helpful assistant.";

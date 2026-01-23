@@ -11,7 +11,9 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
   ElicitRequest,
   ElicitResult,
+  CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
+import type { JSONSchema7 } from "json-schema";
 
 // Re-export ElicitResult for convenience
 export type { ElicitResult };
@@ -318,3 +320,29 @@ export type MCPResourceTemplateListResult = Awaited<
 export type MCPResourceTemplate =
   MCPResourceTemplateListResult["resourceTemplates"][number];
 export type MCPServerSummary = ServerSummary;
+
+// ============================================================================
+// Executable Tool Types
+// ============================================================================
+
+/**
+ * An MCP tool with an execute function pre-wired to call the manager
+ */
+export interface MCPTool {
+  name: string;
+  description?: string;
+  inputSchema?: JSONSchema7;
+  /** Execute the tool with the given arguments */
+  execute: (args: Record<string, unknown>) => Promise<CallToolResult>;
+  _meta?: {
+    _serverId: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Result from getTools() containing executable tools
+ */
+export interface MCPToolsResult {
+  tools: MCPTool[];
+}
