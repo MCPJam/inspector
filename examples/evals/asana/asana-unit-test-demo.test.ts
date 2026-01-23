@@ -4,7 +4,7 @@ describe("test oauth token handling", () => {
   test("valid oauth token successfully connects to server", async () => {
     const clientManager = new MCPClientManager();
     await clientManager.connectToServer("asana", {
-      url: new URL("https://mcp.asana.com/sse"),
+      url: "https://mcp.asana.com/sse",
       requestInit: {
         headers: {
           Authorization: `Bearer ${process.env.ASANA_TOKEN}`,
@@ -17,7 +17,7 @@ describe("test oauth token handling", () => {
 
   test("invalid oauth token fails to connect to server", async () => {
     const config = {
-      url: new URL("https://mcp.asana.com/sse"),
+      url: "https://mcp.asana.com/sse",
       requestInit: {
         headers: {
           Authorization: `Bearer abcxyz`,
@@ -35,7 +35,7 @@ describe("tools", () => {
   let clientManager: MCPClientManager;
 
   const getServerConfig = () => ({
-    url: new URL("https://mcp.asana.com/sse"),
+    url: "https://mcp.asana.com/sse",
     requestInit: {
       headers: {
         Authorization: `Bearer ${process.env.ASANA_TOKEN}`,
@@ -114,11 +114,15 @@ describe("tools", () => {
   test("asana_list_workspaces runs successfully", async () => {
     const result = await clientManager.executeTool("asana", "asana_list_workspaces", {});
 
-    expect(result).toHaveProperty("content");
-    expect(Array.isArray(result.content)).toBe(true);
-    expect(result.content.length).toBeGreaterThan(0);
+    expect("content" in result).toBe(true);
+    if (!("content" in result)) {
+      throw new Error("Expected result to have content property");
+    }
+    const content = (result as { content: Array<{ type: string; text: string }> }).content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content.length).toBeGreaterThan(0);
 
-    const firstContent = result.content[0];
+    const firstContent = content[0];
     expect(firstContent).toHaveProperty("type");
     expect(firstContent.type).toBe("text");
     expect(firstContent).toHaveProperty("text");
@@ -138,11 +142,15 @@ describe("tools", () => {
     const result = await clientManager.executeTool("asana", "asana_get_user", {
       user_id: "me",
     });
-    expect(result).toHaveProperty("content");
-    expect(Array.isArray(result.content)).toBe(true);
-    expect(result.content.length).toBeGreaterThan(0);
+    expect("content" in result).toBe(true);
+    if (!("content" in result)) {
+      throw new Error("Expected result to have content property");
+    }
+    const content = (result as { content: Array<{ type: string; text: string }> }).content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content.length).toBeGreaterThan(0);
 
-    const firstContent = result.content[0];
+    const firstContent = content[0];
     expect(firstContent).toHaveProperty("type");
     expect(firstContent.type).toBe("text");
     expect(firstContent).toHaveProperty("text");
