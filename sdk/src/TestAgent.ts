@@ -56,7 +56,7 @@ function convertToToolSet(tools: Tool[]): ToolSet {
       continue;
     }
 
-    toolSet[tool.name] = dynamicTool({
+    const converted = dynamicTool({
       description: tool.description,
       inputSchema: jsonSchema(ensureJsonSchemaObject(tool.inputSchema)),
       execute: async (args, options) => {
@@ -65,6 +65,13 @@ function convertToToolSet(tools: Tool[]): ToolSet {
         return CallToolResultSchema.parse(result);
       },
     });
+
+    // Preserve _serverId like getToolsForAiSdk() does
+    if (tool._meta?._serverId) {
+      (converted as any)._serverId = tool._meta._serverId;
+    }
+
+    toolSet[tool.name] = converted;
   }
   return toolSet;
 }
