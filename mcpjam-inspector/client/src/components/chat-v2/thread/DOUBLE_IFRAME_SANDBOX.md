@@ -9,6 +9,7 @@ The core security requirement from SEP-1865:
 > **"If the Host is a web page, it MUST wrap the Guest UI and communicate with it through an intermediate Sandbox proxy. The Host and the Sandbox MUST have different origins."**
 
 A single iframe isn't enough because:
+
 1. Same-origin iframes can access parent `window` properties
 2. `sandbox` attribute alone doesn't provide origin isolation
 3. CSP injection requires control over the loading mechanism
@@ -94,13 +95,13 @@ const [sandboxProxyUrl] = useState(() => {
 
   let sandboxHost: string;
   if (currentHost === "localhost") {
-    sandboxHost = "127.0.0.1";      // localhost → 127.0.0.1
+    sandboxHost = "127.0.0.1"; // localhost → 127.0.0.1
   } else if (currentHost === "127.0.0.1") {
-    sandboxHost = "localhost";       // 127.0.0.1 → localhost
+    sandboxHost = "localhost"; // 127.0.0.1 → localhost
   } else {
     // Production would need a sandbox subdomain
     throw new Error(
-      "[SandboxedIframe] SEP-1865 violation: Cannot use same-origin sandbox."
+      "[SandboxedIframe] SEP-1865 violation: Cannot use same-origin sandbox.",
     );
   }
 
@@ -112,6 +113,7 @@ const [sandboxProxyUrl] = useState(() => {
 **Why this works:** `localhost` and `127.0.0.1` resolve to the same IP but are treated as **different origins** by browsers. This gives us cross-origin isolation without needing separate infrastructure.
 
 **Example:**
+
 - Host: `http://localhost:5173`
 - Sandbox: `http://127.0.0.1:5173` ← Different origin!
 
@@ -126,7 +128,7 @@ The component renders an iframe pointing to the sandbox proxy:
   ref={outerRef}
   src={sandboxProxyUrl}
   sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-  allow={outerAllowAttribute}  // "camera *; microphone *; geolocation *; clipboard-write *"
+  allow={outerAllowAttribute} // "camera *; microphone *; geolocation *; clipboard-write *"
   title={title}
   className={className}
   style={style}
@@ -143,6 +145,7 @@ The component renders an iframe pointing to the sandbox proxy:
 | `allow-popups-to-escape-sandbox` | Popups aren't sandboxed |
 
 **Permission Policy (`allow` attribute):**
+
 ```typescript
 // sandboxed-iframe.tsx:182-189
 const outerAllowAttribute = useMemo(() => {
@@ -174,11 +177,14 @@ Then it notifies the host that it's ready:
 
 ```javascript
 // sandbox-proxy.html:313-320
-window.parent.postMessage({
-  jsonrpc: "2.0",
-  method: "ui/notifications/sandbox-proxy-ready",
-  params: {},
-}, "*");
+window.parent.postMessage(
+  {
+    jsonrpc: "2.0",
+    method: "ui/notifications/sandbox-proxy-ready",
+    params: {},
+  },
+  "*",
+);
 ```
 
 ---
@@ -188,32 +194,35 @@ window.parent.postMessage({
 The host listens for the ready signal:
 
 ```typescript
-const handleMessage = useCallback((event: MessageEvent) => {
-  // Verify origin
-  if (event.origin !== sandboxProxyOrigin && sandboxProxyOrigin !== "*") {
-    return;
-  }
-  // Verify source is our iframe
-  if (event.source !== outerRef.current?.contentWindow) return;
+const handleMessage = useCallback(
+  (event: MessageEvent) => {
+    // Verify origin
+    if (event.origin !== sandboxProxyOrigin && sandboxProxyOrigin !== "*") {
+      return;
+    }
+    // Verify source is our iframe
+    if (event.source !== outerRef.current?.contentWindow) return;
 
-  const { jsonrpc, method } = event.data || {};
-  if (jsonrpc !== "2.0") return;
+    const { jsonrpc, method } = event.data || {};
+    if (jsonrpc !== "2.0") return;
 
-  // Handle sandbox proxy ready
-  if (method === "ui/notifications/sandbox-proxy-ready") {
-    setProxyReady(true);
-    onProxyReady?.();
-    return;
-  }
+    // Handle sandbox proxy ready
+    if (method === "ui/notifications/sandbox-proxy-ready") {
+      setProxyReady(true);
+      onProxyReady?.();
+      return;
+    }
 
-  // Filter out sandbox-internal messages
-  if (method?.startsWith("ui/notifications/sandbox-")) {
-    return;
-  }
+    // Filter out sandbox-internal messages
+    if (method?.startsWith("ui/notifications/sandbox-")) {
+      return;
+    }
 
-  // Forward all other messages to parent handler
-  onMessage(event);
-}, [onMessage, onProxyReady, sandboxProxyOrigin]);
+    // Forward all other messages to parent handler
+    onMessage(event);
+  },
+  [onMessage, onProxyReady, sandboxProxyOrigin],
+);
 ```
 
 ---
@@ -226,18 +235,29 @@ Once the proxy is ready, the host sends the widget HTML with CSP metadata:
 useEffect(() => {
   if (!proxyReady || !html) return;
 
-  outerRef.current?.contentWindow?.postMessage({
-    jsonrpc: "2.0",
-    method: "ui/notifications/sandbox-resource-ready",
-    params: {
-      html,           // The widget HTML string
-      sandbox,        // Sandbox attributes for inner iframe
-      csp,            // { connectDomains, resourceDomains, frameDomains, baseUriDomains }
-      permissions,    // { camera, microphone, geolocation, clipboardWrite }
-      permissive      // Skip CSP injection entirely (testing mode)
+  outerRef.current?.contentWindow?.postMessage(
+    {
+      jsonrpc: "2.0",
+      method: "ui/notifications/sandbox-resource-ready",
+      params: {
+        html, // The widget HTML string
+        sandbox, // Sandbox attributes for inner iframe
+        csp, // { connectDomains, resourceDomains, frameDomains, baseUriDomains }
+        permissions, // { camera, microphone, geolocation, clipboardWrite }
+        permissive, // Skip CSP injection entirely (testing mode)
+      },
     },
-  }, sandboxProxyOrigin);
-}, [proxyReady, html, sandbox, csp, permissions, permissive, sandboxProxyOrigin]);
+    sandboxProxyOrigin,
+  );
+}, [
+  proxyReady,
+  html,
+  sandbox,
+  csp,
+  permissions,
+  permissive,
+  sandboxProxyOrigin,
+]);
 ```
 
 ---
@@ -279,18 +299,15 @@ function buildCSP(csp) {
     .filter(Boolean);
 
   // Build directive values
-  const connectSrc = connectDomains.length > 0
-    ? connectDomains.join(" ")
-    : "'none'";
-  const resourceSrc = resourceDomains.length > 0
-    ? ["data:", "blob:", ...resourceDomains].join(" ")
-    : "data: blob:";
-  const frameSrc = frameDomains.length > 0
-    ? frameDomains.join(" ")
-    : "'none'";
-  const baseUri = baseUriDomains.length > 0
-    ? baseUriDomains.join(" ")
-    : "'none'";
+  const connectSrc =
+    connectDomains.length > 0 ? connectDomains.join(" ") : "'none'";
+  const resourceSrc =
+    resourceDomains.length > 0
+      ? ["data:", "blob:", ...resourceDomains].join(" ")
+      : "data: blob:";
+  const frameSrc = frameDomains.length > 0 ? frameDomains.join(" ") : "'none'";
+  const baseUri =
+    baseUriDomains.length > 0 ? baseUriDomains.join(" ") : "'none'";
 
   return [
     "default-src 'none'",
@@ -325,7 +342,8 @@ The CSP is injected as a `<meta>` tag, along with a violation listener:
 
 ```javascript
 function injectCSP(html, cspValue) {
-  const cspMeta = '<meta http-equiv="Content-Security-Policy" content="' + cspValue + '">';
+  const cspMeta =
+    '<meta http-equiv="Content-Security-Policy" content="' + cspValue + '">';
   const violationListener = buildViolationListenerScript();
   const injection = cspMeta + violationListener;
 
@@ -377,7 +395,8 @@ window.addEventListener("message", async (event) => {
   if (event.source === window.parent) {
     // Message from host
     if (event.data?.method === "ui/notifications/sandbox-resource-ready") {
-      const { html, sandbox, csp, permissions, permissive } = event.data.params || {};
+      const { html, sandbox, csp, permissions, permissive } =
+        event.data.params || {};
 
       // Set sandbox attributes
       if (typeof sandbox === "string") {
@@ -436,6 +455,7 @@ Host                     Sandbox Proxy                Guest UI
 ```
 
 **Key behavior:**
+
 - Messages from host → forwarded to inner iframe
 - Messages from inner iframe → forwarded to host
 - `ui/notifications/sandbox-*` messages are **not** forwarded (proxy-internal)
@@ -453,6 +473,7 @@ Guest origin:   about:srcdoc (opaque origin)
 ```
 
 The guest UI cannot:
+
 - Access `window.parent.parent` (host window)
 - Read host cookies or localStorage
 - Make same-origin requests to host APIs
@@ -461,19 +482,20 @@ The guest UI cannot:
 
 The injected CSP `<meta>` tag restricts:
 
-| Directive | Controls | Default |
-|-----------|----------|---------|
-| `connect-src` | fetch, XHR, WebSocket | `'none'` |
-| `script-src` | JavaScript sources | `'unsafe-inline'` only |
-| `style-src` | CSS sources | `'unsafe-inline'` only |
-| `img-src` | Image sources | `data:` only |
-| `font-src` | Font sources | `data:` only |
-| `frame-src` | Nested iframes | `'none'` |
-| `base-uri` | `<base>` tag | `'none'` |
+| Directive     | Controls              | Default                |
+| ------------- | --------------------- | ---------------------- |
+| `connect-src` | fetch, XHR, WebSocket | `'none'`               |
+| `script-src`  | JavaScript sources    | `'unsafe-inline'` only |
+| `style-src`   | CSS sources           | `'unsafe-inline'` only |
+| `img-src`     | Image sources         | `data:` only           |
+| `font-src`    | Font sources          | `data:` only           |
+| `frame-src`   | Nested iframes        | `'none'`               |
+| `base-uri`    | `<base>` tag          | `'none'`               |
 
 ### 3. Sandbox Attribute
 
 The `sandbox` attribute on both iframes restricts:
+
 - No top-level navigation
 - No plugins
 - No pointer lock
@@ -484,12 +506,12 @@ The `sandbox` attribute on both iframes restricts:
 
 The `allow` attribute controls:
 
-| Permission | Purpose |
-|------------|---------|
-| `camera *` | Camera access |
-| `microphone *` | Microphone access |
-| `geolocation *` | Location access |
-| `clipboard-write *` | Clipboard write |
+| Permission          | Purpose           |
+| ------------------- | ----------------- |
+| `camera *`          | Camera access     |
+| `microphone *`      | Microphone access |
+| `geolocation *`     | Location access   |
+| `clipboard-write *` | Clipboard write   |
 
 Only granted if widget declares need in `_meta.ui.permissions`.
 
@@ -505,7 +527,7 @@ MCPJam supports two CSP modes (controlled via UI Playground):
 // Uses CSP from _meta.ui.csp
 const cspValue = buildCSP({
   connectDomains: ["https://api.example.com"],
-  resourceDomains: ["https://cdn.example.com"]
+  resourceDomains: ["https://cdn.example.com"],
 });
 ```
 
@@ -569,6 +591,7 @@ Guest UI                    Sandbox Proxy               Host
 ```
 
 The `CSPDebugPanel` component (`csp-debug-panel.tsx`) shows:
+
 - Which directive was violated
 - What URI was blocked
 - Source file and line number
@@ -578,14 +601,14 @@ The `CSPDebugPanel` component (`csp-debug-panel.tsx`) shows:
 
 ## Common CSP Issues and Fixes
 
-| Issue | Symptom | Fix |
-|-------|---------|-----|
-| API calls blocked | `connect-src` violation | Add API domain to `csp.connectDomains` |
-| Scripts not loading | `script-src` violation | Add CDN to `csp.resourceDomains` |
-| Styles not loading | `style-src` violation | Add CDN to `csp.resourceDomains` |
-| Fonts not loading | `font-src` violation | Add font CDN to `csp.resourceDomains` |
-| Images not loading | `img-src` violation | Add image CDN to `csp.resourceDomains` |
-| Iframes blocked | `frame-src` violation | Add domain to `csp.frameDomains` |
+| Issue               | Symptom                 | Fix                                    |
+| ------------------- | ----------------------- | -------------------------------------- |
+| API calls blocked   | `connect-src` violation | Add API domain to `csp.connectDomains` |
+| Scripts not loading | `script-src` violation  | Add CDN to `csp.resourceDomains`       |
+| Styles not loading  | `style-src` violation   | Add CDN to `csp.resourceDomains`       |
+| Fonts not loading   | `font-src` violation    | Add font CDN to `csp.resourceDomains`  |
+| Images not loading  | `img-src` violation     | Add image CDN to `csp.resourceDomains` |
+| Iframes blocked     | `frame-src` violation   | Add domain to `csp.frameDomains`       |
 
 **Example fix in MCP server:**
 
@@ -605,11 +628,14 @@ server.registerResource({
     ui: {
       csp: {
         connectDomains: ["https://api.myservice.com"],
-        resourceDomains: ["https://cdn.jsdelivr.net", "https://fonts.googleapis.com"],
-        frameDomains: ["https://www.youtube.com"]
-      }
-    }
-  }
+        resourceDomains: [
+          "https://cdn.jsdelivr.net",
+          "https://fonts.googleapis.com",
+        ],
+        frameDomains: ["https://www.youtube.com"],
+      },
+    },
+  },
 });
 ```
 
@@ -617,14 +643,14 @@ server.registerResource({
 
 ## Key Files Reference
 
-| File | Location | Purpose |
-|------|----------|---------|
-| `SandboxedIframe` | `client/src/components/ui/sandboxed-iframe.tsx` | React component, outer iframe management |
-| `sandbox-proxy.html` | `server/routes/mcp/sandbox-proxy.html` | Proxy page, CSP injection, message relay |
-| `MCPAppsRenderer` | `client/src/components/chat-v2/thread/mcp-apps-renderer.tsx` | Orchestrates rendering, AppBridge setup |
-| `apps.ts` | `server/routes/mcp/apps.ts` | Server routes for widget storage/retrieval |
-| `CSPDebugPanel` | `client/src/components/chat-v2/thread/csp-debug-panel.tsx` | CSP violation debugging UI |
-| `widget-debug-store.ts` | `client/src/stores/widget-debug-store.ts` | Stores CSP violations and debug info |
+| File                    | Location                                                     | Purpose                                    |
+| ----------------------- | ------------------------------------------------------------ | ------------------------------------------ |
+| `SandboxedIframe`       | `client/src/components/ui/sandboxed-iframe.tsx`              | React component, outer iframe management   |
+| `sandbox-proxy.html`    | `server/routes/mcp/sandbox-proxy.html`                       | Proxy page, CSP injection, message relay   |
+| `MCPAppsRenderer`       | `client/src/components/chat-v2/thread/mcp-apps-renderer.tsx` | Orchestrates rendering, AppBridge setup    |
+| `apps.ts`               | `server/routes/mcp/apps.ts`                                  | Server routes for widget storage/retrieval |
+| `CSPDebugPanel`         | `client/src/components/chat-v2/thread/csp-debug-panel.tsx`   | CSP violation debugging UI                 |
+| `widget-debug-store.ts` | `client/src/stores/widget-debug-store.ts`                    | Stores CSP violations and debug info       |
 
 ---
 

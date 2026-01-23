@@ -97,7 +97,7 @@ import {
  *     args: ["-y", "@modelcontextprotocol/server-everything"],
  *   },
  *   myServer: {
- *     url: new URL("https://my-server.com/mcp"),
+ *     url: "https://my-server.com/mcp",
  *     accessToken: "my-token",
  *   },
  * });
@@ -225,8 +225,9 @@ export class MCPClientManager {
     if (this.isStdioConfig(config)) {
       transportType = "stdio";
     } else {
+      const url = new URL(config.url);
       transportType =
-        config.preferSSE || config.url.pathname.endsWith("/sse")
+        config.preferSSE || url.pathname.endsWith("/sse")
           ? "sse"
           : "streamable-http";
     }
@@ -1011,23 +1012,21 @@ export class MCPClientManager {
     config: HttpServerConfig,
     timeout: number
   ): Promise<Transport> {
+    const url = new URL(config.url);
     const requestInit = buildRequestInit(
       config.accessToken,
       config.requestInit
     );
-    const preferSSE = config.preferSSE ?? config.url.pathname.endsWith("/sse");
+    const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
     let streamableError: unknown;
 
     if (!preferSSE) {
-      const streamableTransport = new StreamableHTTPClientTransport(
-        config.url,
-        {
-          requestInit,
-          reconnectionOptions: config.reconnectionOptions,
-          authProvider: config.authProvider,
-          sessionId: config.sessionId,
-        }
-      );
+      const streamableTransport = new StreamableHTTPClientTransport(url, {
+        requestInit,
+        reconnectionOptions: config.reconnectionOptions,
+        authProvider: config.authProvider,
+        sessionId: config.sessionId,
+      });
 
       try {
         const logger = this.resolveRpcLogger(config);
@@ -1044,7 +1043,7 @@ export class MCPClientManager {
       }
     }
 
-    const sseTransport = new SSEClientTransport(config.url, {
+    const sseTransport = new SSEClientTransport(url, {
       requestInit,
       eventSourceInit: config.eventSourceInit,
       authProvider: config.authProvider,

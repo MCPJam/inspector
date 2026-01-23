@@ -72,7 +72,7 @@ export type StdioServerConfig = BaseServerConfig & {
  */
 export type HttpServerConfig = BaseServerConfig & {
   /** Server URL */
-  url: URL;
+  url: string;
   /**
    * Access token for Bearer authentication.
    * If provided, adds `Authorization: Bearer <accessToken>` header to requests.

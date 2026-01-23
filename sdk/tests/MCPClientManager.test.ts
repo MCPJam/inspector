@@ -82,7 +82,7 @@ describe("MCPClientManager", () => {
 
   describe("HTTP server", () => {
     let manager: MCPClientManager;
-    let serverUrl: URL;
+    let serverUrl: string;
     let stopServer: () => Promise<void>;
 
     beforeAll(async () => {
@@ -174,18 +174,16 @@ describe("MCPClientManager", () => {
 
   describe("HTTP server (streamable)", () => {
     let manager: MCPClientManager;
-    let serverUrl: URL;
-    let localhostUrl: URL;
+    let serverUrl: string;
     let stopServer: () => Promise<void>;
 
     beforeAll(async () => {
       const result = await startMockStreamableHttpServer();
       serverUrl = result.url;
-      localhostUrl = new URL(`http://localhost:${serverUrl.port}/mcp`);
       stopServer = result.stop;
       manager = new MCPClientManager();
       await manager.connectToServer("http-localhost", {
-        url: localhostUrl,
+        url: serverUrl,
       });
     });
 
@@ -335,7 +333,7 @@ describe("MCPClientManager", () => {
 
   describe("multiple servers", () => {
     let manager: MCPClientManager;
-    let serverUrl: URL;
+    let serverUrl: string;
     let stopServer: () => Promise<void>;
 
     beforeAll(async () => {
