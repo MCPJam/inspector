@@ -30,18 +30,22 @@ function createMockPromptResult(options: {
 function createMockAgent(
   promptFn: (message: string) => Promise<PromptResult>
 ): TestAgent {
-  let promptHistory: PromptResult[] = [];
-  return {
-    prompt: async (message: string) => {
-      const result = await promptFn(message);
-      promptHistory.push(result);
-      return result;
-    },
-    resetPromptHistory: () => {
-      promptHistory = [];
-    },
-    getPromptHistory: () => [...promptHistory],
-  } as TestAgent;
+  const createAgent = (): TestAgent => {
+    let promptHistory: PromptResult[] = [];
+    return {
+      prompt: async (message: string) => {
+        const result = await promptFn(message);
+        promptHistory.push(result);
+        return result;
+      },
+      resetPromptHistory: () => {
+        promptHistory = [];
+      },
+      getPromptHistory: () => [...promptHistory],
+      withOptions: () => createAgent(),
+    } as TestAgent;
+  };
+  return createAgent();
 }
 
 describe("EvalTest", () => {
@@ -525,7 +529,15 @@ describe("EvalTest", () => {
       const result = await test.run(agent, { iterations: 5 });
 
       expect(result.tokenUsage.total).toBe(500);
-      expect(result.tokenUsage.perIteration).toEqual([100, 100, 100, 100, 100]);
+      expect(result.tokenUsage.input).toBe(250);
+      expect(result.tokenUsage.output).toBe(250);
+      expect(result.tokenUsage.perIteration).toEqual([
+        { total: 100, input: 50, output: 50 },
+        { total: 100, input: 50, output: 50 },
+        { total: 100, input: 50, output: 50 },
+        { total: 100, input: 50, output: 50 },
+        { total: 100, input: 50, output: 50 },
+      ]);
     });
 
     it("should aggregate tokens from multi-turn conversations", async () => {
@@ -546,8 +558,13 @@ describe("EvalTest", () => {
       const result = await test.run(agent, { iterations: 2, concurrency: 1 });
 
       // Each iteration has 2 prompts of 50 tokens = 100 per iteration
-      expect(result.tokenUsage.perIteration).toEqual([100, 100]);
+      expect(result.tokenUsage.perIteration).toEqual([
+        { total: 100, input: 50, output: 50 },
+        { total: 100, input: 50, output: 50 },
+      ]);
       expect(result.tokenUsage.total).toBe(200);
+      expect(result.tokenUsage.input).toBe(100);
+      expect(result.tokenUsage.output).toBe(100);
     });
   });
 

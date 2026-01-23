@@ -47,7 +47,7 @@ export interface EvalTestRunOptions {
 export interface IterationResult {
   passed: boolean;
   latencies: LatencyBreakdown[];
-  tokens: number;
+  tokens: { total: number; input: number; output: number };
   error?: string;
   retryCount?: number;
   /** The prompt results from this iteration (multi-turn tests only) */
@@ -65,7 +65,9 @@ export interface EvalRunResult {
   iterationDetails: IterationResult[];
   tokenUsage: {
     total: number;
-    perIteration: number[];
+    input: number;
+    output: number;
+    perIteration: { total: number; input: number; output: number }[];
   };
   latency: {
     e2e: LatencyStats;
@@ -261,7 +263,11 @@ export class EvalTest {
 
             const passed = await validator(result);
             const latency = result.getLatency();
-            const tokens = result.totalTokens();
+            const tokens = {
+              total: result.totalTokens(),
+              input: result.inputTokens(),
+              output: result.outputTokens(),
+            };
 
             return {
               passed,
@@ -284,7 +290,7 @@ export class EvalTest {
         return {
           passed: false,
           latencies: [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
-          tokens: 0,
+          tokens: { total: 0, input: 0, output: 0 },
           error: lastError,
           retryCount: retries,
         };
@@ -341,10 +347,14 @@ export class EvalTest {
             // Get metrics from this iteration's prompt history
             const promptResults = iterationAgent.getPromptHistory();
             const latencies = promptResults.map((r) => r.getLatency());
-            const tokens = promptResults.reduce(
-              (sum, r) => sum + r.totalTokens(),
-              0
-            );
+            const tokens = {
+              total: promptResults.reduce((sum, r) => sum + r.totalTokens(), 0),
+              input: promptResults.reduce((sum, r) => sum + r.inputTokens(), 0),
+              output: promptResults.reduce(
+                (sum, r) => sum + r.outputTokens(),
+                0
+              ),
+            };
 
             return {
               passed,
@@ -368,7 +378,7 @@ export class EvalTest {
         return {
           passed: false,
           latencies: [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
-          tokens: 0,
+          tokens: { total: 0, input: 0, output: 0 },
           error: lastError,
           retryCount: retries,
         };
@@ -417,7 +427,9 @@ export class EvalTest {
       results: iterations.map((r) => r.passed),
       iterationDetails: iterations,
       tokenUsage: {
-        total: iterations.reduce((sum, r) => sum + r.tokens, 0),
+        total: iterations.reduce((sum, r) => sum + r.tokens.total, 0),
+        input: iterations.reduce((sum, r) => sum + r.tokens.input, 0),
+        output: iterations.reduce((sum, r) => sum + r.tokens.output, 0),
         perIteration: iterations.map((r) => r.tokens),
       },
       latency: {
