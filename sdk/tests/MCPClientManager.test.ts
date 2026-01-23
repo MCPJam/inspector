@@ -91,7 +91,7 @@ describe("MCPClientManager", () => {
       stopServer = result.stop;
       manager = new MCPClientManager();
       await manager.connectToServer("http-server", {
-        url: serverUrl,
+        url: serverUrl.toString(),
         preferSSE: true,
       });
     });
@@ -163,12 +163,30 @@ describe("MCPClientManager", () => {
     it("should support accessToken in config", async () => {
       // The mock server doesn't validate tokens, but we test the config is accepted
       await manager.connectToServer("http-server-auth", {
-        url: serverUrl,
+        url: serverUrl.toString(),
         accessToken: "test-bearer-token",
         preferSSE: true,
       });
 
       expect(manager.getConnectionStatus("http-server-auth")).toBe("connected");
+    }, 10000);
+
+    it("should accept url as string", async () => {
+      // Connect with string URL
+      await manager.connectToServer("http-server-string-url", {
+        url: serverUrl.toString(),
+        preferSSE: true,
+      });
+
+      expect(manager.getConnectionStatus("http-server-string-url")).toBe(
+        "connected"
+      );
+
+      const toolsFromStringUrl = await manager.listTools(
+        "http-server-string-url"
+      );
+
+      expect(toolsFromStringUrl.tools.length).toBe(MOCK_TOOLS.length);
     }, 10000);
   });
 
@@ -185,7 +203,7 @@ describe("MCPClientManager", () => {
       stopServer = result.stop;
       manager = new MCPClientManager();
       await manager.connectToServer("http-localhost", {
-        url: localhostUrl,
+        url: localhostUrl.toString(),
       });
     });
 
@@ -364,7 +382,7 @@ describe("MCPClientManager", () => {
           args: ["-y", "@modelcontextprotocol/server-everything"],
         }),
         manager.connectToServer("http-server", {
-          url: serverUrl,
+          url: serverUrl.toString(),
           preferSSE: true,
         }),
       ]);
@@ -390,7 +408,7 @@ describe("MCPClientManager", () => {
           args: ["-y", "@modelcontextprotocol/server-everything"],
         }),
         manager.connectToServer("server-b", {
-          url: serverUrl,
+          url: serverUrl.toString(),
           preferSSE: true,
         }),
       ]);
@@ -407,7 +425,7 @@ describe("MCPClientManager", () => {
           args: ["-y", "@modelcontextprotocol/server-everything"],
         }),
         manager.connectToServer("disc-b", {
-          url: serverUrl,
+          url: serverUrl.toString(),
           preferSSE: true,
         }),
       ]);
