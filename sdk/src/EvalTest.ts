@@ -10,25 +10,53 @@ import {
 } from "./validators.js";
 
 /**
- * Configuration for a single EvalTest
+ * Base configuration shared by all EvalTest types
  */
-export interface EvalTestConfig {
+interface EvalTestConfigBase {
   name: string;
-  prompt?: string;
-  expectTools?: string[];
-  expectExactTools?: string[];
-  expectAnyTool?: string[];
-  expectNoTools?: boolean;
-
-  /**
-   * Unified test function for validation.
-   * - Single-turn (when `prompt` is provided): receives PromptResult, returns boolean
-   * - Multi-turn (when no `prompt`): receives TestAgent, returns boolean
-   */
-  test?:
-    | ((result: PromptResult) => boolean | Promise<boolean>)
-    | ((agent: TestAgent) => boolean | Promise<boolean>);
 }
+
+/**
+ * Configuration for a single-turn EvalTest (requires prompt)
+ */
+export interface SingleTurnEvalTestConfig extends EvalTestConfigBase {
+  /** The prompt to send to the agent */
+  prompt: string;
+  /** Expected tools to be called (subset match) */
+  expectTools?: string[];
+  /** Expected tools to be called (exact match) */
+  expectExactTools?: string[];
+  /** Expected any of these tools to be called */
+  expectAnyTool?: string[];
+  /** Expect no tools to be called */
+  expectNoTools?: boolean;
+  /** Optional custom validator for single-turn tests */
+  test?: (result: PromptResult) => boolean | Promise<boolean>;
+}
+
+/**
+ * Configuration for a multi-turn EvalTest (no prompt, requires test function)
+ */
+export interface MultiTurnEvalTestConfig extends EvalTestConfigBase {
+  /** Multi-turn tests don't use a prompt - the test function handles the conversation */
+  prompt?: never;
+  /** Multi-turn tests don't use declarative expectations */
+  expectTools?: never;
+  expectExactTools?: never;
+  expectAnyTool?: never;
+  expectNoTools?: never;
+  /** Test function that receives the agent and handles the multi-turn conversation */
+  test: (agent: TestAgent) => boolean | Promise<boolean>;
+}
+
+/**
+ * Configuration for a single EvalTest
+ *
+ * Two modes:
+ * - Single-turn: Provide `prompt` and optionally `expectTools`/`test`
+ * - Multi-turn: Provide `test` function only (no `prompt`)
+ */
+export type EvalTestConfig = SingleTurnEvalTestConfig | MultiTurnEvalTestConfig;
 
 /**
  * Options for running an EvalTest
@@ -184,6 +212,19 @@ export class EvalTest {
   private config: EvalTestConfig;
   private lastRunResult: EvalRunResult | null = null;
 
+  /**
+   * Create a single-turn eval test.
+   * Requires a `prompt` string. Optionally accepts `test` function for custom validation.
+   */
+  constructor(config: SingleTurnEvalTestConfig);
+
+  /**
+   * Create a multi-turn eval test.
+   * Requires a `test` function that receives a TestAgent for multi-step conversations.
+   */
+  constructor(config: MultiTurnEvalTestConfig);
+
+  // Implementation
   constructor(config: EvalTestConfig) {
     this.config = config;
   }

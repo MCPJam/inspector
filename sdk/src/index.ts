@@ -124,6 +124,8 @@ export {
 export { EvalTest } from "./EvalTest.js";
 export type {
   EvalTestConfig,
+  SingleTurnEvalTestConfig,
+  MultiTurnEvalTestConfig,
   EvalTestRunOptions,
   EvalRunResult,
   IterationResult,
