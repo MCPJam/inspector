@@ -379,7 +379,7 @@ export class MCPClientManager {
    * ```
    */
   async getTools(serverIds?: string[]): Promise<Tool[]> {
-    const targetIds = serverIds?.length ? serverIds : this.listServers();
+    const targetIds = serverIds !== undefined ? serverIds : this.listServers();
 
     const toolLists = await Promise.all(
       targetIds.map(async (serverId) => {
