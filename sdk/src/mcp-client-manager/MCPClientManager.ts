@@ -48,7 +48,7 @@ import type {
   ProgressHandler,
   RpcLogger,
   Tool,
-  AiSdkTools,
+  AiSdkTool,
 } from "./types.js";
 
 import {
@@ -420,12 +420,12 @@ export class MCPClientManager {
    *
    * @param serverIds - Server IDs to get tools from (or all if omitted)
    * @param options - Schema options
-   * @returns AiSdkTools compatible with Vercel AI SDK's generateText()
+   * @returns AiSdkTool compatible with Vercel AI SDK's generateText()
    */
   async getToolsForAiSdk(
     serverIds?: string[] | string,
     options: { schemas?: ToolSchemaOverrides | "automatic" } = {}
-  ): Promise<AiSdkTools> {
+  ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
       ? serverIds
       : serverIds
@@ -473,7 +473,7 @@ export class MCPClientManager {
           return tools;
         } catch (error) {
           if (isMethodUnavailableError(error, "tools/list")) {
-            return {} as AiSdkTools;
+            return {} as AiSdkTool;
           }
           throw error;
         }
@@ -481,7 +481,7 @@ export class MCPClientManager {
     );
 
     // Flatten (last-in wins for name collisions)
-    const flattened: AiSdkTools = {};
+    const flattened: AiSdkTool = {};
     for (const toolset of perServerTools) {
       Object.assign(flattened, toolset);
     }

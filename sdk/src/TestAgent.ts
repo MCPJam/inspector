@@ -10,15 +10,15 @@ import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider } from "./types.js";
-import type { Tool, AiSdkTools } from "./mcp-client-manager/types.js";
+import type { Tool, AiSdkTool } from "./mcp-client-manager/types.js";
 import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
 
 /**
  * Configuration for creating a TestAgent
  */
 export interface TestAgentConfig {
-  /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTools from manager.getToolsForAiSdk()) */
-  tools: Tool[] | AiSdkTools;
+  /** Tools to provide to the LLM (Tool[] from manager.getTools() or AiSdkTool from manager.getToolsForAiSdk()) */
+  tools: Tool[] | AiSdkTool;
   /** LLM provider and model string (e.g., "openai/gpt-4o", "anthropic/claude-3-5-sonnet-20241022") */
   model: string;
   /** API key for the LLM provider */
@@ -38,7 +38,7 @@ export interface TestAgentConfig {
 /**
  * Type guard to check if tools is Tool[] (from getTools())
  */
-function isToolArray(tools: Tool[] | AiSdkTools): tools is Tool[] {
+function isToolArray(tools: Tool[] | AiSdkTool): tools is Tool[] {
   return Array.isArray(tools);
 }
 

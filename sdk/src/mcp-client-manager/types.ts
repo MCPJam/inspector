@@ -347,4 +347,4 @@ export interface Tool {
  * Returned by MCPClientManager.getToolsForAiSdk().
  * Can be passed directly to AI SDK's generateText().
  */
-export type AiSdkTools = ToolSet;
+export type AiSdkTool = ToolSet;

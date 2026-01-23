@@ -64,7 +64,7 @@ export type {
 } from "./types.js";
 
 // Types - Executable tools
-export type { Tool, AiSdkTools } from "./types.js";
+export type { Tool, AiSdkTool } from "./types.js";
 
 // Tool converters
 export {
