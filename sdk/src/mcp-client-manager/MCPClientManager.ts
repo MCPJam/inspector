@@ -225,8 +225,9 @@ export class MCPClientManager {
     if (this.isStdioConfig(config)) {
       transportType = "stdio";
     } else {
+      const url = new URL(config.url);
       transportType =
-        config.preferSSE || config.url.endsWith("/sse")
+        config.preferSSE || url.pathname.endsWith("/sse")
           ? "sse"
           : "streamable-http";
     }
