@@ -343,34 +343,30 @@ const messages = result.getMessages();
 
 `EvalTest` runs a single test scenario with multiple iterations. It can be run standalone or as part of an `EvalSuite`.
 
+All tests use a `test` function that receives a `TestAgent` and returns a boolean indicating success.
+
 ```ts
 import { EvalTest } from "@mcpjam/sdk";
 
 const test = new EvalTest({
   name: "addition",
-  prompt: "Add 2+3",
-  expectTools: ["add"],
+  test: async (agent) => {
+    const result = await agent.prompt("Add 2+3");
+    return result.hasToolCall("add");
+  },
 });
 
 await test.run(agent, { iterations: 30 });
 console.log(test.accuracy()); // 0.97
 ```
 
-#### Expectation Options
-
-- `expectTools` - All expected tools must be called (any order)
-- `expectExactTools` - Exact tools in exact order
-- `expectAnyTool` - At least one of the expected tools called
-- `expectNoTools` - No tools should be called
-- `test` - Custom test function (for single-turn or multi-turn)
-
-#### Custom Test (Single-turn)
+#### Custom Validation
 
 ```ts
 const test = new EvalTest({
   name: "addition-args",
-  prompt: "What is 2 + 3?",
-  test: (result) => {
+  test: async (agent) => {
+    const result = await agent.prompt("What is 2 + 3?");
     const calls = result.getToolCalls();
     const addCall = calls.find(c => c.toolName === "add");
     return addCall?.arguments?.a === 2 && addCall?.arguments?.b === 3;
@@ -440,8 +436,20 @@ await test.run(agent, {
 import { EvalSuite, EvalTest } from "@mcpjam/sdk";
 
 const suite = new EvalSuite({ name: "Math Operations" });
-suite.add(new EvalTest({ name: "addition", prompt: "Add 2+3", expectTools: ["add"] }));
-suite.add(new EvalTest({ name: "multiply", prompt: "Multiply 4*5", expectTools: ["multiply"] }));
+suite.add(new EvalTest({
+  name: "addition",
+  test: async (agent) => {
+    const r = await agent.prompt("Add 2+3");
+    return r.hasToolCall("add");
+  },
+}));
+suite.add(new EvalTest({
+  name: "multiply",
+  test: async (agent) => {
+    const r = await agent.prompt("Multiply 4*5");
+    return r.hasToolCall("multiply");
+  },
+}));
 
 await suite.run(agent, { iterations: 30 });
 
@@ -557,8 +565,10 @@ const testAgent = new TestAgent({
 // Single test standalone
 const createProjectTest = new EvalTest({
   name: "create-project",
-  prompt: "Create a new Asana project called 'Onboard Joe'",
-  expectTools: ["asana_create_project"],
+  test: async (agent) => {
+    const result = await agent.prompt("Create a new Asana project called 'Onboard Joe'");
+    return result.hasToolCall("asana_create_project");
+  },
 });
 
 await createProjectTest.run(testAgent, { iterations: 30, concurrency: 5 });
@@ -603,13 +613,17 @@ describe("Asana MCP Server Evals", () => {
     suite = new EvalSuite({ name: "Asana Operations" });
     suite.add(new EvalTest({
       name: "create-project",
-      prompt: "Create a new Asana project called 'Onboard Joe'",
-      expectTools: ["asana_create_project"],
+      test: async (agent) => {
+        const result = await agent.prompt("Create a new Asana project called 'Onboard Joe'");
+        return result.hasToolCall("asana_create_project");
+      },
     }));
     suite.add(new EvalTest({
       name: "list-tasks",
-      prompt: "List all tasks in the Marketing project",
-      expectTools: ["asana_list_tasks"],
+      test: async (agent) => {
+        const result = await agent.prompt("List all tasks in the Marketing project");
+        return result.hasToolCall("asana_list_tasks");
+      },
     }));
 
     // Run all tests once

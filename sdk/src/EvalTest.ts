@@ -2,61 +2,16 @@ import type { TestAgent } from "./TestAgent.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
-import {
-  matchToolCalls,
-  matchToolCallsSubset,
-  matchAnyToolCall,
-  matchNoToolCalls,
-} from "./validators.js";
 
 /**
- * Base configuration shared by all EvalTest types
+ * Configuration for an EvalTest
+ *
+ * All tests use the multi-turn pattern with a test function that receives a TestAgent.
  */
-interface EvalTestConfigBase {
+export interface EvalTestConfig {
   name: string;
-}
-
-/**
- * Configuration for a single-turn EvalTest (requires prompt)
- */
-export interface SingleTurnEvalTestConfig extends EvalTestConfigBase {
-  /** The prompt to send to the agent */
-  prompt: string;
-  /** Expected tools to be called (subset match) */
-  expectTools?: string[];
-  /** Expected tools to be called (exact match) */
-  expectExactTools?: string[];
-  /** Expected any of these tools to be called */
-  expectAnyTool?: string[];
-  /** Expect no tools to be called */
-  expectNoTools?: boolean;
-  /** Optional custom validator for single-turn tests */
-  test?: (result: PromptResult) => boolean | Promise<boolean>;
-}
-
-/**
- * Configuration for a multi-turn EvalTest (no prompt, requires test function)
- */
-export interface MultiTurnEvalTestConfig extends EvalTestConfigBase {
-  /** Multi-turn tests don't use a prompt - the test function handles the conversation */
-  prompt?: never;
-  /** Multi-turn tests don't use declarative expectations */
-  expectTools?: never;
-  expectExactTools?: never;
-  expectAnyTool?: never;
-  expectNoTools?: never;
-  /** Test function that receives the agent and handles the multi-turn conversation */
   test: (agent: TestAgent) => boolean | Promise<boolean>;
 }
-
-/**
- * Configuration for a single EvalTest
- *
- * Two modes:
- * - Single-turn: Provide `prompt` and optionally `expectTools`/`test`
- * - Multi-turn: Provide `test` function only (no `prompt`)
- */
-export type EvalTestConfig = SingleTurnEvalTestConfig | MultiTurnEvalTestConfig;
 
 /**
  * Options for running an EvalTest
@@ -78,7 +33,7 @@ export interface IterationResult {
   tokens: { total: number; input: number; output: number };
   error?: string;
   retryCount?: number;
-  /** The prompt results from this iteration (multi-turn tests only) */
+  /** The prompt results from this iteration */
   prompts?: PromptResult[];
 }
 
@@ -135,36 +90,6 @@ class Semaphore {
 }
 
 /**
- * Create a validator function from config expectations
- */
-function createValidator(
-  config: Pick<
-    EvalTestConfig,
-    "expectTools" | "expectExactTools" | "expectAnyTool" | "expectNoTools"
-  >
-): (result: PromptResult) => boolean | Promise<boolean> {
-  return (result: PromptResult) => {
-    const toolsCalled = result.toolsCalled();
-
-    if (config.expectTools) {
-      return matchToolCallsSubset(config.expectTools, toolsCalled);
-    }
-    if (config.expectExactTools) {
-      return matchToolCalls(config.expectExactTools, toolsCalled);
-    }
-    if (config.expectAnyTool) {
-      return matchAnyToolCall(config.expectAnyTool, toolsCalled);
-    }
-    if (config.expectNoTools) {
-      return matchNoToolCalls(toolsCalled);
-    }
-
-    // Default: pass if no error
-    return !result.hasError();
-  };
-}
-
-/**
  * Timeout wrapper for promises
  */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -201,8 +126,10 @@ function sleep(ms: number): Promise<void> {
  * ```ts
  * const test = new EvalTest({
  *   name: "addition",
- *   prompt: "Add 2+3",
- *   expectTools: ["add"],
+ *   test: async (agent) => {
+ *     const result = await agent.prompt("Add 2+3");
+ *     return result.hasToolCall("add");
+ *   },
  * });
  * await test.run(agent, { iterations: 30 });
  * console.log(test.accuracy()); // 0.97
@@ -212,20 +139,10 @@ export class EvalTest {
   private config: EvalTestConfig;
   private lastRunResult: EvalRunResult | null = null;
 
-  /**
-   * Create a single-turn eval test.
-   * Requires a `prompt` string. Optionally accepts `test` function for custom validation.
-   */
-  constructor(config: SingleTurnEvalTestConfig);
-
-  /**
-   * Create a multi-turn eval test.
-   * Requires a `test` function that receives a TestAgent for multi-step conversations.
-   */
-  constructor(config: MultiTurnEvalTestConfig);
-
-  // Implementation
   constructor(config: EvalTestConfig) {
+    if (!config.test) {
+      throw new Error("Invalid config: must provide 'test' function");
+    }
     this.config = config;
   }
 
@@ -244,130 +161,9 @@ export class EvalTest {
     const semaphore = new Semaphore(concurrency);
     let completedCount = 0;
 
-    // Single-turn: has prompt string
-    // Multi-turn: has test function but no prompt
-    if (this.config.prompt) {
-      return this.runSingleTurn(
-        agent,
-        options.iterations,
-        semaphore,
-        retries,
-        timeoutMs,
-        onProgress,
-        () => ++completedCount
-      );
-    } else if (this.config.test) {
-      return this.runConversation(
-        agent,
-        options.iterations,
-        semaphore,
-        retries,
-        timeoutMs,
-        onProgress,
-        () => ++completedCount
-      );
-    } else {
-      throw new Error("Invalid config: must provide 'prompt' or 'test'");
-    }
-  }
-
-  private async runSingleTurn(
-    agent: TestAgent,
-    iterations: number,
-    semaphore: Semaphore,
-    retries: number,
-    timeoutMs: number,
-    onProgress: ((completed: number, total: number) => void) | undefined,
-    incrementCompleted: () => number
-  ): Promise<EvalRunResult> {
-    const promptMsg = this.config.prompt!;
-    // Use config.test as validator if provided, otherwise use declarative expectations
-    const validator = this.config.test
-      ? (this.config.test as (
-          result: PromptResult
-        ) => boolean | Promise<boolean>)
-      : createValidator(this.config);
+    const testFn = this.config.test;
     const iterationResults: IterationResult[] = [];
-    const total = iterations;
-
-    const runSingleIteration = async (): Promise<IterationResult> => {
-      await semaphore.acquire();
-      try {
-        let lastError: string | undefined;
-
-        for (let attempt = 0; attempt <= retries; attempt++) {
-          try {
-            const result = await withTimeout(
-              agent.prompt(promptMsg),
-              timeoutMs
-            );
-
-            const passed = await validator(result);
-            const latency = result.getLatency();
-            const tokens = {
-              total: result.totalTokens(),
-              input: result.inputTokens(),
-              output: result.outputTokens(),
-            };
-
-            return {
-              passed,
-              latencies: [latency],
-              tokens,
-              error: result.hasError() ? result.getError() : undefined,
-              retryCount: attempt,
-            };
-          } catch (error) {
-            lastError = error instanceof Error ? error.message : String(error);
-
-            if (attempt < retries) {
-              // Exponential backoff: 100ms, 200ms, 400ms, ...
-              await sleep(100 * Math.pow(2, attempt));
-            }
-          }
-        }
-
-        // All retries exhausted
-        return {
-          passed: false,
-          latencies: [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
-          tokens: { total: 0, input: 0, output: 0 },
-          error: lastError,
-          retryCount: retries,
-        };
-      } finally {
-        semaphore.release();
-        const completed = incrementCompleted();
-        if (onProgress) {
-          onProgress(completed, total);
-        }
-      }
-    };
-
-    // Run iterations in parallel (limited by semaphore)
-    const promises = Array.from({ length: iterations }, () =>
-      runSingleIteration()
-    );
-    const results = await Promise.all(promises);
-    iterationResults.push(...results);
-
-    return this.aggregateResults(iterationResults);
-  }
-
-  private async runConversation(
-    agent: TestAgent,
-    iterations: number,
-    semaphore: Semaphore,
-    retries: number,
-    timeoutMs: number,
-    onProgress: ((completed: number, total: number) => void) | undefined,
-    incrementCompleted: () => number
-  ): Promise<EvalRunResult> {
-    const testFn = this.config.test! as (
-      agent: TestAgent
-    ) => boolean | Promise<boolean>;
-    const iterationResults: IterationResult[] = [];
-    const total = iterations;
+    const total = options.iterations;
 
     const runSingleIteration = async (): Promise<IterationResult> => {
       await semaphore.acquire();
@@ -425,14 +221,14 @@ export class EvalTest {
         };
       } finally {
         semaphore.release();
-        const completed = incrementCompleted();
+        const completed = ++completedCount;
         if (onProgress) {
           onProgress(completed, total);
         }
       }
     };
 
-    const promises = Array.from({ length: iterations }, () =>
+    const promises = Array.from({ length: options.iterations }, () =>
       runSingleIteration()
     );
     const results = await Promise.all(promises);

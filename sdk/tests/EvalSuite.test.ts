@@ -27,13 +27,26 @@ function createMockPromptResult(options: {
   });
 }
 
-// Create a mock TestAgent
+// Create a mock TestAgent with prompt history tracking
 function createMockAgent(
   promptFn: (message: string) => Promise<PromptResult>
 ): TestAgent {
-  return {
-    prompt: promptFn,
-  } as TestAgent;
+  const createAgent = (): TestAgent => {
+    let promptHistory: PromptResult[] = [];
+    return {
+      prompt: async (message: string) => {
+        const result = await promptFn(message);
+        promptHistory.push(result);
+        return result;
+      },
+      resetPromptHistory: () => {
+        promptHistory = [];
+      },
+      getPromptHistory: () => [...promptHistory],
+      withOptions: () => createAgent(),
+    } as TestAgent;
+  };
+  return createAgent();
 }
 
 describe("EvalSuite", () => {
@@ -52,8 +65,20 @@ describe("EvalSuite", () => {
   describe("add and get tests", () => {
     it("should add tests and retrieve by name", () => {
       const suite = new EvalSuite();
-      const test1 = new EvalTest({ name: "addition", prompt: "Add 2+3" });
-      const test2 = new EvalTest({ name: "multiply", prompt: "Multiply 4*5" });
+      const test1 = new EvalTest({
+        name: "addition",
+        test: async (agent) => {
+          const r = await agent.prompt("Add 2+3");
+          return r.hasToolCall("add");
+        },
+      });
+      const test2 = new EvalTest({
+        name: "multiply",
+        test: async (agent) => {
+          const r = await agent.prompt("Multiply 4*5");
+          return r.hasToolCall("multiply");
+        },
+      });
 
       suite.add(test1);
       suite.add(test2);
@@ -65,17 +90,45 @@ describe("EvalSuite", () => {
 
     it("should throw when adding duplicate test name", () => {
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test", prompt: "Prompt 1" }));
+      suite.add(
+        new EvalTest({
+          name: "test",
+          test: async (agent) => {
+            await agent.prompt("Prompt 1");
+            return true;
+          },
+        })
+      );
 
       expect(() => {
-        suite.add(new EvalTest({ name: "test", prompt: "Prompt 2" }));
+        suite.add(
+          new EvalTest({
+            name: "test",
+            test: async (agent) => {
+              await agent.prompt("Prompt 2");
+              return true;
+            },
+          })
+        );
       }).toThrow('Test with name "test" already exists in suite');
     });
 
     it("should return all tests with getAll", () => {
       const suite = new EvalSuite();
-      const test1 = new EvalTest({ name: "test1", prompt: "Prompt 1" });
-      const test2 = new EvalTest({ name: "test2", prompt: "Prompt 2" });
+      const test1 = new EvalTest({
+        name: "test1",
+        test: async (agent) => {
+          await agent.prompt("Prompt 1");
+          return true;
+        },
+      });
+      const test2 = new EvalTest({
+        name: "test2",
+        test: async (agent) => {
+          await agent.prompt("Prompt 2");
+          return true;
+        },
+      });
 
       suite.add(test1);
       suite.add(test2);
@@ -90,10 +143,26 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       expect(suite.size()).toBe(0);
 
-      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
+      suite.add(
+        new EvalTest({
+          name: "test1",
+          test: async (agent) => {
+            await agent.prompt("Prompt 1");
+            return true;
+          },
+        })
+      );
       expect(suite.size()).toBe(1);
 
-      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
+      suite.add(
+        new EvalTest({
+          name: "test2",
+          test: async (agent) => {
+            await agent.prompt("Prompt 2");
+            return true;
+          },
+        })
+      );
       expect(suite.size()).toBe(2);
     });
   });
@@ -111,15 +180,19 @@ describe("EvalSuite", () => {
       suite.add(
         new EvalTest({
           name: "addition",
-          prompt: "Add 2+3",
-          expectTools: ["add"],
+          test: async (agent) => {
+            const r = await agent.prompt("Add 2+3");
+            return r.hasToolCall("add");
+          },
         })
       );
       suite.add(
         new EvalTest({
           name: "multiply",
-          prompt: "Multiply 4*5",
-          expectTools: ["multiply"],
+          test: async (agent) => {
+            const r = await agent.prompt("Multiply 4*5");
+            return r.hasToolCall("multiply");
+          },
         })
       );
 
@@ -144,15 +217,19 @@ describe("EvalSuite", () => {
       suite.add(
         new EvalTest({
           name: "addition",
-          prompt: "Add 2+3",
-          expectTools: ["add"],
+          test: async (agent) => {
+            const r = await agent.prompt("Add 2+3");
+            return r.hasToolCall("add");
+          },
         })
       );
       suite.add(
         new EvalTest({
           name: "multiply",
-          prompt: "Multiply 4*5",
-          expectTools: ["multiply"],
+          test: async (agent) => {
+            const r = await agent.prompt("Multiply 4*5");
+            return r.hasToolCall("multiply");
+          },
         })
       );
 
@@ -177,8 +254,24 @@ describe("EvalSuite", () => {
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
-      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
+      suite.add(
+        new EvalTest({
+          name: "test1",
+          test: async (agent) => {
+            await agent.prompt("Prompt 1");
+            return true;
+          },
+        })
+      );
+      suite.add(
+        new EvalTest({
+          name: "test2",
+          test: async (agent) => {
+            await agent.prompt("Prompt 2");
+            return true;
+          },
+        })
+      );
 
       await suite.run(agent, {
         iterations: 2,
@@ -200,8 +293,24 @@ describe("EvalSuite", () => {
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
-      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
+      suite.add(
+        new EvalTest({
+          name: "test1",
+          test: async (agent) => {
+            await agent.prompt("Prompt 1");
+            return true;
+          },
+        })
+      );
+      suite.add(
+        new EvalTest({
+          name: "test2",
+          test: async (agent) => {
+            await agent.prompt("Prompt 2");
+            return true;
+          },
+        })
+      );
 
       const result = await suite.run(agent, { iterations: 3 });
 
@@ -226,8 +335,24 @@ describe("EvalSuite", () => {
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
-      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
+      suite.add(
+        new EvalTest({
+          name: "test1",
+          test: async (agent) => {
+            await agent.prompt("Prompt 1");
+            return true;
+          },
+        })
+      );
+      suite.add(
+        new EvalTest({
+          name: "test2",
+          test: async (agent) => {
+            await agent.prompt("Prompt 2");
+            return true;
+          },
+        })
+      );
 
       const result = await suite.run(agent, {
         iterations: 2,
@@ -245,7 +370,15 @@ describe("EvalSuite", () => {
   describe("metrics", () => {
     it("should throw if metrics called before run", () => {
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test", prompt: "Prompt" }));
+      suite.add(
+        new EvalTest({
+          name: "test",
+          test: async (agent) => {
+            await agent.prompt("Prompt");
+            return true;
+          },
+        })
+      );
 
       expect(() => suite.accuracy()).toThrow(
         "No run results available. Call run() first."
@@ -279,8 +412,10 @@ describe("EvalSuite", () => {
       suite.add(
         new EvalTest({
           name: "test",
-          prompt: "Prompt",
-          expectTools: ["tool"],
+          test: async (agent) => {
+            const r = await agent.prompt("Prompt");
+            return r.hasToolCall("tool");
+          },
         })
       );
 
@@ -298,8 +433,10 @@ describe("EvalSuite", () => {
       suite.add(
         new EvalTest({
           name: "test",
-          prompt: "Prompt",
-          expectTools: ["tool"], // Will all fail
+          test: async (agent) => {
+            const r = await agent.prompt("Prompt");
+            return r.hasToolCall("tool"); // Will all fail
+          },
         })
       );
 
@@ -314,8 +451,24 @@ describe("EvalSuite", () => {
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
-      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
+      suite.add(
+        new EvalTest({
+          name: "test1",
+          test: async (agent) => {
+            await agent.prompt("Prompt 1");
+            return true;
+          },
+        })
+      );
+      suite.add(
+        new EvalTest({
+          name: "test2",
+          test: async (agent) => {
+            await agent.prompt("Prompt 2");
+            return true;
+          },
+        })
+      );
 
       await suite.run(agent, { iterations: 5 });
 
@@ -328,7 +481,15 @@ describe("EvalSuite", () => {
   describe("getResults", () => {
     it("should return null before run", () => {
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test", prompt: "Prompt" }));
+      suite.add(
+        new EvalTest({
+          name: "test",
+          test: async (agent) => {
+            await agent.prompt("Prompt");
+            return true;
+          },
+        })
+      );
       expect(suite.getResults()).toBeNull();
     });
 
@@ -338,8 +499,24 @@ describe("EvalSuite", () => {
       });
 
       const suite = new EvalSuite();
-      suite.add(new EvalTest({ name: "test1", prompt: "Prompt 1" }));
-      suite.add(new EvalTest({ name: "test2", prompt: "Prompt 2" }));
+      suite.add(
+        new EvalTest({
+          name: "test1",
+          test: async (agent) => {
+            await agent.prompt("Prompt 1");
+            return true;
+          },
+        })
+      );
+      suite.add(
+        new EvalTest({
+          name: "test2",
+          test: async (agent) => {
+            await agent.prompt("Prompt 2");
+            return true;
+          },
+        })
+      );
 
       await suite.run(agent, { iterations: 2 });
 
@@ -366,15 +543,19 @@ describe("EvalSuite", () => {
       suite.add(
         new EvalTest({
           name: "addition",
-          prompt: "Add 2+3",
-          expectTools: ["add"],
+          test: async (agent) => {
+            const r = await agent.prompt("Add 2+3");
+            return r.hasToolCall("add");
+          },
         })
       );
       suite.add(
         new EvalTest({
           name: "multiply",
-          prompt: "Multiply 4*5",
-          expectTools: ["multiply"],
+          test: async (agent) => {
+            const r = await agent.prompt("Multiply 4*5");
+            return r.hasToolCall("multiply");
+          },
         })
       );
 
