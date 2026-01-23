@@ -32,16 +32,27 @@ describe("test oauth token handling", () => {
 });
 
 describe("tools", () => {
-  test("list tools successfully", async () => {
-    const clientManager = new MCPClientManager();
-    await clientManager.connectToServer("asana", {
-      url: new URL("https://mcp.asana.com/sse"),
-      requestInit: {
-        headers: {
-          Authorization: `Bearer ${process.env.ASANA_TOKEN}`,
-        },
+  let clientManager: MCPClientManager;
+
+  const getServerConfig = () => ({
+    url: new URL("https://mcp.asana.com/sse"),
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${process.env.ASANA_TOKEN}`,
       },
-    });
+    },
+  });
+
+  beforeAll(async () => {
+    clientManager = new MCPClientManager();
+    await clientManager.connectToServer("asana", getServerConfig());
+  });
+
+  afterAll(async () => {
+    await clientManager.disconnectServer("asana");
+  });
+
+  test("list tools successfully", async () => {
     const tools = await clientManager.listTools("asana");
     const expectedTools = [
       "asana_get_allocations",
@@ -91,41 +102,32 @@ describe("tools", () => {
     ];
     expect(tools.tools.length).toEqual(expectedTools.length);
     const actualToolNames = tools.tools.map((tool) => tool.name);
-  
+
     for (const expectedTool of expectedTools) {
       expect(actualToolNames).toContain(expectedTool);
     }
-    
+
     expect(actualToolNames.length).toBe(expectedTools.length);
     expect(new Set(actualToolNames).size).toBe(expectedTools.length);
   });
 
   test("asana_list_workspaces runs successfully", async () => {
-    const clientManager = new MCPClientManager();
-    await clientManager.connectToServer("asana", {
-      url: new URL("https://mcp.asana.com/sse"),
-      requestInit: {
-        headers: {
-          Authorization: `Bearer ${process.env.ASANA_TOKEN}`,
-        },
-      },
-    });
     const result = await clientManager.executeTool("asana", "asana_list_workspaces", {});
-    
+
     expect(result).toHaveProperty("content");
     expect(Array.isArray(result.content)).toBe(true);
     expect(result.content.length).toBeGreaterThan(0);
-    
+
     const firstContent = result.content[0];
     expect(firstContent).toHaveProperty("type");
     expect(firstContent.type).toBe("text");
     expect(firstContent).toHaveProperty("text");
-    
+
     const parsedData = JSON.parse(firstContent.text);
     expect(parsedData).toHaveProperty("data");
     expect(Array.isArray(parsedData.data)).toBe(true);
     expect(parsedData.data.length).toBeGreaterThan(0);
-    
+
     const workspace = parsedData.data[0];
     expect(workspace).toHaveProperty("resource_type");
     expect(workspace.resource_type).toBe("workspace");
@@ -133,15 +135,6 @@ describe("tools", () => {
   });
 
   test("asana_get_user runs successfully for 'me' as a userID", async () => {
-    const clientManager = new MCPClientManager();
-    await clientManager.connectToServer("asana", {
-      url: new URL("https://mcp.asana.com/sse"),
-      requestInit: {
-        headers: {
-          Authorization: `Bearer ${process.env.ASANA_TOKEN}`,
-        },
-      },
-    });
     const result = await clientManager.executeTool("asana", "asana_get_user", {
       user_id: "me",
     });
