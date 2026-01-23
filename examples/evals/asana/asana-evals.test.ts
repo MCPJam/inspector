@@ -68,49 +68,66 @@ describe("Asana MCP Evals", () => {
       suite.add(
         new EvalTest({
           name: "list-workspaces",
-          prompt: "Show me all my Asana workspaces",
-          expectTools: ["asana_list_workspaces"],
+          test: async (agent) => {
+            const r = await agent.prompt("Show me all my Asana workspaces");
+            return r.hasToolCall("asana_list_workspaces");
+          },
         }),
       );
 
       suite.add(
         new EvalTest({
           name: "get-current-user",
-          prompt: "Who am I in Asana? Get my user information.",
-          expectTools: ["asana_get_user"],
+          test: async (agent) => {
+            const r = await agent.prompt(
+              "Who am I in Asana? Get my user information.",
+            );
+            return r.hasToolCall("asana_get_user");
+          },
         }),
       );
 
       suite.add(
         new EvalTest({
           name: "list-projects",
-          prompt: "List all projects in my workspace",
-          expectTools: ["asana_get_projects"],
+          test: async (agent) => {
+            const r = await agent.prompt("List all projects in my workspace");
+            return r.hasToolCall("asana_get_projects");
+          },
         }),
       );
 
       suite.add(
         new EvalTest({
           name: "search-tasks",
-          prompt: "Search for tasks about 'onboarding' in my workspace",
-          expectTools: ["asana_search_tasks"],
+          test: async (agent) => {
+            const r = await agent.prompt(
+              "Search for tasks about 'onboarding' in my workspace",
+            );
+            return r.hasToolCall("asana_search_tasks");
+          },
         }),
       );
 
       suite.add(
         new EvalTest({
           name: "get-teams",
-          prompt: "What teams are in my workspace?",
-          expectTools: ["asana_get_teams_for_workspace"],
+          test: async (agent) => {
+            const r = await agent.prompt("What teams are in my workspace?");
+            return r.hasToolCall("asana_get_teams_for_workspace");
+          },
         }),
       );
 
       suite.add(
         new EvalTest({
           name: "create-task",
-          prompt:
-            "Create a new task called 'Review budget' in my default workspace",
-          expectTools: ["asana_create_task"],
+          test: async (agent) => {
+            const r = await agent.prompt(
+              "Create a new task called 'Review budget' in my default workspace",
+            );
+            return r.hasToolCall("asana_create_task");
+          },
         }),
       );
 
@@ -256,8 +273,10 @@ describe("Asana MCP Evals", () => {
       suite.add(
         new EvalTest({
           name: "get-user-me",
-          prompt: "Get my own user information in Asana",
-          test: (result) => {
+          test: async (agent) => {
+            const result = await agent.prompt(
+              "Get my own user information in Asana",
+            );
             const toolCalls = result.getToolCalls();
             // Check that asana_get_user was called with user_id: "me"
             return matchToolCallWithPartialArgs(
@@ -272,8 +291,10 @@ describe("Asana MCP Evals", () => {
       suite.add(
         new EvalTest({
           name: "create-task-with-name",
-          prompt: "Create a task named 'Prepare quarterly report' in Asana",
-          test: (result) => {
+          test: async (agent) => {
+            const result = await agent.prompt(
+              "Create a task named 'Prepare quarterly report' in Asana",
+            );
             const toolCalls = result.getToolCalls();
             // Check that asana_create_task was called
             if (!result.hasToolCall("asana_create_task")) {
@@ -297,8 +318,10 @@ describe("Asana MCP Evals", () => {
       suite.add(
         new EvalTest({
           name: "search-with-query",
-          prompt: "Search for all tasks related to 'budget review' in Asana",
-          test: (result) => {
+          test: async (agent) => {
+            const result = await agent.prompt(
+              "Search for all tasks related to 'budget review' in Asana",
+            );
             const toolCalls = result.getToolCalls();
             // Check that asana_search_tasks was called
             if (!result.hasToolCall("asana_search_tasks")) {
@@ -355,32 +378,40 @@ describe("Asana MCP Evals", () => {
       suite.add(
         new EvalTest({
           name: "general-question",
-          prompt: "What is the capital of France?",
-          expectNoTools: true,
+          test: async (agent) => {
+            const r = await agent.prompt("What is the capital of France?");
+            return r.toolsCalled().length === 0;
+          },
         }),
       );
 
       suite.add(
         new EvalTest({
           name: "math-question",
-          prompt: "What is 2 + 2?",
-          expectNoTools: true,
+          test: async (agent) => {
+            const r = await agent.prompt("What is 2 + 2?");
+            return r.toolsCalled().length === 0;
+          },
         }),
       );
 
       suite.add(
         new EvalTest({
           name: "definition-question",
-          prompt: "What is project management?",
-          expectNoTools: true,
+          test: async (agent) => {
+            const r = await agent.prompt("What is project management?");
+            return r.toolsCalled().length === 0;
+          },
         }),
       );
 
       suite.add(
         new EvalTest({
           name: "greeting",
-          prompt: "Hello, how are you today?",
-          expectNoTools: true,
+          test: async (agent) => {
+            const r = await agent.prompt("Hello, how are you today?");
+            return r.toolsCalled().length === 0;
+          },
         }),
       );
 
