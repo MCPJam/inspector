@@ -287,7 +287,7 @@ describe("MCPClientManager", () => {
 
       expect(manager.hasServer("to-remove")).toBe(true);
 
-      manager.removeServer("to-remove");
+      await manager.removeServer("to-remove");
 
       expect(manager.hasServer("to-remove")).toBe(false);
     }, 30000);

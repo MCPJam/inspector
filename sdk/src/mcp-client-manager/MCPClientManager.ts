@@ -312,8 +312,8 @@ export class MCPClientManager {
   /**
    * Removes a server from the manager entirely.
    */
-  removeServer(serverId: string): void {
-    this.resetState(serverId);
+  async removeServer(serverId: string): Promise<void> {
+    await this.disconnectServer(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
   }
