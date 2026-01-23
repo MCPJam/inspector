@@ -395,7 +395,7 @@ describe("MCPClientManager", () => {
 
       const result = await manager.getTools();
       // Should have tools from both servers
-      expect(result.tools.length).toBeGreaterThan(MOCK_TOOLS.length);
+      expect(result.length).toBeGreaterThan(MOCK_TOOLS.length);
     }, 30000);
 
     it("should disconnect all servers", async () => {

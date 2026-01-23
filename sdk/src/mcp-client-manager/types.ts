@@ -12,8 +12,8 @@ import type {
   ElicitRequest,
   ElicitResult,
   CallToolResult,
+  Tool as BaseTool,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { JSONSchema7 } from "json-schema";
 import type { ToolSet } from "ai";
 
 // Re-export ElicitResult for convenience
@@ -328,12 +328,10 @@ export type MCPServerSummary = ServerSummary;
 
 /**
  * An MCP tool with an execute function pre-wired to call the manager.
+ * Extends the official MCP SDK Tool type.
  * Returned by MCPClientManager.getTools().
  */
-export interface Tool {
-  name: string;
-  description?: string;
-  inputSchema?: JSONSchema7;
+export interface Tool extends BaseTool {
   /** Execute the tool with the given arguments */
   execute: (args: Record<string, unknown>) => Promise<CallToolResult>;
   _meta?: {
@@ -341,6 +339,9 @@ export interface Tool {
     [key: string]: unknown;
   };
 }
+
+// Re-export base type for users who need it
+export type { BaseTool };
 
 /**
  * AI SDK compatible tool set (Record<string, CoreTool>).
