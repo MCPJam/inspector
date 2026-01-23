@@ -228,7 +228,7 @@ export function createMockServer(): Server {
  */
 export async function startMockHttpServer(
   port = 0
-): Promise<{ server: HttpServer; url: URL; stop: () => Promise<void> }> {
+): Promise<{ server: HttpServer; url: string; stop: () => Promise<void> }> {
   const mcpServer = createMockServer();
   let sseTransport: InstanceType<typeof SSEServerTransport> | null = null;
 
@@ -290,7 +290,7 @@ export async function startMockHttpServer(
   return new Promise((resolve) => {
     httpServer.listen(port, "127.0.0.1", () => {
       const address = httpServer.address() as AddressInfo;
-      const url = new URL(`http://127.0.0.1:${address.port}/sse`);
+      const url = `http://127.0.0.1:${address.port}/sse`;
 
       resolve({
         server: httpServer,
@@ -310,7 +310,7 @@ export async function startMockHttpServer(
  */
 export async function startMockStreamableHttpServer(
   port = 0
-): Promise<{ server: HttpServer; url: URL; stop: () => Promise<void> }> {
+): Promise<{ server: HttpServer; url: string; stop: () => Promise<void> }> {
   const mcpServer = createMockServer();
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => `session-${Date.now()}`,
@@ -344,7 +344,7 @@ export async function startMockStreamableHttpServer(
   return new Promise((resolve) => {
     httpServer.listen(port, "127.0.0.1", () => {
       const address = httpServer.address() as AddressInfo;
-      const url = new URL(`http://127.0.0.1:${address.port}/mcp`);
+      const url = `http://127.0.0.1:${address.port}/mcp`;
 
       resolve({
         server: httpServer,

@@ -82,7 +82,7 @@ describe("MCPClientManager", () => {
 
   describe("HTTP server", () => {
     let manager: MCPClientManager;
-    let serverUrl: URL;
+    let serverUrl: string;
     let stopServer: () => Promise<void>;
 
     beforeAll(async () => {
@@ -91,7 +91,7 @@ describe("MCPClientManager", () => {
       stopServer = result.stop;
       manager = new MCPClientManager();
       await manager.connectToServer("http-server", {
-        url: serverUrl.toString(),
+        url: serverUrl,
         preferSSE: true,
       });
     });
@@ -163,47 +163,27 @@ describe("MCPClientManager", () => {
     it("should support accessToken in config", async () => {
       // The mock server doesn't validate tokens, but we test the config is accepted
       await manager.connectToServer("http-server-auth", {
-        url: serverUrl.toString(),
+        url: serverUrl,
         accessToken: "test-bearer-token",
         preferSSE: true,
       });
 
       expect(manager.getConnectionStatus("http-server-auth")).toBe("connected");
     }, 10000);
-
-    it("should accept url as string", async () => {
-      // Connect with string URL
-      await manager.connectToServer("http-server-string-url", {
-        url: serverUrl.toString(),
-        preferSSE: true,
-      });
-
-      expect(manager.getConnectionStatus("http-server-string-url")).toBe(
-        "connected"
-      );
-
-      const toolsFromStringUrl = await manager.listTools(
-        "http-server-string-url"
-      );
-
-      expect(toolsFromStringUrl.tools.length).toBe(MOCK_TOOLS.length);
-    }, 10000);
   });
 
   describe("HTTP server (streamable)", () => {
     let manager: MCPClientManager;
-    let serverUrl: URL;
-    let localhostUrl: URL;
+    let serverUrl: string;
     let stopServer: () => Promise<void>;
 
     beforeAll(async () => {
       const result = await startMockStreamableHttpServer();
       serverUrl = result.url;
-      localhostUrl = new URL(`http://localhost:${serverUrl.port}/mcp`);
       stopServer = result.stop;
       manager = new MCPClientManager();
       await manager.connectToServer("http-localhost", {
-        url: localhostUrl.toString(),
+        url: serverUrl,
       });
     });
 
@@ -353,7 +333,7 @@ describe("MCPClientManager", () => {
 
   describe("multiple servers", () => {
     let manager: MCPClientManager;
-    let serverUrl: URL;
+    let serverUrl: string;
     let stopServer: () => Promise<void>;
 
     beforeAll(async () => {
@@ -382,7 +362,7 @@ describe("MCPClientManager", () => {
           args: ["-y", "@modelcontextprotocol/server-everything"],
         }),
         manager.connectToServer("http-server", {
-          url: serverUrl.toString(),
+          url: serverUrl,
           preferSSE: true,
         }),
       ]);
@@ -408,7 +388,7 @@ describe("MCPClientManager", () => {
           args: ["-y", "@modelcontextprotocol/server-everything"],
         }),
         manager.connectToServer("server-b", {
-          url: serverUrl.toString(),
+          url: serverUrl,
           preferSSE: true,
         }),
       ]);
@@ -425,7 +405,7 @@ describe("MCPClientManager", () => {
           args: ["-y", "@modelcontextprotocol/server-everything"],
         }),
         manager.connectToServer("disc-b", {
-          url: serverUrl.toString(),
+          url: serverUrl,
           preferSSE: true,
         }),
       ]);
