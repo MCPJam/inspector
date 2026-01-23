@@ -152,12 +152,7 @@ export async function convertMCPToolsToVercelTools(
       const normalizedInputSchema = ensureJsonSchemaObject(inputSchema);
       vercelTool = dynamicTool({
         description,
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: normalizedInputSchema.properties ?? {},
-          additionalProperties:
-            normalizedInputSchema.additionalProperties ?? false,
-        }),
+        inputSchema: jsonSchema(normalizedInputSchema),
         execute,
       });
     } else {
