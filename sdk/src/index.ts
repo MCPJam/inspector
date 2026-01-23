@@ -39,6 +39,7 @@ export type {
 // Tool and task types
 export type {
   Tool,
+  ToolExecuteOptions,
   AiSdkTool,
   ExecuteToolArguments,
   TaskOptions,

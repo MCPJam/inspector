@@ -391,13 +391,18 @@ export class MCPClientManager {
           ...tool,
           _meta: { ...tool._meta, _serverId: serverId },
           execute: async (
-            args: Record<string, unknown>
+            args: Record<string, unknown>,
+            options?: { signal?: AbortSignal }
           ): Promise<CallToolResult> => {
             // When called without taskOptions, executeTool always returns CallToolResult
+            const requestOptions = options?.signal
+              ? { signal: options.signal }
+              : undefined;
             return this.executeTool(
               serverId,
               tool.name,
-              args
+              args,
+              requestOptions
             ) as Promise<CallToolResult>;
           },
         }));

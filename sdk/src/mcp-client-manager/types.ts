@@ -331,9 +331,18 @@ export type MCPServerSummary = ServerSummary;
  * Extends the official MCP SDK Tool type.
  * Returned by MCPClientManager.getTools().
  */
+/** Options for tool execution */
+export interface ToolExecuteOptions {
+  /** Abort signal for cancellation */
+  signal?: AbortSignal;
+}
+
 export interface Tool extends BaseTool {
   /** Execute the tool with the given arguments */
-  execute: (args: Record<string, unknown>) => Promise<CallToolResult>;
+  execute: (
+    args: Record<string, unknown>,
+    options?: ToolExecuteOptions
+  ) => Promise<CallToolResult>;
   _meta?: {
     _serverId: string;
     [key: string]: unknown;
