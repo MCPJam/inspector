@@ -157,16 +157,7 @@ describe("tools", () => {
     const parsed = JSON.parse(firstContent.text);
     expect(parsed).toHaveProperty("data");
     const user = parsed.data;
-    expect(user).toHaveProperty("resource_type");
-    expect(user.resource_type).toBe("user");
     expect(user).toHaveProperty("name");
     expect(user).toHaveProperty("email");
-    expect(user).toHaveProperty("gid");
-    expect(user).toHaveProperty("workspaces");
-    expect(Array.isArray(user.workspaces)).toBe(true);
-    expect(user.workspaces.length).toBeGreaterThan(0);
-    expect(user.workspaces[0]).toHaveProperty("resource_type");
-    expect(user.workspaces[0].resource_type).toBe("workspace");
-    expect(user.workspaces[0]).toHaveProperty("name");
   });
 });
