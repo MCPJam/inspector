@@ -11,15 +11,11 @@ WORKDIR /usr/src/app
 FROM base AS deps
 
 # Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage bind mounts to package.json and package-lock.json to avoid having to copy them
-# into this layer.
-RUN --mount=type=bind,source=package.json,target=package.json \
-    --mount=type=bind,source=package-lock.json,target=package-lock.json \
-    npm ci --legacy-peer-deps
+COPY package.json package-lock.json ./
+RUN npm ci --legacy-peer-deps
 
-RUN --mount=type=bind,source=sdk/package.json,target=sdk/package.json \
-    --mount=type=bind,source=sdk/package-lock.json,target=sdk/package-lock.json \
-    npm ci --legacy-peer-deps --prefix sdk
+COPY sdk/package.json sdk/package-lock.json ./sdk/
+RUN npm ci --legacy-peer-deps --prefix sdk
 ################################################################################
 # Create a stage for building the application.
 FROM deps AS build
