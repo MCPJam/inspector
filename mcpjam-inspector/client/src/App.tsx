@@ -236,6 +236,7 @@ export default function App() {
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
+          onReconnect: handleReconnect,
           isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,

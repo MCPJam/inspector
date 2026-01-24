@@ -1954,7 +1954,9 @@ export function useAppState() {
     // Only connected servers (for features requiring active connections)
     connectedServerConfigs: Object.fromEntries(
       Object.entries(effectiveServers).filter(
-        ([, server]) => server.connectionStatus === "connected",
+        ([, server]) =>
+          server.connectionStatus === "connected" ||
+          server.connectionStatus === "connecting",
       ),
     ),
     selectedServerEntry: effectiveServers[appState.selectedServer],
