@@ -1,0 +1,97 @@
+# MCPJam Inspector - Self-Hosted Docker Compose
+#
+# This configuration runs MCPJam Inspector with a self-hosted Convex backend.
+#
+# Quick Start:
+#   docker compose up -d
+#
+# After first run, generate Convex admin key:
+#   docker compose exec convex-backend ./generate_admin_key.sh
+#
+# Access:
+#   - Inspector UI: http://localhost:6274
+#   - Convex Dashboard: http://localhost:6791
+#
+# Current Limitations:
+#   - Authentication (WorkOS) still requires external service
+#   - Some features may not work without authentication
+#   - See README.md for details
+
+services:
+  # Convex Backend - Reactive database
+  convex-backend:
+    image: ghcr.io/get-convex/convex-backend@sha256:ba8dd946f1e77e34acfbf99612117763a55e52e3
+    container_name: mcpjam-convex-backend
+    restart: unless-stopped
+    ports:
+      - "${CONVEX_PORT:-3210}:3210"
+      - "${CONVEX_SITE_PORT:-3211}:3211"
+    volumes:
+      - convex_data:/convex/data
+    environment:
+      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:-http://127.0.0.1:3211}
+      - RUST_LOG=${RUST_LOG:-info}
+      - DISABLE_BEACON=${DISABLE_BEACON:-false}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3210/version"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mcpjam
+
+  # Convex Dashboard - Admin UI (optional)
+  convex-dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    container_name: mcpjam-convex-dashboard
+    restart: unless-stopped
+    ports:
+      - "${CONVEX_DASHBOARD_PORT:-6791}:6791"
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_URL=http://convex-backend:3210
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+    networks:
+      - mcpjam
+
+  # MCPJam Inspector
+  mcp-inspector:
+    image: mcpjam/mcp-inspector:v1.5.0
+    container_name: mcpjam-inspector
+    restart: unless-stopped
+    ports:
+      - "${INSPECTOR_PORT:-6274}:6274"
+    environment:
+      - NODE_ENV=production
+      - PORT=6274
+      # Point to self-hosted Convex
+      - CONVEX_HTTP_URL=http://convex-backend:3211
+      - VITE_CONVEX_URL=http://convex-backend:3210
+      # Disable telemetry
+      - VITE_DISABLE_POSTHOG_LOCAL=true
+      # Note: WorkOS auth still required for full functionality
+      # Set these if you have WorkOS credentials:
+      # - VITE_WORKOS_CLIENT_ID=your_client_id
+      # - VITE_WORKOS_REDIRECT_URI=http://localhost:6274/callback
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+    networks:
+      - mcpjam
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').request('http://localhost:6274/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).end()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  mcpjam:
+    name: mcpjam-network
+
+volumes:
+  convex_data:
+    name: mcpjam-convex-data
