@@ -11,18 +11,14 @@ WORKDIR /usr/src/app
 FROM base AS deps
 
 # Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.npm to speed up subsequent builds.
 # Leverage bind mounts to package.json and package-lock.json to avoid having to copy them
 # into this layer.
-# Railway cache mount format: id=s/<service-id>-<target-path>
 RUN --mount=type=bind,source=package.json,target=package.json \
     --mount=type=bind,source=package-lock.json,target=package-lock.json \
-    --mount=type=cache,id=s/e486d5da-228c-499b-8f7b-3afa3d0cfff6-/root/.npm,target=/root/.npm \
     npm ci --legacy-peer-deps
 
 RUN --mount=type=bind,source=sdk/package.json,target=sdk/package.json \
     --mount=type=bind,source=sdk/package-lock.json,target=sdk/package-lock.json \
-    --mount=type=cache,id=s/e486d5da-228c-499b-8f7b-3afa3d0cfff6-/root/.npm,target=/root/.npm \
     npm ci --legacy-peer-deps --prefix sdk
 ################################################################################
 # Create a stage for building the application.
