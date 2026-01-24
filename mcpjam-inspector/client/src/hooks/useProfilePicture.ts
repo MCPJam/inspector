@@ -1,4 +1,4 @@
-import { useAuth } from "@workos-inc/authkit-react";
+import { useAuth } from "@/contexts/ServerAuthContext";
 import { useQuery } from "convex/react";
 
 /**

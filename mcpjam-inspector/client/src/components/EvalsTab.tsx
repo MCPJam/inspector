@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useEffect } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useAuth } from "@/contexts/ServerAuthContext";
 import { useConvexAuth } from "convex/react";
 import { FlaskConical } from "lucide-react";
 import posthog from "posthog-js";

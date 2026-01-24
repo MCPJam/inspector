@@ -36,7 +36,7 @@ import {
   closeTunnel,
   cleanupOrphanedTunnels,
 } from "@/lib/apis/mcp-tunnels-api";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useAuth } from "@/contexts/ServerAuthContext";
 import { useConvexAuth } from "convex/react";
 import { toast } from "sonner";
 import {

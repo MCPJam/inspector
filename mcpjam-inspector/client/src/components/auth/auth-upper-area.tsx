@@ -1,4 +1,4 @@
-import { useAuth } from "@workos-inc/authkit-react";
+import { useAuth } from "@/contexts/ServerAuthContext";
 import { useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@/components/ui/button";
 import {
