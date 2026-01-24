@@ -43,3 +43,47 @@ export function isLocalhostRequest(hostHeader: string | undefined): boolean {
     host.startsWith("[::1]:")
   );
 }
+
+/**
+ * Check if the request is from an allowed host.
+ *
+ * In hosted mode (cloud deployments), this allows both localhost and
+ * configured allowed hosts (MCPJAM_ALLOWED_HOSTS) to receive tokens.
+ * This enables deployment to platforms like Railway while maintaining
+ * security by only allowing explicitly configured hosts.
+ *
+ * @param hostHeader - The Host header value from the request
+ * @param allowedHosts - List of additional allowed hosts (from config)
+ * @param hostedMode - Whether hosted mode is enabled
+ * @returns true if the request is from an allowed host, false otherwise
+ */
+export function isAllowedHost(
+  hostHeader: string | undefined,
+  allowedHosts: string[],
+  hostedMode: boolean,
+): boolean {
+  // Always allow localhost
+  if (isLocalhostRequest(hostHeader)) {
+    return true;
+  }
+
+  // In hosted mode, check configured allowed hosts
+  if (hostedMode && hostHeader && allowedHosts.length > 0) {
+    const host = hostHeader.toLowerCase();
+    // Extract hostname without port for comparison
+    const hostWithoutPort = host.split(":")[0];
+
+    return allowedHosts.some((allowed) => {
+      // Support exact match or subdomain matching (e.g., "*.railway.app")
+      if (allowed.startsWith("*.")) {
+        const domain = allowed.slice(2);
+        return (
+          hostWithoutPort === domain || hostWithoutPort.endsWith(`.${domain}`)
+        );
+      }
+      return hostWithoutPort === allowed;
+    });
+  }
+
+  return false;
+}

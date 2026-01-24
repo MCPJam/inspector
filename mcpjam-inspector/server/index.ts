@@ -17,7 +17,10 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
-import { isLocalhostRequest } from "./utils/localhost-check";
+import {
+  isLocalhostRequest,
+  isAllowedHost,
+} from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -84,7 +87,14 @@ import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
-import { SERVER_PORT, SERVER_HOSTNAME, CORS_ORIGINS } from "./config";
+import {
+  SERVER_PORT,
+  SERVER_HOSTNAME,
+  CORS_ORIGINS,
+  HOSTED_MODE,
+  ALLOWED_HOSTS,
+  STDIO_DISABLED,
+} from "./config";
 import "./types/hono"; // Type extensions
 
 // Utility function to extract MCP server config from environment variables
@@ -290,15 +300,15 @@ app.get("/health", (c) => {
 });
 
 // Session token endpoint (for dev mode where HTML isn't served by this server)
-// Token is only served to localhost requests to prevent leakage to network attackers
+// Token is only served to localhost or allowed hosts (in hosted mode) to prevent leakage
 app.get("/api/session-token", (c) => {
   const host = c.req.header("Host");
 
-  if (!isLocalhostRequest(host)) {
+  if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
     appLogger.warn(
-      `[Security] Token request denied - non-localhost Host: ${host}`,
+      `[Security] Token request denied - non-allowed Host: ${host}`,
     );
-    return c.json({ error: "Token only available via localhost" }, 403);
+    return c.json({ error: "Token only available via localhost or allowed hosts" }, 403);
   }
 
   return c.json({ token: getSessionToken() });
@@ -334,20 +344,28 @@ if (process.env.NODE_ENV === "production") {
       const indexPath = join(process.cwd(), "dist", "client", "index.html");
       let htmlContent = readFileSync(indexPath, "utf-8");
 
-      // SECURITY: Only inject token for localhost requests
+      // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
       // This prevents token leakage when bound to 0.0.0.0
       const host = c.req.header("Host");
 
-      if (isLocalhostRequest(host)) {
+      if (isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
         const token = getSessionToken();
         const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
         htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);
+
+        // Inject deployment config for client-side awareness
+        const deploymentConfig = {
+          hostedMode: HOSTED_MODE,
+          stdioDisabled: STDIO_DISABLED,
+        };
+        const configScript = `<script>window.__MCP_DEPLOYMENT_CONFIG__=${JSON.stringify(deploymentConfig)};</script>`;
+        htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       } else {
-        // Non-localhost access - no token (security measure)
+        // Non-allowed host access - no token (security measure)
         appLogger.warn(
-          `[Security] Token not injected - non-localhost Host: ${host}`,
+          `[Security] Token not injected - non-allowed Host: ${host}`,
         );
-        const warningScript = `<script>console.error("MCPJam: Access via localhost required for full functionality");</script>`;
+        const warningScript = `<script>console.error("MCPJam: Access via localhost or allowed hosts required for full functionality");</script>`;
         htmlContent = htmlContent.replace("</head>", `${warningScript}</head>`);
       }
 

@@ -12,10 +12,17 @@
  * - Add token to URLs for SSE/EventSource (which can't use headers)
  */
 
-// Extend window type for the injected token
+// Deployment configuration injected by server in hosted mode
+interface DeploymentConfig {
+  hostedMode: boolean;
+  stdioDisabled: boolean;
+}
+
+// Extend window type for the injected token and deployment config
 declare global {
   interface Window {
     __MCP_SESSION_TOKEN__?: string;
+    __MCP_DEPLOYMENT_CONFIG__?: DeploymentConfig;
   }
 }
 
@@ -162,4 +169,32 @@ export function authFetch(
   };
 
   return fetch(input, mergedInit);
+}
+
+/**
+ * Check if STDIO transport is disabled.
+ * Returns true when running in hosted mode (cloud deployments).
+ *
+ * @returns true if STDIO is disabled, false otherwise
+ */
+export function isStdioDisabled(): boolean {
+  return window.__MCP_DEPLOYMENT_CONFIG__?.stdioDisabled ?? false;
+}
+
+/**
+ * Check if running in hosted mode (cloud deployment).
+ *
+ * @returns true if in hosted mode, false otherwise
+ */
+export function isHostedMode(): boolean {
+  return window.__MCP_DEPLOYMENT_CONFIG__?.hostedMode ?? false;
+}
+
+/**
+ * Get the deployment configuration.
+ *
+ * @returns DeploymentConfig or undefined if not in hosted mode
+ */
+export function getDeploymentConfig(): DeploymentConfig | undefined {
+  return window.__MCP_DEPLOYMENT_CONFIG__;
 }

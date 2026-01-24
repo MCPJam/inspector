@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import { STDIO_DISABLED } from "../../config";
 
 const connect = new Hono();
 
@@ -36,6 +37,17 @@ connect.post("/", async (c) => {
       ) {
         serverConfig.url = new URL(serverConfig.url.href);
       }
+    }
+
+    // Block STDIO connections in hosted mode (security: prevents RCE)
+    if (STDIO_DISABLED && serverConfig.command) {
+      return c.json(
+        {
+          success: false,
+          error: "STDIO transport is disabled in hosted mode",
+        },
+        403,
+      );
     }
 
     const mcpClientManager = c.mcpClientManager;
