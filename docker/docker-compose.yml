@@ -19,8 +19,10 @@
 
 services:
   # Convex Backend - Reactive database
+  # Note: Convex uses commit SHA tags, not semver. Pin to specific SHA for stability.
+  # Find latest at: https://github.com/get-convex/convex-backend/pkgs/container/convex-backend
   convex-backend:
-    image: ghcr.io/get-convex/convex-backend@sha256:ba8dd946f1e77e34acfbf99612117763a55e52e3
+    image: ghcr.io/get-convex/convex-backend:latest
     container_name: mcpjam-convex-backend
     restart: unless-stopped
     ports:
