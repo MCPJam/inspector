@@ -80,7 +80,12 @@ export { buildRequestInit } from "./transport-utils.js";
 export { isMethodUnavailableError, formatError } from "./error-utils.js";
 
 // Error classes
-export { MCPError, MCPAuthError, isAuthError, isMCPAuthError } from "./errors.js";
+export {
+  MCPError,
+  MCPAuthError,
+  isAuthError,
+  isMCPAuthError,
+} from "./errors.js";
 
 // Task utilities
 export {

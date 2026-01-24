@@ -112,7 +112,9 @@ describe("isAuthError", () => {
     });
 
     it("should return { isAuth: false } for plain objects", () => {
-      expect(isAuthError({ message: "unauthorized" })).toEqual({ isAuth: false });
+      expect(isAuthError({ message: "unauthorized" })).toEqual({
+        isAuth: false,
+      });
     });
   });
 

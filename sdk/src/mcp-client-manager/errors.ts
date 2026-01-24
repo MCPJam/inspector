@@ -12,7 +12,7 @@ export class MCPError extends Error {
     options?: { cause?: unknown }
   ) {
     super(message, options);
-    this.name = 'MCPError';
+    this.name = "MCPError";
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -26,8 +26,8 @@ export class MCPAuthError extends MCPError {
     public readonly statusCode?: number,
     options?: { cause?: unknown }
   ) {
-    super(message, 'AUTH_ERROR', options);
-    this.name = 'MCPAuthError';
+    super(message, "AUTH_ERROR", options);
+    this.name = "MCPAuthError";
   }
 }
 
@@ -44,8 +44,8 @@ export function isMCPAuthError(error: unknown): error is MCPAuthError {
 function hasNumericCode(error: unknown): error is Error & { code: number } {
   return (
     error instanceof Error &&
-    'code' in error &&
-    typeof (error as { code: unknown }).code === 'number'
+    "code" in error &&
+    typeof (error as { code: unknown }).code === "number"
   );
 }
 
@@ -56,14 +56,17 @@ function hasNumericCode(error: unknown): error is Error & { code: number } {
  * 2. HTTP status codes (401, 403) from transport errors
  * 3. Common auth-related patterns in error messages (case-insensitive)
  */
-export function isAuthError(error: unknown): { isAuth: boolean; statusCode?: number } {
+export function isAuthError(error: unknown): {
+  isAuth: boolean;
+  statusCode?: number;
+} {
   if (!(error instanceof Error)) {
     return { isAuth: false };
   }
 
   // Check for MCP SDK's UnauthorizedError by class name
   // (We check by name to avoid importing from @modelcontextprotocol/sdk)
-  if (error.name === 'UnauthorizedError') {
+  if (error.name === "UnauthorizedError") {
     return { isAuth: true, statusCode: 401 };
   }
 
@@ -78,19 +81,19 @@ export function isAuthError(error: unknown): { isAuth: boolean; statusCode?: num
   // Fall back to message pattern matching (case-insensitive)
   const message = error.message.toLowerCase();
   const authPatterns = [
-    'unauthorized',
-    'invalid_token',
-    'invalid token',
-    'token expired',
-    'token has expired',
-    'access denied',
-    'authentication failed',
-    'authentication required',
-    'not authenticated',
-    'forbidden',
+    "unauthorized",
+    "invalid_token",
+    "invalid token",
+    "token expired",
+    "token has expired",
+    "access denied",
+    "authentication failed",
+    "authentication required",
+    "not authenticated",
+    "forbidden",
   ];
 
-  if (authPatterns.some(pattern => message.includes(pattern))) {
+  if (authPatterns.some((pattern) => message.includes(pattern))) {
     return { isAuth: true };
   }
 
@@ -100,7 +103,9 @@ export function isAuthError(error: unknown): { isAuth: boolean; statusCode?: num
     return { isAuth: true, statusCode: 401 };
   }
 
-  const forbiddenMatch = message.match(/\b(status[:\s]*)?403\b|\bhttp\s*403\b/i);
+  const forbiddenMatch = message.match(
+    /\b(status[:\s]*)?403\b|\bhttp\s*403\b/i
+  );
   if (forbiddenMatch) {
     return { isAuth: true, statusCode: 403 };
   }

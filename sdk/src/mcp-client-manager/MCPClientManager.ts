@@ -1083,14 +1083,18 @@ export class MCPClientManager {
         ? ` Streamable HTTP error: ${formatError(streamableError)}.`
         : "";
       const sseErrorMessage = formatError(error);
-      const combinedErrorMessage = `${streamableMessage} SSE error: ${sseErrorMessage}`.trim();
+      const combinedErrorMessage =
+        `${streamableMessage} SSE error: ${sseErrorMessage}`.trim();
 
       // Check for auth errors in both the SSE error and streamable error
       const sseAuthCheck = isAuthError(error);
-      const streamableAuthCheck = streamableError ? isAuthError(streamableError) : { isAuth: false };
+      const streamableAuthCheck = streamableError
+        ? isAuthError(streamableError)
+        : { isAuth: false };
 
       if (sseAuthCheck.isAuth || streamableAuthCheck.isAuth) {
-        const statusCode = sseAuthCheck.statusCode ?? streamableAuthCheck.statusCode;
+        const statusCode =
+          sseAuthCheck.statusCode ?? streamableAuthCheck.statusCode;
         throw new MCPAuthError(
           `Authentication failed for MCP server "${serverId}": ${combinedErrorMessage}`,
           statusCode,
