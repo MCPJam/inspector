@@ -8,13 +8,12 @@ import {
   isPostHogDisabled,
 } from "./lib/PosthogUtils.js";
 import { PostHogProvider } from "posthog-js/react";
+import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
-import { ConvexProviderWithAuth } from "convex/react";
+import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
-import { ServerAuthProvider } from "./contexts/ServerAuthContext.js";
-import { useConvexServerAuth } from "./lib/convex-server-auth.js";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -41,6 +40,21 @@ if (isInIframe) {
   );
 } else {
   const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
+  const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
+
+  // Compute redirect URI safely across environments
+  const workosRedirectUri = (() => {
+    const envRedirect =
+      (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
+    if (typeof window === "undefined") return envRedirect ?? "/callback";
+    const isBrowserHttp =
+      window.location.protocol === "http:" ||
+      window.location.protocol === "https:";
+    if (isBrowserHttp) return `${window.location.origin}/callback`;
+    if (envRedirect) return envRedirect;
+    if ((window as any)?.isElectron) return "mcpjam://oauth/callback";
+    return `${window.location.origin}/callback`;
+  })();
 
   // Warn if critical env vars are missing
   if (!convexUrl) {
@@ -48,15 +62,42 @@ if (isInIframe) {
       "[main] VITE_CONVEX_URL is not set; Convex features may not work.",
     );
   }
+  if (!workosClientId) {
+    console.warn(
+      "[main] VITE_WORKOS_CLIENT_ID is not set; authentication will not work.",
+    );
+  }
+
+  const workosClientOptions = (() => {
+    if (typeof window === "undefined") return {};
+    const disableProxy =
+      (import.meta.env.VITE_WORKOS_DISABLE_LOCAL_PROXY as
+        | string
+        | undefined) === "true";
+    if (!import.meta.env.DEV || disableProxy) return {};
+    const { protocol, hostname, port } = window.location;
+    const parsedPort = port ? Number(port) : undefined;
+    return {
+      apiHostname: hostname,
+      https: protocol === "https:",
+      ...(parsedPort ? { port: parsedPort } : {}),
+    };
+  })();
 
   const convex = new ConvexReactClient(convexUrl);
 
+  console.log("workosClientOptions", workosClientOptions);
+
   const Providers = (
-    <ServerAuthProvider>
-      <ConvexProviderWithAuth client={convex} useAuth={useConvexServerAuth}>
+    <AuthKitProvider
+      clientId={workosClientId}
+      redirectUri={workosRedirectUri}
+      {...workosClientOptions}
+    >
+      <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
         <App />
-      </ConvexProviderWithAuth>
-    </ServerAuthProvider>
+      </ConvexProviderWithAuthKit>
+    </AuthKitProvider>
   );
 
   // Async bootstrap to initialize session token before rendering

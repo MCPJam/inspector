@@ -26,7 +26,7 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   generateId,
 } from "ai";
-import { useAuth } from "@/contexts/ServerAuthContext";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { ModelDefinition, isGPT5Model } from "@/shared/types";
 import {

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { useAuth } from "@/contexts/ServerAuthContext";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";

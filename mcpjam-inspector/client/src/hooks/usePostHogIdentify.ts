@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { usePostHog } from "posthog-js/react";
-import { useAuth } from "@/contexts/ServerAuthContext";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 
 /**

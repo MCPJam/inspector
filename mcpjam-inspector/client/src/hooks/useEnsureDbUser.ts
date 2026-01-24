@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
-import { useAuth } from "@/contexts/ServerAuthContext";
+import { useAuth } from "@workos-inc/authkit-react";
 import * as Sentry from "@sentry/react";
 
 /**

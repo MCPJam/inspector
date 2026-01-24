@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@/contexts/ServerAuthContext";
+import { useAuth } from "@workos-inc/authkit-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { Share2 } from "lucide-react";

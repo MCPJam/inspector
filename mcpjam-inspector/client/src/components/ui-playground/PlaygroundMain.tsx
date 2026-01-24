@@ -29,7 +29,7 @@ import {
   Hand,
   Settings2,
 } from "lucide-react";
-import { useAuth } from "@/contexts/ServerAuthContext";
+import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";

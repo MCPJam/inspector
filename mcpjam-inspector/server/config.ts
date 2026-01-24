@@ -36,10 +36,3 @@ export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
 // Can also be manually disabled via MCPJAM_DISABLE_STDIO
 export const STDIO_DISABLED =
   HOSTED_MODE || process.env.MCPJAM_DISABLE_STDIO === "true";
-
-// WorkOS Authentication Configuration
-export const WORKOS_API_KEY = process.env.WORKOS_API_KEY ?? "";
-export const WORKOS_CLIENT_ID = process.env.WORKOS_CLIENT_ID ?? "";
-export const WORKOS_REDIRECT_URI =
-  process.env.WORKOS_REDIRECT_URI ?? "http://localhost:6274/api/auth/callback";
-export const WORKOS_COOKIE_PASSWORD = process.env.WORKOS_COOKIE_PASSWORD ?? "";

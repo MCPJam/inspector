@@ -85,7 +85,6 @@ function logBox(content: string, title?: string) {
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
-import authRoutes from "./routes/auth/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import {
@@ -280,15 +279,6 @@ app.use(
 // API Routes
 app.route("/api/apps", appsRoutes);
 app.route("/api/mcp", mcpRoutes);
-app.route("/api/auth", authRoutes);
-
-// Legacy redirect: /callback -> /api/auth/callback
-// This ensures existing OAuth flows continue to work during migration
-app.get("/callback", (c) => {
-  const url = new URL(c.req.url);
-  url.pathname = "/api/auth/callback";
-  return c.redirect(url.toString());
-});
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.

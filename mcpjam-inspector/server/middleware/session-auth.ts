@@ -30,12 +30,6 @@ const UNPROTECTED_ROUTES = [
   "/api/mcp/health", // Health check - no sensitive data
   "/api/apps/health", // Health check - no sensitive data
   "/api/session-token", // Token endpoint - protected by localhost check instead
-  "/api/auth/login", // Auth - protected by WorkOS OAuth flow
-  "/api/auth/callback", // Auth - receives OAuth callback from WorkOS
-  "/api/auth/logout", // Auth - requires session cookie validation
-  "/api/auth/me", // Auth - returns user from session cookie
-  "/api/auth/token", // Auth - returns access token from session cookie
-  "/callback", // Legacy redirect to /api/auth/callback
 ];
 
 /**

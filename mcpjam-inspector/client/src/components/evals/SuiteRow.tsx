@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useAuth } from "@/contexts/ServerAuthContext";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
