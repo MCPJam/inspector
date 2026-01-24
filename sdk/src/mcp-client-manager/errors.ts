@@ -70,6 +70,15 @@ export function isAuthError(error: unknown): {
     return { isAuth: true, statusCode: 401 };
   }
 
+  // Check for our own MCPAuthError by name
+  if (error.name === "MCPAuthError") {
+    const statusCode =
+      "statusCode" in error && typeof error.statusCode === "number"
+        ? error.statusCode
+        : undefined;
+    return { isAuth: true, statusCode };
+  }
+
   // Check for transport errors with HTTP status codes (StreamableHTTPError, SseError)
   if (hasNumericCode(error)) {
     const code = error.code;
