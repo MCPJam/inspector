@@ -210,20 +210,13 @@ export class TestAgent {
       });
 
       const e2eMs = Date.now() - startTime;
-
-      // Extract tool calls from result steps
       const toolCalls = extractToolCalls(result);
-
-      // Use totalUsage for multi-step agents (aggregates tokens across all steps)
-      // Fall back to usage (final step only) for single-step prompts
       const usage = result.totalUsage ?? result.usage;
       const inputTokens = usage?.inputTokens ?? 0;
       const outputTokens = usage?.outputTokens ?? 0;
 
-      // Build full message history
       const messages: CoreMessage[] = [];
 
-      // Add user message first
       const userMessage: CoreUserMessage = {
         role: "user",
         content: message,

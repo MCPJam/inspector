@@ -74,7 +74,7 @@ export interface LLMConfig {
  */
 export interface ToolCall {
   toolName: string;
-  arguments: Record<string, unknown>;
+  arguments: Record<any, any>;
 }
 
 /**

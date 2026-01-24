@@ -103,7 +103,6 @@ export { PromptResult } from "./PromptResult.js";
 export {
   extractToolCalls,
   extractToolNames,
-  type GenerateTextResultLike,
 } from "./tool-extraction.js";
 
 // Validators for tool call matching

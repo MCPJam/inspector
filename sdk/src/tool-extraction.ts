@@ -2,53 +2,8 @@
  * Tool extraction utilities for AI SDK generateText results
  */
 
+import { GenerateTextResult, ToolSet } from "ai";
 import type { ToolCall } from "./types.js";
-
-/**
- * Represents a tool call from AI SDK's generateText result.
- * Made flexible to handle different AI SDK versions.
- */
-interface AISDKToolCall {
-  toolName: string;
-  /** Arguments - 'args' in v3+ format */
-  args?: Record<string, unknown>;
-  toolCallId?: string;
-}
-
-/**
- * Represents a step from AI SDK's generateText result
- */
-interface AISDKStep {
-  toolCalls?: AISDKToolCall[];
-}
-
-/**
- * Token usage format from AI SDK.
- * Supports both older (promptTokens/completionTokens) and newer (inputTokens/outputTokens) formats.
- */
-export interface AISDKUsage {
-  // Older format
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
-  // Newer format (AI SDK v6+)
-  inputTokens?: number;
-  outputTokens?: number;
-}
-
-/**
- * Minimal interface for AI SDK's GenerateTextResult
- * We only extract what we need to avoid tight coupling.
- */
-export interface GenerateTextResultLike {
-  text: string;
-  steps?: AISDKStep[];
-  toolCalls?: AISDKToolCall[];
-  /** Token usage for the final step */
-  usage?: AISDKUsage;
-  /** Total token usage across all steps (for multi-step generations) */
-  totalUsage?: AISDKUsage;
-}
 
 /**
  * Extract all tool calls from an AI SDK generateText result.
@@ -57,7 +12,7 @@ export interface GenerateTextResultLike {
  * @param result - The result from AI SDK's generateText
  * @returns Array of ToolCall objects with toolName and arguments
  */
-export function extractToolCalls(result: GenerateTextResultLike): ToolCall[] {
+export function extractToolCalls(result: GenerateTextResult<ToolSet, never>): ToolCall[] {
   const toolCalls: ToolCall[] = [];
 
   // Extract from steps (multi-step agentic loop)
@@ -67,7 +22,7 @@ export function extractToolCalls(result: GenerateTextResultLike): ToolCall[] {
         for (const tc of step.toolCalls) {
           toolCalls.push({
             toolName: tc.toolName,
-            arguments: tc.args ?? {},
+            arguments: tc.input ?? {},
           });
         }
       }
@@ -83,7 +38,7 @@ export function extractToolCalls(result: GenerateTextResultLike): ToolCall[] {
     for (const tc of result.toolCalls) {
       toolCalls.push({
         toolName: tc.toolName,
-        arguments: tc.args ?? {},
+        arguments: tc.input ?? {},
       });
     }
   }
@@ -98,6 +53,6 @@ export function extractToolCalls(result: GenerateTextResultLike): ToolCall[] {
  * @param result - The result from AI SDK's generateText
  * @returns Array of tool names that were called
  */
-export function extractToolNames(result: GenerateTextResultLike): string[] {
+export function extractToolNames(result: GenerateTextResult<ToolSet, never>): string[] {
   return extractToolCalls(result).map((tc) => tc.toolName);
 }
