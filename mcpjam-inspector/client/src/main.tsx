@@ -92,11 +92,6 @@ if (isInIframe) {
     <AuthKitProvider
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
-      devMode={true} // Enable localStorage token storage for Railway deployment
-      onRedirectCallback={() => {
-        // Navigate to home without full page reload to preserve auth state
-        window.history.replaceState({}, "", "/");
-      }}
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
