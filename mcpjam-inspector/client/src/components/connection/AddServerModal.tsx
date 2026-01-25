@@ -13,7 +13,7 @@ import {
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ServerFormData } from "@/shared/types.js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { isStdioDisabled } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 import { usePostHog } from "posthog-js/react";
 import { useServerForm } from "./hooks/use-server-form";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
@@ -36,14 +36,12 @@ export function AddServerModal({
   const posthog = usePostHog();
   const formState = useServerForm();
 
-  const stdioDisabled = isStdioDisabled();
-
   // Default to HTTP when STDIO is disabled (hosted mode)
   useEffect(() => {
-    if (isOpen && stdioDisabled && formState.type === "stdio") {
+    if (isOpen && HOSTED_MODE && formState.type === "stdio") {
       formState.setType("http");
     }
-  }, [isOpen, stdioDisabled, formState.type]);
+  }, [isOpen, formState.type]);
 
   // Initialize form with initial data if provided
   useEffect(() => {
@@ -54,11 +52,11 @@ export function AddServerModal({
       if (initialData.type) {
         // In hosted mode, force HTTP if STDIO is disabled
         const effectiveType =
-          stdioDisabled && initialData.type === "stdio"
+          HOSTED_MODE && initialData.type === "stdio"
             ? "http"
             : initialData.type;
         formState.setType(effectiveType);
-      } else if (stdioDisabled) {
+      } else if (HOSTED_MODE) {
         // Default to HTTP when STDIO is disabled
         formState.setType("http");
       }
@@ -97,7 +95,7 @@ export function AddServerModal({
         formState.setBearerToken(initialData.headers["Authorization"] || "");
       }
     }
-  }, [initialData, isOpen, stdioDisabled]);
+  }, [initialData, isOpen]);
 
   const handleClose = () => {
     formState.resetForm();
@@ -173,7 +171,7 @@ export function AddServerModal({
             <label className="block text-sm font-medium text-foreground">
               Connection Type
             </label>
-            {formState.type === "stdio" && !stdioDisabled ? (
+            {formState.type === "stdio" && !HOSTED_MODE ? (
               <div className="flex">
                 <Select
                   value={formState.type}
@@ -207,7 +205,7 @@ export function AddServerModal({
                   value={formState.type}
                   onValueChange={(value: "stdio" | "http") => {
                     // Don't allow switching to STDIO if disabled
-                    if (value === "stdio" && stdioDisabled) return;
+                    if (value === "stdio" && HOSTED_MODE) return;
                     const currentValue = formState.url;
                     formState.setType(value);
                     if (value === "stdio" && currentValue) {
@@ -219,7 +217,7 @@ export function AddServerModal({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {!stdioDisabled && (
+                    {!HOSTED_MODE && (
                       <SelectItem value="stdio">STDIO</SelectItem>
                     )}
                     <SelectItem value="http">HTTP</SelectItem>

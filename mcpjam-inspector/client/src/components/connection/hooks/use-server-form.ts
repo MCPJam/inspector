@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import { HOSTED_MODE } from "@/lib/config";
 
 export function useServerForm(server?: ServerWithName) {
   const [name, setName] = useState("");
@@ -181,6 +182,18 @@ export function useServerForm(server?: ServerWithName) {
     } else if (type === "http") {
       if (!url || url.trim() === "") {
         return "URL is required for HTTP servers";
+      }
+
+      // Enforce HTTPS in hosted mode
+      if (HOSTED_MODE) {
+        try {
+          const urlObj = new URL(url.trim());
+          if (urlObj.protocol !== "https:") {
+            return "HTTPS is required in web app";
+          }
+        } catch {
+          return "Invalid URL format";
+        }
       }
     }
 

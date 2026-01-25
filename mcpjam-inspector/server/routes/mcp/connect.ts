@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
-import { STDIO_DISABLED } from "../../config";
+import { HOSTED_MODE } from "../../config";
 
 const connect = new Hono();
 
@@ -40,7 +40,7 @@ connect.post("/", async (c) => {
     }
 
     // Block STDIO connections in hosted mode (security: prevents RCE)
-    if (STDIO_DISABLED && serverConfig.command) {
+    if (HOSTED_MODE && serverConfig.command) {
       return c.json(
         {
           success: false,
@@ -48,6 +48,20 @@ connect.post("/", async (c) => {
         },
         403,
       );
+    }
+
+    // Enforce HTTPS in hosted mode
+    if (HOSTED_MODE && serverConfig.url) {
+      if (serverConfig.url.protocol !== "https:") {
+        return c.json(
+          {
+            success: false,
+            error:
+              "HTTPS is required in hosted mode. Please use an https:// URL.",
+          },
+          400,
+        );
+      }
     }
 
     const mcpClientManager = c.mcpClientManager;

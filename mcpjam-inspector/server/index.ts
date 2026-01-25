@@ -90,7 +90,6 @@ import {
   CORS_ORIGINS,
   HOSTED_MODE,
   ALLOWED_HOSTS,
-  STDIO_DISABLED,
 } from "./config";
 import "./types/hono"; // Type extensions
 
@@ -352,14 +351,6 @@ if (process.env.NODE_ENV === "production") {
         const token = getSessionToken();
         const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
         htmlContent = htmlContent.replace("</head>", `${tokenScript}</head>`);
-
-        // Inject deployment config for client-side awareness
-        const deploymentConfig = {
-          hostedMode: HOSTED_MODE,
-          stdioDisabled: STDIO_DISABLED,
-        };
-        const configScript = `<script>window.__MCP_DEPLOYMENT_CONFIG__=${JSON.stringify(deploymentConfig)};</script>`;
-        htmlContent = htmlContent.replace("</head>", `${configScript}</head>`);
       } else {
         // Non-allowed host access - no token (security measure)
         appLogger.warn(

@@ -3,6 +3,7 @@ import type { MCPServerConfig } from "@/sdk";
 import "../../types/hono"; // Type extensions
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
+import { HOSTED_MODE } from "../../config";
 
 const servers = new Hono();
 
@@ -175,6 +176,31 @@ servers.post("/reconnect", async (c) => {
         typeof (urlValue as { href?: unknown }).href === "string"
       ) {
         normalizedConfig.url = new URL((urlValue as { href: string }).href);
+      }
+    }
+
+    // Block STDIO connections in hosted mode (security: prevents RCE)
+    if (HOSTED_MODE && normalizedConfig.command) {
+      return c.json(
+        {
+          success: false,
+          error: "STDIO transport is disabled in hosted mode",
+        },
+        403,
+      );
+    }
+
+    // Enforce HTTPS in hosted mode
+    if (HOSTED_MODE && normalizedConfig.url) {
+      if (normalizedConfig.url.protocol !== "https:") {
+        return c.json(
+          {
+            success: false,
+            error:
+              "HTTPS is required in hosted mode. Please use an https:// URL.",
+          },
+          400,
+        );
       }
     }
 
