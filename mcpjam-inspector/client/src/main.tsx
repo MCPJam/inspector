@@ -68,7 +68,19 @@ if (isInIframe) {
     );
   }
 
+  // Configure WorkOS AuthKit API hostname
+  // Priority: 1) Explicit env var (for custom domains like login.mcpjam.com)
+  //           2) Dev mode proxy through Vite
+  //           3) Default (api.workos.com)
   const workosClientOptions = (() => {
+    const envApiHostname = import.meta.env.VITE_WORKOS_API_HOSTNAME as
+      | string
+      | undefined;
+    if (envApiHostname) {
+      return { apiHostname: envApiHostname };
+    }
+
+    // Dev mode: proxy through Vite dev server to avoid CORS
     if (typeof window === "undefined") return {};
     const disableProxy =
       (import.meta.env.VITE_WORKOS_DISABLE_LOCAL_PROXY as
@@ -90,6 +102,7 @@ if (isInIframe) {
     <AuthKitProvider
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
+      devMode={true}
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
