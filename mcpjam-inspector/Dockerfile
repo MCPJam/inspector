@@ -31,6 +31,9 @@ ENV VITE_MCPJAM_HOSTED_MODE=${VITE_MCPJAM_HOSTED_MODE}
 ARG VITE_WORKOS_API_HOSTNAME
 ENV VITE_WORKOS_API_HOSTNAME=${VITE_WORKOS_API_HOSTNAME}
 
+ARG VITE_CONVEX_URL
+ENV VITE_CONVEX_URL=${VITE_CONVEX_URL}
+
 # Layer 1: Copy configuration files (rarely change)
 COPY tsconfig.json package.json ./
 COPY lib/tsconfig.json lib/tsup.config.ts ./lib/
