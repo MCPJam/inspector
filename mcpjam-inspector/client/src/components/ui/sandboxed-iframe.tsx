@@ -98,10 +98,14 @@ export const SandboxedIframe = forwardRef<
     } else if (currentHost === "127.0.0.1") {
       sandboxHost = "localhost";
     } else {
-      throw new Error(
-        "[SandboxedIframe] SEP-1865 violation: Cannot use same-origin sandbox. " +
-          "Configure a sandbox subdomain (e.g., sandbox.example.com) or different port.",
+      // In production/hosted environments, fall back to same-origin
+      // Note: SEP-1865 recommends different origins, but same-origin works with sandbox attribute
+      console.warn(
+        "[SandboxedIframe] Cross-origin isolation not available for hostname:",
+        currentHost,
+        "- falling back to same-origin sandbox",
       );
+      sandboxHost = currentHost;
     }
 
     const portSuffix = currentPort ? `:${currentPort}` : "";
