@@ -20,6 +20,7 @@ export const CORS_ORIGINS = [
   "http://localhost:8080", // Electron renderer dev server
   `http://localhost:${SERVER_PORT}`, // Hono server
   `http://127.0.0.1:${SERVER_PORT}`, // Hono server production
+  "https://inspector-dev.up.railway.app/",
 ];
 
 // Hosted mode for cloud deployments (Railway, etc.)
@@ -29,7 +30,9 @@ export const HOSTED_MODE = process.env.MCPJAM_HOSTED_MODE === "true";
 // Allowed hosts for token delivery in hosted mode (comma-separated)
 // These hosts will be allowed to receive session tokens in addition to localhost
 export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
-  ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) => h.trim().toLowerCase())
+  ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
+      h.trim().toLowerCase(),
+    )
   : [];
 
 // STDIO transport disabled - always disabled in hosted mode (security: prevents RCE)
