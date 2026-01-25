@@ -24,10 +24,7 @@ export function useEnsureDbUser() {
 
   useEffect(() => {
     if (isLoading) return;
-    if (!isAuthenticated && user) {
-      console.log("useEnsureDbUser: not authenticated");
-      throw new Error("Not authenticated");
-    }
+    // Wait for Convex auth to sync with WorkOS - don't throw during the race window
     if (!isAuthenticated) return;
     if (!user) return;
 
