@@ -17,10 +17,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
-import {
-  isLocalhostRequest,
-  isAllowedHost,
-} from "./utils/localhost-check";
+import { isLocalhostRequest, isAllowedHost } from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -308,7 +305,10 @@ app.get("/api/session-token", (c) => {
     appLogger.warn(
       `[Security] Token request denied - non-allowed Host: ${host}`,
     );
-    return c.json({ error: "Token only available via localhost or allowed hosts" }, 403);
+    return c.json(
+      { error: "Token only available via localhost or allowed hosts" },
+      403,
+    );
   }
 
   return c.json({ token: getSessionToken() });
