@@ -36,6 +36,14 @@ export interface TestAgentConfig {
 }
 
 /**
+ * Options for the prompt() method
+ */
+export interface PromptOptions {
+  /** Previous PromptResult(s) to include as conversation context for multi-turn conversations */
+  context?: PromptResult | PromptResult[];
+}
+
+/**
  * Type guard to check if tools is Tool[] (from getTools())
  */
 function isToolArray(tools: Tool[] | AiSdkTool): tools is Tool[] {
@@ -163,13 +171,55 @@ export class TestAgent {
   }
 
   /**
+   * Build an array of CoreMessages from previous PromptResult(s) for multi-turn context.
+   * @param context - Single PromptResult or array of PromptResults to include as context
+   * @returns Array of CoreMessages representing the conversation history
+   */
+  private buildContextMessages(
+    context: PromptResult | PromptResult[] | undefined
+  ): CoreMessage[] {
+    if (!context) {
+      return [];
+    }
+
+    const results = Array.isArray(context) ? context : [context];
+    const messages: CoreMessage[] = [];
+
+    for (const result of results) {
+      // Get all messages from this prompt result (user message + assistant/tool responses)
+      messages.push(...result.getMessages());
+    }
+
+    return messages;
+  }
+
+  /**
    * Run a prompt with the LLM, allowing tool calls.
    * Never throws - errors are returned in the PromptResult.
    *
    * @param message - The user message to send to the LLM
+   * @param options - Optional settings including context for multi-turn conversations
    * @returns PromptResult with text response, tool calls, token usage, and latency breakdown
+   *
+   * @example
+   * // Single-turn (default)
+   * const result = await agent.prompt("Show me workspaces");
+   *
+   * @example
+   * // Multi-turn with context
+   * const r1 = await agent.prompt("Show me workspaces");
+   * const r2 = await agent.prompt("Now show tasks", { context: r1 });
+   *
+   * @example
+   * // Multi-turn with multiple context results
+   * const r1 = await agent.prompt("Show workspaces");
+   * const r2 = await agent.prompt("Pick the first", { context: r1 });
+   * const r3 = await agent.prompt("Show tasks", { context: [r1, r2] });
    */
-  async prompt(message: string): Promise<PromptResult> {
+  async prompt(
+    message: string,
+    options?: PromptOptions
+  ): Promise<PromptResult> {
     const startTime = Date.now();
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
@@ -189,12 +239,19 @@ export class TestAgent {
         stepMcpMs += ms; // Accumulate per-step for LLM calculation
       });
 
+      // Build messages array if context is provided for multi-turn
+      const contextMessages = this.buildContextMessages(options?.context);
+      const userMessage: CoreUserMessage = { role: "user", content: message };
+
       // Cast model to any to handle AI SDK version compatibility
       const result = await generateText({
         model: model as any,
         tools: instrumentedTools,
         system: this.systemPrompt,
-        prompt: message,
+        // Use messages array for multi-turn, simple prompt for single-turn
+        ...(contextMessages.length > 0
+          ? { messages: [...contextMessages, userMessage] }
+          : { prompt: message }),
         temperature: this.temperature,
         // Use stopWhen with stepCountIs for controlling max agentic steps
         // AI SDK v6+ uses this instead of maxSteps
@@ -216,11 +273,6 @@ export class TestAgent {
       const outputTokens = usage?.outputTokens ?? 0;
 
       const messages: CoreMessage[] = [];
-
-      const userMessage: CoreUserMessage = {
-        role: "user",
-        content: message,
-      };
       messages.push(userMessage);
 
       // Add response messages (assistant + tool messages from agentic loop)

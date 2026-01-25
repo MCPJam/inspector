@@ -12,7 +12,9 @@ import type { ToolCall } from "./types.js";
  * @param result - The result from AI SDK's generateText
  * @returns Array of ToolCall objects with toolName and arguments
  */
-export function extractToolCalls(result: GenerateTextResult<ToolSet, never>): ToolCall[] {
+export function extractToolCalls(
+  result: GenerateTextResult<ToolSet, never>
+): ToolCall[] {
   const toolCalls: ToolCall[] = [];
 
   // Extract from steps (multi-step agentic loop)
@@ -53,6 +55,8 @@ export function extractToolCalls(result: GenerateTextResult<ToolSet, never>): To
  * @param result - The result from AI SDK's generateText
  * @returns Array of tool names that were called
  */
-export function extractToolNames(result: GenerateTextResult<ToolSet, never>): string[] {
+export function extractToolNames(
+  result: GenerateTextResult<ToolSet, never>
+): string[] {
   return extractToolCalls(result).map((tc) => tc.toolName);
 }

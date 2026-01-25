@@ -102,16 +102,13 @@ export {
 
 // TestAgent
 export { TestAgent } from "./TestAgent.js";
-export type { TestAgentConfig } from "./TestAgent.js";
+export type { TestAgentConfig, PromptOptions } from "./TestAgent.js";
 
 // PromptResult class (preferred over TestAgent's interface)
 export { PromptResult } from "./PromptResult.js";
 
 // Tool extraction utilities
-export {
-  extractToolCalls,
-  extractToolNames,
-} from "./tool-extraction.js";
+export { extractToolCalls, extractToolNames } from "./tool-extraction.js";
 
 // Validators for tool call matching
 export {

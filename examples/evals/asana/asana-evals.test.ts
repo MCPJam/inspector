@@ -2,7 +2,6 @@ import {
   MCPClientManager,
   TestAgent,
   EvalTest,
-  EvalSuite,
 } from "@mcpjam/sdk";
 
 describe("Asana MCP Evals", () => {
@@ -46,71 +45,91 @@ describe("Asana MCP Evals", () => {
 
   describe("Test workspace tools", () => {
     test("list-workspaces accuracy > 80%", async () => {
-      const suite = new EvalSuite({ name: "Single-Turn Tool Selection" });
-      suite.add(
-        new EvalTest({
-          name: "list-workspaces",
-          test: async (agent: TestAgent) => {
-            const runResult = await agent.prompt("Show me all my Asana workspaces");
-            return runResult.hasToolCall("asana_list_workspaces");
-          },
-        }),
-      );
-      await suite.run(testAgent, {
-        iterations: 1, // Number of test runs per eval
-        concurrency: undefined, // Parallel executions
+      const test = new EvalTest({
+        name: "list-workspaces",
+        test: async (agent: TestAgent) => {
+          const runResult = await agent.prompt("Show me all my Asana workspaces");
+          return runResult.hasToolCall("asana_list_workspaces");
+        },
+      });
+      await test.run(testAgent, {
+        iterations: 10, // Number of test runs per eval
+        concurrency: undefined, // Leave as undfined for max concurrency
         retries: 1, // Retry on failure
         timeoutMs: 60000, // 60s timeout
-      })
-      expect(suite.get("list-workspaces")!.accuracy()).toBeGreaterThan(0.8);
-      expect(suite.get("list-workspaces")!.averageTokenUse()).toBeLessThan(30000);
+      });
+      expect(test.accuracy()).toBeGreaterThan(0.8);
+      expect(test.averageTokenUse()).toBeLessThan(30000);
     });
   });
 
   describe("Test asana_get_user", () => {
     test("asana_get_user accuracy > 80%", async () => {
-      const suite = new EvalSuite({ name: "asana_get_user" });
-      suite.add(
-        new EvalTest({
-          name: "asana-get-user",
-          test: async (agent: TestAgent) => {
-            const runResult = await agent.prompt("Who am I in Asana?");
-            return runResult.hasToolCall("asana_get_user");
-          },
-        }),
-      );
-      await suite.run(testAgent, {
-        iterations: 1, // Number of test runs per eval
-        concurrency: undefined, // Parallel executions
+      const test = new EvalTest({
+        name: "asana-get-user",
+        test: async (agent: TestAgent) => {
+          const runResult = await agent.prompt("Who am I in Asana?");
+          return runResult.hasToolCall("asana_get_user");
+        },
+      });
+      await test.run(testAgent, {
+        iterations: 10, // Number of test runs per eval
+        concurrency: undefined, // Leave as undfined for max concurrency
         retries: 1, // Retry on failure
         timeoutMs: 60000, // 60s timeout
-      })
-      expect(suite.get("asana-get-user")!.accuracy()).toBeGreaterThan(0.8);
-      expect(suite.get("asana-get-user")!.averageTokenUse()).toBeLessThan(30000);
+      });
+      expect(test.accuracy()).toBeGreaterThan(0.8);
+      expect(test.averageTokenUse()).toBeLessThan(30000);
     });
   });
 
   describe("Test get_workspace_users", () => {
     test("get_workspace_users accuracy > 80%", async () => {
-      const suite = new EvalSuite({ name: "get_workspace_users" });
-      suite.add(
-        new EvalTest({
-          name: "get_workspace_users",
-          test: async (agent: TestAgent) => {
-            const runResult = await agent.prompt("Show me all users in my Asana workspace.");
-            const getToolCallArguments = runResult.getToolArguments("asana_get_workspace_users");
-            return runResult.hasToolCall("asana_get_workspace_users") && typeof getToolCallArguments?.workspace_gid === "string";
-          },
-        }),
-      );
-      await suite.run(testAgent, {
-        iterations: 1, // Number of test runs per eval
-        concurrency: undefined, // Parallel executions
+      const test = new EvalTest({
+        name: "get_workspace_users",
+        test: async (agent: TestAgent) => {
+          const runResult = await agent.prompt("Show me all users in my Asana workspace.");
+          const getToolCallArguments = runResult.getToolArguments("asana_get_workspace_users");
+          return runResult.hasToolCall("asana_get_workspace_users") && typeof getToolCallArguments?.workspace_gid === "string";
+        },
+      });
+      await test.run(testAgent, {
+        iterations: 10, // Number of test runs per eval
+        concurrency: undefined, // Leave as undfined for max concurrency
         retries: 1, // Retry on failure
         timeoutMs: 60000, // 60s timeout
-      })
-      expect(suite.get("get_workspace_users")!.accuracy()).toBeGreaterThan(0.8);
-      expect(suite.get("get_workspace_users")!.averageTokenUse()).toBeLessThan(40000);
+      });
+      expect(test.accuracy()).toBeGreaterThan(0.8);
+      expect(test.averageTokenUse()).toBeLessThan(40000);
     });
+  });
+
+  describe("Multi-turn tests", () => {
+    test("identify who I am in Asana, then list projects in my workspace", async () => {
+      const test = new EvalTest({
+        name: "user-projects-tasks-flow",
+        test: async (agent: TestAgent) => {
+          // Turn 1: Get current user info
+          const r1 = await agent.prompt("Who am I in Asana? What's my user ID?");
+          if (!r1.hasToolCall("asana_get_user")) return false;
+
+          // Turn 2: List projects in workspace (with context from turn 1)
+          const r2 = await agent.prompt(
+            "Now list the projects in my workspace",
+            { context: [r1] }
+          );
+          if (!r2.hasToolCall("asana_get_projects") && !r2.hasToolCall("asana_get_projects_for_workspace")) return false;
+          return true;
+        },
+      });
+      await test.run(testAgent, {
+        iterations: 10,
+        concurrency: undefined, // Leave as undfined for max concurrency
+        retries: 1,
+        timeoutMs: 60000, // 60s timeout
+      });
+      expect(test.accuracy()).toBeGreaterThan(0.7);
+      expect(test.averageTokenUse()).toBeLessThan(90000);
+    },);
   });
 });
