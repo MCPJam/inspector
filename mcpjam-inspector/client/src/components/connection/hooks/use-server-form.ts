@@ -6,7 +6,7 @@ import { HOSTED_MODE } from "@/lib/config";
 
 export function useServerForm(server?: ServerWithName) {
   const [name, setName] = useState("");
-  const [type, setType] = useState<"stdio" | "http">("stdio");
+  const [type, setType] = useState<"stdio" | "http">("http");
   const [commandInput, setCommandInput] = useState("");
   const [url, setUrl] = useState("");
 
@@ -308,7 +308,7 @@ export function useServerForm(server?: ServerWithName) {
 
   const resetForm = () => {
     setName("");
-    setType("stdio");
+    setType("http");
     setCommandInput("");
     setUrl("");
     setOauthScopesInput("");
