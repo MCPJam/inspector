@@ -50,6 +50,7 @@ import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { formatJsonConfig } from "@/lib/json-config-parser";
 import { Skeleton } from "./ui/skeleton";
+import { HOSTED_MODE } from "@/lib/config";
 
 interface ServersTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -277,6 +278,34 @@ export function ServersTab({
   };
 
   const renderTunnelButton = () => {
+    // Tunnels are not available in hosted mode
+    if (HOSTED_MODE) {
+      const disabledButton = (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={true}
+          className="cursor-not-allowed"
+        >
+          <Cable className="h-4 w-4 mr-2" />
+          Create ngrok tunnel
+        </Button>
+      );
+
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={0}>{disabledButton}</span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>This feature is not available on the web</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    }
+
     if (tunnelUrl) {
       return (
         <Button

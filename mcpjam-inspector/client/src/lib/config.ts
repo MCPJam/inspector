@@ -10,6 +10,7 @@
  * When enabled:
  * - STDIO connections are disabled (security: prevents RCE)
  * - Only HTTPS connections are allowed
+ * - ngrok tunneling is disabled (not applicable for web)
  *
  * Set VITE_MCPJAM_HOSTED_MODE=true at build time to enable.
  */
