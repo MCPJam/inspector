@@ -102,7 +102,6 @@ if (isInIframe) {
     <AuthKitProvider
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
-      devMode={true}
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
