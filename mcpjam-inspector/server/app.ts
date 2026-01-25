@@ -16,7 +16,7 @@ import { MCPClientManager } from "@/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
-import { CORS_ORIGINS } from "./config.js";
+import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import path from "path";
 
 // Security imports
@@ -24,7 +24,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token.js";
-import { isLocalhostRequest } from "./utils/localhost-check.js";
+import { isAllowedHost } from "./utils/localhost-check.js";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
@@ -173,15 +173,15 @@ export function createHonoApp() {
   });
 
   // Session token endpoint (for dev mode where HTML isn't served by this server)
-  // Token is only served to localhost requests to prevent leakage to network attackers
+  // Token is only served to localhost or allowed hosts (in hosted mode)
   app.get("/api/session-token", (c) => {
     const host = c.req.header("Host");
 
-    if (!isLocalhostRequest(host)) {
+    if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
       appLogger.warn(
-        `[Security] Token request denied - non-localhost Host: ${host}`,
+        `[Security] Token request denied - Host not allowed: ${host}`,
       );
-      return c.json({ error: "Token only available via localhost" }, 403);
+      return c.json({ error: "Token only available via allowed hosts" }, 403);
     }
 
     return c.json({ token: getSessionToken() });
@@ -219,20 +219,20 @@ export function createHonoApp() {
         const indexPath = path.join(root, "index.html");
         let html = readFileSync(indexPath, "utf-8");
 
-        // SECURITY: Only inject token for localhost requests
+        // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
         // This prevents token leakage when bound to 0.0.0.0
         const host = c.req.header("Host");
 
-        if (isLocalhostRequest(host)) {
+        if (isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
           const token = getSessionToken();
           const tokenScript = `<script>window.__MCP_SESSION_TOKEN__="${token}";</script>`;
           html = html.replace("</head>", `${tokenScript}</head>`);
         } else {
-          // Non-localhost access - no token (security measure)
+          // Host not allowed - no token (security measure)
           appLogger.warn(
-            `[Security] Token not injected - non-localhost Host: ${host}`,
+            `[Security] Token not injected - Host not allowed: ${host}`,
           );
-          const warningScript = `<script>console.error("MCPJam: Access via localhost required for full functionality");</script>`;
+          const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
           html = html.replace("</head>", `${warningScript}</head>`);
         }
 
