@@ -22,6 +22,12 @@ FROM deps AS build
 
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
+# Build-time arguments for Vite environment variables
+# These are baked into the client bundle during build
+# On Railway: set VITE_MCPJAM_HOSTED_MODE=true as a build-time variable
+ARG VITE_MCPJAM_HOSTED_MODE
+ENV VITE_MCPJAM_HOSTED_MODE=${VITE_MCPJAM_HOSTED_MODE}
+
 # Layer 1: Copy configuration files (rarely change)
 COPY tsconfig.json package.json ./
 COPY lib/tsconfig.json lib/tsup.config.ts ./lib/
