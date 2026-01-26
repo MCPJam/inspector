@@ -36,29 +36,15 @@ export function AddServerModal({
   const posthog = usePostHog();
   const formState = useServerForm();
 
-  // Default to HTTP when STDIO is disabled (hosted mode)
-  useEffect(() => {
-    if (isOpen && HOSTED_MODE && formState.type === "stdio") {
-      formState.setType("http");
-    }
-  }, [isOpen, formState.type]);
-
   // Initialize form with initial data if provided
   useEffect(() => {
     if (initialData && isOpen) {
       if (initialData.name) {
         formState.setName(initialData.name);
       }
-      if (initialData.type) {
-        // In hosted mode, force HTTP if STDIO is disabled
-        const effectiveType =
-          HOSTED_MODE && initialData.type === "stdio"
-            ? "http"
-            : initialData.type;
-        formState.setType(effectiveType);
-      } else if (HOSTED_MODE) {
-        // Default to HTTP when STDIO is disabled
-        formState.setType("http");
+      // Only set type if it's allowed (STDIO is disabled in web app)
+      if (initialData.type && !(HOSTED_MODE && initialData.type === "stdio")) {
+        formState.setType(initialData.type);
       }
       if (initialData.command) {
         const fullCommand = initialData.args
@@ -204,7 +190,7 @@ export function AddServerModal({
                 <Select
                   value={formState.type}
                   onValueChange={(value: "stdio" | "http") => {
-                    // Don't allow switching to STDIO if disabled
+                    // STDIO is disabled in web app
                     if (value === "stdio" && HOSTED_MODE) return;
                     const currentValue = formState.url;
                     formState.setType(value);
