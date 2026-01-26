@@ -253,7 +253,9 @@ export class TestAgent {
           ? { messages: [...contextMessages, userMessage] }
           : { prompt: message }),
         // Only include temperature if explicitly set (some models like reasoning models don't support it)
-        ...(this.temperature !== undefined && { temperature: this.temperature }),
+        ...(this.temperature !== undefined && {
+          temperature: this.temperature,
+        }),
         // Use stopWhen with stepCountIs for controlling max agentic steps
         // AI SDK v6+ uses this instead of maxSteps
         stopWhen: stepCountIs(this.maxSteps),
