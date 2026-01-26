@@ -25,7 +25,7 @@ export interface TestAgentConfig {
   apiKey: string;
   /** System prompt for the LLM (default: "You are a helpful assistant.") */
   systemPrompt?: string;
-  /** Temperature for LLM responses (0-2, default: 0.7) */
+  /** Temperature for LLM responses (0-2). If undefined, uses model default. Some models (e.g., reasoning models) don't support temperature. */
   temperature?: number;
   /** Maximum number of agentic steps/tool calls (default: 10) */
   maxSteps?: number;
@@ -111,7 +111,7 @@ export class TestAgent {
   private readonly model: string;
   private readonly apiKey: string;
   private systemPrompt: string;
-  private temperature: number;
+  private temperature: number | undefined;
   private readonly maxSteps: number;
   private readonly customProviders?:
     | Map<string, CustomProvider>
@@ -135,7 +135,7 @@ export class TestAgent {
     this.model = config.model;
     this.apiKey = config.apiKey;
     this.systemPrompt = config.systemPrompt ?? "You are a helpful assistant.";
-    this.temperature = config.temperature ?? 0.7;
+    this.temperature = config.temperature;
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
   }
@@ -252,7 +252,8 @@ export class TestAgent {
         ...(contextMessages.length > 0
           ? { messages: [...contextMessages, userMessage] }
           : { prompt: message }),
-        temperature: this.temperature,
+        // Only include temperature if explicitly set (some models like reasoning models don't support it)
+        ...(this.temperature !== undefined && { temperature: this.temperature }),
         // Use stopWhen with stepCountIs for controlling max agentic steps
         // AI SDK v6+ uses this instead of maxSteps
         stopWhen: stepCountIs(this.maxSteps),
@@ -382,9 +383,9 @@ export class TestAgent {
   }
 
   /**
-   * Get the current temperature
+   * Get the current temperature (undefined means model default)
    */
-  getTemperature(): number {
+  getTemperature(): number | undefined {
     return this.temperature;
   }
 

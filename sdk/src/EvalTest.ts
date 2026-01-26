@@ -22,6 +22,8 @@ export interface EvalTestRunOptions {
   retries?: number; // default: 0
   timeoutMs?: number; // default: 30000
   onProgress?: (completed: number, total: number) => void;
+  /** Called with a failure report if any iterations fail */
+  onFailure?: (report: string) => void;
 }
 
 /**
@@ -234,7 +236,14 @@ export class EvalTest {
     const results = await Promise.all(promises);
     iterationResults.push(...results);
 
-    return this.aggregateResults(iterationResults);
+    const runResult = this.aggregateResults(iterationResults);
+
+    // Call onFailure callback if there are any failures
+    if (options.onFailure && runResult.failures > 0) {
+      options.onFailure(this.getFailureReport());
+    }
+
+    return runResult;
   }
 
   private aggregateResults(iterations: IterationResult[]): EvalRunResult {
@@ -403,5 +412,34 @@ export class EvalTest {
       throw new Error("No run results available. Call run() first.");
     }
     return this.lastRunResult.iterationDetails.filter((r) => r.passed);
+  }
+
+  /**
+   * Get a failure report with traces from all failed iterations.
+   * Useful for debugging why evaluations failed.
+   *
+   * @returns A formatted string with failure details
+   */
+  getFailureReport(): string {
+    if (!this.lastRunResult) {
+      throw new Error("No run results available. Call run() first.");
+    }
+
+    const failedIterations = this.getFailedIterations();
+    if (failedIterations.length === 0) {
+      return "No failures.";
+    }
+
+    const reports = failedIterations.map((iteration, index) => {
+      const header = `=== Failed Iteration ${index + 1}/${failedIterations.length} ===`;
+      const error = iteration.error ? `Error: ${iteration.error}` : "";
+      const traces = (iteration.prompts ?? [])
+        .map((p, i) => `--- Prompt ${i + 1} ---\n${p.formatTrace()}`)
+        .join("\n\n");
+
+      return [header, error, traces].filter(Boolean).join("\n");
+    });
+
+    return reports.join("\n\n");
   }
 }

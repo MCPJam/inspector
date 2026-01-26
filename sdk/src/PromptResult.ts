@@ -280,4 +280,14 @@ export class PromptResult {
       error,
     });
   }
+
+  /**
+   * Format the conversation trace as a JSON string.
+   * Useful for debugging failed evaluations.
+   *
+   * @returns A JSON string of the conversation messages
+   */
+  formatTrace(): string {
+    return JSON.stringify(this._messages, null, 2);
+  }
 }

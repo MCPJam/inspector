@@ -54,9 +54,10 @@ describe("Asana MCP Evals", () => {
       });
       await test.run(testAgent, {
         iterations: 5, // Number of test runs per eval
-        concurrency: undefined, // Leave as undfined for max concurrency
+        concurrency: undefined, // Leave as undefined for max concurrency
         retries: 1, // Retry on failure
         timeoutMs: 60000, // 60s timeout
+        onFailure: (report) => console.log(report), // Print trace on failure
       });
       expect(test.accuracy()).toBeGreaterThan(0.8);
       expect(test.averageTokenUse()).toBeLessThan(30000);
@@ -74,9 +75,10 @@ describe("Asana MCP Evals", () => {
       });
       await test.run(testAgent, {
         iterations: 10, // Number of test runs per eval
-        concurrency: undefined, // Leave as undfined for max concurrency
+        concurrency: undefined, // Leave as undefined for max concurrency
         retries: 1, // Retry on failure
         timeoutMs: 60000, // 60s timeout
+        onFailure: (report) => console.error(report)
       });
       expect(test.accuracy()).toBeGreaterThan(0.8);
       expect(test.averageTokenUse()).toBeLessThan(30000);
@@ -88,16 +90,17 @@ describe("Asana MCP Evals", () => {
       const test = new EvalTest({
         name: "get_workspace_users",
         test: async (agent: TestAgent) => {
-          const runResult = await agent.prompt("Show me all users in my Asana workspace.");
+          const runResult = await agent.prompt("Can you get me the users in my workspace?");
           const getToolCallArguments = runResult.getToolArguments("asana_get_workspace_users");
           return runResult.hasToolCall("asana_get_workspace_users") && typeof getToolCallArguments?.workspace_gid === "string";
         },
       });
       await test.run(testAgent, {
-        iterations: 5, // Number of test runs per eval
-        concurrency: undefined, // Leave as undfined for max concurrency
-        retries: 1, // Retry on failure
-        timeoutMs: 60000, // 60s timeout
+        iterations: 5, 
+        concurrency: undefined,
+        retries: 1, 
+        timeoutMs: 60000, 
+        onFailure: (report) => console.error(report)
       });
       expect(test.accuracy()).toBeGreaterThan(0.8);
       expect(test.averageTokenUse()).toBeLessThan(40000);
@@ -124,12 +127,13 @@ describe("Asana MCP Evals", () => {
       });
       await test.run(testAgent, {
         iterations: 5,
-        concurrency: undefined, // Leave as undfined for max concurrency
+        concurrency: undefined,
         retries: 1,
-        timeoutMs: 60000, // 60s timeout
+        timeoutMs: 60000,
+        onFailure: (report) => console.error(report)
       });
       expect(test.accuracy()).toBeGreaterThan(0.7);
       expect(test.averageTokenUse()).toBeLessThan(90000);
-    },);
+    });
   });
 });
