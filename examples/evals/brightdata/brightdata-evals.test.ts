@@ -117,7 +117,7 @@ describe("Bright Data MCP Evals", () => {
   });
 
   describe("Multi-turn evals", () => {
-    test("search then scrape a result accuracy > 50%", async () => {
+    test("search then scrape a result accuracy > 30%", async () => {
       const evalTest = new EvalTest({
         name: "search-then-scrape",
         test: async (agent: TestAgent) => {
