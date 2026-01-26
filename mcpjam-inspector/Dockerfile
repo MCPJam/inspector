@@ -34,6 +34,9 @@ ENV VITE_WORKOS_API_HOSTNAME=${VITE_WORKOS_API_HOSTNAME}
 ARG VITE_CONVEX_URL
 ENV VITE_CONVEX_URL=${VITE_CONVEX_URL}
 
+ARG VITE_WORKOS_CLIENT_ID
+ENV VITE_WORKOS_CLIENT_ID=${VITE_WORKOS_CLIENT_ID}
+
 # Layer 1: Copy configuration files (rarely change)
 COPY tsconfig.json package.json ./
 COPY lib/tsconfig.json lib/tsup.config.ts ./lib/
