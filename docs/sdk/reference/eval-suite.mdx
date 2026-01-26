@@ -215,7 +215,7 @@ async function main() {
   await manager.connectToServer("everything");
 
   const agent = new TestAgent({
-    tools: await manager.getToolsForAiSdk(),
+    tools: await manager.getTools(),
     model: "anthropic/claude-sonnet-4-20250514",
     apiKey: process.env.ANTHROPIC_API_KEY,
     temperature: 0.1,

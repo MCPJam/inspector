@@ -48,7 +48,7 @@ const manager = new MCPClientManager({
 });
 await manager.connectToServer("myServer");
 
-const tools = await manager.getToolsForAiSdk();
+const tools = await manager.getTools();
 
 // Test definition (reused across providers)
 const additionTest = new EvalTest({
@@ -94,7 +94,7 @@ async function compareProviders() {
     },
   });
   await manager.connectToServer("everything");
-  const tools = await manager.getToolsForAiSdk();
+  const tools = await manager.getTools();
 
   // Build test suite
   const suite = new EvalSuite({ name: "Tool Selection" });

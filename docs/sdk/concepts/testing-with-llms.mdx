@@ -31,7 +31,7 @@ await manager.connectToServer("myServer");
 
 // Create an agent with your tools
 const agent = new TestAgent({
-  tools: await manager.getToolsForAiSdk(),
+  tools: await manager.getTools(),
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
 });

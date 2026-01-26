@@ -406,12 +406,12 @@ console.log(prompt.messages);
 
 ---
 
-### getToolsForAiSdk()
+### getTools()
 
-Converts MCP tools to Vercel AI SDK format for use with `TestAgent`.
+Returns MCP tools in Vercel AI SDK format for use with `TestAgent`.
 
 ```typescript
-getToolsForAiSdk(serverId?: string): Promise<Record<string, Tool>>
+getTools(serverId?: string): Promise<Record<string, Tool>>
 ```
 
 #### Parameters
@@ -428,10 +428,10 @@ getToolsForAiSdk(serverId?: string): Promise<Record<string, Tool>>
 
 ```typescript
 // Tools from one server
-const serverTools = await manager.getToolsForAiSdk("myServer");
+const serverTools = await manager.getTools("myServer");
 
 // Tools from all connected servers
-const allTools = await manager.getToolsForAiSdk();
+const allTools = await manager.getTools();
 
 // Use with TestAgent
 const agent = new TestAgent({
@@ -483,7 +483,7 @@ async function main() {
 
     // Create agent with all tools
     const agent = new TestAgent({
-      tools: await manager.getToolsForAiSdk(),
+      tools: await manager.getTools(),
       model: "anthropic/claude-sonnet-4-20250514",
       apiKey: process.env.ANTHROPIC_API_KEY,
     });

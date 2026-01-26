@@ -28,7 +28,7 @@ new TestAgent(options: TestAgentOptions)
 
 | Property | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
-| `tools` | `Record<string, Tool>` | Yes | - | MCP tools from `manager.getToolsForAiSdk()` |
+| `tools` | `Record<string, Tool>` | Yes | - | MCP tools from `manager.getTools()` |
 | `model` | `string` | Yes | - | Model identifier in `provider/model` format |
 | `apiKey` | `string` | Yes | - | API key for the LLM provider |
 | `systemPrompt` | `string` | No | `undefined` | System prompt for the LLM |
@@ -40,7 +40,7 @@ new TestAgent(options: TestAgentOptions)
 
 ```typescript
 const agent = new TestAgent({
-  tools: await manager.getToolsForAiSdk(),
+  tools: await manager.getTools(),
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
   systemPrompt: "You are a helpful assistant.",
@@ -179,10 +179,10 @@ const agent = new TestAgent({
 
 ### tools
 
-The MCP tools available to the agent. Obtained from `MCPClientManager.getToolsForAiSdk()`.
+The MCP tools available to the agent. Obtained from `MCPClientManager.getTools()`.
 
 ```typescript
-const tools = await manager.getToolsForAiSdk();
+const tools = await manager.getTools();
 const agent = new TestAgent({ tools, ... });
 ```
 
@@ -250,7 +250,7 @@ async function main() {
 
   // Create agent
   const agent = new TestAgent({
-    tools: await manager.getToolsForAiSdk(),
+    tools: await manager.getTools(),
     model: "anthropic/claude-sonnet-4-20250514",
     apiKey: process.env.ANTHROPIC_API_KEY,
     systemPrompt: "You are a helpful assistant.",

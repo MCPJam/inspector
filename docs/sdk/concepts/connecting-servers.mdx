@@ -116,7 +116,7 @@ await Promise.all([
 ]);
 
 // Aggregate tools from all servers
-const allTools = await manager.getToolsForAiSdk();
+const allTools = await manager.getTools();
 // Now allTools contains tools from math, asana, and github
 ```
 
@@ -145,7 +145,7 @@ const manager = new MCPClientManager({
 await manager.connectToServer("myServer");
 
 // Get tools in AI SDK format
-const tools = await manager.getToolsForAiSdk();
+const tools = await manager.getTools();
 
 // Create agent with those tools
 const agent = new TestAgent({
