@@ -248,7 +248,11 @@ export default function App() {
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
-      <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
+      <MCPSidebar
+        onNavigate={handleNavigate}
+        activeTab={activeTab}
+        servers={workspaceServers}
+      />
       <SidebarInset className="flex flex-col min-h-0">
         <Header
           workspaces={workspaces}

@@ -405,7 +405,7 @@ export function useAppState() {
 
       serversWithRuntime[name] = {
         ...server,
-        config: configWithEnv,
+        config: configWithEnv as MCPServerConfig,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,

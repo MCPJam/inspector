@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Hammer,
   MessageCircle,
@@ -26,6 +27,16 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { ThemeSwitcher } from "@/components/sidebar/theme-switcher";
+import {
+  listTools,
+  type ListToolsResultWithMetadata,
+} from "@/lib/apis/mcp-tools-api";
+import {
+  isMCPApp,
+  isOpenAIApp,
+  isOpenAIAppAndMCPApp,
+} from "@/lib/mcp-ui/mcp-apps-utils";
+import type { ServerWithName } from "@/hooks/use-app-state";
 
 // Define sections with their respective items
 const navigationSections = [
@@ -124,22 +135,96 @@ const navigationSections = [
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
+  /** Servers to check for app capabilities */
+  servers?: Record<string, ServerWithName>;
 }
+
+const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
 
 export function MCPSidebar({
   onNavigate,
   activeTab,
+  servers = {},
   ...props
 }: MCPSidebarProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const [toolsDataMap, setToolsDataMap] = useState<
+    Record<string, ListToolsResultWithMetadata | null>
+  >({});
+  const [hasVisitedAppBuilder, setHasVisitedAppBuilder] = useState(() => {
+    return localStorage.getItem(APP_BUILDER_VISITED_KEY) === "true";
+  });
+
+  // Get list of connected server names
+  const connectedServerNames = useMemo(() => {
+    return Object.entries(servers)
+      .filter(([, server]) => server.connectionStatus === "connected")
+      .map(([name]) => name);
+  }, [servers]);
+
+  // Fetch tools data for connected servers
+  useEffect(() => {
+    const fetchToolsData = async () => {
+      if (connectedServerNames.length === 0) {
+        setToolsDataMap({});
+        return;
+      }
+
+      const newToolsDataMap: Record<
+        string,
+        ListToolsResultWithMetadata | null
+      > = {};
+
+      await Promise.all(
+        connectedServerNames.map(async (serverName) => {
+          try {
+            const result = await listTools(serverName);
+            newToolsDataMap[serverName] = result;
+          } catch {
+            newToolsDataMap[serverName] = null;
+          }
+        }),
+      );
+
+      setToolsDataMap(newToolsDataMap);
+    };
+
+    fetchToolsData();
+  }, [connectedServerNames.join(",")]);
+
+  // Check if any connected server is an app
+  const hasAppServer = useMemo(() => {
+    return Object.values(toolsDataMap).some(
+      (toolsData) =>
+        isMCPApp(toolsData) ||
+        isOpenAIApp(toolsData) ||
+        isOpenAIAppAndMCPApp(toolsData),
+    );
+  }, [toolsDataMap]);
+
+  const showAppBuilderBubble =
+    hasAppServer && activeTab !== "app-builder" && !hasVisitedAppBuilder;
 
   const handleNavClick = (url: string) => {
     if (onNavigate && url.startsWith("#")) {
-      onNavigate(url.slice(1));
+      const section = url.slice(1);
+      // Mark App Builder as visited when clicked (always, not just when bubble is visible)
+      if (section === "app-builder" && showAppBuilderBubble) {
+        localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
+        setHasVisitedAppBuilder(true);
+      }
+      onNavigate(section);
     } else {
       window.open(url, "_blank");
     }
   };
+
+  const appBuilderBubble = showAppBuilderBubble
+    ? {
+        message: "Build your UI app with App Builder.",
+        subMessage: "Get started",
+      }
+    : null;
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -166,6 +251,9 @@ export function MCPSidebar({
                 isActive: item.url === `#${activeTab}`,
               }))}
               onItemClick={handleNavClick}
+              appBuilderBubble={
+                section.id === "mcp-apps" ? appBuilderBubble : null
+              }
             />
             {/* Add subtle divider between sections (except after the last section) */}
             {sectionIndex < navigationSections.length - 1 && (
