@@ -20,6 +20,7 @@ export const CORS_ORIGINS = [
   "http://localhost:8080", // Electron renderer dev server
   `http://localhost:${SERVER_PORT}`, // Hono server
   `http://127.0.0.1:${SERVER_PORT}`, // Hono server production
+  "https://staging.app.mcpjam.com", // Hosted deployment
 ];
 
 // Hosted mode for cloud deployments (Railway, etc.)
