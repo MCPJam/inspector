@@ -179,12 +179,12 @@ servers.post("/reconnect", async (c) => {
       }
     }
 
-    // Block STDIO connections in hosted mode (security: prevents RCE)
+    // Block STDIO connections in hosted mode
     if (HOSTED_MODE && normalizedConfig.command) {
       return c.json(
         {
           success: false,
-          error: "STDIO transport is disabled in hosted mode",
+          error: "STDIO transport is disabled in the web app",
         },
         403,
       );
@@ -197,7 +197,7 @@ servers.post("/reconnect", async (c) => {
           {
             success: false,
             error:
-              "HTTPS is required in hosted mode. Please use an https:// URL.",
+              "HTTPS is required in the web app. Please use an https:// URL.",
           },
           400,
         );
