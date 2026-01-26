@@ -58,8 +58,7 @@
               "sdk/reference/eval-test",
               "sdk/reference/eval-suite",
               "sdk/reference/validators",
-              "sdk/reference/llm-providers",
-              "sdk/reference/utilities"
+              "sdk/reference/llm-providers"
             ]
           }
         ]

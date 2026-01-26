@@ -62,22 +62,6 @@ export type {
   MCPResourceTemplate,
 } from "./mcp-client-manager/index.js";
 
-// Tool converters for AI SDK integration
-export {
-  convertMCPToolsToVercelTools,
-  ensureJsonSchemaObject,
-  type ToolSchemaOverrides,
-  type ConvertedToolSet,
-  type CallToolExecutor,
-} from "./mcp-client-manager/index.js";
-
-// Utility functions
-export {
-  buildRequestInit,
-  isMethodUnavailableError,
-  formatError,
-} from "./mcp-client-manager/index.js";
-
 // Error classes
 export {
   MCPError,
@@ -86,29 +70,12 @@ export {
   isMCPAuthError,
 } from "./mcp-client-manager/index.js";
 
-// Task capability utilities
-export {
-  supportsTasksForToolCalls,
-  supportsTasksList,
-  supportsTasksCancel,
-} from "./mcp-client-manager/index.js";
-
-// Notification schemas
-export {
-  ResourceListChangedNotificationSchema,
-  ResourceUpdatedNotificationSchema,
-  PromptListChangedNotificationSchema,
-} from "./mcp-client-manager/index.js";
-
 // TestAgent
 export { TestAgent } from "./TestAgent.js";
 export type { TestAgentConfig, PromptOptions } from "./TestAgent.js";
 
 // PromptResult class (preferred over TestAgent's interface)
 export { PromptResult } from "./PromptResult.js";
-
-// Tool extraction utilities
-export { extractToolCalls, extractToolNames } from "./tool-extraction.js";
 
 // Validators for tool call matching
 export {
@@ -157,13 +124,6 @@ export type {
   CoreAssistantMessage,
   CoreToolMessage,
 } from "./types.js";
-
-// Percentile utilities
-export {
-  calculatePercentile,
-  calculateLatencyStats,
-  type LatencyStats,
-} from "./percentiles.js";
 
 // Model factory utilities
 export {
