@@ -1,0 +1,225 @@
+---
+title: "Running Evals"
+description: "Measure tool accuracy with statistical evaluations"
+icon: "chart-bar"
+---
+
+LLMs are probabilistic—the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
+
+## Why Run Evals?
+
+A single test pass can be misleading:
+- The LLM might get lucky on one attempt
+- Temperature introduces randomness
+- Different phrasings might fail where others succeed
+
+Running 30+ iterations gives you confidence in real-world performance:
+- "This tool is called correctly 97% of the time"
+- "Arguments are correct in 90% of cases"
+- "Average latency is 1.2 seconds"
+
+## EvalTest: Single Test Scenario
+
+`EvalTest` runs one test function multiple times:
+
+```typescript
+import { EvalTest } from "@mcpjam/sdk";
+
+const test = new EvalTest({
+  name: "addition-accuracy",
+  test: async (agent) => {
+    const result = await agent.prompt("Add 2 and 3");
+    return result.hasToolCall("add"); // Return true/false
+  },
+});
+
+await test.run(agent, { iterations: 30 });
+
+console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
+// "Accuracy: 96.7%"
+```
+
+### Writing Test Functions
+
+Test functions receive a `TestAgent` and return `boolean`:
+
+```typescript
+// Simple: did the right tool get called?
+test: async (agent) => {
+  const result = await agent.prompt("Add 5 and 3");
+  return result.hasToolCall("add");
+}
+
+// Detailed: check arguments too
+test: async (agent) => {
+  const result = await agent.prompt("Add 10 and 20");
+  const args = result.getToolArguments("add");
+  return args?.a === 10 && args?.b === 20;
+}
+
+// Complex: multi-step workflow
+test: async (agent) => {
+  const r1 = await agent.prompt("Create a project called 'Test'");
+  const r2 = await agent.prompt("Add a task to it", { context: r1 });
+  return r1.hasToolCall("createProject") && r2.hasToolCall("createTask");
+}
+```
+
+### Run Options
+
+```typescript
+await test.run(agent, {
+  iterations: 30,      // How many times to run
+  concurrency: 5,      // Parallel runs (careful with rate limits)
+  retries: 2,          // Retry failures
+  timeoutMs: 30000,    // Per-test timeout
+  onProgress: (done, total) => {
+    console.log(`${done}/${total}`);
+  },
+});
+```
+
+### Metrics
+
+After running, access various metrics:
+
+```typescript
+test.accuracy();           // Success rate (0.0 - 1.0)
+test.precision();          // Precision metric
+test.recall();             // Recall metric
+test.averageTokenUse();    // Avg tokens per iteration
+```
+
+## EvalSuite: Multiple Tests
+
+Group related tests together:
+
+```typescript
+import { EvalSuite, EvalTest } from "@mcpjam/sdk";
+
+const suite = new EvalSuite({ name: "Math Operations" });
+
+suite.add(new EvalTest({
+  name: "addition",
+  test: async (agent) => {
+    const r = await agent.prompt("Add 5 and 3");
+    return r.hasToolCall("add");
+  },
+}));
+
+suite.add(new EvalTest({
+  name: "multiplication",
+  test: async (agent) => {
+    const r = await agent.prompt("Multiply 4 by 6");
+    return r.hasToolCall("multiply");
+  },
+}));
+
+suite.add(new EvalTest({
+  name: "division",
+  test: async (agent) => {
+    const r = await agent.prompt("Divide 20 by 4");
+    return r.hasToolCall("divide");
+  },
+}));
+
+await suite.run(agent, { iterations: 30 });
+```
+
+### Suite Results
+
+```typescript
+// Overall accuracy
+console.log(`Suite: ${(suite.accuracy() * 100).toFixed(1)}%`);
+
+// Per-test breakdown
+for (const test of suite.getTests()) {
+  console.log(`  ${test.name}: ${(test.accuracy() * 100).toFixed(1)}%`);
+}
+
+// Get specific test
+const addTest = suite.get("addition");
+console.log(`Addition accuracy: ${addTest.accuracy()}`);
+```
+
+## Choosing Iteration Count
+
+| Scenario | Iterations | Why |
+|----------|------------|-----|
+| Quick smoke test | 10 | Fast feedback during development |
+| Regular testing | 30 | Good statistical significance |
+| Pre-release | 50-100 | High confidence before shipping |
+| Benchmarking | 100+ | Comparing models or changes |
+
+## Best Practices
+
+### Use Low Temperature
+
+More deterministic results for testing:
+
+```typescript
+const agent = new TestAgent({
+  // ...
+  temperature: 0.1,
+});
+```
+
+### Handle Rate Limits
+
+Reduce concurrency for rate-limited APIs:
+
+```typescript
+await suite.run(agent, {
+  iterations: 30,
+  concurrency: 2, // Avoid hitting rate limits
+});
+```
+
+### Test Edge Cases
+
+Don't just test the happy path:
+
+```typescript
+suite.add(new EvalTest({
+  name: "handles-empty-input",
+  test: async (agent) => {
+    const r = await agent.prompt("Add numbers"); // No numbers given
+    return !r.hasError(); // Should handle gracefully
+  },
+}));
+
+suite.add(new EvalTest({
+  name: "handles-large-numbers",
+  test: async (agent) => {
+    const r = await agent.prompt("Add 999999999 and 1");
+    return r.hasToolCall("add");
+  },
+}));
+```
+
+### Set Quality Thresholds
+
+Fail CI if accuracy drops below a threshold:
+
+```typescript
+await suite.run(agent, { iterations: 30 });
+
+if (suite.accuracy() < 0.90) {
+  console.error(`Accuracy ${suite.accuracy()} below 90% threshold`);
+  process.exit(1);
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Testing Across Providers" icon="microchip" href="/sdk/concepts/multi-provider">
+    Compare performance across LLMs
+  </Card>
+  <Card title="EvalTest Reference" icon="book" href="/sdk/reference/eval-test">
+    Full EvalTest API
+  </Card>
+  <Card title="EvalSuite Reference" icon="book" href="/sdk/reference/eval-suite">
+    Full EvalSuite API
+  </Card>
+</CardGroup>

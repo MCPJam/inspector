@@ -1,0 +1,271 @@
+---
+title: "Utilities"
+description: "API reference for utility functions"
+icon: "book"
+---
+
+The SDK exports several utility functions for working with MCP tools, calculating statistics, and extracting data from results.
+
+## Import
+
+```typescript
+import {
+  convertMCPToolsToVercelTools,
+  ensureJsonSchemaObject,
+  calculatePercentile,
+  calculateLatencyStats,
+  extractToolCalls,
+  extractToolNames,
+} from "@mcpjam/sdk";
+```
+
+---
+
+## Tool Conversion
+
+### convertMCPToolsToVercelTools()
+
+Converts MCP tool definitions to Vercel AI SDK format.
+
+```typescript
+convertMCPToolsToVercelTools(
+  mcpTools: MCPTool[],
+  executeTool: (name: string, args: unknown) => Promise<unknown>
+): Record<string, Tool>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `mcpTools` | `MCPTool[]` | Array of MCP tool definitions |
+| `executeTool` | `function` | Function to execute tools |
+
+#### Returns
+
+`Record<string, Tool>` - Tools in Vercel AI SDK format.
+
+<Note>
+You typically don't need to call this directly—use `manager.getToolsForAiSdk()` instead.
+</Note>
+
+#### Example
+
+```typescript
+const tools = await manager.listTools("myServer");
+
+const vercelTools = convertMCPToolsToVercelTools(
+  tools,
+  (name, args) => manager.executeTool("myServer", name, args)
+);
+```
+
+---
+
+### ensureJsonSchemaObject()
+
+Normalizes a JSON Schema to ensure it's an object schema.
+
+```typescript
+ensureJsonSchemaObject(schema: unknown): JsonSchema
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `schema` | `unknown` | Input schema (possibly malformed) |
+
+#### Returns
+
+`JsonSchema` - Valid JSON Schema object.
+
+#### Example
+
+```typescript
+const normalized = ensureJsonSchemaObject(tool.inputSchema);
+```
+
+---
+
+## Statistics
+
+### calculatePercentile()
+
+Calculates a percentile value from an array of numbers.
+
+```typescript
+calculatePercentile(values: number[], percentile: number): number
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `values` | `number[]` | Array of numeric values |
+| `percentile` | `number` | Percentile to calculate (0-100) |
+
+#### Returns
+
+`number` - The percentile value.
+
+#### Example
+
+```typescript
+const latencies = [100, 150, 200, 250, 300, 1000];
+
+const p50 = calculatePercentile(latencies, 50);  // Median
+const p95 = calculatePercentile(latencies, 95);  // 95th percentile
+const p99 = calculatePercentile(latencies, 99);  // 99th percentile
+
+console.log(`p50: ${p50}ms, p95: ${p95}ms, p99: ${p99}ms`);
+```
+
+---
+
+### calculateLatencyStats()
+
+Calculates comprehensive latency statistics.
+
+```typescript
+calculateLatencyStats(latencies: number[]): LatencyStats
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `latencies` | `number[]` | Array of latency values (ms) |
+
+#### Returns
+
+```typescript
+interface LatencyStats {
+  min: number;
+  max: number;
+  mean: number;
+  median: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  stdDev: number;
+}
+```
+
+#### Example
+
+```typescript
+const latencies = results.map(r => r.latencyMs);
+const stats = calculateLatencyStats(latencies);
+
+console.log(`Min: ${stats.min}ms`);
+console.log(`Max: ${stats.max}ms`);
+console.log(`Mean: ${stats.mean.toFixed(1)}ms`);
+console.log(`Median: ${stats.median}ms`);
+console.log(`p95: ${stats.p95}ms`);
+console.log(`StdDev: ${stats.stdDev.toFixed(1)}ms`);
+```
+
+---
+
+## Tool Extraction
+
+### extractToolCalls()
+
+Extracts tool calls from Vercel AI SDK response.
+
+```typescript
+extractToolCalls(response: GenerateTextResult): ToolCall[]
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `response` | `GenerateTextResult` | Vercel AI SDK response |
+
+#### Returns
+
+`ToolCall[]` - Array of tool call objects.
+
+```typescript
+interface ToolCall {
+  toolName: string;
+  args: Record<string, unknown>;
+}
+```
+
+<Note>
+`PromptResult` uses this internally. You typically access tool calls via `result.getToolCalls()`.
+</Note>
+
+---
+
+### extractToolNames()
+
+Extracts just the tool names from a response.
+
+```typescript
+extractToolNames(response: GenerateTextResult): string[]
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `response` | `GenerateTextResult` | Vercel AI SDK response |
+
+#### Returns
+
+`string[]` - Array of tool names.
+
+<Note>
+`PromptResult` uses this internally. You typically access tool names via `result.toolsCalled()`.
+</Note>
+
+---
+
+## Complete Example
+
+```typescript
+import {
+  calculatePercentile,
+  calculateLatencyStats,
+} from "@mcpjam/sdk";
+
+// Collect latencies from multiple test runs
+const latencies: number[] = [];
+
+for (let i = 0; i < 100; i++) {
+  const result = await agent.prompt("Add 2 and 3");
+  latencies.push(result.e2eLatencyMs());
+}
+
+// Calculate statistics
+const stats = calculateLatencyStats(latencies);
+
+console.log("Latency Report");
+console.log("==============");
+console.log(`Samples: ${latencies.length}`);
+console.log(`Min: ${stats.min}ms`);
+console.log(`Max: ${stats.max}ms`);
+console.log(`Mean: ${stats.mean.toFixed(1)}ms`);
+console.log(`Median (p50): ${stats.median}ms`);
+console.log(`p75: ${stats.p75}ms`);
+console.log(`p90: ${stats.p90}ms`);
+console.log(`p95: ${stats.p95}ms`);
+console.log(`p99: ${stats.p99}ms`);
+console.log(`Std Dev: ${stats.stdDev.toFixed(1)}ms`);
+
+// Custom percentile
+const p80 = calculatePercentile(latencies, 80);
+console.log(`p80: ${p80}ms`);
+```
+
+---
+
+## Related
+
+- [PromptResult Reference](/sdk/reference/prompt-result) - Result inspection
+- [EvalTest Reference](/sdk/reference/eval-test) - Running evaluations
