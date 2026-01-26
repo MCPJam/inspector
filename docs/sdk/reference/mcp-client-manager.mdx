@@ -154,10 +154,10 @@ await manager.disconnectServer("myServer");
 
 ### pingServer()
 
-Checks if a server is responsive.
+Sends a ping to check if a server is responsive.
 
 ```typescript
-pingServer(serverId: string): Promise<boolean>
+pingServer(serverId: string): void
 ```
 
 #### Parameters
@@ -168,14 +168,21 @@ pingServer(serverId: string): Promise<boolean>
 
 #### Returns
 
-`Promise<boolean>` - `true` if responsive, `false` otherwise.
+`void` - This method is synchronous and does not return a value.
+
+#### Throws
+
+- Error if the server is not connected
+- Error if the ping fails
 
 #### Example
 
 ```typescript
-const isHealthy = await manager.pingServer("myServer");
-if (!isHealthy) {
-  console.warn("Server not responding");
+try {
+  manager.pingServer("myServer");
+  console.log("Server is responsive");
+} catch (error) {
+  console.warn("Server not responding:", error.message);
 }
 ```
 
@@ -408,41 +415,59 @@ console.log(prompt.messages);
 
 ### getTools()
 
-Returns MCP tools in Vercel AI SDK format for use with `TestAgent`.
+Returns all tools from specified servers or all connected servers.
 
 ```typescript
-getTools(serverId?: string): Promise<Record<string, Tool>>
+getTools(serverIds?: string[]): Promise<Tool[]>
 ```
 
 #### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `serverId` | `string` | Optional. If provided, returns tools from that server only. If omitted, returns tools from all connected servers. |
+| `serverIds` | `string[]` | Optional. Array of server IDs to fetch tools from. If omitted, returns tools from all connected servers. |
 
 #### Returns
 
-`Promise<Record<string, Tool>>` - Tools in Vercel AI SDK format.
+`Promise<Tool[]>` - Array of tool definitions from all specified servers.
+
+#### Tool Object
+
+Each tool in the returned array includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Tool identifier |
+| `description` | `string` | Human-readable description |
+| `inputSchema` | `object` | JSON Schema for tool arguments |
+| `execute` | `function` | Function to execute the tool with arguments |
 
 #### Example
 
 ```typescript
-// Tools from one server
-const serverTools = await manager.getTools("myServer");
+// Tools from specific servers
+const tools = await manager.getTools(["myServer", "anotherServer"]);
 
 // Tools from all connected servers
 const allTools = await manager.getTools();
 
+for (const tool of allTools) {
+  console.log(`${tool.name}: ${tool.description}`);
+}
+
 // Use with TestAgent
 const agent = new TestAgent({
-  tools: allTools,
+  tools: await manager.getTools(),
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
+
+const result = await agent.prompt("Add 2 and 3");
+console.log(result.getText());
 ```
 
 <Note>
-Tools with `visibility: ["app"]` are automatically filtered out per MCP specification.
+Tools with `visibility: ["app"]` are automatically filtered out by `TestAgent` per MCP specification. These tools are callable by apps but should not be exposed to the AI model.
 </Note>
 
 ---

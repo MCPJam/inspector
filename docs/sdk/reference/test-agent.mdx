@@ -32,7 +32,7 @@ new TestAgent(options: TestAgentOptions)
 | `model` | `string` | Yes | - | Model identifier in `provider/model` format |
 | `apiKey` | `string` | Yes | - | API key for the LLM provider |
 | `systemPrompt` | `string` | No | `undefined` | System prompt for the LLM |
-| `temperature` | `number` | No | `0.7` | Sampling temperature (0-1) |
+| `temperature` | `number` | No | `undefined` | Sampling temperature (0-2). If undefined, uses model default. |
 | `maxSteps` | `number` | No | `10` | Maximum agentic loop iterations |
 | `customProviders` | `Record<string, CustomProvider>` | No | `undefined` | Custom LLM provider definitions |
 

@@ -390,10 +390,9 @@ Create a Vercel AI SDK model directly.
 import { createModelFromString } from "@mcpjam/sdk";
 
 createModelFromString(
-  modelString: string,
-  apiKey: string,
-  options?: { customProviders?: Record<string, CustomProvider> }
-): LanguageModel
+  llmString: string,
+  options: CreateModelOptions
+): ProviderLanguageModel
 ```
 
 #### Example
@@ -401,7 +400,7 @@ createModelFromString(
 ```typescript
 const model = createModelFromString(
   "openai/gpt-4o",
-  process.env.OPENAI_API_KEY
+  { apiKey: process.env.OPENAI_API_KEY }
 );
 ```
 

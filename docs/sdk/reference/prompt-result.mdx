@@ -20,15 +20,15 @@ const result = await agent.prompt("...");
 
 ## Text Response
 
-### getText()
+### text
 
-Returns the final text response from the LLM.
+The final text response from the LLM.
 
 ```typescript
-getText(): string
+readonly text: string
 ```
 
-#### Returns
+#### Value
 
 `string` - The assistant's text response. Empty string if no text response.
 
@@ -36,7 +36,7 @@ getText(): string
 
 ```typescript
 const result = await agent.prompt("What is 2 + 2?");
-console.log(result.getText()); // "2 + 2 equals 4."
+console.log(result.text); // "2 + 2 equals 4."
 ```
 
 ---
@@ -109,7 +109,7 @@ getToolCalls(): ToolCall[]
 | Property | Type | Description |
 |----------|------|-------------|
 | `toolName` | `string` | Name of the tool |
-| `args` | `Record<string, unknown>` | Arguments passed to the tool |
+| `arguments` | `Record<any, any>` | Arguments passed to the tool |
 
 #### Example
 
@@ -117,7 +117,7 @@ getToolCalls(): ToolCall[]
 const calls = result.getToolCalls();
 
 for (const call of calls) {
-  console.log(`${call.toolName}(${JSON.stringify(call.args)})`);
+  console.log(`${call.toolName}(${JSON.stringify(call.arguments)})`);
 }
 // add({"a":2,"b":3})
 // multiply({"a":5,"b":4})
@@ -404,7 +404,7 @@ const r3 = await agent.prompt("Show summary", { context: [r1, r2] });
 const result = await agent.prompt("Add 100 and 200");
 
 // Response
-console.log("Text:", result.getText());
+console.log("Text:", result.text);
 
 // Tool calls
 console.log("Tools:", result.toolsCalled());
@@ -412,7 +412,7 @@ console.log("Has add?", result.hasToolCall("add"));
 console.log("Add args:", result.getToolArguments("add"));
 
 for (const call of result.getToolCalls()) {
-  console.log(`  ${call.toolName}:`, call.args);
+  console.log(`  ${call.toolName}:`, call.arguments);
 }
 
 // Errors
