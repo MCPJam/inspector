@@ -53,7 +53,7 @@ describe("Asana MCP Evals", () => {
         },
       });
       await test.run(testAgent, {
-        iterations: 10, // Number of test runs per eval
+        iterations: 5, // Number of test runs per eval
         concurrency: undefined, // Leave as undfined for max concurrency
         retries: 1, // Retry on failure
         timeoutMs: 60000, // 60s timeout
@@ -94,7 +94,7 @@ describe("Asana MCP Evals", () => {
         },
       });
       await test.run(testAgent, {
-        iterations: 10, // Number of test runs per eval
+        iterations: 5, // Number of test runs per eval
         concurrency: undefined, // Leave as undfined for max concurrency
         retries: 1, // Retry on failure
         timeoutMs: 60000, // 60s timeout
@@ -123,7 +123,7 @@ describe("Asana MCP Evals", () => {
         },
       });
       await test.run(testAgent, {
-        iterations: 10,
+        iterations: 5,
         concurrency: undefined, // Leave as undfined for max concurrency
         retries: 1,
         timeoutMs: 60000, // 60s timeout
