@@ -16,7 +16,7 @@ import {
   MCPServerConfig,
   type MCPResourceTemplate,
   type MCPReadResourceResult,
-} from "@/sdk";
+} from "@mcpjam/sdk";
 import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/apis/mcp-resource-templates-api";
 import { readResource as readResourceTemplateApi } from "@/lib/apis/mcp-resources-api";
 import { LoggerView } from "./logger-view";

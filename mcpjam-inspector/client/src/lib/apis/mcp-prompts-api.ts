@@ -1,4 +1,4 @@
-import type { MCPPrompt } from "@/sdk";
+import type { MCPPrompt } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
 
 export interface PromptContentResponse {

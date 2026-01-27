@@ -49,9 +49,9 @@ export default defineConfig({
   esbuildOptions(options) {
     options.platform = "node";
     options.mainFields = ["module", "main"];
-    // Configure path alias for @/sdk
+    // Configure path alias for @mcpjam/sdk
     options.alias = {
-      "@/sdk": join(rootDir, "sdk/dist/index.js"),
+      "@mcpjam/sdk": join(rootDir, "sdk/dist/index.js"),
     };
   },
   async onSuccess() {

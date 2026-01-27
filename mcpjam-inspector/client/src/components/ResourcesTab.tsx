@@ -15,7 +15,7 @@ import {
   MCPServerConfig,
   type MCPReadResourceResult,
   type MCPResource,
-} from "@/sdk";
+} from "@mcpjam/sdk";
 import { LoggerView } from "./logger-view";
 import { listResources } from "@/lib/apis/mcp-resources-api";
 import { authFetch } from "@/lib/session-token";

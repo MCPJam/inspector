@@ -1,4 +1,4 @@
-import { MCPServerConfig } from "@/sdk";
+import { MCPServerConfig } from "@mcpjam/sdk";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 

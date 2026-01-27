@@ -1,4 +1,4 @@
-import type { MCPResourceTemplate } from "@/sdk";
+import type { MCPResourceTemplate } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
 
 export async function listResourceTemplates(

@@ -1,6 +1,6 @@
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import { LanguageModelV2ToolResultOutput } from "@ai-sdk/provider-v5";
-import type { MCPClientManager } from "@/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;

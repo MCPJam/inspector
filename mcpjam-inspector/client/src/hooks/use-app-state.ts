@@ -40,7 +40,7 @@ import {
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
-import { MCPServerConfig } from "@/sdk";
+import { MCPServerConfig } from "@mcpjam/sdk";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 export type { ServerWithName } from "@/state/app-types";

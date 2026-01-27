@@ -19,9 +19,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@/shared/*": ["../shared/*"],
-      "@/sdk": ["../sdk/src/index.ts"],
-      "@/sdk/*": ["../sdk/src/*"]
+      "@/shared/*": ["../shared/*"]
     }
   },
   "include": ["src", "../shared/**/*.ts"],

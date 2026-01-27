@@ -10,7 +10,7 @@ import {
   type EvaluationResult,
   type UsageTotals,
 } from "./evals/types";
-import type { MCPClientManager } from "@/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import { createLlmModel } from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
 import {

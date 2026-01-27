@@ -1,4 +1,4 @@
-import type { MCPTask, MCPListTasksResult } from "@/sdk";
+import type { MCPTask, MCPListTasksResult } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
 
 // Re-export SDK types for convenience

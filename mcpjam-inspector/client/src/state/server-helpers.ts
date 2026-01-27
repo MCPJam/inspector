@@ -1,4 +1,4 @@
-import { MCPServerConfig } from "@/sdk";
+import { MCPServerConfig } from "@mcpjam/sdk";
 import {
   HttpServerDefinition,
   StdioServerDefinition,

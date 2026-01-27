@@ -24,7 +24,7 @@ const createMockMcpClientManager = (overrides: Record<string, any> = {}) => ({
       config: { url: new URL("http://localhost:3000") },
     },
   ]),
-  getConnectionStatusByAttemptingPing: vi.fn().mockReturnValue("connected"),
+  getConnectionStatus: vi.fn().mockReturnValue("connected"),
   getInitializationInfo: vi.fn().mockReturnValue({
     protocolVersion: "2024-11-05",
     capabilities: { tools: {}, resources: {} },
@@ -131,15 +131,13 @@ describe("GET /api/mcp/servers/status/:serverId", () => {
     expect(data.serverId).toBe("server-1");
     expect(data.status).toBe("connected");
 
-    expect(
-      mcpClientManager.getConnectionStatusByAttemptingPing,
-    ).toHaveBeenCalledWith("server-1");
+    expect(mcpClientManager.getConnectionStatus).toHaveBeenCalledWith(
+      "server-1",
+    );
   });
 
   it("returns disconnected status for unhealthy server", async () => {
-    mcpClientManager.getConnectionStatusByAttemptingPing.mockReturnValue(
-      "disconnected",
-    );
+    mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
 
     const res = await app.request("/api/mcp/servers/status/server-2", {
       method: "GET",
@@ -151,11 +149,9 @@ describe("GET /api/mcp/servers/status/:serverId", () => {
   });
 
   it("returns 500 when status check fails", async () => {
-    mcpClientManager.getConnectionStatusByAttemptingPing.mockImplementation(
-      () => {
-        throw new Error("Ping timeout");
-      },
-    );
+    mcpClientManager.getConnectionStatus.mockImplementation(() => {
+      throw new Error("Ping timeout");
+    });
 
     const res = await app.request("/api/mcp/servers/status/server-1", {
       method: "GET",
@@ -362,9 +358,7 @@ describe("POST /api/mcp/servers/reconnect", () => {
 
   describe("reconnection failures", () => {
     it("returns error when reconnection fails to establish connection", async () => {
-      mcpClientManager.getConnectionStatusByAttemptingPing.mockReturnValue(
-        "failed",
-      );
+      mcpClientManager.getConnectionStatus.mockReturnValue("failed");
 
       const res = await app.request("/api/mcp/servers/reconnect", {
         method: "POST",

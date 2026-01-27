@@ -1,4 +1,4 @@
-import { MCPClientManager } from "@/sdk";
+import { MCPClientManager } from "@mcpjam/sdk";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
