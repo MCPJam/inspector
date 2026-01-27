@@ -65,8 +65,8 @@
     "@ai-sdk/openai": "^2.0.32",
     "@ai-sdk/xai": "^2.0.29",
     "@modelcontextprotocol/sdk": "^1.25.3",
-    "@openrouter/ai-sdk-provider": "^1.2.0",
-    "ai": "^5.0.123",
+    "@openrouter/ai-sdk-provider": "^2.0.2",
+    "ai": "^6.0.50",
     "ollama-ai-provider-v2": "^1.5.2",
     "zod": "^4.1.12"
   },

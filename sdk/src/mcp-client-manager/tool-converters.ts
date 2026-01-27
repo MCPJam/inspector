@@ -13,7 +13,7 @@ import {
   jsonSchema,
   tool as defineTool,
   type Tool,
-  type ToolCallOptions,
+  type ToolExecutionOptions,
   type ToolSet,
 } from "ai";
 
@@ -63,7 +63,7 @@ export function ensureJsonSchemaObject(schema: unknown): JSONSchema7 {
 export type CallToolExecutor = (params: {
   name: string;
   args: unknown;
-  options: ToolCallOptions;
+  options: ToolExecutionOptions;
 }) => Promise<CallToolResult>;
 
 /**
@@ -139,8 +139,8 @@ export async function convertMCPToolsToVercelTools(
     const { name, description, inputSchema } = toolDescription;
 
     // Create the execute function that delegates to the provided callTool
-    const execute = async (args: unknown, options: ToolCallOptions) => {
-      options?.abortSignal?.throwIfAborted?.();
+    const execute = async (args: unknown, options: ToolExecutionOptions) => {
+      options.abortSignal?.throwIfAborted();
       const result = await callTool({ name, args, options });
       return CallToolResultSchema.parse(result);
     };

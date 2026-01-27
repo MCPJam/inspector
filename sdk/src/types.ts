@@ -4,18 +4,24 @@
 
 // Re-export AI SDK message types for users
 import type {
-  CoreMessage,
-  CoreUserMessage,
-  CoreAssistantMessage,
-  CoreToolMessage,
+  ModelMessage,
+  UserModelMessage,
+  AssistantModelMessage,
+  ToolModelMessage,
 } from "ai";
 
 export type {
-  CoreMessage,
-  CoreUserMessage,
-  CoreAssistantMessage,
-  CoreToolMessage,
+  ModelMessage,
+  UserModelMessage,
+  AssistantModelMessage,
+  ToolModelMessage,
 };
+
+// Backwards compatibility aliases for AI SDK 5.x users
+export type CoreMessage = ModelMessage;
+export type CoreUserMessage = UserModelMessage;
+export type CoreAssistantMessage = AssistantModelMessage;
+export type CoreToolMessage = ToolModelMessage;
 
 /**
  * Built-in LLM providers with native SDK support
@@ -105,7 +111,7 @@ export interface PromptResultData {
   /** The original prompt/query that was sent */
   prompt: string;
   /** The full conversation history (user, assistant, tool messages) */
-  messages: CoreMessage[];
+  messages: ModelMessage[];
   text: string;
   toolCalls: ToolCall[];
   usage: TokenUsage;

@@ -3,7 +3,7 @@
  */
 
 import { generateText, stepCountIs, dynamicTool, jsonSchema } from "ai";
-import type { ToolSet, CoreMessage, CoreUserMessage } from "ai";
+import type { ToolSet, ModelMessage, UserModelMessage } from "ai";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createModelFromString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
@@ -171,19 +171,19 @@ export class TestAgent {
   }
 
   /**
-   * Build an array of CoreMessages from previous PromptResult(s) for multi-turn context.
+   * Build an array of ModelMessages from previous PromptResult(s) for multi-turn context.
    * @param context - Single PromptResult or array of PromptResults to include as context
-   * @returns Array of CoreMessages representing the conversation history
+   * @returns Array of ModelMessages representing the conversation history
    */
   private buildContextMessages(
     context: PromptResult | PromptResult[] | undefined
-  ): CoreMessage[] {
+  ): ModelMessage[] {
     if (!context) {
       return [];
     }
 
     const results = Array.isArray(context) ? context : [context];
-    const messages: CoreMessage[] = [];
+    const messages: ModelMessage[] = [];
 
     for (const result of results) {
       // Get all messages from this prompt result (user message + assistant/tool responses)
@@ -241,7 +241,7 @@ export class TestAgent {
 
       // Build messages array if context is provided for multi-turn
       const contextMessages = this.buildContextMessages(options?.context);
-      const userMessage: CoreUserMessage = { role: "user", content: message };
+      const userMessage: UserModelMessage = { role: "user", content: message };
 
       // Cast model to any to handle AI SDK version compatibility
       const result = await generateText({
@@ -275,7 +275,7 @@ export class TestAgent {
       const inputTokens = usage?.inputTokens ?? 0;
       const outputTokens = usage?.outputTokens ?? 0;
 
-      const messages: CoreMessage[] = [];
+      const messages: ModelMessage[] = [];
       messages.push(userMessage);
 
       // Add response messages (assistant + tool messages from agentic loop)

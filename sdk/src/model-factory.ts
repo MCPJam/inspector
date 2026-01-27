@@ -236,7 +236,7 @@ export function createModelFromString(
 
     case "openrouter": {
       const openrouter = createOpenRouter({ apiKey });
-      return openrouter(model) as ProviderLanguageModel;
+      return openrouter(model) as unknown as ProviderLanguageModel;
     }
 
     case "xai": {
