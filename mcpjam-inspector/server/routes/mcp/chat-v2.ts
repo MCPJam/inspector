@@ -175,6 +175,45 @@ chatV2.post("/", async (c) => {
 
             const beforeLen = messageHistory.length;
             if (hasUnresolvedToolCalls(messageHistory as any)) {
+              // Collect unresolved tool calls from message history
+              // We need to emit tool-input-available for any inherited tool calls
+              // before emitting their results (required by AI SDK stream validation)
+              const existingToolResultIds = new Set<string>();
+              for (const msg of messageHistory) {
+                if (
+                  msg?.role === "tool" &&
+                  Array.isArray((msg as any).content)
+                ) {
+                  for (const c of (msg as any).content) {
+                    if (c?.type === "tool-result") {
+                      existingToolResultIds.add(c.toolCallId);
+                    }
+                  }
+                }
+              }
+
+              // Emit tool-input-available for unresolved tool calls from history
+              for (const msg of messageHistory) {
+                if (
+                  msg?.role === "assistant" &&
+                  Array.isArray((msg as any).content)
+                ) {
+                  for (const item of (msg as any).content) {
+                    if (
+                      item?.type === "tool-call" &&
+                      !existingToolResultIds.has(item.toolCallId)
+                    ) {
+                      writer.write({
+                        type: "tool-input-available",
+                        toolCallId: item.toolCallId,
+                        toolName: item.toolName ?? item.name,
+                        input: item.input ?? item.parameters ?? item.args ?? {},
+                      } as any);
+                    }
+                  }
+                }
+              }
+
               await executeToolCallsFromMessages(messageHistory, {
                 clientManager: mcpClientManager,
               });

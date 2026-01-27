@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createMockMcpClientManager,
   createTestApp,
@@ -7,6 +7,10 @@ import {
   type MockMCPClientManager,
 } from "./helpers/index.js";
 import type { Hono } from "hono";
+
+// Track stream events for testing
+let capturedStreamEvents: any[] = [];
+let mockWriter: { write: ReturnType<typeof vi.fn> };
 
 // Mock the AI SDK
 vi.mock("ai", () => ({
@@ -19,8 +23,22 @@ vi.mock("ai", () => ({
     ),
   }),
   stepCountIs: vi.fn().mockReturnValue(() => false),
-  createUIMessageStream: vi.fn(),
-  createUIMessageStreamResponse: vi.fn(),
+  createUIMessageStream: vi.fn(({ execute }) => {
+    // Create a mock writer that captures events
+    mockWriter = {
+      write: vi.fn((event) => {
+        capturedStreamEvents.push(event);
+      }),
+    };
+    // Execute the stream function to capture events
+    execute({ writer: mockWriter });
+    return { getReader: vi.fn() };
+  }),
+  createUIMessageStreamResponse: vi.fn().mockReturnValue(
+    new Response(JSON.stringify({ type: "stream" }), {
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+  ),
 }));
 
 // Mock chat helpers
@@ -34,12 +52,19 @@ vi.mock("@/shared/types", () => ({
   isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
 }));
 
+// Mock http-tool-calls for testing unresolved tool calls scenario
+vi.mock("@/shared/http-tool-calls", () => ({
+  hasUnresolvedToolCalls: vi.fn().mockReturnValue(false),
+  executeToolCallsFromMessages: vi.fn(),
+}));
+
 describe("POST /api/mcp/chat-v2", () => {
   let manager: MockMCPClientManager;
   let app: Hono;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    capturedStreamEvents = [];
     manager = createMockMcpClientManager({
       getToolsForAiSdk: vi.fn().mockResolvedValue({}),
     });
@@ -228,6 +253,277 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
+    beforeEach(async () => {
+      // Enable MCPJam model path
+      const { isMCPJamProvidedModel } = await import("@/shared/types");
+      vi.mocked(isMCPJamProvidedModel).mockReturnValue(true);
+
+      // Set required env var
+      process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+    });
+
+    afterEach(() => {
+      delete process.env.CONVEX_HTTP_URL;
+    });
+
+    it("emits tool-input-available before tool-output-available for inherited unresolved tool calls", async () => {
+      const {
+        hasUnresolvedToolCalls,
+        executeToolCallsFromMessages,
+      } = await import("@/shared/http-tool-calls");
+
+      // Setup: message history has an unresolved tool call (simulating abort scenario)
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          // Simulate adding tool result to messages
+          messages.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "orphaned-call-123",
+                output: { type: "json", value: { result: "executed" } },
+              },
+            ],
+          });
+        },
+      );
+
+      // Mock fetch for CONVEX_HTTP_URL
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          messages: [],
+          finishReason: "stop",
+        }),
+      });
+
+      try {
+        await postJson(app, "/api/mcp/chat-v2", {
+          messages: [
+            { role: "user", content: "Continue" },
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "orphaned-call-123",
+                  toolName: "asana_list_workspaces",
+                  input: {},
+                },
+              ],
+            },
+          ],
+          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+        });
+
+        // Find tool-input-available and tool-output-available events
+        const toolInputEvents = capturedStreamEvents.filter(
+          (e) => e.type === "tool-input-available",
+        );
+        const toolOutputEvents = capturedStreamEvents.filter(
+          (e) => e.type === "tool-output-available",
+        );
+
+        // Verify tool-input-available was emitted for the orphaned tool call
+        expect(toolInputEvents.length).toBeGreaterThanOrEqual(1);
+        expect(
+          toolInputEvents.some(
+            (e) => e.toolCallId === "orphaned-call-123",
+          ),
+        ).toBe(true);
+
+        // Verify tool-output-available was also emitted
+        expect(toolOutputEvents.length).toBeGreaterThanOrEqual(1);
+        expect(
+          toolOutputEvents.some(
+            (e) => e.toolCallId === "orphaned-call-123",
+          ),
+        ).toBe(true);
+
+        // Verify order: tool-input-available must come before tool-output-available
+        const inputIndex = capturedStreamEvents.findIndex(
+          (e) =>
+            e.type === "tool-input-available" &&
+            e.toolCallId === "orphaned-call-123",
+        );
+        const outputIndex = capturedStreamEvents.findIndex(
+          (e) =>
+            e.type === "tool-output-available" &&
+            e.toolCallId === "orphaned-call-123",
+        );
+
+        expect(inputIndex).toBeLessThan(outputIndex);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("does not emit duplicate tool-input-available for tool calls that already have results", async () => {
+      const {
+        hasUnresolvedToolCalls,
+        executeToolCallsFromMessages,
+      } = await import("@/shared/http-tool-calls");
+
+      // No unresolved tool calls - all are resolved
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(async () => {});
+
+      // Mock fetch for CONVEX_HTTP_URL
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          messages: [],
+          finishReason: "stop",
+        }),
+      });
+
+      try {
+        await postJson(app, "/api/mcp/chat-v2", {
+          messages: [
+            { role: "user", content: "Continue" },
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "resolved-call-456",
+                  toolName: "some_tool",
+                  input: {},
+                },
+              ],
+            },
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "resolved-call-456",
+                  output: { result: "already done" },
+                },
+              ],
+            },
+          ],
+          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+        });
+
+        // Should NOT emit tool-input-available for already-resolved tool calls
+        const toolInputEvents = capturedStreamEvents.filter(
+          (e) =>
+            e.type === "tool-input-available" &&
+            e.toolCallId === "resolved-call-456",
+        );
+
+        expect(toolInputEvents.length).toBe(0);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("handles multiple unresolved tool calls from aborted request", async () => {
+      const {
+        hasUnresolvedToolCalls,
+        executeToolCallsFromMessages,
+      } = await import("@/shared/http-tool-calls");
+
+      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          // Simulate adding tool results for both calls
+          messages.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                output: { type: "json", value: { result: "result1" } },
+              },
+            ],
+          });
+          messages.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-2",
+                output: { type: "json", value: { result: "result2" } },
+              },
+            ],
+          });
+        },
+      );
+
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          messages: [],
+          finishReason: "stop",
+        }),
+      });
+
+      try {
+        await postJson(app, "/api/mcp/chat-v2", {
+          messages: [
+            { role: "user", content: "Do two things" },
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "tool_a",
+                  input: { arg: "a" },
+                },
+                {
+                  type: "tool-call",
+                  toolCallId: "call-2",
+                  toolName: "tool_b",
+                  input: { arg: "b" },
+                },
+              ],
+            },
+          ],
+          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+        });
+
+        // Verify both tool calls get tool-input-available emitted
+        const toolInputEvents = capturedStreamEvents.filter(
+          (e) => e.type === "tool-input-available",
+        );
+
+        expect(
+          toolInputEvents.some((e) => e.toolCallId === "call-1"),
+        ).toBe(true);
+        expect(
+          toolInputEvents.some((e) => e.toolCallId === "call-2"),
+        ).toBe(true);
+
+        // Verify tool names and inputs are preserved
+        const call1Event = toolInputEvents.find(
+          (e) => e.toolCallId === "call-1",
+        );
+        const call2Event = toolInputEvents.find(
+          (e) => e.toolCallId === "call-2",
+        );
+
+        expect(call1Event?.toolName).toBe("tool_a");
+        expect(call1Event?.input).toEqual({ arg: "a" });
+        expect(call2Event?.toolName).toBe("tool_b");
+        expect(call2Event?.input).toEqual({ arg: "b" });
+      } finally {
+        global.fetch = originalFetch;
+      }
     });
   });
 });
