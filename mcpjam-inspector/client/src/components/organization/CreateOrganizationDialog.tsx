@@ -83,10 +83,7 @@ export function CreateOrganizationDialog({
           >
             Cancel
           </Button>
-          <Button
-            onClick={handleCreate}
-            disabled={!name.trim() || isCreating}
-          >
+          <Button onClick={handleCreate} disabled={!name.trim() || isCreating}>
             {isCreating ? "Creating..." : "Create organization"}
           </Button>
         </DialogFooter>

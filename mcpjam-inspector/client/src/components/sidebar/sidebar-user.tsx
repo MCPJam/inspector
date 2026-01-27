@@ -100,7 +100,9 @@ export function SidebarUser() {
               signIn();
             }}
           >
-            <span className="group-data-[collapsible=icon]:hidden">Sign in</span>
+            <span className="group-data-[collapsible=icon]:hidden">
+              Sign in
+            </span>
             <User className="hidden group-data-[collapsible=icon]:block size-4" />
           </Button>
           <Button
@@ -141,41 +143,14 @@ export function SidebarUser() {
   // Logged in state with dropdown
   return (
     <>
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SidebarMenuButton
-              size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-            >
-              <Avatar className="size-8 rounded-lg">
-                <AvatarImage src={avatarUrl} alt={displayName} />
-                <AvatarFallback className="rounded-lg bg-muted text-muted-foreground text-sm font-medium">
-                  {initials !== "?" ? (
-                    initials
-                  ) : (
-                    <CircleUser className="size-4" />
-                  )}
-                </AvatarFallback>
-              </Avatar>
-              <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
-                <span className="truncate font-semibold">{displayName}</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {email}
-                </span>
-              </div>
-              <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
-            </SidebarMenuButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-            side={isMobile ? "bottom" : "right"}
-            align="end"
-            sideOffset={4}
-          >
-            <DropdownMenuLabel className="p-0 font-normal">
-              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <SidebarMenuButton
+                size="lg"
+                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              >
                 <Avatar className="size-8 rounded-lg">
                   <AvatarImage src={avatarUrl} alt={displayName} />
                   <AvatarFallback className="rounded-lg bg-muted text-muted-foreground text-sm font-medium">
@@ -186,90 +161,121 @@ export function SidebarUser() {
                     )}
                   </AvatarFallback>
                 </Avatar>
-                <div className="grid flex-1 text-left text-sm leading-tight">
+                <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                   <span className="truncate font-semibold">{displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     {email}
                   </span>
                 </div>
-              </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => (window.location.hash = "profile")}
-              className="cursor-pointer"
+                <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
+              </SidebarMenuButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+              side={isMobile ? "bottom" : "right"}
+              align="end"
+              sideOffset={4}
             >
-              <User className="size-4" />
-              Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => (window.location.hash = "settings")}
-              className="cursor-pointer"
-            >
-              <Settings className="size-4" />
-              Settings
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {/* Organizations Section */}
-            <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">
-              Organizations
-            </DropdownMenuLabel>
-            {sortedOrganizations.length > 0 ? (
-              sortedOrganizations.map((org) => (
-                <DropdownMenuItem
-                  key={org._id}
-                  onClick={() => (window.location.hash = `organizations/${org._id}`)}
-                  className="cursor-pointer"
-                >
-                  <Avatar className="size-6 rounded">
-                    <AvatarImage src={org.logoUrl} alt={org.name} />
-                    <AvatarFallback className="rounded bg-primary/10 text-primary text-xs font-semibold">
-                      {org.name.charAt(0).toUpperCase()}
+              <DropdownMenuLabel className="p-0 font-normal">
+                <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                  <Avatar className="size-8 rounded-lg">
+                    <AvatarImage src={avatarUrl} alt={displayName} />
+                    <AvatarFallback className="rounded-lg bg-muted text-muted-foreground text-sm font-medium">
+                      {initials !== "?" ? (
+                        initials
+                      ) : (
+                        <CircleUser className="size-4" />
+                      )}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="flex-1 truncate">{org.name}</span>
-                  <Settings
-                    className="size-4 text-muted-foreground hover:text-foreground"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      window.location.hash = `organizations/${org._id}`;
-                    }}
-                  />
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-semibold">
+                      {displayName}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {email}
+                    </span>
+                  </div>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => (window.location.hash = "profile")}
+                className="cursor-pointer"
+              >
+                <User className="size-4" />
+                Profile
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => (window.location.hash = "settings")}
+                className="cursor-pointer"
+              >
+                <Settings className="size-4" />
+                Settings
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {/* Organizations Section */}
+              <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">
+                Organizations
+              </DropdownMenuLabel>
+              {sortedOrganizations.length > 0 ? (
+                sortedOrganizations.map((org) => (
+                  <DropdownMenuItem
+                    key={org._id}
+                    onClick={() =>
+                      (window.location.hash = `organizations/${org._id}`)
+                    }
+                    className="cursor-pointer"
+                  >
+                    <Avatar className="size-6 rounded">
+                      <AvatarImage src={org.logoUrl} alt={org.name} />
+                      <AvatarFallback className="rounded bg-primary/10 text-primary text-xs font-semibold">
+                        {org.name.charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="flex-1 truncate">{org.name}</span>
+                    <Settings
+                      className="size-4 text-muted-foreground hover:text-foreground"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.location.hash = `organizations/${org._id}`;
+                      }}
+                    />
+                  </DropdownMenuItem>
+                ))
+              ) : (
+                <DropdownMenuItem
+                  onClick={() => setShowCreateOrgDialog(true)}
+                  className="cursor-pointer text-muted-foreground"
+                >
+                  <Building2 className="size-4" />
+                  No organizations yet
                 </DropdownMenuItem>
-              ))
-            ) : (
+              )}
               <DropdownMenuItem
                 onClick={() => setShowCreateOrgDialog(true)}
-                className="cursor-pointer text-muted-foreground"
+                className="cursor-pointer"
               >
-                <Building2 className="size-4" />
-                No organizations yet
+                <Plus className="size-4" />
+                New organization
               </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              onClick={() => setShowCreateOrgDialog(true)}
-              className="cursor-pointer"
-            >
-              <Plus className="size-4" />
-              New organization
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={handleSignOut}
-              className="cursor-pointer"
-            >
-              <LogOut className="size-4" />
-              Log out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </SidebarMenuItem>
-    </SidebarMenu>
-    <CreateOrganizationDialog
-      open={showCreateOrgDialog}
-      onOpenChange={setShowCreateOrgDialog}
-    />
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={handleSignOut}
+                className="cursor-pointer"
+              >
+                <LogOut className="size-4" />
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </SidebarMenuItem>
+      </SidebarMenu>
+      <CreateOrganizationDialog
+        open={showCreateOrgDialog}
+        onOpenChange={setShowCreateOrgDialog}
+      />
     </>
   );
 }

@@ -50,7 +50,9 @@ import type { ActiveServerSelectorProps } from "./components/ActiveServerSelecto
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
-  const [activeOrganizationId, setActiveOrganizationId] = useState<string | undefined>(undefined);
+  const [activeOrganizationId, setActiveOrganizationId] = useState<
+    string | undefined
+  >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [openAiAppOrMcpAppsServers, setOpenAiAppOrMcpAppsServers] = useState<
     Set<string>
@@ -360,7 +362,9 @@ export default function App() {
           )}
           {activeTab === "settings" && <SettingsTab />}
           {activeTab === "profile" && <ProfileTab />}
-          {activeTab === "organizations" && <OrganizationsTab organizationId={activeOrganizationId} />}
+          {activeTab === "organizations" && (
+            <OrganizationsTab organizationId={activeOrganizationId} />
+          )}
         </div>
       </SidebarInset>
     </SidebarProvider>

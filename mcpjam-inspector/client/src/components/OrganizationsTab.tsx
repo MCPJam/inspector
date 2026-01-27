@@ -108,11 +108,14 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const currentUserEmail = user?.email;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { activeMembers, pendingMembers, isLoading: membersLoading } =
-    useOrganizationMembers({
-      isAuthenticated,
-      organizationId: organization._id,
-    });
+  const {
+    activeMembers,
+    pendingMembers,
+    isLoading: membersLoading,
+  } = useOrganizationMembers({
+    isAuthenticated,
+    organizationId: organization._id,
+  });
 
   const {
     updateOrganization,
@@ -128,7 +131,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
 
   // Determine if current user is the creator (for delete vs leave)
   const currentMember = activeMembers.find(
-    (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase()
+    (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
   const isCreator = currentMember?.userId === organization.createdBy;
 
@@ -162,7 +165,9 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     }
   };
 
-  const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -226,7 +231,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
       });
       if (result.isPending) {
         toast.success(
-          `Invitation sent to ${inviteEmail}. They'll get access once they sign up.`
+          `Invitation sent to ${inviteEmail}. They'll get access once they sign up.`,
         );
       } else {
         toast.success(`${inviteEmail} added to the organization.`);
@@ -337,7 +342,6 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
           ) : (
             <h1 className="text-3xl font-semibold">{organization.name}</h1>
           )}
-
         </div>
       </div>
 
