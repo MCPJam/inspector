@@ -517,5 +517,98 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
+
+    it("does not emit duplicate tool-input-available for new tool calls from current step", async () => {
+      const { hasUnresolvedToolCalls, executeToolCallsFromMessages } =
+        await import("@/shared/http-tool-calls");
+
+      // First call returns true (new tool call needs execution), then false after result added
+      let hasUnresolvedCallCount = 0;
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(() => {
+        hasUnresolvedCallCount++;
+        // First call: true (new tool call needs execution)
+        // Second call: false (tool result added, no more unresolved)
+        return hasUnresolvedCallCount === 1;
+      });
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          // Simulate adding tool result for the new tool call
+          messages.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "new-call-from-step",
+                output: { type: "json", value: { result: "done" } },
+              },
+            ],
+          });
+        },
+      );
+
+      const originalFetch = global.fetch;
+      let fetchCallCount = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        fetchCallCount++;
+        if (fetchCallCount === 1) {
+          // First call: return a new tool call
+          return {
+            ok: true,
+            json: async () => ({
+              ok: true,
+              messages: [
+                {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "tool-call",
+                      toolCallId: "new-call-from-step",
+                      toolName: "new_tool",
+                      input: { foo: "bar" },
+                    },
+                  ],
+                },
+              ],
+              finishReason: "tool-calls",
+            }),
+          };
+        }
+        // Second call: return final response
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            messages: [
+              {
+                role: "assistant",
+                content: [{ type: "text", text: "Done!" }],
+              },
+            ],
+            finishReason: "stop",
+          }),
+        };
+      });
+
+      try {
+        await postJson(app, "/api/mcp/chat-v2", {
+          // No inherited tool calls - clean message history
+          messages: [{ role: "user", content: "Do something" }],
+          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+        });
+
+        // Count how many times tool-input-available was emitted for this tool call
+        const toolInputEventsForNewCall = capturedStreamEvents.filter(
+          (e) =>
+            e.type === "tool-input-available" &&
+            e.toolCallId === "new-call-from-step",
+        );
+
+        // Should be emitted exactly ONCE (when processing json.messages),
+        // NOT twice (which would happen if the unresolved tool calls logic also emitted it)
+        expect(toolInputEventsForNewCall.length).toBe(1);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 });

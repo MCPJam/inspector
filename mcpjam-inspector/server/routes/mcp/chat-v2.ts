@@ -144,6 +144,9 @@ chatV2.post("/", async (c) => {
               break;
             }
 
+            // Track length before processing new messages to identify inherited tool calls
+            const messageHistoryLenBeforeStep = messageHistory.length;
+
             for (const m of json.messages as any[]) {
               if (m?.role === "assistant" && Array.isArray(m.content)) {
                 for (const item of m.content) {
@@ -175,9 +178,7 @@ chatV2.post("/", async (c) => {
 
             const beforeLen = messageHistory.length;
             if (hasUnresolvedToolCalls(messageHistory as any)) {
-              // Collect unresolved tool calls from message history
-              // We need to emit tool-input-available for any inherited tool calls
-              // before emitting their results (required by AI SDK stream validation)
+              // Collect existing tool result IDs from message history
               const existingToolResultIds = new Set<string>();
               for (const msg of messageHistory) {
                 if (
@@ -192,8 +193,11 @@ chatV2.post("/", async (c) => {
                 }
               }
 
-              // Emit tool-input-available for unresolved tool calls from history
-              for (const msg of messageHistory) {
+              // Emit tool-input-available ONLY for inherited unresolved tool calls
+              // (i.e., tool calls that existed before this step, not new ones from this step)
+              // New tool calls already had tool-input-available emitted above (lines 164-169)
+              for (let i = 0; i < messageHistoryLenBeforeStep; i++) {
+                const msg = messageHistory[i];
                 if (
                   msg?.role === "assistant" &&
                   Array.isArray((msg as any).content)
