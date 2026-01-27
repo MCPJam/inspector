@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ResourcesTab } from "../ResourcesTab";
-import type { MCPServerConfig } from "@/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk";
 
 // Mock APIs
 const mockListResources = vi.fn();

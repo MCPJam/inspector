@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ToolsTab } from "../ToolsTab";
-import type { MCPServerConfig } from "@/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk";
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({

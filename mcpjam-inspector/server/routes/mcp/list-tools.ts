@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import type { MCPClientManager } from "@/sdk";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 
@@ -24,10 +23,7 @@ listTools.post("/", async (c) => {
 
     for (const serverId of serverIds) {
       // Check if server is connected
-      if (
-        clientManager.getConnectionStatusByAttemptingPing(serverId) !==
-        "connected"
-      ) {
+      if (clientManager.getConnectionStatus(serverId) !== "connected") {
         continue;
       }
 

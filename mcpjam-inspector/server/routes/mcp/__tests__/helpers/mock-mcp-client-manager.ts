@@ -20,7 +20,7 @@ const defaultMocks = {
   hasServer: vi.fn().mockReturnValue(false),
   listServers: vi.fn().mockReturnValue([]),
   getServerSummaries: vi.fn().mockReturnValue([]),
-  getConnectionStatusByAttemptingPing: vi.fn().mockReturnValue("connected"),
+  getConnectionStatus: vi.fn().mockReturnValue("connected"),
   getInitializationInfo: vi.fn().mockReturnValue(null),
 
   // Tools

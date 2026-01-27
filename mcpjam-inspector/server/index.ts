@@ -10,14 +10,14 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
-import { MCPClientManager } from "@/sdk";
+import { MCPClientManager } from "@mcpjam/sdk";
 
 // Security imports
 import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
-import { isLocalhostRequest, isAllowedHost } from "./utils/localhost-check";
+import { isAllowedHost } from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,

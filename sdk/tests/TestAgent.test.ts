@@ -19,7 +19,7 @@ jest.mock("../src/model-factory", () => ({
   createModelFromString: jest.fn(() => ({})),
 }));
 
-import { generateText } from "ai";
+import { generateText, jsonSchema } from "ai";
 import { createModelFromString } from "../src/model-factory";
 
 const mockGenerateText = generateText as jest.MockedFunction<
@@ -34,27 +34,27 @@ describe("TestAgent", () => {
   const mockToolSet: ToolSet = {
     add: {
       description: "Add two numbers",
-      parameters: {
+      inputSchema: jsonSchema({
         type: "object",
         properties: {
           a: { type: "number" },
           b: { type: "number" },
         },
         required: ["a", "b"],
-      },
-      execute: async ({ a, b }: { a: number; b: number }) => a + b,
+      }),
+      execute: async (args: { a: number; b: number }) => args.a + args.b,
     },
     subtract: {
       description: "Subtract two numbers",
-      parameters: {
+      inputSchema: jsonSchema({
         type: "object",
         properties: {
           a: { type: "number" },
           b: { type: "number" },
         },
         required: ["a", "b"],
-      },
-      execute: async ({ a, b }: { a: number; b: number }) => a - b,
+      }),
+      execute: async (args: { a: number; b: number }) => args.a - args.b,
     },
   };
 
@@ -97,7 +97,7 @@ describe("TestAgent", () => {
       });
 
       expect(agent.getSystemPrompt()).toBe("You are a helpful assistant.");
-      expect(agent.getTemperature()).toBe(0.7);
+      expect(agent.getTemperature()).toBe(undefined);
       expect(agent.getMaxSteps()).toBe(10);
     });
   });
@@ -210,10 +210,24 @@ describe("TestAgent", () => {
         text: "Done",
         steps: [
           {
-            toolCalls: [{ toolName: "add", args: { a: 1, b: 2 } }],
+            toolCalls: [
+              {
+                type: "tool-call",
+                toolCallId: "1",
+                toolName: "add",
+                input: { a: 1, b: 2 },
+              },
+            ],
           },
           {
-            toolCalls: [{ toolName: "subtract", args: { a: 5, b: 3 } }],
+            toolCalls: [
+              {
+                type: "tool-call",
+                toolCallId: "2",
+                toolName: "subtract",
+                input: { a: 5, b: 3 },
+              },
+            ],
           },
         ],
         usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },

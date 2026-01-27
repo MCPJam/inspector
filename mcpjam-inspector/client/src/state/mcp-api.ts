@@ -1,4 +1,4 @@
-import { MCPServerConfig } from "@/sdk";
+import { MCPServerConfig } from "@mcpjam/sdk";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { authFetch } from "@/lib/session-token";
 

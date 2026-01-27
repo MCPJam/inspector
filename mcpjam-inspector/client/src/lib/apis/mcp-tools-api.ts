@@ -4,7 +4,7 @@ import type {
   ElicitResult,
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { MCPTask, TaskOptions } from "@/sdk";
+import type { MCPTask, TaskOptions } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
