@@ -77,8 +77,16 @@ export function AuthUpperArea({
           size="icon"
           variant="ghost"
           onClick={handleThemeToggle}
-          aria-label={themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          title={themeMode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={
+            themeMode === "dark"
+              ? "Switch to light mode"
+              : "Switch to dark mode"
+          }
+          title={
+            themeMode === "dark"
+              ? "Switch to light mode"
+              : "Switch to dark mode"
+          }
         >
           {themeMode === "dark" ? (
             <Sun className="h-5 w-5" />
