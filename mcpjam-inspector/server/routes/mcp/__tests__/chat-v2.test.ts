@@ -271,10 +271,8 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("emits tool-input-available before tool-output-available for inherited unresolved tool calls", async () => {
-      const {
-        hasUnresolvedToolCalls,
-        executeToolCallsFromMessages,
-      } = await import("@/shared/http-tool-calls");
+      const { hasUnresolvedToolCalls, executeToolCallsFromMessages } =
+        await import("@/shared/http-tool-calls");
 
       // Setup: message history has an unresolved tool call (simulating abort scenario)
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
@@ -335,17 +333,13 @@ describe("POST /api/mcp/chat-v2", () => {
         // Verify tool-input-available was emitted for the orphaned tool call
         expect(toolInputEvents.length).toBeGreaterThanOrEqual(1);
         expect(
-          toolInputEvents.some(
-            (e) => e.toolCallId === "orphaned-call-123",
-          ),
+          toolInputEvents.some((e) => e.toolCallId === "orphaned-call-123"),
         ).toBe(true);
 
         // Verify tool-output-available was also emitted
         expect(toolOutputEvents.length).toBeGreaterThanOrEqual(1);
         expect(
-          toolOutputEvents.some(
-            (e) => e.toolCallId === "orphaned-call-123",
-          ),
+          toolOutputEvents.some((e) => e.toolCallId === "orphaned-call-123"),
         ).toBe(true);
 
         // Verify order: tool-input-available must come before tool-output-available
@@ -367,14 +361,14 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("does not emit duplicate tool-input-available for tool calls that already have results", async () => {
-      const {
-        hasUnresolvedToolCalls,
-        executeToolCallsFromMessages,
-      } = await import("@/shared/http-tool-calls");
+      const { hasUnresolvedToolCalls, executeToolCallsFromMessages } =
+        await import("@/shared/http-tool-calls");
 
       // No unresolved tool calls - all are resolved
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(false);
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(async () => {});
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async () => {},
+      );
 
       // Mock fetch for CONVEX_HTTP_URL
       const originalFetch = global.fetch;
@@ -430,10 +424,8 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("handles multiple unresolved tool calls from aborted request", async () => {
-      const {
-        hasUnresolvedToolCalls,
-        executeToolCallsFromMessages,
-      } = await import("@/shared/http-tool-calls");
+      const { hasUnresolvedToolCalls, executeToolCallsFromMessages } =
+        await import("@/shared/http-tool-calls");
 
       vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
@@ -502,12 +494,12 @@ describe("POST /api/mcp/chat-v2", () => {
           (e) => e.type === "tool-input-available",
         );
 
-        expect(
-          toolInputEvents.some((e) => e.toolCallId === "call-1"),
-        ).toBe(true);
-        expect(
-          toolInputEvents.some((e) => e.toolCallId === "call-2"),
-        ).toBe(true);
+        expect(toolInputEvents.some((e) => e.toolCallId === "call-1")).toBe(
+          true,
+        );
+        expect(toolInputEvents.some((e) => e.toolCallId === "call-2")).toBe(
+          true,
+        );
 
         // Verify tool names and inputs are preserved
         const call1Event = toolInputEvents.find(
