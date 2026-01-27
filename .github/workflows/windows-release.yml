@@ -90,8 +90,8 @@ jobs:
         run: |
           $setupFile = Get-ChildItem -Path "out\make" -Recurse -Name "*Setup.exe" | Select-Object -First 1
           if ($setupFile) {
-            Copy-Item "out\make\$setupFile" "MCPJam-Inspector-Setup.exe"
-            echo "SETUP_PATH=mcpjam-inspector\MCPJam-Inspector-Setup.exe" >> $env:GITHUB_ENV
+            Copy-Item "out\make\$setupFile" "$env:GITHUB_WORKSPACE\MCPJam-Inspector-Setup.exe"
+            echo "SETUP_PATH=$env:GITHUB_WORKSPACE/MCPJam-Inspector-Setup.exe" >> $env:GITHUB_ENV
           }
         shell: powershell
 
