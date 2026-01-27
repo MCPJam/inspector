@@ -5,6 +5,7 @@ import {
   ActiveServerSelector,
   ActiveServerSelectorProps,
 } from "@/components/ActiveServerSelector";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 interface AuthUpperAreaProps {
   activeServerSelectorProps?: ActiveServerSelectorProps;
@@ -53,6 +54,7 @@ export function AuthUpperArea({
         </div>
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
+        <NotificationBell />
         {communityLinks}
       </div>
     </div>
