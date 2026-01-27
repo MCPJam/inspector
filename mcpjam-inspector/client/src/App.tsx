@@ -166,11 +166,14 @@ export default function App() {
     const applyHash = () => {
       const hash = (window.location.hash || "#servers").replace("#", "");
 
-      // Extract the top-level tab from subroutes (e.g., "/evals/suite/123" -> "evals")
-      const topLevelTab = hash.startsWith("/") ? hash.split("/")[1] : hash;
+      // Remove leading slash before splitting to avoid empty first element
+      const trimmedHash = hash.startsWith("/") ? hash.slice(1) : hash;
+      const hashParts = trimmedHash.split("/");
+
+      // Extract the top-level tab (e.g., "evals/suite/123" -> "evals")
+      const topLevelTab = hashParts[0];
 
       // Handle organizations/:orgId route
-      const hashParts = hash.split("/");
       if (hashParts[0] === "organizations" && hashParts[1]) {
         setActiveOrganizationId(hashParts[1]);
       } else {
@@ -178,7 +181,7 @@ export default function App() {
       }
 
       const normalizedTab =
-        topLevelTab === "registry" ? "servers" : hashParts[0];
+        topLevelTab === "registry" ? "servers" : topLevelTab;
 
       setActiveTab(normalizedTab);
       if (normalizedTab === "chat" || normalizedTab === "chat-v2") {
