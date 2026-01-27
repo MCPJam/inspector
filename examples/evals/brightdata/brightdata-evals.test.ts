@@ -33,7 +33,9 @@ describe("Bright Data MCP Evals", () => {
   }, 60000);
 
   afterAll(async () => {
-    await clientManager.disconnectServer("brightdata");
+    if (clientManager) {
+      await clientManager.disconnectServer("brightdata");
+    }
   });
 
   describe("Search tool evals", () => {

@@ -52,7 +52,9 @@ describe("Server Introspection", () => {
   });
 
   afterAll(async () => {
-    await clientManager.disconnectServer("brightdata");
+    if (clientManager) {
+      await clientManager.disconnectServer("brightdata");
+    }
   });
 
   test("getServerSummaries returns server info", () => {
