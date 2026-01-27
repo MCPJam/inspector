@@ -45,10 +45,8 @@ export function useOrganizationQueries({
   }, [organizations]);
 
   return {
-    organizations,
     sortedOrganizations,
     isLoading,
-    hasOrganizations: (organizations?.length ?? 0) > 0,
   };
 }
 
@@ -79,11 +77,9 @@ export function useOrganizationMembers({
   }, [members]);
 
   return {
-    members,
     activeMembers,
     pendingMembers,
     isLoading,
-    hasPendingMembers: pendingMembers.length > 0,
   };
 }
 
@@ -105,9 +101,6 @@ export function useOrganizationMutations() {
   const updateOrganizationLogo = useMutation(
     "organizations:updateOrganizationLogo" as any,
   );
-  const removeOrganizationLogo = useMutation(
-    "organizations:removeOrganizationLogo" as any,
-  );
 
   return {
     createOrganization,
@@ -117,6 +110,5 @@ export function useOrganizationMutations() {
     removeMember,
     generateLogoUploadUrl,
     updateOrganizationLogo,
-    removeOrganizationLogo,
   };
 }
