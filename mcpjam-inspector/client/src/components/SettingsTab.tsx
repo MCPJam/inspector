@@ -6,6 +6,11 @@ import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
 import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
 import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
 import { AzureOpenAIConfigDialog } from "./setting/AzureOpenAIConfigDialog";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Moon, Sun } from "lucide-react";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { updateThemeMode } from "@/lib/theme-utils";
 
 interface ProviderConfig {
   id: string;
@@ -19,6 +24,9 @@ interface ProviderConfig {
 }
 
 export function SettingsTab() {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+
   const {
     tokens,
     setToken,
@@ -39,6 +47,12 @@ export function SettingsTab() {
     getOpenAIBaseUrl,
     setOpenAIBaseUrl,
   } = useAiProviderKeys();
+
+  const handleThemeToggle = () => {
+    const newTheme = themeMode === "dark" ? "light" : "dark";
+    updateThemeMode(newTheme);
+    setThemeMode(newTheme);
+  };
 
   const [editingValue, setEditingValue] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -271,6 +285,36 @@ export function SettingsTab() {
           <p className="text-sm text-muted-foreground">
             MCPJam Version: v{__APP_VERSION__}
           </p>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold">Appearance</h3>
+          </div>
+          <div className="rounded-lg border bg-card p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {themeMode === "dark" ? (
+                  <Moon className="h-5 w-5 text-muted-foreground" />
+                ) : (
+                  <Sun className="h-5 w-5 text-muted-foreground" />
+                )}
+                <div className="space-y-0.5">
+                  <Label htmlFor="dark-mode" className="text-sm font-medium">
+                    Dark mode
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Switch between light and dark themes
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="dark-mode"
+                checked={themeMode === "dark"}
+                onCheckedChange={handleThemeToggle}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="space-y-4">

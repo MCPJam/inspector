@@ -14,6 +14,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
 import { ProfileTab } from "./components/ProfileTab";
+import { OrganizationsTab } from "./components/OrganizationsTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
@@ -49,6 +50,7 @@ import type { ActiveServerSelectorProps } from "./components/ActiveServerSelecto
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [activeOrganizationId, setActiveOrganizationId] = useState<string | undefined>(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [openAiAppOrMcpAppsServers, setOpenAiAppOrMcpAppsServers] = useState<
     Set<string>
@@ -164,8 +166,17 @@ export default function App() {
 
       // Extract the top-level tab from subroutes (e.g., "/evals/suite/123" -> "evals")
       const topLevelTab = hash.startsWith("/") ? hash.split("/")[1] : hash;
+
+      // Handle organizations/:orgId route
+      const hashParts = hash.split("/");
+      if (hashParts[0] === "organizations" && hashParts[1]) {
+        setActiveOrganizationId(hashParts[1]);
+      } else {
+        setActiveOrganizationId(undefined);
+      }
+
       const normalizedTab =
-        topLevelTab === "registry" ? "servers" : topLevelTab;
+        topLevelTab === "registry" ? "servers" : hashParts[0];
 
       setActiveTab(normalizedTab);
       if (normalizedTab === "chat" || normalizedTab === "chat-v2") {
@@ -349,6 +360,7 @@ export default function App() {
           )}
           {activeTab === "settings" && <SettingsTab />}
           {activeTab === "profile" && <ProfileTab />}
+          {activeTab === "organizations" && <OrganizationsTab organizationId={activeOrganizationId} />}
         </div>
       </SidebarInset>
     </SidebarProvider>
