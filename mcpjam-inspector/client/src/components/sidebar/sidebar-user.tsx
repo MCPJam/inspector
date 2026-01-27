@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,16 +27,13 @@ import {
   Settings,
   User,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 
 export function SidebarUser() {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signIn, signOut, signUp } = useAuth();
-  const posthog = usePostHog();
+  const { user, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -67,61 +63,9 @@ export function SidebarUser() {
 
   const avatarUrl = profilePictureUrl;
 
-  // Not logged in state
+  // Not logged in state - auth buttons are now in the header
   if (!user) {
-    if (isLoading) {
-      return (
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" disabled>
-              <RefreshCw className="size-4 animate-spin" />
-              <span className="truncate group-data-[collapsible=icon]:hidden">
-                Loading...
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      );
-    }
-
-    return (
-      <SidebarMenu>
-        <SidebarMenuItem className="flex flex-col gap-2 group-data-[collapsible=icon]:items-center">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:h-8 group-data-[collapsible=icon]:p-0"
-            onClick={() => {
-              posthog.capture("login_button_clicked", {
-                location: "sidebar",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              });
-              signIn();
-            }}
-          >
-            <span className="group-data-[collapsible=icon]:hidden">
-              Sign in
-            </span>
-            <User className="hidden group-data-[collapsible=icon]:block size-4" />
-          </Button>
-          <Button
-            size="sm"
-            className="w-full group-data-[collapsible=icon]:hidden"
-            onClick={() => {
-              posthog.capture("sign_up_button_clicked", {
-                location: "sidebar",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              });
-              signUp();
-            }}
-          >
-            Create account
-          </Button>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    );
+    return null;
   }
 
   // Loading state while authenticated
