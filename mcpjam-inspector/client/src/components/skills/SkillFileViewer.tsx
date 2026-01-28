@@ -87,14 +87,18 @@ export function SkillFileViewer({
       if (!href) return;
 
       // Only intercept relative links (not external URLs)
-      if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("//")) {
+      if (
+        href.startsWith("http://") ||
+        href.startsWith("https://") ||
+        href.startsWith("//")
+      ) {
         return;
       }
 
       e.preventDefault();
       onLinkClick(href);
     },
-    [onLinkClick]
+    [onLinkClick],
   );
 
   const handleDownload = () => {

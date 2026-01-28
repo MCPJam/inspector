@@ -14,7 +14,10 @@ export const SKILL_NAME_MAX_LENGTH = 64;
  * - 1-64 characters
  */
 export function isValidSkillName(name: string): boolean {
-  if (name.length < SKILL_NAME_MIN_LENGTH || name.length > SKILL_NAME_MAX_LENGTH)
+  if (
+    name.length < SKILL_NAME_MIN_LENGTH ||
+    name.length > SKILL_NAME_MAX_LENGTH
+  )
     return false;
   if (name.includes("--")) return false;
   return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$|^[a-z0-9]$/.test(name);

@@ -210,9 +210,7 @@ export function parseSkillFile(
       !frontmatter.description ||
       typeof frontmatter.description !== "string"
     ) {
-      logger.warn(
-        `Skill at ${skillPath} missing required 'description' field`,
-      );
+      logger.warn(`Skill at ${skillPath} missing required 'description' field`);
       return null;
     }
 
