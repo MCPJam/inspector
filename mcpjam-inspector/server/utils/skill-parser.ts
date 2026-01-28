@@ -1,7 +1,7 @@
 import matter from "gray-matter";
 import fs from "fs/promises";
 import path from "path";
-import logger from "@/utils/logger";
+import { logger } from "./logger";
 import {
   isValidSkillName,
   type Skill,
