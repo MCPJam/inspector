@@ -27,7 +27,7 @@ export interface PendingExecution {
 }
 
 export interface UseToolExecutionOptions {
-  serverName: string | undefined;
+  serverId: string | undefined;
   selectedTool: string | null;
   formFields: FormField[];
   setIsExecuting: (executing: boolean) => void;
@@ -58,7 +58,7 @@ function extractMetadata(result: unknown): ToolResponseMeta | undefined {
 }
 
 export function useToolExecution({
-  serverName,
+  serverId,
   selectedTool,
   formFields,
   setIsExecuting,
@@ -79,14 +79,14 @@ export function useToolExecution({
 
   // Execute tool and set up pending injection
   const executeTool = useCallback(async () => {
-    if (!selectedTool || !serverName) return;
+    if (!selectedTool || !serverId) return;
 
     setIsExecuting(true);
     setExecutionError(null);
 
     try {
       const params = buildParametersFromFields(formFields);
-      const response = await executeToolApi(serverName, selectedTool, params);
+      const response = await executeToolApi(serverId, selectedTool, params);
 
       if ("error" in response) {
         // Log tool execution failure
@@ -157,7 +157,7 @@ export function useToolExecution({
     }
   }, [
     selectedTool,
-    serverName,
+    serverId,
     formFields,
     setIsExecuting,
     setExecutionError,

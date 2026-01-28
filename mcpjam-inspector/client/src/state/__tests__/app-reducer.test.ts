@@ -30,6 +30,7 @@ function createServer(
   overrides: Partial<ServerWithName> = {},
 ): ServerWithName {
   return {
+    id: overrides.id ?? name,
     name,
     config: { command: "node", args: ["server.js"] },
     connectionStatus: "disconnected",
@@ -66,7 +67,6 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "UPSERT_SERVER",
-        name: "new-server",
         server,
       });
 
@@ -82,7 +82,6 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "UPSERT_SERVER",
-        name: "existing",
         server: updatedServer,
       });
 
@@ -97,6 +96,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_REQUEST",
+        id: "new-server",
         name: "new-server",
         config,
         select: false,
@@ -117,6 +117,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_REQUEST",
+        id: "existing",
         name: "existing",
         config: existingServer.config,
         select: false,
@@ -131,6 +132,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_REQUEST",
+        id: "new-server",
         name: "new-server",
         config: { command: "node" },
         select: true,
@@ -144,6 +146,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_REQUEST",
+        id: "new-server",
         name: "new-server",
         config: { command: "node" },
         select: false,
@@ -171,6 +174,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_SUCCESS",
+        id: "test",
         name: "test",
         config: server.config,
       });
@@ -204,6 +208,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_SUCCESS",
+        id: "oauth-server",
         name: "oauth-server",
         config: server.config,
         tokens,
@@ -229,6 +234,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_SUCCESS",
+        id: "new-server",
         name: "new-server",
         config,
       });
@@ -258,7 +264,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_FAILURE",
-        name: "failing",
+        id: "failing",
         error: "Connection refused",
       });
 
@@ -271,7 +277,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "CONNECT_FAILURE",
-        name: "nonexistent",
+        id: "nonexistent",
         error: "Not found",
       });
 
@@ -300,7 +306,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "DISCONNECT",
-        name: "connected",
+        id: "connected",
       });
 
       expect(result.servers["connected"].connectionStatus).toBe("disconnected");
@@ -327,7 +333,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "DISCONNECT",
-        name: "selected",
+        id: "selected",
       });
 
       expect(result.selectedServer).toBe("none");
@@ -351,7 +357,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "DISCONNECT",
-        name: "multi",
+        id: "multi",
       });
 
       expect(result.selectedMultipleServers).toEqual(["other"]);
@@ -374,7 +380,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "DISCONNECT",
-        name: "error",
+        id: "error",
         error: "Lost connection",
       });
 
@@ -400,7 +406,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "REMOVE_SERVER",
-        name: "to-remove",
+        id: "to-remove",
       });
 
       expect(result.servers["to-remove"]).toBeUndefined();
@@ -427,7 +433,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "REMOVE_SERVER",
-        name: "selected",
+        id: "selected",
       });
 
       expect(result.selectedServer).toBe("none");
@@ -440,7 +446,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "SELECT_SERVER",
-        name: "new",
+        id: "new",
       });
 
       expect(result.selectedServer).toBe("new");
@@ -453,7 +459,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "SET_MULTI_SELECTED",
-        names: ["server-1", "server-2", "server-3"],
+        ids: ["server-1", "server-2", "server-3"],
       });
 
       expect(result.selectedMultipleServers).toEqual([
@@ -574,7 +580,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "SET_INITIALIZATION_INFO",
-        name: "test",
+        id: "test",
         initInfo,
       });
 
@@ -586,7 +592,7 @@ describe("appReducer", () => {
 
       const result = appReducer(state, {
         type: "SET_INITIALIZATION_INFO",
-        name: "nonexistent",
+        id: "nonexistent",
         initInfo: {} as any,
       });
 

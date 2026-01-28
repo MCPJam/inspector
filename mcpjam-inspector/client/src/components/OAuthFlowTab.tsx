@@ -74,19 +74,19 @@ const isHttpServer = (server?: ServerWithName) =>
 
 interface OAuthFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
-  selectedServerName: string;
-  onSelectServer: (serverName: string) => void;
+  selectedServerId: string;
+  onSelectServer: (serverId: string) => void;
   onSaveServerConfig?: (
     formData: ServerFormData,
     options?: { oauthProfile?: OAuthTestProfile },
   ) => void;
   onConnectWithTokens?: (
-    serverName: string,
+    serverId: string,
     tokens: OAuthTokensFromFlow,
     serverUrl: string,
   ) => Promise<void>;
   onRefreshTokens?: (
-    serverName: string,
+    serverId: string,
     tokens: OAuthTokensFromFlow,
     serverUrl: string,
   ) => Promise<void>;
@@ -94,7 +94,7 @@ interface OAuthFlowTabProps {
 
 export const OAuthFlowTab = ({
   serverConfigs,
-  selectedServerName,
+  selectedServerId,
   onSelectServer,
   onSaveServerConfig,
   onConnectWithTokens,
@@ -119,26 +119,29 @@ export const OAuthFlowTab = ({
   );
 
   const selectedServer =
-    selectedServerName !== "none"
-      ? serverConfigs[selectedServerName]
-      : undefined;
+    selectedServerId !== "none" ? serverConfigs[selectedServerId] : undefined;
   const activeServer = isHttpServer(selectedServer)
     ? selectedServer
     : undefined;
 
   useEffect(() => {
     if (!isHttpServer(selectedServer) && httpServers.length > 0) {
-      onSelectServer(httpServers[0].name);
+      onSelectServer(httpServers[0].id);
     }
   }, [selectedServer, httpServers, onSelectServer]);
 
   useEffect(() => {
-    if (
-      pendingServerSelection &&
-      serverConfigs[pendingServerSelection] &&
-      isHttpServer(serverConfigs[pendingServerSelection])
-    ) {
-      onSelectServer(pendingServerSelection);
+    if (!pendingServerSelection) return;
+
+    const matchById = serverConfigs[pendingServerSelection];
+    const matchByName = matchById
+      ? matchById
+      : Object.values(serverConfigs).find(
+          (server) => server.name === pendingServerSelection,
+        );
+
+    if (matchByName && isHttpServer(matchByName)) {
+      onSelectServer(matchByName.id);
       setPendingServerSelection(null);
     }
   }, [pendingServerSelection, serverConfigs, onSelectServer]);
@@ -183,10 +186,10 @@ export const OAuthFlowTab = ({
   const exchangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Reset OAuth flow state when switching servers
-  const prevServerNameRef = useRef(selectedServerName);
+  const prevServerIdRef = useRef(selectedServerId);
   useEffect(() => {
-    if (prevServerNameRef.current !== selectedServerName) {
-      prevServerNameRef.current = selectedServerName;
+    if (prevServerIdRef.current !== selectedServerId) {
+      prevServerIdRef.current = selectedServerId;
       setOAuthFlowState({
         ...EMPTY_OAUTH_FLOW_STATE_V2,
         serverUrl: profile.serverUrl || undefined,
@@ -197,7 +200,7 @@ export const OAuthFlowTab = ({
         exchangeTimeoutRef.current = null;
       }
     }
-  }, [selectedServerName, profile.serverUrl]);
+  }, [selectedServerId, profile.serverUrl]);
 
   const resetOAuthFlow = useCallback(
     (serverUrlOverride?: string) => {
@@ -343,7 +346,7 @@ export const OAuthFlowTab = ({
     setIsApplyingTokens(true);
     try {
       await onConnectWithTokens(
-        activeServer.name,
+        activeServer.id,
         extractTokensFromFlowState(),
         profile.serverUrl,
       );
@@ -363,7 +366,7 @@ export const OAuthFlowTab = ({
     setIsApplyingTokens(true);
     try {
       await onRefreshTokens(
-        activeServer.name,
+        activeServer.id,
         extractTokensFromFlowState(),
         profile.serverUrl,
       );
@@ -537,7 +540,9 @@ export const OAuthFlowTab = ({
         open={isProfileModalOpen}
         onOpenChange={setIsProfileModalOpen}
         server={activeServer}
-        existingServerNames={Object.keys(serverConfigs)}
+        existingServerNames={Object.values(serverConfigs).map(
+          (server) => server.name,
+        )}
         onSave={({ formData, profile: savedProfile }) => {
           onSaveServerConfig?.(formData, { oauthProfile: savedProfile });
           setPendingServerSelection(formData.name);

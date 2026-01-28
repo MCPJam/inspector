@@ -18,8 +18,10 @@ function reviveServer(server: any): ServerWithName {
       // ignore invalid URL
     }
   }
+  const id = server.id || crypto.randomUUID();
   return {
     ...server,
+    id,
     config: nextCfg,
     connectionStatus: server.connectionStatus || "disconnected",
     retryCount: server.retryCount || 0,
@@ -30,10 +32,33 @@ function reviveServer(server: any): ServerWithName {
   } as ServerWithName;
 }
 
+function reviveServersMap(
+  rawServers: Record<string, any> | undefined,
+): Record<string, ServerWithName> {
+  if (!rawServers) return {};
+  return Object.fromEntries(
+    Object.values(rawServers).map((server) => {
+      const revived = reviveServer(server);
+      return [revived.id, revived] as const;
+    }),
+  );
+}
+
+function mapSelectionToId(
+  value: string | undefined,
+  servers: Record<string, ServerWithName>,
+): string {
+  if (!value || value === "none") return "none";
+  if (servers[value]) return value;
+  const match = Object.values(servers).find((s) => s.name === value);
+  return match ? match.id : "none";
+}
+
 export function loadAppState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     const workspacesRaw = localStorage.getItem(WORKSPACES_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
 
     // Load workspaces
     let workspaces: Record<string, Workspace> = {};
@@ -48,11 +73,7 @@ export function loadAppState(): AppState {
               id,
               {
                 ...workspace,
-                servers: Object.fromEntries(
-                  Object.entries(workspace.servers || {}).map(
-                    ([name, server]) => [name, reviveServer(server)],
-                  ),
-                ),
+                servers: reviveServersMap(workspace.servers),
                 createdAt: new Date(workspace.createdAt),
                 updatedAt: new Date(workspace.updatedAt),
               },
@@ -71,13 +92,7 @@ export function loadAppState(): AppState {
       let migratedServers: Record<string, ServerWithName> = {};
       if (raw) {
         try {
-          const parsed = JSON.parse(raw);
-          migratedServers = Object.fromEntries(
-            Object.entries(parsed.servers || {}).map(([name, server]) => [
-              name,
-              reviveServer(server),
-            ]),
-          );
+          migratedServers = reviveServersMap(parsed.servers || {});
         } catch (e) {
           console.error("Failed to migrate old state", e);
         }
@@ -97,15 +112,27 @@ export function loadAppState(): AppState {
       activeWorkspaceId = "default";
     }
 
+    if (!workspaces[activeWorkspaceId]) {
+      activeWorkspaceId = Object.keys(workspaces)[0] || "default";
+    }
+
     const activeWorkspace = workspaces[activeWorkspaceId];
-    const parsed = raw ? JSON.parse(raw) : {};
+    const activeServers = activeWorkspace?.servers || {};
+
+    const selectedServer = mapSelectionToId(
+      parsed.selectedServer,
+      activeServers,
+    );
+    const selectedMultipleServers = (parsed.selectedMultipleServers || [])
+      .map((name: string) => mapSelectionToId(name, activeServers))
+      .filter((id: string) => id !== "none");
 
     return {
       workspaces,
       activeWorkspaceId,
-      servers: activeWorkspace?.servers || {},
-      selectedServer: parsed.selectedServer || "none",
-      selectedMultipleServers: parsed.selectedMultipleServers || [],
+      servers: activeServers,
+      selectedServer,
+      selectedMultipleServers,
       isMultiSelectMode: parsed.isMultiSelectMode || false,
     } as AppState;
   } catch (e) {
@@ -125,13 +152,13 @@ export function saveAppState(state: AppState) {
           {
             ...workspace,
             servers: Object.fromEntries(
-              Object.entries(workspace.servers).map(([name, server]) => {
+              Object.values(workspace.servers).map((server) => {
                 const cfg: any = server.config;
                 const serializedConfig =
                   cfg && cfg.url instanceof URL
                     ? { ...cfg, url: cfg.url.toString() }
                     : cfg;
-                return [name, { ...server, config: serializedConfig }];
+                return [server.id, { ...server, config: serializedConfig }];
               }),
             ),
           },
@@ -149,13 +176,13 @@ export function saveAppState(state: AppState) {
       selectedMultipleServers: state.selectedMultipleServers,
       isMultiSelectMode: state.isMultiSelectMode,
       servers: Object.fromEntries(
-        Object.entries(state.servers).map(([name, server]) => {
+        Object.values(state.servers).map((server) => {
           const cfg: any = server.config;
           const serializedConfig =
             cfg && cfg.url instanceof URL
               ? { ...cfg, url: cfg.url.toString() }
               : cfg;
-          return [name, { ...server, config: serializedConfig }];
+          return [server.id, { ...server, config: serializedConfig }];
         }),
       ),
     };

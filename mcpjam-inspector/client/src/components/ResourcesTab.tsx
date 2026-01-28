@@ -22,10 +22,16 @@ import { authFetch } from "@/lib/session-token";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
+  serverId?: string;
   serverName?: string;
 }
 
-export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
+export function ResourcesTab({
+  serverConfig,
+  serverId,
+  serverName,
+}: ResourcesTabProps) {
+  const activeServerId = serverId ?? serverName;
   const [resources, setResources] = useState<MCPResource[]>([]);
   const [selectedResource, setSelectedResource] = useState<string>("");
   const [resourceContent, setResourceContent] =
@@ -38,10 +44,10 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (serverConfig && serverName) {
+    if (serverConfig && activeServerId) {
       fetchResources();
     }
-  }, [serverConfig, serverName]);
+  }, [serverConfig, activeServerId]);
 
   const selectedResourceData = useMemo(() => {
     return (
@@ -50,7 +56,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   }, [resources, selectedResource]);
 
   const fetchResources = async (cursor?: string, append = false) => {
-    if (!serverName) return;
+    if (!activeServerId) return;
 
     if (append) {
       setLoadingMore(true);
@@ -64,7 +70,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     }
 
     try {
-      const result = await listResources(serverName, cursor);
+      const result = await listResources(activeServerId, cursor);
       const serverResources: MCPResource[] = Array.isArray(result.resources)
         ? result.resources
         : [];
@@ -123,7 +129,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   }, [nextCursor, loadingMore, loadMoreResources]);
 
   const readResource = async (uri: string) => {
-    if (!serverName) return;
+    if (!activeServerId) return;
     setLoading(true);
     setError("");
 
@@ -132,7 +138,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serverId: serverName,
+          serverId: activeServerId,
           uri: uri,
         }),
       });
@@ -173,7 +179,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedResource, loading]);
 
-  if (!serverConfig || !serverName) {
+  if (!serverConfig || !activeServerId) {
     return (
       <EmptyState
         icon={FolderOpen}
@@ -381,7 +387,9 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
+              <LoggerView
+                serverIds={activeServerId ? [activeServerId] : undefined}
+              />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>

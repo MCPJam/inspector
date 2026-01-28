@@ -44,13 +44,13 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 interface ServerConnectionCardProps {
   server: ServerWithName;
-  onDisconnect: (serverName: string) => void;
+  onDisconnect: (serverId: string) => void;
   onReconnect: (
-    serverName: string,
+    serverId: string,
     options?: { forceOAuthFlow?: boolean },
   ) => void;
   onEdit: (server: ServerWithName) => void;
-  onRemove?: (serverName: string) => void;
+  onRemove?: (serverId: string) => void;
   sharedTunnelUrl?: string | null;
 }
 
@@ -115,7 +115,7 @@ export function ServerConnectionCard({
   // Only show tunnel URL if server is connected
   const serverTunnelUrl =
     sharedTunnelUrl && server.connectionStatus === "connected"
-      ? `${sharedTunnelUrl}/api/mcp/adapter-http/${server.name}`
+      ? `${sharedTunnelUrl}/api/mcp/adapter-http/${server.id}`
       : null;
 
   // Load tools when server is connected
@@ -126,7 +126,7 @@ export function ServerConnectionCard({
         return;
       }
       try {
-        const result = await listTools(server.name);
+        const result = await listTools(server.id);
         setToolsData(result);
       } catch (err) {
         // Silently fail - tools metadata is optional
@@ -136,7 +136,7 @@ export function ServerConnectionCard({
     };
 
     loadTools();
-  }, [server.name, server.connectionStatus]);
+  }, [server.id, server.connectionStatus]);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -151,7 +151,7 @@ export function ServerConnectionCard({
   const handleReconnect = async (options?: { forceOAuthFlow?: boolean }) => {
     setIsReconnecting(true);
     try {
-      onReconnect(server.name, options);
+      onReconnect(server.id, options);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -179,7 +179,7 @@ export function ServerConnectionCard({
     setIsExporting(true);
     try {
       const toastId = toast.loading(`Exporting ${server.name}…`);
-      const data = await exportServerApi(server.name);
+      const data = await exportServerApi(server.id);
       const ts = new Date().toISOString().replace(/[:.]/g, "-");
       const filename = `mcp-server-export_${server.name}_${ts}.json`;
       downloadJson(filename, data);
@@ -263,7 +263,7 @@ export function ServerConnectionCard({
                     environment: detectEnvironment(),
                   });
                   if (!checked) {
-                    onDisconnect(server.name);
+                    onDisconnect(server.id);
                   } else {
                     handleReconnect();
                   }
@@ -355,8 +355,8 @@ export function ServerConnectionCard({
                         platform: detectPlatform(),
                         environment: detectEnvironment(),
                       });
-                      onDisconnect(server.name);
-                      onRemove?.(server.name);
+                      onDisconnect(server.id);
+                      onRemove?.(server.id);
                     }}
                   >
                     <Link2Off className="h-3 w-3 mr-2" />

@@ -5,7 +5,8 @@ export function serializeServersForSharing(
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
-  for (const [serverId, server] of Object.entries(servers)) {
+  for (const server of Object.values(servers)) {
+    const serverId = server.id || crypto.randomUUID();
     const serializedServer: Record<string, unknown> = {
       name: server.name,
       enabled: server.enabled,
@@ -70,6 +71,7 @@ export function deserializeServersFromConvex(
 
   for (const [serverId, serverData] of Object.entries(servers)) {
     if (!serverData) continue;
+    const revivedId = serverData.id || serverId || crypto.randomUUID();
 
     const config: any = {};
     if (serverData.config) {
@@ -89,6 +91,7 @@ export function deserializeServersFromConvex(
     }
 
     const server: ServerWithName = {
+      id: revivedId,
       name: serverData.name || serverId,
       config,
       lastConnectionTime: new Date(),
@@ -102,7 +105,7 @@ export function deserializeServersFromConvex(
       server.oauthFlowProfile = serverData.oauthFlowProfile;
     }
 
-    result[serverId] = server;
+    result[revivedId] = server;
   }
 
   return result;
@@ -112,16 +115,19 @@ export function serversHaveChanged(
   local: Record<string, ServerWithName>,
   remote: Record<string, any>,
 ): boolean {
-  const localKeys = Object.keys(local);
-  const remoteKeys = Object.keys(remote);
+  const localIds = Object.keys(local);
+  const remoteEntries = Object.entries(remote).map(([key, value]) => [key, value]);
 
-  if (localKeys.length !== remoteKeys.length) return true;
+  if (localIds.length !== remoteEntries.length) return true;
 
-  for (const key of localKeys) {
-    if (!remoteKeys.includes(key)) return true;
+  const remoteIds = new Set(remoteEntries.map(([id]) => id));
+  for (const id of localIds) {
+    if (!remoteIds.has(id)) return true;
+  }
 
-    const localServer = local[key];
-    const remoteServer = remote[key];
+  for (const [id, remoteServer] of remoteEntries) {
+    const localServer = local[id];
+    if (!localServer || !remoteServer) return true;
 
     if (localServer.name !== remoteServer.name) return true;
     if (localServer.enabled !== remoteServer.enabled) return true;

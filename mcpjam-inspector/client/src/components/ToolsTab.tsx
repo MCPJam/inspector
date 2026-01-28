@@ -94,10 +94,16 @@ function normalizeElicitationContent(
 
 interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
+  serverId?: string;
   serverName?: string;
 }
 
-export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
+export function ToolsTab({
+  serverConfig,
+  serverId,
+  serverName,
+}: ToolsTabProps) {
+  const activeServerId = serverId ?? serverName;
   const logger = useLogger("ToolsTab");
   const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
@@ -201,7 +207,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     taskCapabilities?.supportsToolCalls ?? false;
 
   useEffect(() => {
-    if (!serverConfig || !serverName) {
+    if (!serverConfig || !activeServerId) {
       setTools({});
       setSelectedTool("");
       setFormFields([]);
@@ -218,7 +224,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     void fetchTools();
     // Fetch task capabilities for this server (MCP Tasks spec 2025-11-25)
     void fetchTaskCapabilities();
-  }, [serverConfig, serverName]);
+  }, [serverConfig, activeServerId]);
 
   const toolNames = Object.keys(tools);
   const filteredToolNames = searchQuery.trim()
@@ -254,12 +260,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   // Fetch task capabilities for the server
   const fetchTaskCapabilities = async () => {
-    if (!serverName) return;
+    if (!activeServerId) return;
     try {
-      const capabilities = await getTaskCapabilities(serverName);
+      const capabilities = await getTaskCapabilities(activeServerId);
       setTaskCapabilities(capabilities);
       logger.info("Task capabilities fetched", {
-        serverId: serverName,
+        serverId: activeServerId,
         supportsToolCalls: capabilities.supportsToolCalls,
         supportsList: capabilities.supportsList,
         supportsCancel: capabilities.supportsCancel,
@@ -295,7 +301,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   }, []);
 
   const fetchTools = async (reset = false) => {
-    if (!serverName) {
+    if (!activeServerId) {
       logger.warn("Cannot fetch tools: no serverId available");
       return;
     }
@@ -314,7 +320,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     try {
       // Call to get all of the tools for server
-      const data = await listTools(serverName, undefined, cursor);
+      const data = await listTools(activeServerId, undefined, cursor);
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),
@@ -322,7 +328,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setTools((prev) => ({ ...prev, ...dictionary }));
       setCursor(data.nextCursor);
       logger.info("Tools fetched", {
-        serverId: serverName,
+        serverId: activeServerId,
         toolCount: toolArray.length,
       });
     } catch (err) {
@@ -423,10 +429,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setCreatedTaskId(task.taskId);
 
       // Track the task locally so it appears in the Tasks tab
-      if (serverName) {
+      if (activeServerId) {
         trackTask({
           taskId: task.taskId,
-          serverId: serverName,
+          serverId: activeServerId,
           createdAt: task.createdAt,
           toolName,
           primitiveType: "tool",
@@ -460,7 +466,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.warn("Cannot execute tool: no tool selected");
       return;
     }
-    if (!serverName) {
+    if (!activeServerId) {
       logger.warn("Cannot execute tool: no serverId available");
       return;
     }
@@ -496,7 +502,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         : undefined;
 
       const response = await executeToolApi(
-        serverName,
+        activeServerId,
         selectedTool,
         params,
         taskOptions,
@@ -731,7 +737,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
+              <LoggerView
+                serverIds={activeServerId ? [activeServerId] : undefined}
+              />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>
@@ -743,18 +751,23 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 result={result}
                 validationErrors={validationErrors}
                 unstructuredValidationResult={unstructuredValidationResult}
-                serverId={serverName}
+                serverId={activeServerId}
                 toolCallId={lastToolCallId ?? undefined}
                 toolName={lastToolName ?? undefined}
                 toolParameters={lastToolParameters ?? undefined}
                 toolMeta={getToolMeta(lastToolName)}
                 onExecuteFromUI={async (name, params) => {
-                  if (!serverName) return { error: "No server selected" };
-                  return await executeToolApi(serverName, name, params || {});
+                  if (!activeServerId)
+                    return { error: "No server selected" };
+                  return await executeToolApi(
+                    activeServerId,
+                    name,
+                    params || {},
+                  );
                 }}
                 onHandleIntent={async (intent, params) => {
-                  if (!serverName) return;
-                  await executeToolApi(serverName, "handleIntent", {
+                  if (!activeServerId) return;
+                  await executeToolApi(activeServerId, "handleIntent", {
                     intent,
                     params: params || {},
                   });

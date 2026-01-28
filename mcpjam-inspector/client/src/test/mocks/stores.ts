@@ -35,7 +35,7 @@ export function createMockAppStateWithServers(
   servers: ServerWithName[],
   overrides: Partial<AppState> = {},
 ): AppState {
-  const serversMap = Object.fromEntries(servers.map((s) => [s.name, s]));
+  const serversMap = Object.fromEntries(servers.map((s) => [s.id, s]));
   const workspace = createWorkspace({
     id: "default-workspace",
     isDefault: true,

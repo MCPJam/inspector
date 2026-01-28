@@ -24,6 +24,7 @@ import { parseTemplate } from "url-template";
 
 interface ResourceTemplatesTabProps {
   serverConfig?: MCPServerConfig;
+  serverId?: string;
   serverName?: string;
 }
 
@@ -66,8 +67,10 @@ function buildUriFromTemplate(
 
 export function ResourceTemplatesTab({
   serverConfig,
+  serverId,
   serverName,
 }: ResourceTemplatesTabProps) {
+  const activeServerId = serverId ?? serverName;
   const [templates, setTemplates] = useState<MCPResourceTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
   const [resourceContent, setResourceContent] =
@@ -102,13 +105,13 @@ export function ResourceTemplatesTab({
   }, [selectedTemplateData?.uriTemplate, templateOverrides]);
 
   useEffect(() => {
-    if (serverConfig && serverName) {
+    if (serverConfig && activeServerId) {
       fetchTemplates();
     }
-  }, [serverConfig, serverName]);
+  }, [serverConfig, activeServerId]);
 
   const fetchTemplates = async () => {
-    if (!serverName) return;
+    if (!activeServerId) return;
 
     setFetchingTemplates(true);
     setTemplateOverrides({});
@@ -118,7 +121,7 @@ export function ResourceTemplatesTab({
     setResourceContent(null);
 
     try {
-      const serverTemplates = await listResourceTemplatesApi(serverName);
+      const serverTemplates = await listResourceTemplatesApi(activeServerId);
       setTemplates(serverTemplates);
 
       if (serverTemplates.length === 0) {
@@ -164,14 +167,14 @@ export function ResourceTemplatesTab({
   };
 
   const readResource = async () => {
-    if (!selectedTemplate || !serverName) return;
+    if (!selectedTemplate || !activeServerId) return;
 
     setLoading(true);
     setError("");
 
     try {
       const uri = getResolvedUri();
-      const data = await readResourceTemplateApi(serverName, uri);
+      const data = await readResourceTemplateApi(activeServerId, uri);
       setResourceContent(data?.content ?? null);
     } catch (err) {
       const message =
@@ -212,7 +215,7 @@ export function ResourceTemplatesTab({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedTemplate, loading, templateParams]);
 
-  if (!serverConfig || !serverName) {
+  if (!serverConfig || !activeServerId) {
     return (
       <EmptyState
         icon={FileCode}
@@ -470,7 +473,9 @@ export function ResourceTemplatesTab({
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
+              <LoggerView
+                serverIds={activeServerId ? [activeServerId] : undefined}
+              />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>

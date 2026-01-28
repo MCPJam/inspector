@@ -76,6 +76,8 @@ export const AuthTab = ({
   serverEntry,
   serverName,
 }: AuthTabProps) => {
+  const resolvedServerId = serverEntry?.id || serverName || "";
+  const resolvedServerName = serverEntry?.name || serverName || "";
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
   );
@@ -115,11 +117,14 @@ export const AuthTab = ({
 
   // Update auth settings when server config changes
   useEffect(() => {
-    if (serverConfig && serverConfig.url && serverName) {
+    if (serverConfig && serverConfig.url && resolvedServerId) {
       const serverUrl = serverConfig.url.toString();
 
       // Check for existing tokens using the real OAuth system
-      const existingTokens = getStoredTokens(serverName);
+      const existingTokens = getStoredTokens(
+        resolvedServerId,
+        resolvedServerName,
+      );
 
       updateAuthSettings({
         serverUrl,
@@ -130,16 +135,16 @@ export const AuthTab = ({
     } else {
       updateAuthSettings(DEFAULT_AUTH_SETTINGS);
     }
-  }, [serverConfig, serverName, updateAuthSettings]);
+  }, [serverConfig, resolvedServerId, resolvedServerName, updateAuthSettings]);
 
   // Reset OAuth flow when component mounts or server changes
   useEffect(() => {
     // Reset the guided flow state when switching tabs or servers
     resetOAuthFlow();
-  }, [serverName, resetOAuthFlow]);
+  }, [resolvedServerId, resetOAuthFlow]);
 
   const handleQuickRefresh = useCallback(async () => {
-    if (!serverConfig || !authSettings.serverUrl || !serverName) {
+    if (!serverConfig || !authSettings.serverUrl || !resolvedServerId) {
       updateAuthSettings({
         statusMessage: {
           type: "error",
@@ -160,11 +165,15 @@ export const AuthTab = ({
 
       if (authSettings.tokens) {
         // If tokens exist, try to refresh them
-        result = await refreshOAuthTokens(serverName);
+        result = await refreshOAuthTokens(
+          resolvedServerId,
+          resolvedServerName || resolvedServerId,
+        );
       } else {
         // If no tokens exist, initiate new OAuth flow
         const oauthOptions: MCPOAuthOptions = {
-          serverName: serverName,
+          serverId: resolvedServerId,
+          serverName: resolvedServerName || resolvedServerId,
           serverUrl: authSettings.serverUrl,
         };
         result = await initiateOAuth(oauthOptions);
@@ -172,7 +181,10 @@ export const AuthTab = ({
 
       if (result.success) {
         // Check for updated tokens
-        const updatedTokens = getStoredTokens(serverName);
+        const updatedTokens = getStoredTokens(
+          resolvedServerId,
+          resolvedServerName || resolvedServerId,
+        );
 
         updateAuthSettings({
           tokens: updatedTokens,
@@ -216,12 +228,13 @@ export const AuthTab = ({
     serverConfig,
     authSettings.serverUrl,
     authSettings.tokens,
-    serverName,
+    resolvedServerId,
+    resolvedServerName,
     updateAuthSettings,
   ]);
 
   const handleNewOAuth = useCallback(async () => {
-    if (!serverConfig || !authSettings.serverUrl || !serverName) {
+    if (!serverConfig || !authSettings.serverUrl || !resolvedServerId) {
       updateAuthSettings({
         statusMessage: {
           type: "error",
@@ -239,18 +252,22 @@ export const AuthTab = ({
 
     try {
       // Clear existing tokens first to force a fresh OAuth flow
-      clearOAuthData(serverName);
+      clearOAuthData(resolvedServerId, resolvedServerName);
 
       // Always initiate new OAuth flow (fresh start)
       const oauthOptions: MCPOAuthOptions = {
-        serverName: serverName,
+        serverId: resolvedServerId,
+        serverName: resolvedServerName || resolvedServerId,
         serverUrl: authSettings.serverUrl,
       };
       const result = await initiateOAuth(oauthOptions);
 
       if (result.success) {
         // Check for updated tokens
-        const updatedTokens = getStoredTokens(serverName);
+        const updatedTokens = getStoredTokens(
+          resolvedServerId,
+          resolvedServerName || resolvedServerId,
+        );
 
         updateAuthSettings({
           tokens: updatedTokens,
@@ -287,23 +304,31 @@ export const AuthTab = ({
         },
       });
     }
-  }, [serverConfig, authSettings.serverUrl, serverName, updateAuthSettings]);
+  }, [
+    serverConfig,
+    authSettings.serverUrl,
+    resolvedServerId,
+    resolvedServerName,
+    updateAuthSettings,
+  ]);
 
   // Initialize OAuth state machine
   const oauthStateMachine = useMemo(() => {
-    if (!serverConfig || !serverName || !authSettings.serverUrl) return null;
+    if (!serverConfig || !resolvedServerId || !authSettings.serverUrl)
+      return null;
 
     const provider = new DebugMCPOAuthClientProvider(authSettings.serverUrl);
     return new OAuthStateMachine({
       state: oauthFlowState,
       serverUrl: authSettings.serverUrl,
-      serverName,
+      serverName: resolvedServerName || resolvedServerId,
       provider,
       updateState: updateOAuthFlowState,
     });
   }, [
     serverConfig,
-    serverName,
+    resolvedServerId,
+    resolvedServerName,
     authSettings.serverUrl,
     oauthFlowState,
     updateOAuthFlowState,
@@ -331,16 +356,24 @@ export const AuthTab = ({
     setShowGuidedFlow(false);
     updateOAuthFlowState(EMPTY_OAUTH_FLOW_STATE);
     // Refresh tokens after guided flow completion
-    if (serverName) {
-      const updatedTokens = getStoredTokens(serverName);
+    if (resolvedServerId) {
+      const updatedTokens = getStoredTokens(
+        resolvedServerId,
+        resolvedServerName,
+      );
       updateAuthSettings({ tokens: updatedTokens });
     }
-  }, [serverName, updateAuthSettings, updateOAuthFlowState]);
+  }, [
+    resolvedServerId,
+    resolvedServerName,
+    updateAuthSettings,
+    updateOAuthFlowState,
+  ]);
 
   const handleClearTokens = useCallback(() => {
-    if (serverConfig && authSettings.serverUrl && serverName) {
+    if (serverConfig && authSettings.serverUrl && resolvedServerId) {
       // Use the real OAuth system to clear tokens
-      clearOAuthData(serverName);
+      clearOAuthData(resolvedServerId, resolvedServerName);
 
       updateAuthSettings({
         tokens: null,
@@ -356,7 +389,13 @@ export const AuthTab = ({
         updateAuthSettings({ statusMessage: null });
       }, 3000);
     }
-  }, [serverConfig, authSettings.serverUrl, serverName, updateAuthSettings]);
+  }, [
+    serverConfig,
+    authSettings.serverUrl,
+    resolvedServerId,
+    resolvedServerName,
+    updateAuthSettings,
+  ]);
 
   // Check if server supports OAuth
   // Only HTTP servers support OAuth (STDIO servers use process-based auth)
@@ -365,9 +404,9 @@ export const AuthTab = ({
 
   // Check if OAuth is currently configured/in-use
   const hasOAuthConfigured =
-    serverName &&
+    resolvedServerId &&
     (serverEntry?.oauthTokens ||
-      getStoredTokens(serverName) ||
+      getStoredTokens(resolvedServerId, resolvedServerName) ||
       serverEntry?.connectionStatus === "oauth-flow");
 
   const contributionBanner = (

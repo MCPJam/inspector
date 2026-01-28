@@ -15,7 +15,8 @@ servers.get("/", async (c) => {
       .getServerSummaries()
       .map(({ id, status, config }) => ({
         id,
-        name: id,
+        // Name is client-provided display name; fallback to id when unknown
+        name: (config as any)?.name ?? id,
         status,
         config,
       }));

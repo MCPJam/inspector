@@ -29,6 +29,7 @@ export interface InitializationInfo {
 }
 
 export interface ServerWithName {
+  id: string;
   name: string;
   config: MCPServerConfig;
   oauthTokens?: OauthTokens;
@@ -59,7 +60,7 @@ export interface AppState {
   activeWorkspaceId: string;
   servers: Record<string, ServerWithName>;
   selectedServer: string;
-  selectedMultipleServers: string[];
+  selectedMultipleServers: string[]; // Stores server ids
   isMultiSelectMode: boolean;
 }
 
@@ -67,30 +68,33 @@ export type AgentServerInfo = { id: string; status: ConnectionStatus };
 
 export type AppAction =
   | { type: "HYDRATE_STATE"; payload: AppState }
-  | { type: "UPSERT_SERVER"; name: string; server: ServerWithName }
+  | { type: "UPSERT_SERVER"; server: ServerWithName }
+  | { type: "RENAME_SERVER"; id: string; newName: string }
   | {
       type: "CONNECT_REQUEST";
+      id: string;
       name: string;
       config: MCPServerConfig;
       select?: boolean;
     }
   | {
       type: "CONNECT_SUCCESS";
+      id: string;
       name: string;
       config: MCPServerConfig;
       tokens?: OauthTokens;
     }
-  | { type: "CONNECT_FAILURE"; name: string; error: string }
-  | { type: "RECONNECT_REQUEST"; name: string; config: MCPServerConfig }
-  | { type: "DISCONNECT"; name: string; error?: string }
-  | { type: "REMOVE_SERVER"; name: string }
+  | { type: "CONNECT_FAILURE"; id: string; error: string }
+  | { type: "RECONNECT_REQUEST"; id: string; config: MCPServerConfig }
+  | { type: "DISCONNECT"; id: string; error?: string }
+  | { type: "REMOVE_SERVER"; id: string }
   | { type: "SYNC_AGENT_STATUS"; servers: AgentServerInfo[] }
-  | { type: "SELECT_SERVER"; name: string }
-  | { type: "SET_MULTI_SELECTED"; names: string[] }
+  | { type: "SELECT_SERVER"; id: string }
+  | { type: "SET_MULTI_SELECTED"; ids: string[] }
   | { type: "SET_MULTI_MODE"; enabled: boolean }
   | {
       type: "SET_INITIALIZATION_INFO";
-      name: string;
+      id: string;
       initInfo: InitializationInfo;
     }
   | { type: "CREATE_WORKSPACE"; workspace: Workspace }

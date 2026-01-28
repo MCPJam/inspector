@@ -13,6 +13,57 @@ import { authFetch } from "@/lib/session-token";
 // Store original fetch for restoration
 const originalFetch = window.fetch;
 
+type StoragePrefix =
+  | "mcp-tokens"
+  | "mcp-client"
+  | "mcp-verifier"
+  | "mcp-oauth-config"
+  | "mcp-serverUrl";
+
+const buildKey = (prefix: StoragePrefix, serverId: string) =>
+  `${prefix}-${serverId}`;
+
+function readWithMigration(
+  prefix: StoragePrefix,
+  serverId: string,
+  serverName?: string,
+): string | null {
+  const primaryKey = buildKey(prefix, serverId);
+  const existing = localStorage.getItem(primaryKey);
+  if (existing !== null) return existing;
+  if (!serverName) return null;
+  const legacyKey = `${prefix}-${serverName}`;
+  const legacy = localStorage.getItem(legacyKey);
+  if (legacy !== null) {
+    localStorage.setItem(primaryKey, legacy);
+    return legacy;
+  }
+  return null;
+}
+
+function writeWithLegacy(
+  prefix: StoragePrefix,
+  serverId: string,
+  value: string,
+  serverName?: string,
+) {
+  localStorage.setItem(buildKey(prefix, serverId), value);
+  if (serverName && serverName !== serverId) {
+    localStorage.setItem(`${prefix}-${serverName}`, value);
+  }
+}
+
+function removeWithLegacy(
+  prefix: StoragePrefix,
+  serverId: string,
+  serverName?: string,
+) {
+  localStorage.removeItem(buildKey(prefix, serverId));
+  if (serverName) {
+    localStorage.removeItem(`${prefix}-${serverName}`);
+  }
+}
+
 /**
  * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS
  */
@@ -94,6 +145,7 @@ async function serializeBody(body: BodyInit): Promise<any> {
 }
 
 export interface MCPOAuthOptions {
+  serverId: string;
   serverName: string;
   serverUrl: string;
   scopes?: string[];
@@ -111,16 +163,19 @@ export interface OAuthResult {
  * Simple localStorage-based OAuth provider for MCP
  */
 export class MCPOAuthProvider implements OAuthClientProvider {
+  private serverId: string;
   private serverName: string;
   private redirectUri: string;
   private customClientId?: string;
   private customClientSecret?: string;
 
   constructor(
+    serverId: string,
     serverName: string,
     customClientId?: string,
     customClientSecret?: string,
   ) {
+    this.serverId = serverId;
     this.serverName = serverName;
     this.redirectUri = `${window.location.origin}/oauth/callback`;
     this.customClientId = customClientId;
@@ -147,7 +202,11 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   clientInformation() {
-    const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
+    const stored = readWithMigration(
+      "mcp-client",
+      this.serverId,
+      this.serverName,
+    );
     const storedJson = stored ? JSON.parse(stored) : undefined;
 
     // If custom client ID is provided, use it
@@ -178,27 +237,38 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async saveClientInformation(clientInformation: any) {
-    localStorage.setItem(
-      `mcp-client-${this.serverName}`,
+    writeWithLegacy(
+      "mcp-client",
+      this.serverId,
       JSON.stringify(clientInformation),
+      this.serverName,
     );
   }
 
   tokens() {
-    const stored = localStorage.getItem(`mcp-tokens-${this.serverName}`);
+    const stored = readWithMigration(
+      "mcp-tokens",
+      this.serverId,
+      this.serverName,
+    );
     return stored ? JSON.parse(stored) : undefined;
   }
 
   async saveTokens(tokens: any) {
-    localStorage.setItem(
-      `mcp-tokens-${this.serverName}`,
+    writeWithLegacy(
+      "mcp-tokens",
+      this.serverId,
       JSON.stringify(tokens),
+      this.serverName,
     );
   }
 
   async redirectToAuthorization(authorizationUrl: URL) {
     // Store server name for callback recovery
-    localStorage.setItem("mcp-oauth-pending", this.serverName);
+    localStorage.setItem(
+      "mcp-oauth-pending",
+      JSON.stringify({ id: this.serverId, name: this.serverName }),
+    );
     // Store current hash to restore after OAuth callback
     if (window.location.hash) {
       localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
@@ -207,11 +277,20 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(codeVerifier: string) {
-    localStorage.setItem(`mcp-verifier-${this.serverName}`, codeVerifier);
+    writeWithLegacy(
+      "mcp-verifier",
+      this.serverId,
+      codeVerifier,
+      this.serverName,
+    );
   }
 
   codeVerifier(): string {
-    const verifier = localStorage.getItem(`mcp-verifier-${this.serverName}`);
+    const verifier = readWithMigration(
+      "mcp-verifier",
+      this.serverId,
+      this.serverName,
+    );
     if (!verifier) {
       throw new Error("Code verifier not found");
     }
@@ -221,18 +300,18 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier") {
     switch (scope) {
       case "all":
-        localStorage.removeItem(`mcp-tokens-${this.serverName}`);
-        localStorage.removeItem(`mcp-client-${this.serverName}`);
-        localStorage.removeItem(`mcp-verifier-${this.serverName}`);
+        removeWithLegacy("mcp-tokens", this.serverId, this.serverName);
+        removeWithLegacy("mcp-client", this.serverId, this.serverName);
+        removeWithLegacy("mcp-verifier", this.serverId, this.serverName);
         break;
       case "client":
-        localStorage.removeItem(`mcp-client-${this.serverName}`);
+        removeWithLegacy("mcp-client", this.serverId, this.serverName);
         break;
       case "tokens":
-        localStorage.removeItem(`mcp-tokens-${this.serverName}`);
+        removeWithLegacy("mcp-tokens", this.serverId, this.serverName);
         break;
       case "verifier":
-        localStorage.removeItem(`mcp-verifier-${this.serverName}`);
+        removeWithLegacy("mcp-verifier", this.serverId, this.serverName);
         break;
     }
   }
@@ -250,32 +329,42 @@ export async function initiateOAuth(
 
   try {
     const provider = new MCPOAuthProvider(
+      options.serverId,
       options.serverName,
       options.clientId,
       options.clientSecret,
     );
 
     // Store server URL for callback recovery
-    localStorage.setItem(
-      `mcp-serverUrl-${options.serverName}`,
+    writeWithLegacy(
+      "mcp-serverUrl",
+      options.serverId,
       options.serverUrl,
+      options.serverName,
     );
-    localStorage.setItem("mcp-oauth-pending", options.serverName);
+    localStorage.setItem(
+      "mcp-oauth-pending",
+      JSON.stringify({ id: options.serverId, name: options.serverName }),
+    );
 
     // Store OAuth configuration (scopes) for recovery if connection fails
     const oauthConfig: any = {};
     if (options.scopes && options.scopes.length > 0) {
       oauthConfig.scopes = options.scopes;
     }
-    localStorage.setItem(
-      `mcp-oauth-config-${options.serverName}`,
+    writeWithLegacy(
+      "mcp-oauth-config",
+      options.serverId,
       JSON.stringify(oauthConfig),
+      options.serverName,
     );
 
     // Store custom client credentials if provided, so they can be retrieved during callback
     if (options.clientId || options.clientSecret) {
-      const existingClientInfo = localStorage.getItem(
-        `mcp-client-${options.serverName}`,
+      const existingClientInfo = readWithMigration(
+        "mcp-client",
+        options.serverId,
+        options.serverName,
       );
       const existingJson = existingClientInfo
         ? JSON.parse(existingClientInfo)
@@ -289,9 +378,11 @@ export async function initiateOAuth(
         updatedClientInfo.client_secret = options.clientSecret;
       }
 
-      localStorage.setItem(
-        `mcp-client-${options.serverName}`,
+      writeWithLegacy(
+        "mcp-client",
+        options.serverId,
         JSON.stringify(updatedClientInfo),
+        options.serverName,
       );
     }
 
@@ -359,26 +450,48 @@ export async function initiateOAuth(
  */
 export async function handleOAuthCallback(
   authorizationCode: string,
-): Promise<OAuthResult & { serverName?: string }> {
+): Promise<OAuthResult & { serverName?: string; serverId?: string }> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
   window.fetch = interceptedFetch;
 
   try {
-    // Get pending server name from localStorage
-    const serverName = localStorage.getItem("mcp-oauth-pending");
-    if (!serverName) {
-      throw new Error("No pending OAuth flow found");
+    // Get pending server metadata from localStorage
+    const pending = localStorage.getItem("mcp-oauth-pending");
+    let serverId: string | undefined;
+    let serverName: string | undefined;
+    if (pending) {
+      try {
+        const parsed = JSON.parse(pending);
+        serverId = parsed?.id || parsed?.serverId || parsed?.name;
+        serverName = parsed?.name || parsed?.serverName || parsed?.id;
+      } catch {
+        serverId = pending;
+        serverName = pending;
+      }
     }
 
+    if (!serverId) {
+      throw new Error("No pending OAuth flow found");
+    }
+    const displayName = serverName || serverId;
+
     // Get server URL
-    const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+    const serverUrl = readWithMigration(
+      "mcp-serverUrl",
+      serverId,
+      displayName,
+    );
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
 
     // Get stored client credentials if any
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    const storedClientInfo = readWithMigration(
+      "mcp-client",
+      serverId,
+      displayName,
+    );
     const customClientId = storedClientInfo
       ? JSON.parse(storedClientInfo).client_id
       : undefined;
@@ -387,7 +500,8 @@ export async function handleOAuthCallback(
       : undefined;
 
     const provider = new MCPOAuthProvider(
-      serverName,
+      serverId,
+      displayName,
       customClientId,
       customClientSecret,
     );
@@ -407,7 +521,8 @@ export async function handleOAuthCallback(
         return {
           success: true,
           serverConfig,
-          serverName, // Return server name so caller doesn't need to look it up
+          serverName: displayName,
+          serverId,
         };
       }
     }
@@ -451,9 +566,9 @@ export async function handleOAuthCallback(
 /**
  * Gets stored tokens for a server, including client_id from client information
  */
-export function getStoredTokens(serverName: string): any {
-  const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
-  const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+export function getStoredTokens(serverId: string, serverName?: string): any {
+  const tokens = readWithMigration("mcp-tokens", serverId, serverName);
+  const clientInfo = readWithMigration("mcp-client", serverId, serverName);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
   if (!tokens) return undefined;
 
@@ -470,13 +585,23 @@ export function getStoredTokens(serverName: string): any {
 /**
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
-export function hasOAuthConfig(serverName: string): boolean {
-  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
-  const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
-  const storedOAuthConfig = localStorage.getItem(
-    `mcp-oauth-config-${serverName}`,
+export function hasOAuthConfig(serverId: string, serverName?: string): boolean {
+  const storedServerUrl = readWithMigration(
+    "mcp-serverUrl",
+    serverId,
+    serverName,
   );
-  const storedTokens = getStoredTokens(serverName);
+  const storedClientInfo = readWithMigration(
+    "mcp-client",
+    serverId,
+    serverName,
+  );
+  const storedOAuthConfig = readWithMigration(
+    "mcp-oauth-config",
+    serverId,
+    serverName,
+  );
+  const storedTokens = getStoredTokens(serverId, serverName);
 
   return (
     storedServerUrl != null ||
@@ -490,27 +615,29 @@ export function hasOAuthConfig(serverName: string): boolean {
  * Waits for tokens to be available with timeout
  */
 export async function waitForTokens(
-  serverName: string,
+  serverId: string,
+  serverName?: string,
   timeoutMs: number = 5000,
 ): Promise<any> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
-    const tokens = getStoredTokens(serverName);
+    const tokens = getStoredTokens(serverId, serverName);
     if (tokens?.access_token) {
       return tokens;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  throw new Error(`Timeout waiting for tokens for server: ${serverName}`);
+  throw new Error(`Timeout waiting for tokens for server: ${serverId}`);
 }
 
 /**
  * Refreshes OAuth tokens for a server using the refresh token
  */
 export async function refreshOAuthTokens(
-  serverName: string,
+  serverId: string,
+  serverName?: string,
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor();
@@ -518,7 +645,11 @@ export async function refreshOAuthTokens(
 
   try {
     // Get stored client credentials if any
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    const storedClientInfo = readWithMigration(
+      "mcp-client",
+      serverId,
+      serverName,
+    );
     const customClientId = storedClientInfo
       ? JSON.parse(storedClientInfo).client_id
       : undefined;
@@ -527,7 +658,8 @@ export async function refreshOAuthTokens(
       : undefined;
 
     const provider = new MCPOAuthProvider(
-      serverName,
+      serverId,
+      serverName || serverId,
       customClientId,
       customClientSecret,
     );
@@ -541,7 +673,11 @@ export async function refreshOAuthTokens(
     }
 
     // Get server URL
-    const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+    const serverUrl = readWithMigration(
+      "mcp-serverUrl",
+      serverId,
+      serverName,
+    );
     if (!serverUrl) {
       return {
         success: false,
@@ -601,12 +737,15 @@ export async function refreshOAuthTokens(
 /**
  * Clears all OAuth data for a server
  */
-export function clearOAuthData(serverName: string): void {
-  localStorage.removeItem(`mcp-tokens-${serverName}`);
-  localStorage.removeItem(`mcp-client-${serverName}`);
-  localStorage.removeItem(`mcp-verifier-${serverName}`);
-  localStorage.removeItem(`mcp-serverUrl-${serverName}`);
-  localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+export function clearOAuthData(
+  serverId: string,
+  serverName?: string,
+): void {
+  removeWithLegacy("mcp-tokens", serverId, serverName);
+  removeWithLegacy("mcp-client", serverId, serverName);
+  removeWithLegacy("mcp-verifier", serverId, serverName);
+  removeWithLegacy("mcp-serverUrl", serverId, serverName);
+  removeWithLegacy("mcp-oauth-config", serverId, serverName);
 }
 
 /**

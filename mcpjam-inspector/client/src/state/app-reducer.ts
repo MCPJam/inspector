@@ -20,14 +20,49 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "UPSERT_SERVER":
       return {
         ...state,
-        servers: { ...state.servers, [action.name]: action.server },
+        servers: { ...state.servers, [action.server.id]: action.server },
       };
 
+    case "RENAME_SERVER": {
+      const existing = state.servers[action.id];
+      if (!existing) return state;
+      const renamed = { ...existing, name: action.newName };
+      const updatedWorkspaces: Record<string, Workspace> = {};
+      for (const [workspaceId, workspace] of Object.entries(state.workspaces)) {
+        if (!workspace.servers[action.id]) {
+          updatedWorkspaces[workspaceId] = workspace;
+          continue;
+        }
+        updatedWorkspaces[workspaceId] = {
+          ...workspace,
+          servers: {
+            ...workspace.servers,
+            [action.id]: {
+              ...workspace.servers[action.id],
+              name: action.newName,
+            },
+          },
+          updatedAt: new Date(),
+        };
+      }
+      return {
+        ...state,
+        servers: { ...state.servers, [action.id]: renamed },
+        workspaces: updatedWorkspaces,
+      };
+    }
+
     case "CONNECT_REQUEST": {
-      const existing = state.servers[action.name];
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const existing =
+        state.servers[action.id] ?? activeWorkspace?.servers[action.id];
       const server: ServerWithName = existing
-        ? setStatus(existing, "connecting", { enabled: true })
+        ? setStatus(existing, "connecting", {
+            enabled: true,
+            name: action.name,
+          })
         : ({
+            id: action.id,
             name: action.name,
             config: action.config,
             lastConnectionTime: new Date(),
@@ -39,9 +74,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: { ...server, config: action.config },
+          [action.id]: { ...server, name: action.name, config: action.config },
         },
-        selectedServer: action.select ? action.name : state.selectedServer,
+        selectedServer: action.select ? action.id : state.selectedServer,
       };
     }
 
@@ -50,9 +85,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // If server doesn't exist anywhere, create it (for servers from Convex remote workspaces)
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.id] ?? activeWorkspace?.servers[action.id];
       // Create server entry if it doesn't exist (for Convex-synced servers)
       const baseServer: ServerWithName = existing ?? {
+        id: action.id,
         name: action.name,
         config: action.config,
         lastConnectionTime: new Date(),
@@ -61,6 +97,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         enabled: true,
       };
       const nextServer = setStatus(baseServer, "connected", {
+        name: action.name,
         config: action.config,
         lastConnectionTime: new Date(),
         retryCount: 0,
@@ -74,19 +111,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: nextServer,
+          [action.id]: nextServer,
         },
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
-            servers: {
-              ...activeWorkspace.servers,
-              [action.name]: nextServer,
-            },
-            updatedAt: new Date(),
-          },
-        },
+        workspaces:
+          activeWorkspace !== undefined
+            ? {
+                ...state.workspaces,
+                [state.activeWorkspaceId]: {
+                  ...activeWorkspace,
+                  servers: {
+                    ...activeWorkspace.servers,
+                    [action.id]: nextServer,
+                  },
+                  updatedAt: new Date(),
+                },
+              }
+            : state.workspaces,
       };
     }
 
@@ -94,13 +134,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // Check state.servers first, then fallback to workspace servers (for cloud-synced servers)
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.id] ?? activeWorkspace?.servers[action.id];
       if (!existing) return state;
       return {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: setStatus(existing, "failed", {
+          [action.id]: setStatus(existing, "failed", {
             retryCount: existing.retryCount,
             lastError: action.error,
           }),
@@ -113,10 +153,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // If server doesn't exist anywhere, create it (for servers from Convex remote workspaces)
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.id] ?? activeWorkspace?.servers[action.id];
       // Create server entry if it doesn't exist (for Convex-synced servers)
       const baseServer: ServerWithName = existing ?? {
-        name: action.name,
+        id: action.id,
+        name: existing?.name ?? "Server",
         config: action.config,
         lastConnectionTime: new Date(),
         connectionStatus: "disconnected",
@@ -128,7 +169,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: nextServer,
+          [action.id]: nextServer,
         },
       };
     }
@@ -137,74 +178,77 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // Check state.servers first, then fallback to workspace servers (for cloud-synced servers)
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       const existing =
-        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
+        state.servers[action.id] ?? activeWorkspace?.servers[action.id];
       if (!existing) return state;
       const nextSelected =
-        state.selectedServer === action.name ? "none" : state.selectedServer;
+        state.selectedServer === action.id ? "none" : state.selectedServer;
       return {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: setStatus(existing, "disconnected", {
+          [action.id]: setStatus(existing, "disconnected", {
             enabled: false,
             lastError: action.error ?? existing.lastError,
           }),
         },
         selectedServer: nextSelected,
         selectedMultipleServers: state.selectedMultipleServers.filter(
-          (n) => n !== action.name,
+          (n) => n !== action.id,
         ),
       };
     }
 
     case "REMOVE_SERVER": {
-      const { [action.name]: _, ...rest } = state.servers;
+      const { [action.id]: _, ...rest } = state.servers;
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
-      const { [action.name]: __, ...restWorkspaceServers } =
-        activeWorkspace.servers;
+      const { [action.id]: __, ...restWorkspaceServers } =
+        activeWorkspace?.servers ?? {};
       return {
         ...state,
         servers: rest,
         selectedServer:
-          state.selectedServer === action.name ? "none" : state.selectedServer,
+          state.selectedServer === action.id ? "none" : state.selectedServer,
         selectedMultipleServers: state.selectedMultipleServers.filter(
-          (n) => n !== action.name,
+          (n) => n !== action.id,
         ),
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
-            servers: restWorkspaceServers,
-            updatedAt: new Date(),
-          },
-        },
+        workspaces:
+          activeWorkspace !== undefined
+            ? {
+                ...state.workspaces,
+                [state.activeWorkspaceId]: {
+                  ...activeWorkspace,
+                  servers: restWorkspaceServers,
+                  updatedAt: new Date(),
+                },
+              }
+            : state.workspaces,
       };
     }
 
     case "SYNC_AGENT_STATUS": {
       const map = new Map(action.servers.map((s) => [s.id, s.status]));
       const updated: AppState["servers"] = {};
-      for (const [name, server] of Object.entries(state.servers)) {
+      for (const [id, server] of Object.entries(state.servers)) {
         const inFlight = server.connectionStatus === "connecting";
         if (inFlight) {
-          updated[name] = server;
+          updated[id] = server;
           continue;
         }
-        const agentStatus = map.get(name);
+        const agentStatus = map.get(id);
         if (agentStatus) {
-          updated[name] = { ...server, connectionStatus: agentStatus };
+          updated[id] = { ...server, connectionStatus: agentStatus };
         } else {
-          updated[name] = { ...server, connectionStatus: "disconnected" };
+          updated[id] = { ...server, connectionStatus: "disconnected" };
         }
       }
       return { ...state, servers: updated };
     }
 
     case "SELECT_SERVER":
-      return { ...state, selectedServer: action.name };
+      return { ...state, selectedServer: action.id };
 
     case "SET_MULTI_SELECTED":
-      return { ...state, selectedMultipleServers: action.names };
+      return { ...state, selectedMultipleServers: action.ids };
 
     case "SET_MULTI_MODE":
       return {
@@ -216,7 +260,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
 
     case "SET_INITIALIZATION_INFO": {
-      const existing = state.servers[action.name];
+      const existing = state.servers[action.id];
       if (!existing) return state;
       const nextServer = {
         ...existing,
@@ -227,19 +271,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         servers: {
           ...state.servers,
-          [action.name]: nextServer,
+          [action.id]: nextServer,
         },
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
-            servers: {
-              ...activeWorkspace.servers,
-              [action.name]: nextServer,
-            },
-            updatedAt: new Date(),
-          },
-        },
+        workspaces:
+          activeWorkspace !== undefined
+            ? {
+                ...state.workspaces,
+                [state.activeWorkspaceId]: {
+                  ...activeWorkspace,
+                  servers: {
+                    ...activeWorkspace.servers,
+                    [action.id]: nextServer,
+                  },
+                  updatedAt: new Date(),
+                },
+              }
+            : state.workspaces,
       };
     }
 
@@ -285,8 +332,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // Mark all servers as disconnected when switching workspaces
       // since we disconnect them before switching
       const disconnectedServers = Object.fromEntries(
-        Object.entries(targetWorkspace.servers).map(([name, server]) => [
-          name,
+        Object.entries(targetWorkspace.servers).map(([id, server]) => [
+          id,
           { ...server, connectionStatus: "disconnected" as ConnectionStatus },
         ]),
       );

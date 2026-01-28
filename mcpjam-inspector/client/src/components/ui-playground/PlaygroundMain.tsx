@@ -166,7 +166,8 @@ const CSP_MODE_OPTIONS: {
 ];
 
 interface PlaygroundMainProps {
-  serverName: string;
+  serverId: string;
+  serverName?: string;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   // Execution state for "Invoking" indicator
   isExecuting?: boolean;
@@ -238,6 +239,7 @@ function InvokingIndicator({
 }
 
 export function PlaygroundMain({
+  serverId,
   serverName,
   onWidgetStateChange,
   isExecuting,
@@ -309,12 +311,14 @@ export function PlaygroundMain({
   }, [themeMode, setThemeMode]);
 
   const { servers } = useSharedAppState();
+  const displayServerName =
+    serverName ?? servers[serverId]?.name ?? serverId ?? "";
   const selectedServers = useMemo(
     () =>
-      serverName && servers[serverName]?.connectionStatus === "connected"
-        ? [serverName]
+      serverId && servers[serverId]?.connectionStatus === "connected"
+        ? [serverId]
         : [],
-    [serverName, servers],
+    [serverId, servers],
   );
 
   // Use shared chat session hook
@@ -573,7 +577,9 @@ export function PlaygroundMain({
     selectedServers,
     mcpToolsTokenCount: null,
     mcpToolsTokenCountLoading: false,
-    connectedOrConnectingServerConfigs: { [serverName]: { name: serverName } },
+    connectedOrConnectingServerConfigs: displayServerName
+      ? { [serverId]: { name: displayServerName } }
+      : {},
     systemPromptTokenCount: null,
     systemPromptTokenCountLoading: false,
     mcpPromptResults,

@@ -36,13 +36,16 @@ import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface UIPlaygroundTabProps {
   serverConfig?: MCPServerConfig;
+  serverId?: string;
   serverName?: string;
 }
 
 export function UIPlaygroundTab({
   serverConfig,
+  serverId,
   serverName,
 }: UIPlaygroundTabProps) {
+  const activeServerId = serverId ?? serverName;
   const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Compute server key for saved requests storage
@@ -114,7 +117,7 @@ export function UIPlaygroundTab({
   // Tool execution hook
   const { pendingExecution, clearPendingExecution, executeTool } =
     useToolExecution({
-      serverName,
+      serverId: activeServerId,
       selectedTool,
       formFields,
       setIsExecuting,
@@ -135,12 +138,12 @@ export function UIPlaygroundTab({
 
   // Fetch tools when server changes
   const fetchTools = useCallback(async () => {
-    if (!serverName) return;
+    if (!activeServerId) return;
 
     reset();
     setToolsMetadata({});
     try {
-      const data = await listTools(serverName);
+      const data = await listTools(activeServerId);
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),
@@ -153,15 +156,15 @@ export function UIPlaygroundTab({
         err instanceof Error ? err.message : "Failed to fetch tools",
       );
     }
-  }, [serverName, reset, setTools, setExecutionError]);
+  }, [activeServerId, reset, setTools, setExecutionError]);
 
   useEffect(() => {
-    if (serverConfig && serverName) {
+    if (serverConfig && activeServerId) {
       fetchTools();
     } else {
       reset();
     }
-  }, [serverConfig, serverName, fetchTools, reset]);
+  }, [serverConfig, activeServerId, fetchTools, reset]);
 
   // Update form fields when tool is selected
   useEffect(() => {
@@ -271,7 +274,8 @@ export function UIPlaygroundTab({
           minSize={PANEL_SIZES.CENTER.MIN}
         >
           <PlaygroundMain
-            serverName={serverName || ""}
+            serverId={activeServerId || ""}
+            serverName={serverName}
             isExecuting={isExecuting}
             executingToolName={selectedTool}
             invokingMessage={invokingMessage}

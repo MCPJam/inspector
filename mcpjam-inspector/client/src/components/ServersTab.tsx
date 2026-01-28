@@ -55,17 +55,17 @@ import { HOSTED_MODE } from "@/lib/config";
 interface ServersTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
-  onDisconnect: (serverName: string) => void;
+  onDisconnect: (serverId: string) => void;
   onReconnect: (
-    serverName: string,
+    serverId: string,
     options?: { forceOAuthFlow?: boolean },
   ) => void;
   onUpdate: (
-    originalServerName: string,
+    originalServerId: string,
     formData: ServerFormData,
     skipAutoConnect?: boolean,
   ) => void;
-  onRemove: (serverName: string) => void;
+  onRemove: (serverId: string) => void;
   isLoadingWorkspaces?: boolean;
 }
 
@@ -447,9 +447,9 @@ export function ServersTab({
           {/* Server Cards Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
             {Object.entries(connectedOrConnectingServerConfigs).map(
-              ([name, server]) => (
+              ([serverId, server]) => (
                 <ServerConnectionCard
-                  key={name}
+                  key={serverId}
                   server={server}
                   onDisconnect={onDisconnect}
                   onReconnect={onReconnect}
@@ -569,8 +569,8 @@ export function ServersTab({
         <EditServerModal
           isOpen={isEditingServer}
           onClose={handleCloseEditModal}
-          onSubmit={(formData, originalName) =>
-            onUpdate(originalName, formData)
+          onSubmit={(formData, originalServerId) =>
+            onUpdate(originalServerId, formData)
           }
           server={serverToEdit}
         />

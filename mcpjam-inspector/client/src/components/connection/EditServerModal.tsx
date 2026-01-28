@@ -30,7 +30,7 @@ interface EditServerModalProps {
   onClose: () => void;
   onSubmit: (
     formData: ServerFormData,
-    originalServerName: string,
+    originalServerId: string,
     skipAutoConnect?: boolean,
   ) => void;
   server: ServerWithName;
@@ -73,7 +73,7 @@ export function EditServerModal({
     }
 
     const finalFormData = formState.buildFormData();
-    onSubmit(finalFormData, server.name, skipAutoConnect);
+    onSubmit(finalFormData, server.id, skipAutoConnect);
     handleClose();
   };
 
