@@ -1,16 +1,16 @@
 import { useMemo } from "react";
-import { RefreshCw, FileText, Copy, Check, Download } from "lucide-react";
+import { RefreshCw, FileText, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import type { SkillFileContent } from "@shared/skill-types";
-import { useState } from "react";
 
 interface SkillFileViewerProps {
   file: SkillFileContent | null;
   loading?: boolean;
   error?: string;
   onLinkClick?: (path: string) => void;
+  rawMode?: boolean;
 }
 
 /**
@@ -72,21 +72,8 @@ export function SkillFileViewer({
   loading,
   error,
   onLinkClick,
+  rawMode = false,
 }: SkillFileViewerProps) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    if (!file?.content) return;
-
-    try {
-      await navigator.clipboard.writeText(file.content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error("Failed to copy:", err);
-    }
-  };
-
   const handleDownload = () => {
     if (!file) return;
 
@@ -107,13 +94,27 @@ export function SkillFileViewer({
     URL.revokeObjectURL(url);
   };
 
-  // Process markdown content to intercept relative links
+  // Process markdown content - strip frontmatter for cleaner display (unless raw mode)
   const processedContent = useMemo(() => {
     if (!file?.content || !file.mimeType.includes("markdown")) return null;
 
-    // For now, return content as-is. Link interception would need custom markdown renderer
-    return file.content;
-  }, [file]);
+    // In raw mode, show as code block with original content
+    if (rawMode) {
+      return wrapAsCodeBlock(file.content, "yaml");
+    }
+
+    let content = file.content;
+
+    // Strip YAML frontmatter (content between --- at the start)
+    if (content.startsWith("---")) {
+      const endIndex = content.indexOf("---", 3);
+      if (endIndex !== -1) {
+        content = content.slice(endIndex + 3).trim();
+      }
+    }
+
+    return content;
+  }, [file, rawMode]);
 
   if (loading) {
     return (
@@ -152,73 +153,27 @@ export function SkillFileViewer({
   // Image files
   if (file.mimeType.startsWith("image/") && file.base64) {
     return (
-      <div className="h-full flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-border bg-muted/30">
-          <span className="text-xs font-mono text-muted-foreground truncate">
-            {file.path}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleDownload}
-            className="h-6 px-2"
-          >
-            <Download className="h-3 w-3 mr-1" />
-            Download
-          </Button>
+      <ScrollArea className="h-full">
+        <div className="p-6 flex items-center justify-center">
+          <img
+            src={`data:${file.mimeType};base64,${file.base64}`}
+            alt={file.name}
+            className="max-w-full max-h-[70vh] object-contain rounded-md border border-border"
+          />
         </div>
-
-        {/* Image content */}
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-6 flex items-center justify-center">
-            <img
-              src={`data:${file.mimeType};base64,${file.base64}`}
-              alt={file.name}
-              className="max-w-full max-h-[70vh] object-contain rounded-md border border-border"
-            />
-          </div>
-        </ScrollArea>
-      </div>
+      </ScrollArea>
     );
   }
 
   // Markdown files
   if (file.mimeType.includes("markdown") && file.content) {
     return (
-      <div className="h-full flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-border bg-muted/30">
-          <span className="text-xs font-mono text-muted-foreground truncate">
-            {file.path}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopy}
-            className="h-6 px-2"
-          >
-            {copied ? (
-              <>
-                <Check className="h-3 w-3 mr-1" />
-                Copied
-              </>
-            ) : (
-              <>
-                <Copy className="h-3 w-3 mr-1" />
-                Copy
-              </>
-            )}
-          </Button>
+      <ScrollArea className="h-full">
+        <div className={rawMode ? "p-4 min-w-max" : "p-6 prose prose-sm dark:prose-invert max-w-none"}>
+          <MemoizedMarkdown content={processedContent || file.content} />
         </div>
-
-        {/* Markdown content */}
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-6 prose prose-sm dark:prose-invert max-w-none">
-            <MemoizedMarkdown content={processedContent || file.content} />
-          </div>
-        </ScrollArea>
-      </div>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
     );
   }
 
@@ -228,73 +183,27 @@ export function SkillFileViewer({
     const codeBlock = wrapAsCodeBlock(file.content, language);
 
     return (
-      <div className="h-full flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-border bg-muted/30">
-          <span className="text-xs font-mono text-muted-foreground truncate">
-            {file.path}
-          </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopy}
-            className="h-6 px-2"
-          >
-            {copied ? (
-              <>
-                <Check className="h-3 w-3 mr-1" />
-                Copied
-              </>
-            ) : (
-              <>
-                <Copy className="h-3 w-3 mr-1" />
-                Copy
-              </>
-            )}
-          </Button>
+      <ScrollArea className="h-full">
+        <div className="p-4 min-w-max">
+          <MemoizedMarkdown content={codeBlock} />
         </div>
-
-        {/* Code content with syntax highlighting via Streamdown */}
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-4">
-            <MemoizedMarkdown content={codeBlock} />
-          </div>
-        </ScrollArea>
-      </div>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
     );
   }
 
   // Binary files (non-image)
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-border bg-muted/30">
-        <span className="text-xs font-mono text-muted-foreground truncate">
-          {file.path}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleDownload}
-          className="h-6 px-2"
-        >
-          <Download className="h-3 w-3 mr-1" />
-          Download
-        </Button>
-      </div>
-
-      {/* Binary file message */}
-      <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center p-6">
-        <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
-        <p className="text-sm font-medium text-foreground mb-1">Binary File</p>
-        <p className="text-xs text-muted-foreground mb-4">
-          {file.mimeType} ({formatFileSize(file.size)})
-        </p>
-        <Button variant="outline" size="sm" onClick={handleDownload}>
-          <Download className="h-3 w-3 mr-2" />
-          Download File
-        </Button>
-      </div>
+    <div className="h-full flex flex-col items-center justify-center text-center p-6">
+      <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
+      <p className="text-sm font-medium text-foreground mb-1">Binary File</p>
+      <p className="text-xs text-muted-foreground mb-4">
+        {file.mimeType} ({formatFileSize(file.size)})
+      </p>
+      <Button variant="outline" size="sm" onClick={handleDownload}>
+        <Download className="h-3 w-3 mr-2" />
+        Download File
+      </Button>
     </div>
   );
 }

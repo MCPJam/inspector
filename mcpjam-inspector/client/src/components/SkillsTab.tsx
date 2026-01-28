@@ -7,7 +7,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { SquareSlash, RefreshCw, Plus, Trash2 } from "lucide-react";
+import { SquareSlash, RefreshCw, Plus, Trash2, Copy, Check, Code, Eye } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -49,6 +49,20 @@ export function SkillsTab() {
   const [fileContent, setFileContent] = useState<SkillFileContent | null>(null);
   const [loadingFileContent, setLoadingFileContent] = useState(false);
   const [fileError, setFileError] = useState<string>("");
+  const [copied, setCopied] = useState(false);
+  const [rawMode, setRawMode] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+
+  const handleCopy = async () => {
+    if (!fileContent?.content) return;
+    try {
+      await navigator.clipboard.writeText(fileContent.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
 
   useEffect(() => {
     fetchSkills();
@@ -183,6 +197,8 @@ export function SkillsTab() {
     setSelectedSkillName(name);
     setSelectedFilePath("SKILL.md");
     setFileContent(null);
+    setRawMode(false);
+    setDescriptionExpanded(false);
   };
 
   const handleSelectFile = (skillName: string, filePath: string) => {
@@ -190,6 +206,7 @@ export function SkillsTab() {
       setSelectedSkillName(skillName);
     }
     setSelectedFilePath(filePath);
+    setRawMode(false);
   };
 
   const handleExpandSkill = (name: string) => {
@@ -198,6 +215,7 @@ export function SkillsTab() {
 
   const handleLinkClick = (path: string) => {
     setSelectedFilePath(path);
+    setRawMode(false);
   };
 
   return (
@@ -291,24 +309,63 @@ export function SkillsTab() {
             {selectedSkillName && selectedSkill ? (
               <>
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                      {selectedSkill.name}
-                    </code>
-                    <span className="text-xs text-muted-foreground truncate">
-                      {selectedFilePath}
-                    </span>
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-4">
+                  <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-medium text-sm text-foreground truncate">
+                        {selectedSkill.name}
+                      </span>
+                      {selectedFilePath !== "SKILL.md" && (
+                        <>
+                          <span className="text-muted-foreground">/</span>
+                          <span className="text-sm text-muted-foreground truncate">
+                            {selectedFilePath}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {selectedFilePath === "SKILL.md" && selectedSkill.description && (
+                      <p
+                        onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+                        className={`text-xs text-muted-foreground cursor-pointer hover:text-muted-foreground/80 ${descriptionExpanded ? "" : "line-clamp-1"}`}
+                      >
+                        {selectedSkill.description}
+                      </p>
+                    )}
                   </div>
-                  <Button
-                    onClick={() => setSkillToDelete(selectedSkill.name)}
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10 flex-shrink-0"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    Delete
-                  </Button>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {fileContent?.isText && fileContent.mimeType.includes("markdown") && (
+                      <Button
+                        onClick={() => setRawMode(!rawMode)}
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        title={rawMode ? "Show rendered" : "Show raw"}
+                      >
+                        {rawMode ? <Eye className="h-4 w-4" /> : <Code className="h-4 w-4" />}
+                      </Button>
+                    )}
+                    {fileContent?.isText && (
+                      <Button
+                        onClick={handleCopy}
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        title="Copy"
+                      >
+                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    )}
+                    <Button
+                      onClick={() => setSkillToDelete(selectedSkill.name)}
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      title="Delete skill"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
 
                 {/* File Content Viewer */}
@@ -318,6 +375,7 @@ export function SkillsTab() {
                     loading={loadingFileContent}
                     error={fileError}
                     onLinkClick={handleLinkClick}
+                    rawMode={rawMode}
                   />
                 </div>
               </>
