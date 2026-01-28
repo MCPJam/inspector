@@ -24,9 +24,11 @@ import {
 import {
   useTrafficLogStore,
   subscribeToRpcStream,
+  subscribeToXRayStream,
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/traffic-log-store";
+import { XRayEventCard } from "@/components/xray/xray-event-card";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "sonner";
@@ -48,7 +50,7 @@ import { Filter, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type RpcDirection = "in" | "out" | string;
-type TrafficSource = "mcp-server" | "mcp-apps";
+type TrafficSource = "mcp-server" | "mcp-apps" | "xray";
 
 interface RpcEventMessage {
   serverId: string;
@@ -117,6 +119,7 @@ export function LoggerView({
   // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
   const uiLogItems = useTrafficLogStore((s) => s.items);
   const mcpServerRpcItems = useTrafficLogStore((s) => s.mcpServerItems);
+  const xrayItems = useTrafficLogStore((s) => s.xrayItems);
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Convert UI log items to renderable format
@@ -180,7 +183,7 @@ export function LoggerView({
   };
 
   const copyLogs = async () => {
-    const logsText = filteredItems.map((item) => ({
+    const rpcLogs = filteredItems.map((item) => ({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
@@ -188,8 +191,20 @@ export function LoggerView({
       method: item.method,
       payload: item.payload,
     }));
+    const xrayLogs = filteredXRayItems.map((item) => ({
+      timestamp: item.timestamp,
+      source: "xray",
+      model: item.model,
+      messages: item.messages,
+      systemPrompt: item.systemPrompt,
+      tools: item.tools,
+      temperature: item.temperature,
+      selectedServers: item.selectedServers,
+      path: item.path,
+    }));
+    const allLogs = [...xrayLogs, ...rpcLogs];
     try {
-      await navigator.clipboard.writeText(JSON.stringify(logsText, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify(allLogs, null, 2));
       toast.success("Logs copied to clipboard");
     } catch {
       toast.error("Failed to copy logs");
@@ -199,6 +214,12 @@ export function LoggerView({
   // Subscribe to the singleton SSE connection for RPC traffic
   useEffect(() => {
     const unsubscribe = subscribeToRpcStream();
+    return unsubscribe;
+  }, []);
+
+  // Subscribe to the singleton SSE connection for X-Ray traffic
+  useEffect(() => {
+    const unsubscribe = subscribeToXRayStream();
     return unsubscribe;
   }, []);
 
@@ -212,6 +233,11 @@ export function LoggerView({
   }, [mcpServerItems, mcpAppsItems]);
 
   const filteredItems = useMemo(() => {
+    // If xray filter is selected, don't include regular RPC items
+    if (sourceFilter === "xray") {
+      return [];
+    }
+
     let result = allItems;
 
     // Filter by source type
@@ -241,6 +267,47 @@ export function LoggerView({
     return result;
   }, [allItems, searchQuery, serverIds, sourceFilter]);
 
+  // Filter X-Ray items separately
+  const filteredXRayItems = useMemo(() => {
+    if (sourceFilter !== "all" && sourceFilter !== "xray") {
+      return [];
+    }
+
+    let result = xrayItems;
+
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const queryLower = searchQuery.toLowerCase();
+      result = result.filter((item) => {
+        return (
+          item.model.id.toLowerCase().includes(queryLower) ||
+          item.model.provider.toLowerCase().includes(queryLower) ||
+          item.selectedServers.some((s) =>
+            s.toLowerCase().includes(queryLower),
+          ) ||
+          item.tools.some((t) => t.name.toLowerCase().includes(queryLower)) ||
+          (item.systemPrompt?.toLowerCase().includes(queryLower) ?? false) ||
+          JSON.stringify(item.messages).toLowerCase().includes(queryLower)
+        );
+      });
+    }
+
+    return result;
+  }, [xrayItems, searchQuery, sourceFilter]);
+
+  // Calculate total count for display
+  const totalItemCount = useMemo(() => {
+    if (sourceFilter === "xray") {
+      return xrayItems.length;
+    }
+    if (sourceFilter === "all") {
+      return allItems.length + xrayItems.length;
+    }
+    return allItems.length;
+  }, [allItems.length, xrayItems.length, sourceFilter]);
+
+  const filteredItemCount = filteredItems.length + filteredXRayItems.length;
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex flex-col gap-2 p-3 border-b border-border flex-shrink-0">
@@ -251,7 +318,7 @@ export function LoggerView({
               variant="ghost"
               size="icon"
               onClick={copyLogs}
-              disabled={filteredItems.length === 0}
+              disabled={filteredItemCount === 0}
               className="h-7 w-7"
               title="Copy logs to clipboard"
             >
@@ -261,7 +328,7 @@ export function LoggerView({
               variant="ghost"
               size="icon"
               onClick={clearMessages}
-              disabled={allItems.length === 0}
+              disabled={totalItemCount === 0}
               className="h-7 w-7"
               title="Clear all messages"
             >
@@ -293,7 +360,7 @@ export function LoggerView({
               />
             </div>
             <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline-block">
-              {filteredItems.length} / {allItems.length}
+              {filteredItemCount} / {totalItemCount}
             </span>
 
             {/* Source Filter */}
@@ -331,6 +398,9 @@ export function LoggerView({
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                     Apps
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="xray" className="text-xs">
+                    X-Ray (AI Requests)
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
@@ -424,7 +494,7 @@ export function LoggerView({
         ref={scrollRef}
         className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3"
       >
-        {filteredItems.length === 0 ? (
+        {filteredItemCount === 0 ? (
           <div className="text-center py-8">
             <div className="text-xs text-muted-foreground">{"No logs yet"}</div>
             <div className="text-[10px] text-muted-foreground mt-1">
@@ -432,91 +502,99 @@ export function LoggerView({
             </div>
           </div>
         ) : (
-          filteredItems.map((it) => {
-            const isExpanded = expanded.has(it.id);
-            const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
-            const isIncoming =
-              it.direction === "RECEIVE" || it.direction === "UI→HOST";
+          <>
+            {/* X-Ray items (shown at top when included) */}
+            {filteredXRayItems.map((xrayEvent) => (
+              <XRayEventCard key={xrayEvent.id} event={xrayEvent} />
+            ))}
 
-            // Border color: purple for Apps traffic, none for MCP Server
-            const borderClass = isAppsTraffic
-              ? "border-l-4 border-l-purple-500/50"
-              : "";
+            {/* Regular RPC items */}
+            {filteredItems.map((it) => {
+              const isExpanded = expanded.has(it.id);
+              const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps
+              const isIncoming =
+                it.direction === "RECEIVE" || it.direction === "UI→HOST";
 
-            return (
-              <div
-                key={it.id}
-                className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
-              >
+              // Border color: purple for Apps traffic, none for MCP Server
+              const borderClass = isAppsTraffic
+                ? "border-l-4 border-l-purple-500/50"
+                : "";
+
+              return (
                 <div
-                  className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
-                  onClick={() => toggleExpanded(it.id)}
+                  key={it.id}
+                  className={`group border rounded-lg shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden bg-card ${borderClass}`}
                 >
-                  <div className="flex-shrink-0">
-                    {isExpanded ? (
-                      <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
-                    ) : (
-                      <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50 whitespace-nowrap">
-                      {it.serverId}
-                    </span>
-                    {/* Direction indicator */}
-                    <span
-                      className={`flex items-center justify-center px-1 py-0.5 rounded ${
-                        isIncoming
-                          ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                          : "bg-green-500/10 text-green-600 dark:text-green-400"
-                      }`}
-                      title={it.direction}
-                    >
-                      {isIncoming ? (
-                        <ArrowDownToLine className="h-3 w-3" />
+                  <div
+                    className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-muted/50 transition-colors"
+                    onClick={() => toggleExpanded(it.id)}
+                  >
+                    <div className="flex-shrink-0">
+                      {isExpanded ? (
+                        <ChevronDown className="h-3 w-3 text-muted-foreground transition-transform" />
                       ) : (
-                        <ArrowUpFromLine className="h-3 w-3" />
+                        <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform" />
                       )}
-                    </span>
-                    <span
-                      className="text-xs font-mono text-foreground truncate"
-                      title={it.method}
-                    >
-                      {it.method}
-                    </span>
-                    <span className="text-muted-foreground font-mono text-xs whitespace-nowrap ml-auto">
-                      {new Date(it.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                </div>
-                {isExpanded && (
-                  <div className="border-t bg-muted/20">
-                    <div className="p-3">
-                      <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                        <JsonView
-                          src={normalizePayload(it.payload) as object}
-                          dark={true}
-                          theme="atom"
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "11px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "transparent",
-                            padding: "0",
-                            borderRadius: "0",
-                            border: "none",
-                          }}
-                        />
-                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <span className="hidden sm:inline-block text-xs px-1.5 py-0.5 rounded bg-muted/50 whitespace-nowrap">
+                        {it.serverId}
+                      </span>
+                      {/* Direction indicator */}
+                      <span
+                        className={`flex items-center justify-center px-1 py-0.5 rounded ${
+                          isIncoming
+                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                            : "bg-green-500/10 text-green-600 dark:text-green-400"
+                        }`}
+                        title={it.direction}
+                      >
+                        {isIncoming ? (
+                          <ArrowDownToLine className="h-3 w-3" />
+                        ) : (
+                          <ArrowUpFromLine className="h-3 w-3" />
+                        )}
+                      </span>
+                      <span
+                        className="text-xs font-mono text-foreground truncate"
+                        title={it.method}
+                      >
+                        {it.method}
+                      </span>
+                      <span className="text-muted-foreground font-mono text-xs whitespace-nowrap ml-auto">
+                        {new Date(it.timestamp).toLocaleTimeString()}
+                      </span>
                     </div>
                   </div>
-                )}
-              </div>
-            );
-          })
+                  {isExpanded && (
+                    <div className="border-t bg-muted/20">
+                      <div className="p-3">
+                        <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
+                          <JsonView
+                            src={normalizePayload(it.payload) as object}
+                            dark={true}
+                            theme="atom"
+                            enableClipboard={true}
+                            displaySize={false}
+                            collapseStringsAfterLength={100}
+                            style={{
+                              fontSize: "11px",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                              backgroundColor: "transparent",
+                              padding: "0",
+                              borderRadius: "0",
+                              border: "none",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </div>

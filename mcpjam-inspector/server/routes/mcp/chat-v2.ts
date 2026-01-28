@@ -19,8 +19,63 @@ import {
 import { logger } from "../../utils/logger";
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
+import { xrayLogBus } from "../../services/xray-log-bus";
+import type { XRayLogEvent, XRayToolDefinition } from "@/shared/xray-types";
 
 const DEFAULT_TEMPERATURE = 0.7;
+
+/**
+ * Build tool definitions for X-Ray logging from the tools object.
+ */
+function buildXRayToolDefs(
+  tools: Record<string, unknown>,
+): XRayToolDefinition[] {
+  const result: XRayToolDefinition[] = [];
+  for (const [name, tool] of Object.entries(tools)) {
+    if (!tool) continue;
+    const t = tool as {
+      description?: string;
+      parameters?: unknown;
+      inputSchema?: unknown;
+    };
+    result.push({
+      name,
+      description: t.description,
+      parameters: t.parameters ?? t.inputSchema,
+    });
+  }
+  return result;
+}
+
+/**
+ * Emit an X-Ray event for AI request inspection.
+ */
+function emitXRayEvent(params: {
+  model: { id: string; provider: string };
+  messages: ModelMessage[];
+  systemPrompt: string | undefined;
+  tools: Record<string, unknown>;
+  temperature: number | undefined;
+  selectedServers: string[];
+  path: "streamText" | "mcpjam-backend";
+}): void {
+  const event: XRayLogEvent = {
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+    type: "ai-request",
+    model: params.model,
+    messages: params.messages.map((m) => ({
+      role: m.role as "system" | "user" | "assistant" | "tool",
+      content: m.content,
+    })),
+    systemPrompt: params.systemPrompt,
+    tools: buildXRayToolDefs(params.tools),
+    temperature: params.temperature,
+    selectedServers: params.selectedServers,
+    path: params.path,
+  };
+  xrayLogBus.publish(event);
+}
 
 const chatV2 = new Hono();
 
@@ -140,6 +195,17 @@ chatV2.post("/", async (c) => {
       let messageHistory = await convertToModelMessages(messages);
       let steps = 0;
       const MAX_STEPS = 20;
+
+      // Emit X-Ray event for MCPJam backend path
+      emitXRayEvent({
+        model: { id: modelDefinition.id, provider: modelDefinition.provider },
+        messages: messageHistory,
+        systemPrompt: enhancedSystemPrompt,
+        tools: allTools as Record<string, unknown>,
+        temperature: resolvedTemperature,
+        selectedServers: selectedServers ?? [],
+        path: "mcpjam-backend",
+      });
 
       const stream = createUIMessageStream({
         execute: async ({ writer }) => {
@@ -300,9 +366,21 @@ chatV2.post("/", async (c) => {
       openai: body.openaiBaseUrl,
     });
 
+    // Transform messages and emit X-Ray event for external provider path
+    const transformedMessages = await convertToModelMessages(messages);
+    emitXRayEvent({
+      model: { id: modelDefinition.id, provider: modelDefinition.provider },
+      messages: transformedMessages,
+      systemPrompt: enhancedSystemPrompt,
+      tools: allTools as Record<string, unknown>,
+      temperature: resolvedTemperature,
+      selectedServers: selectedServers ?? [],
+      path: "streamText",
+    });
+
     const result = streamText({
       model: llmModel,
-      messages: await convertToModelMessages(messages),
+      messages: transformedMessages,
       ...(resolvedTemperature == undefined
         ? {}
         : { temperature: resolvedTemperature }),

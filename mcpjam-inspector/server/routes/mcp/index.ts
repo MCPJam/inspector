@@ -22,6 +22,7 @@ import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
 import skills from "./skills";
+import xray from "./xray";
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -117,5 +118,8 @@ mcp.route("/tasks", tasks);
 
 // Skills endpoints - Agent skills from .mcpjam/skills/
 mcp.route("/skills", skills);
+
+// X-Ray endpoints - AI request inspection for debugging
+mcp.route("/xray", xray);
 
 export default mcp;
