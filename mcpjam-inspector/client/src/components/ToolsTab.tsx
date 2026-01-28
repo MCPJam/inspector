@@ -649,6 +649,10 @@ export function ToolsTab({
     );
   }
 
+  if (!activeServerId) {
+    return null;
+  }
+
   return (
     <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="vertical" className="flex-1">
