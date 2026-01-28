@@ -31,6 +31,11 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
+import {
+  useTrafficLogStore,
+  subscribeToXRayStream,
+} from "@/stores/traffic-log-store";
+import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -89,6 +94,20 @@ export function ChatTabV2({
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+
+  // X-Ray mode state
+  const [xrayMode, setXrayMode] = useState(false);
+  const [selectedXrayEventId, setSelectedXrayEventId] = useState<string | null>(
+    null,
+  );
+  const xrayItems = useTrafficLogStore((s) => s.xrayItems);
+  const clearXRay = useTrafficLogStore((s) => s.clearXRay);
+
+  // Subscribe to X-Ray SSE stream
+  useEffect(() => {
+    const unsubscribe = subscribeToXRayStream();
+    return () => unsubscribe();
+  }, []);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -479,6 +498,9 @@ export function ChatTabV2({
     onChangeMcpPromptResults: setMcpPromptResults,
     skillResults,
     onChangeSkillResults: setSkillResults,
+    xrayMode,
+    onXrayModeChange: setXrayMode,
+    xrayEventCount: xrayItems.length,
   };
 
   const showStarterPrompts =
@@ -544,6 +566,27 @@ export function ChatTabV2({
                         hasMessages={false}
                       />
                     )}
+                  </div>
+                </div>
+              </div>
+            ) : xrayMode ? (
+              // X-Ray mode: show raw JSON view of AI payload
+              <div className="flex flex-1 flex-col min-h-0">
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <XRaySnapshotView
+                    event={
+                      xrayItems.find((e) => e.id === selectedXrayEventId) ??
+                      xrayItems[0] ??
+                      null
+                    }
+                    allEvents={xrayItems}
+                    onSelectEvent={setSelectedXrayEventId}
+                    onClear={clearXRay}
+                  />
+                </div>
+                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                  <div className="max-w-4xl mx-auto p-4">
+                    <ChatInput {...sharedChatInputProps} hasMessages />
                   </div>
                 </div>
               </div>

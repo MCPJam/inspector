@@ -4,7 +4,7 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, Square, Scan } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -72,6 +72,10 @@ interface ChatInputProps {
   onChangeSkillResults: (skillResults: SkillResult[]) => void;
   /** When true, shows icons only for a more compact layout */
   compact?: boolean;
+  /** X-Ray mode toggle */
+  xrayMode?: boolean;
+  onXrayModeChange?: (enabled: boolean) => void;
+  xrayEventCount?: number;
 }
 
 export function ChatInput({
@@ -105,6 +109,9 @@ export function ChatInput({
   skillResults,
   onChangeSkillResults,
   compact = false,
+  xrayMode = false,
+  onXrayModeChange,
+  xrayEventCount = 0,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -290,6 +297,33 @@ export function ChatInput({
               currentModel={currentModel}
               compact={compact}
             />
+            {onXrayModeChange && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={xrayMode ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => onXrayModeChange(!xrayMode)}
+                    className={cn(
+                      "h-8 px-2 gap-1.5 relative",
+                      xrayMode && "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20"
+                    )}
+                  >
+                    <Scan className="h-4 w-4" />
+                    {!compact && <span className="text-xs">X-Ray</span>}
+                    {xrayEventCount > 0 && (
+                      <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 text-[10px] font-medium bg-cyan-500 text-white rounded-full flex items-center justify-center">
+                        {xrayEventCount > 99 ? "99+" : xrayEventCount}
+                      </span>
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {xrayMode ? "Hide X-Ray view" : "Show X-Ray view (raw AI payload)"}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
 
           <div className="flex items-center gap-2">

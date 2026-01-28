@@ -5,7 +5,6 @@ import { WorkspaceSelector } from "./connection/WorkspaceSelector";
 import { WorkspaceMembers } from "./workspace/WorkspaceMembers";
 import { Workspace } from "@/state/app-types";
 import { ActiveServerSelectorProps } from "./ActiveServerSelector";
-import { XRayToggle } from "./xray/xray-toggle";
 
 interface HeaderProps {
   workspaces: Record<string, Workspace>;
@@ -61,7 +60,6 @@ export const Header = ({
             onWorkspaceShared={onWorkspaceShared}
             onLeaveWorkspace={handleLeaveWorkspace}
           />
-          <XRayToggle />
         </div>
         <AuthUpperArea activeServerSelectorProps={activeServerSelectorProps} />
       </div>
