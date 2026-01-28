@@ -354,10 +354,30 @@ export async function buildSkillsSystemPromptSection(): Promise<string> {
 
 /**
  * Get skill tools and system prompt section together
+ * Only returns tools if there are skills available
  */
 export async function getSkillToolsAndPrompt() {
+  const skills = await listSkillsMetadata();
+
+  // Only add skill tools and prompt section if there are skills loaded
+  if (skills.length === 0) {
+    return {
+      tools: {},
+      systemPromptSection: "",
+    };
+  }
+
   const tools = createSkillTools();
-  const systemPromptSection = await buildSkillsSystemPromptSection();
+
+  // Build prompt section from the already-fetched skills list
+  let systemPromptSection = `\n\n## Available Skills\n\n`;
+  systemPromptSection += `You have access to the following skills. When a task matches a skill's purpose, use the \`loadSkill\` tool to load its full instructions:\n\n`;
+
+  for (const skill of skills) {
+    systemPromptSection += `- **${skill.name}**: ${skill.description}\n`;
+  }
+
+  systemPromptSection += `\nAfter loading a skill, you can use \`listSkillFiles\` and \`readSkillFile\` to access any supporting files (rules, templates, etc.) that the skill provides.`;
 
   return {
     tools,
