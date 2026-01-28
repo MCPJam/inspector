@@ -1,0 +1,109 @@
+import { authFetch } from "@/lib/session-token";
+import type { Skill, SkillListItem } from "../../../../shared/skill-types";
+
+export interface ListSkillsResponse {
+  skills: SkillListItem[];
+}
+
+export interface GetSkillResponse {
+  skill: Skill;
+}
+
+export interface UploadSkillResponse {
+  success: boolean;
+  skill: Skill;
+}
+
+/**
+ * List all available skills from .mcpjam/skills/
+ */
+export async function listSkills(): Promise<SkillListItem[]> {
+  const res = await authFetch("/api/mcp/skills/list", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `List skills failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return Array.isArray(body?.skills) ? (body.skills as SkillListItem[]) : [];
+}
+
+/**
+ * Get full skill content by name
+ */
+export async function getSkill(name: string): Promise<Skill> {
+  const res = await authFetch("/api/mcp/skills/get", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `Get skill failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return body.skill as Skill;
+}
+
+/**
+ * Upload/create a new skill
+ */
+export async function uploadSkill(data: {
+  name: string;
+  description: string;
+  content: string;
+}): Promise<Skill> {
+  const res = await authFetch("/api/mcp/skills/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `Upload skill failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return body.skill as Skill;
+}
+
+/**
+ * Delete a skill by name
+ */
+export async function deleteSkill(name: string): Promise<void> {
+  const res = await authFetch("/api/mcp/skills/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `Delete skill failed (${res.status})`;
+    throw new Error(message);
+  }
+}

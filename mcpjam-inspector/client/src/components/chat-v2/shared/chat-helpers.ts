@@ -1,6 +1,7 @@
 import { ModelDefinition } from "@/shared/types.js";
 import { generateId, type UIMessage } from "ai";
 import type { MCPPromptResult } from "../chat-input/prompts/mcp-prompts-popover";
+import type { SkillResult } from "../chat-input/skills/skill-types";
 import azureLogo from "/azure_logo.png";
 import claudeLogo from "/claude_logo.png";
 import openaiLogo from "/openai_logo.png";
@@ -224,6 +225,31 @@ export function buildMcpPromptMessages(
           },
         ],
       });
+    });
+  }
+
+  return messages;
+}
+
+/**
+ * Builds UIMessages from skill results.
+ * Skills are injected as user messages with format: [skill:name] content
+ */
+export function buildSkillMessages(skillResults: SkillResult[]): UIMessage[] {
+  const messages: UIMessage[] = [];
+
+  for (const skill of skillResults) {
+    if (!skill.content) continue;
+
+    messages.push({
+      id: `skill-${skill.name}-${generateId()}`,
+      role: "user",
+      parts: [
+        {
+          type: "text",
+          text: `[skill:${skill.name}] ${skill.content}`,
+        },
+      ],
     });
   }
 

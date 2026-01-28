@@ -21,10 +21,12 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
+import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import {
   STARTER_PROMPTS,
   formatErrorMessage,
   buildMcpPromptMessages,
+  buildSkillMessages,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
@@ -70,6 +72,7 @@ export function ChatTabV2({
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
+  const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
   >([]);
@@ -380,11 +383,9 @@ export function ChatTabV2({
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (
-      (input.trim() || mcpPromptResults.length > 0) &&
-      status === "ready" &&
-      !submitBlocked
-    ) {
+    const hasResults =
+      mcpPromptResults.length > 0 || skillResults.length > 0;
+    if ((input.trim() || hasResults) && status === "ready" && !submitBlocked) {
       posthog.capture("send_message", {
         location: "chat_tab",
         platform: detectPlatform(),
@@ -393,9 +394,17 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
       });
+
+      // Build messages from MCP prompts
       const promptMessages = buildMcpPromptMessages(mcpPromptResults);
       if (promptMessages.length > 0) {
         setMessages((prev) => [...prev, ...promptMessages]);
+      }
+
+      // Build messages from skills
+      const skillMessages = buildSkillMessages(skillResults);
+      if (skillMessages.length > 0) {
+        setMessages((prev) => [...prev, ...skillMessages]);
       }
 
       // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
@@ -424,6 +433,7 @@ export function ChatTabV2({
       sendMessage({ text: input });
       setInput("");
       setMcpPromptResults([]);
+      setSkillResults([]);
       setModelContextQueue([]); // Clear after sending
     }
   };
@@ -474,6 +484,8 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     mcpPromptResults,
     onChangeMcpPromptResults: setMcpPromptResults,
+    skillResults,
+    onChangeSkillResults: setSkillResults,
   };
 
   const showStarterPrompts =
