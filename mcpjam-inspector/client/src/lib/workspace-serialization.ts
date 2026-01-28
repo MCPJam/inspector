@@ -116,7 +116,10 @@ export function serversHaveChanged(
   remote: Record<string, any>,
 ): boolean {
   const localIds = Object.keys(local);
-  const remoteEntries = Object.entries(remote).map(([key, value]) => [key, value]);
+  const remoteEntries = Object.entries(remote).map(([key, value]) => [
+    key,
+    value,
+  ]);
 
   if (localIds.length !== remoteEntries.length) return true;
 

@@ -477,11 +477,7 @@ export async function handleOAuthCallback(
     const displayName = serverName || serverId;
 
     // Get server URL
-    const serverUrl = readWithMigration(
-      "mcp-serverUrl",
-      serverId,
-      displayName,
-    );
+    const serverUrl = readWithMigration("mcp-serverUrl", serverId, displayName);
     if (!serverUrl) {
       throw new Error("Server URL not found for OAuth callback");
     }
@@ -673,11 +669,7 @@ export async function refreshOAuthTokens(
     }
 
     // Get server URL
-    const serverUrl = readWithMigration(
-      "mcp-serverUrl",
-      serverId,
-      serverName,
-    );
+    const serverUrl = readWithMigration("mcp-serverUrl", serverId, serverName);
     if (!serverUrl) {
       return {
         success: false,
@@ -737,10 +729,7 @@ export async function refreshOAuthTokens(
 /**
  * Clears all OAuth data for a server
  */
-export function clearOAuthData(
-  serverId: string,
-  serverName?: string,
-): void {
+export function clearOAuthData(serverId: string, serverName?: string): void {
   removeWithLegacy("mcp-tokens", serverId, serverName);
   removeWithLegacy("mcp-client", serverId, serverName);
   removeWithLegacy("mcp-verifier", serverId, serverName);

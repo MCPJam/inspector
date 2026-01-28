@@ -450,9 +450,13 @@ export function useAppState() {
       if (!idOrName) return undefined;
       return (
         appState.servers[idOrName] ||
-        Object.values(appState.servers).find((server) => server.name === idOrName) ||
+        Object.values(appState.servers).find(
+          (server) => server.name === idOrName,
+        ) ||
         effectiveServers[idOrName] ||
-        Object.values(effectiveServers).find((server) => server.name === idOrName)
+        Object.values(effectiveServers).find(
+          (server) => server.name === idOrName,
+        )
       );
     },
     [appState.servers, effectiveServers],
@@ -962,10 +966,7 @@ export function useAppState() {
           // Save env vars to localStorage (local-only, not synced to cloud)
           const env = (mcpConfig as any).env;
           if (env && Object.keys(env).length > 0) {
-            localStorage.setItem(
-              `mcp-env-${serverId}`,
-              JSON.stringify(env),
-            );
+            localStorage.setItem(`mcp-env-${serverId}`, JSON.stringify(env));
           }
           logger.info("Connection successful", { serverName: formData.name });
           toast.success(`Connected successfully!`);
@@ -1430,25 +1431,28 @@ export function useAppState() {
     [getServerByIdOrName],
   );
 
-  const handleDisconnect = useCallback(async (serverId: string) => {
-    const server = getServerByIdOrName(serverId);
-    logger.info("Disconnecting from server", {
-      serverName: server?.name ?? serverId,
-    });
-    dispatch({ type: "DISCONNECT", id: serverId });
-    try {
-      const result = await deleteServer(serverId);
-      if (!result.success) {
-        dispatch({ type: "DISCONNECT", id: serverId, error: result.error });
-      }
-    } catch (error) {
-      dispatch({
-        type: "DISCONNECT",
-        id: serverId,
-        error: error instanceof Error ? error.message : "Unknown error",
+  const handleDisconnect = useCallback(
+    async (serverId: string) => {
+      const server = getServerByIdOrName(serverId);
+      logger.info("Disconnecting from server", {
+        serverName: server?.name ?? serverId,
       });
-    }
-  }, [getServerByIdOrName, logger]);
+      dispatch({ type: "DISCONNECT", id: serverId });
+      try {
+        const result = await deleteServer(serverId);
+        if (!result.success) {
+          dispatch({ type: "DISCONNECT", id: serverId, error: result.error });
+        }
+      } catch (error) {
+        dispatch({
+          type: "DISCONNECT",
+          id: serverId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    },
+    [getServerByIdOrName, logger],
+  );
 
   const handleRemoveServer = useCallback(
     async (serverId: string) => {
@@ -1561,10 +1565,7 @@ export function useAppState() {
           toast.error(`Failed to connect: ${serverName}`);
           return;
         }
-        const result = await reconnectServer(
-          serverId,
-          authResult.serverConfig,
-        );
+        const result = await reconnectServer(serverId, authResult.serverConfig);
         if (isStaleOp(serverId, token)) return;
         if (result.success) {
           dispatch({
@@ -1606,7 +1607,12 @@ export function useAppState() {
         throw error;
       }
     },
-    [ensureAuthorizedForReconnect, fetchAndStoreInitInfo, getServerByIdOrName, logger],
+    [
+      ensureAuthorizedForReconnect,
+      fetchAndStoreInitInfo,
+      getServerByIdOrName,
+      logger,
+    ],
   );
 
   // Sync with centralized agent status on app startup only

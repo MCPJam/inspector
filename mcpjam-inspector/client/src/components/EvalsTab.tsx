@@ -54,7 +54,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
   const appState = useSharedAppState();
   const selectedServerDisplayName =
     selectedServer && selectedServer !== "none"
-      ? appState.servers[selectedServer]?.name ?? selectedServer
+      ? (appState.servers[selectedServer]?.name ?? selectedServer)
       : null;
 
   // Get connected server names
@@ -350,7 +350,8 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
                     No test cases yet
                   </h2>
                   <p className="text-sm text-muted-foreground mb-6">
-                    Create your first test case for "{selectedServerDisplayName || selectedServer}" to start
+                    Create your first test case for "
+                    {selectedServerDisplayName || selectedServer}" to start
                     evaluating your MCP server.
                   </p>
                 </div>

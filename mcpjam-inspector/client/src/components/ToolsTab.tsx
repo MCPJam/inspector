@@ -757,8 +757,7 @@ export function ToolsTab({
                 toolParameters={lastToolParameters ?? undefined}
                 toolMeta={getToolMeta(lastToolName)}
                 onExecuteFromUI={async (name, params) => {
-                  if (!activeServerId)
-                    return { error: "No server selected" };
+                  if (!activeServerId) return { error: "No server selected" };
                   return await executeToolApi(
                     activeServerId,
                     name,
