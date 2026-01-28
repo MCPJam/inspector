@@ -1,5 +1,9 @@
 import { ModelMessage } from "@ai-sdk/provider-utils";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import {
+  type MCPClientManager,
+  isMcpAppTool,
+  scrubMcpAppToolResult,
+} from "@mcpjam/sdk";
 import { ToolResultPart } from "ai";
 
 type ToolsMap = Record<string, any>;
@@ -143,6 +147,31 @@ export async function executeToolCallsFromMessages(
           // Extract serverId from tool name
           const serverId = extractServerId(toolName);
 
+          // For MCP app tools, scrub _meta and structuredContent from the
+          // output that goes to the LLM, while preserving the full result
+          // for the UI.
+          let llmOutput = output;
+          if (
+            "clientManager" in options &&
+            serverId &&
+            result &&
+            typeof result === "object"
+          ) {
+            const toolsMetadata =
+              options.clientManager.getAllToolsMetadata(serverId);
+            const toolMeta = toolsMetadata[toolName];
+            if (isMcpAppTool(toolMeta)) {
+              const scrubbed = scrubMcpAppToolResult(result as any);
+              const scrubbedSerialized = serializeToolResult(scrubbed);
+              if (scrubbedSerialized.success) {
+                llmOutput = {
+                  type: "json",
+                  value: scrubbedSerialized.value,
+                } as any;
+              }
+            }
+          }
+
           const toolResultMessage: ModelMessage = {
             role: "tool" as const,
             content: [
@@ -150,8 +179,8 @@ export async function executeToolCallsFromMessages(
                 type: "tool-result",
                 toolCallId: content.toolCallId,
                 toolName: toolName,
-                output,
-                // Preserve full result including _meta for OpenAI Apps SDK
+                output: llmOutput,
+                // Preserve full result including _meta for UI hydration
                 result: result,
                 // Add serverId for OpenAI component resolution
                 serverId,

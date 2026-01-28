@@ -62,6 +62,12 @@ export type {
   MCPResourceTemplate,
 } from "./mcp-client-manager/index.js";
 
+// Tool result scrubbing utilities (for MCP Apps)
+export {
+  isMcpAppTool,
+  scrubMcpAppToolResult,
+} from "./mcp-client-manager/index.js";
+
 // Error classes
 export {
   MCPError,

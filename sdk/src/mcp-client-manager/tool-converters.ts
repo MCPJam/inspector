@@ -104,6 +104,40 @@ export interface ConvertOptions<
 }
 
 /**
+ * Checks whether a tool is an MCP App by inspecting its _meta for a UI resource URI.
+ *
+ * @param toolMeta - The tool's _meta field from listTools result
+ * @returns true if the tool is an MCP App
+ */
+export function isMcpAppTool(
+  toolMeta: Record<string, unknown> | undefined
+): boolean {
+  if (!toolMeta) return false;
+  // MCP Apps use _meta.ui.resourceUri (preferred) or legacy "ui/resourceUri".
+  const nested = (toolMeta as { ui?: { resourceUri?: unknown } }).ui;
+  if (typeof nested?.resourceUri === "string") return true;
+  return typeof toolMeta["ui/resourceUri"] === "string";
+}
+
+/**
+ * Returns a shallow copy of a CallToolResult with _meta and structuredContent removed.
+ * If neither field is present, returns the original object unchanged.
+ *
+ * @param result - The full tool call result
+ * @returns A scrubbed copy without _meta and structuredContent
+ */
+export function scrubMcpAppToolResult(
+  result: CallToolResult
+): CallToolResult {
+  if (!("_meta" in result) && !("structuredContent" in result)) {
+    return result;
+  }
+  delete result._meta;
+  delete result.structuredContent;
+  return result;
+}
+
+/**
  * Converts MCP tools to Vercel AI SDK format.
  *
  * @param listToolsResult - The result from listTools()
@@ -137,6 +171,9 @@ export async function convertMCPToolsToVercelTools(
 
   for (const toolDescription of listToolsResult.tools) {
     const { name, description, inputSchema } = toolDescription;
+    const isApp = isMcpAppTool(
+      toolDescription._meta as Record<string, unknown> | undefined
+    );
 
     // Create the execute function that delegates to the provided callTool
     const execute = async (args: unknown, options?: ToolCallOptions) => {
@@ -144,6 +181,17 @@ export async function convertMCPToolsToVercelTools(
       const result = await callTool({ name, args, options });
       return CallToolResultSchema.parse(result);
     };
+
+    // For MCP app tools, strip _meta and structuredContent before sending to the LLM.
+    // The raw execute() return value still reaches the UI stream unchanged.
+    // Runtime signature: ({ toolCallId, input, output }) => ToolResultOutput
+    const toModelOutput = isApp
+      ? ((opts: unknown) => {
+          const output = (opts as { output: unknown }).output;
+          const scrubbed = scrubMcpAppToolResult(output as CallToolResult);
+          return { type: "json" as const, value: scrubbed as any };
+        }) as any
+      : undefined;
 
     let vercelTool: Tool;
 
@@ -154,6 +202,7 @@ export async function convertMCPToolsToVercelTools(
         description,
         inputSchema: jsonSchema(normalizedInputSchema),
         execute,
+        ...(toModelOutput ? { toModelOutput } : {}),
       });
     } else {
       // Override mode: only include tools explicitly listed in overrides
@@ -165,6 +214,7 @@ export async function convertMCPToolsToVercelTools(
         description,
         inputSchema: overrides[name].inputSchema,
         execute,
+        ...(toModelOutput ? { toModelOutput } : {}),
       });
     }
 

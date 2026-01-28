@@ -20,6 +20,43 @@ import { ModelMessage } from "@ai-sdk/provider-utils";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
+const scrubToolResultPayload = (payload: unknown): unknown => {
+  if (!payload || typeof payload !== "object") return payload;
+  const record = payload as Record<string, unknown>;
+  if (!("_meta" in record) && !("structuredContent" in record)) return payload;
+  const {
+    _meta: _removedMeta,
+    structuredContent: _removedStructured,
+    ...rest
+  } = record;
+  return rest;
+};
+
+const scrubToolResultsForBackend = (
+  messages: ModelMessage[],
+): ModelMessage[] => {
+  return messages.map((msg) => {
+    if (!msg || msg.role !== "tool" || !Array.isArray((msg as any).content)) {
+      return msg;
+    }
+    const content = (msg as any).content.map((part: any) => {
+      if (part?.type !== "tool-result") return part;
+      const nextPart = { ...part };
+      if (nextPart.output?.type === "json") {
+        nextPart.output = {
+          ...nextPart.output,
+          value: scrubToolResultPayload(nextPart.output.value),
+        };
+      }
+      if ("result" in nextPart) {
+        nextPart.result = scrubToolResultPayload(nextPart.result);
+      }
+      return nextPart;
+    });
+    return { ...msg, content } as ModelMessage;
+  });
+};
+
 const chatV2 = new Hono();
 
 chatV2.post("/", async (c) => {
@@ -108,7 +145,9 @@ chatV2.post("/", async (c) => {
 
       // Driver loop that emits AI UIMessage chunks (compatible with DefaultChatTransport)
       const authHeader = c.req.header("authorization") || undefined;
-      let messageHistory = await convertToModelMessages(messages);
+      let messageHistory = scrubToolResultsForBackend(
+        (await convertToModelMessages(messages)) as ModelMessage[],
+      );
       let steps = 0;
       const MAX_STEPS = 20;
 
@@ -125,7 +164,9 @@ chatV2.post("/", async (c) => {
               },
               body: JSON.stringify({
                 mode: "step",
-                messages: JSON.stringify(messageHistory),
+                messages: JSON.stringify(
+                  scrubToolResultsForBackend(messageHistory),
+                ),
                 model: String(modelDefinition.id),
                 systemPrompt,
                 ...(resolvedTemperature == undefined
@@ -235,7 +276,9 @@ chatV2.post("/", async (c) => {
                     writer.write({
                       type: "tool-output-available",
                       toolCallId: item.toolCallId,
-                      output: item.output ?? item.result ?? item.value,
+                      // Prefer full result (with _meta/structuredContent) for the UI;
+                      // the scrubbed output stays in messageHistory for the LLM.
+                      output: item.result ?? item.output ?? item.value,
                     } as any);
                   }
                 }
@@ -272,7 +315,9 @@ chatV2.post("/", async (c) => {
 
     const result = streamText({
       model: llmModel,
-      messages: await convertToModelMessages(messages),
+      messages: scrubToolResultsForBackend(
+        (await convertToModelMessages(messages)) as ModelMessage[],
+      ),
       ...(resolvedTemperature == undefined
         ? {}
         : { temperature: resolvedTemperature }),
