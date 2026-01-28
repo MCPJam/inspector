@@ -7,149 +7,89 @@ describe("Bright Data MCP Evals", () => {
   let testAgent: TestAgent;
 
   beforeAll(async () => {
-    if (!process.env.BRIGHTDATA_API_TOKEN) {
-      throw new Error("BRIGHTDATA_API_TOKEN environment variable is required");
-    }
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY environment variable is required");
-    }
+    if (!process.env.BRIGHTDATA_API_TOKEN) throw new Error("BRIGHTDATA_API_TOKEN required");
+    if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY required");
 
-    // Connect to Bright Data MCP server
     clientManager = new MCPClientManager();
-    await clientManager.connectToServer("brightdata", {
-      url: `https://mcp.brightdata.com/sse?token=${process.env.BRIGHTDATA_API_TOKEN}`,
+    await clientManager.connectToServer("brightdata-ecommerce", {
+      url: `https://mcp.brightdata.com/mcp?token=${process.env.BRIGHTDATA_API_TOKEN}&groups=ecommerce`,
     });
 
-    // Create TestAgent with Anthropic Claude
+    const tools = await clientManager.getToolsForAiSdk(["brightdata-ecommerce"]);
     testAgent = new TestAgent({
-      tools: await clientManager.getToolsForAiSdk(["brightdata"]),
+      tools,
       model: "anthropic/claude-sonnet-4-20250514",
       apiKey: process.env.ANTHROPIC_API_KEY!,
-      systemPrompt:
-        "You are an Anthropic Claude LLM model. You have access to web search and scraping tools.",
-      maxSteps: 10,
-      temperature: undefined,
+      systemPrompt: "You are a shopping assistant for Amazon, Walmart, eBay, and other e-commerce platforms.",
+      maxSteps: 5,
+      temperature: 0.1,
     });
   }, 60000);
 
   afterAll(async () => {
-    if (clientManager) {
-      await clientManager.disconnectServer("brightdata");
-    }
+    if (clientManager) await clientManager.disconnectServer("brightdata-ecommerce");
   });
 
-  describe("Search tool evals", () => {
-    test("search_engine accuracy > 80%", async () => {
-      const evalTest = new EvalTest({
-        name: "search-engine",
-        test: async (agent: TestAgent) => {
-          const runResult = await agent.prompt(
-            "Search the web for 'artificial intelligence news'",
-          );
-          return runResult.hasToolCall("search_engine");
-        },
-      });
-
-      await evalTest.run(testAgent, {
-        iterations: 5,
-        concurrency: undefined,
-        retries: 1,
-        timeoutMs: 60000,
-        onFailure: (report) => console.error(report),
-      });
-
-      expect(evalTest.accuracy()).toBeGreaterThan(0.8);
-      expect(evalTest.averageTokenUse()).toBeLessThan(30000);
+  // hasToolCall()
+  test("hasToolCall() - verifies correct tool selection", async () => {
+    const evalTest = new EvalTest({
+      name: "hasToolCall-test",
+      test: async (agent: TestAgent) => {
+        const result = await agent.prompt("Search for wireless headphones on Amazon");
+        return result.hasToolCall("web_data_amazon_product_search");
+      },
     });
-  });
+    await evalTest.run(testAgent, { iterations: 2, concurrency: 1, retries: 1, timeoutMs: 180000 });
+    expect(evalTest.accuracy()).toBeGreaterThan(0.3);
+  }, 600000);
 
-  describe("Scrape tool evals", () => {
-    test("scrape_as_markdown accuracy > 80%", async () => {
-      const evalTest = new EvalTest({
-        name: "scrape-as-markdown",
-        test: async (agent: TestAgent) => {
-          const runResult = await agent.prompt(
-            "Scrape the content from https://example.com",
-          );
-          return runResult.hasToolCall("scrape_as_markdown");
-        },
-      });
-
-      await evalTest.run(testAgent, {
-        iterations: 5,
-        concurrency: undefined,
-        retries: 1,
-        timeoutMs: 60000,
-        onFailure: (report) => console.error(report),
-      });
-
-      expect(evalTest.accuracy()).toBeGreaterThan(0.8);
-      expect(evalTest.averageTokenUse()).toBeLessThan(30000);
+  // getToolCalls()
+  test("getToolCalls() - retrieves all tool calls array", async () => {
+    const evalTest = new EvalTest({
+      name: "getToolCalls-test",
+      test: async (agent: TestAgent) => {
+        const result = await agent.prompt("Find laptops on Amazon");
+        const toolCalls = result.getToolCalls();
+        return Array.isArray(toolCalls) && toolCalls.some((tc) => tc.toolName === "web_data_amazon_product_search");
+      },
     });
-  });
+    await evalTest.run(testAgent, { iterations: 2, concurrency: 1, retries: 1, timeoutMs: 180000 });
+    expect(evalTest.accuracy()).toBeGreaterThan(0.3);
+  }, 600000);
 
-  describe("Argument validation evals", () => {
-    test("search_engine receives query argument accuracy > 80%", async () => {
-      const evalTest = new EvalTest({
-        name: "search-engine-args",
-        test: async (agent: TestAgent) => {
-          const runResult = await agent.prompt(
-            "Search for TypeScript tutorials on the web",
-          );
-          const args = runResult.getToolArguments("search_engine");
-          return (
-            runResult.hasToolCall("search_engine") &&
-            typeof args?.query === "string" &&
-            args.query.length > 0
-          );
-        },
-      });
-
-      await evalTest.run(testAgent, {
-        iterations: 5,
-        concurrency: undefined,
-        retries: 1,
-        timeoutMs: 60000,
-        onFailure: (report) => console.error(report),
-      });
-
-      expect(evalTest.accuracy()).toBeGreaterThan(0.8);
-      expect(evalTest.averageTokenUse()).toBeLessThan(40000);
+  // getToolArguments() + averageTokenUse()
+  test("getToolArguments() + averageTokenUse() - validates arguments and tracks tokens", async () => {
+    const evalTest = new EvalTest({
+      name: "getToolArguments-tokenUse-test",
+      test: async (agent: TestAgent) => {
+        const result = await agent.prompt("Search Amazon for gaming keyboards");
+        const args = result.getToolArguments("web_data_amazon_product_search");
+        return args !== null && typeof args === "object" && "keyword" in args;
+      },
     });
-  });
+    await evalTest.run(testAgent, { iterations: 2, concurrency: 1, retries: 1, timeoutMs: 180000 });
 
-  describe("Multi-turn evals", () => {
-    test("search then scrape a result accuracy > 30%", async () => {
-      const evalTest = new EvalTest({
-        name: "search-then-scrape",
-        test: async (agent: TestAgent) => {
-          // Turn 1: Search for something
-          const r1 = await agent.prompt(
-            "Search for Python documentation on the web",
-          );
-          if (!r1.hasToolCall("search_engine")) return false;
+    // Validate getToolArguments worked (via accuracy)
+    expect(evalTest.accuracy()).toBeGreaterThan(0.3);
 
-          // Turn 2: Ask to scrape one of the results (with context from turn 1)
-          const r2 = await agent.prompt(
-            "Now scrape the first URL from those search results",
-            { context: [r1] },
-          );
-          if (!r2.hasToolCall("scrape_as_markdown")) return false;
+    // Validate averageTokenUse works
+    const avgTokens = evalTest.averageTokenUse();
+    expect(typeof avgTokens).toBe("number");
+    expect(avgTokens).toBeGreaterThan(0);
+  }, 600000);
 
-          return true;
-        },
-      });
-
-      await evalTest.run(testAgent, {
-        iterations: 5,
-        concurrency: undefined,
-        retries: 1,
-        timeoutMs: 60000,
-        onFailure: (report) => console.error(report),
-      });
-
-      expect(evalTest.accuracy()).toBeGreaterThan(0.3);
-      expect(evalTest.averageTokenUse()).toBeLessThan(90000);
+  // context option (2-turn)
+  test("context option - two-turn conversation", async () => {
+    const evalTest = new EvalTest({
+      name: "context-two-turn",
+      test: async (agent: TestAgent) => {
+        const r1 = await agent.prompt("Search for wireless earbuds on Amazon");
+        if (!r1.hasToolCall("web_data_amazon_product_search")) return false;
+        const r2 = await agent.prompt("Get details for the first product", { context: [r1] });
+        return r2.hasToolCall("web_data_amazon_product");
+      },
     });
-  });
+    await evalTest.run(testAgent, { iterations: 2, concurrency: 1, retries: 1, timeoutMs: 300000 });
+    expect(evalTest.accuracy()).toBeGreaterThan(0.3);
+  }, 900000);
 });

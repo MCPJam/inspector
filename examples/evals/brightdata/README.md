@@ -8,17 +8,20 @@ This example demonstrates how to use the `@mcpjam/sdk` to write unit tests and M
 
 Test the basic functionality of the MCP server via unit tests:
 
-- **Connection + capabilities** - Validates token and tests `getServerCapabilities()`
-- **Invalid token handling** - Verifies bad tokens fail appropriately
-- **Server summaries** - Tests `getServerSummaries()` for server introspection
+- **Connection testing** - Validates token handling and connects to the Bright Data ecommerce MCP server
+- **Server capabilities** - Verifies `getServerCapabilities()` returns proper tool definitions
+- **Server summaries** - Tests `getServerSummaries()` for server introspection (id, status, config)
 - **Ping server** - Tests `pingServer()` for connectivity checks
-- **Tool execution** - Tests `executeTool()` with search_engine
+- **Tool discovery** - Verifies the server exposes all expected ecommerce tools (Amazon, Walmart, eBay, etc.)
+- **Tool execution** - Tests `executeTool()` with `web_data_amazon_product_search`
+
+Ensures that the server's request / response is working, and conforms to the MCP spec.
 
 ### MCP Server Evals (`brightdata-evals.test.ts`)
 
-MCP evals measure how well LLMs understand how to use the MCP server (tool ergonomics).
+MCP evals measures how well the LLM's can understand how use the MCP server (tool ergonomics).
 
-- **Tool choice accuracy** - For a prompt like "Search for AI news", does the LLM call the correct tool?
+- **Tool choice accuracy** - For a prompt like "Search for wireless headphones on Amazon", does the LLM call the correct tool?
 - **Argument accuracy** - Does the LLM extract and pass the right arguments to tools?
 - **Multi-turn conversations** - Can the LLM maintain context across multiple prompts and chain tool calls appropriately?
 - **Token efficiency** - Track token usage to optimize cost and performance
@@ -79,13 +82,13 @@ npm test
 ### Run only unit tests
 
 ```bash
-npm run test:unit
+npm test -- brightdata-unit-test
 ```
 
 ### Run only evals
 
 ```bash
-npm run test:evals
+npm test -- brightdata-evals
 ```
 
 **Tests timing out**: Increase the timeout in `vitest.config.ts` or individual test configurations.
