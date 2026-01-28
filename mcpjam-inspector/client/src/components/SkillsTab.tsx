@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
@@ -7,7 +7,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { Sparkles, RefreshCw, ChevronRight, Plus, Trash2, FolderTree } from "lucide-react";
+import { Sparkles, RefreshCw, Plus, Trash2 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -28,7 +28,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./ui/alert-dialog";
-import { SkillFileTree } from "./skills/SkillFileTree";
+import { SkillsFileTree } from "./skills/SkillsFileTree";
 import { SkillFileViewer } from "./skills/SkillFileViewer";
 
 export function SkillsTab() {
@@ -42,9 +42,9 @@ export function SkillsTab() {
   const [skillToDelete, setSkillToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // File browsing state
-  const [skillFiles, setSkillFiles] = useState<SkillFile[]>([]);
-  const [loadingFiles, setLoadingFiles] = useState(false);
+  // File browsing state - now stores files per skill
+  const [skillFiles, setSkillFiles] = useState<Record<string, SkillFile[]>>({});
+  const [loadingFiles, setLoadingFiles] = useState<Record<string, boolean>>({});
   const [selectedFilePath, setSelectedFilePath] = useState<string>("SKILL.md");
   const [fileContent, setFileContent] = useState<SkillFileContent | null>(null);
   const [loadingFileContent, setLoadingFileContent] = useState(false);
@@ -57,13 +57,8 @@ export function SkillsTab() {
   useEffect(() => {
     if (selectedSkillName) {
       fetchSkillContent(selectedSkillName);
-      fetchSkillFiles(selectedSkillName);
-      // Reset file selection to SKILL.md when skill changes
-      setSelectedFilePath("SKILL.md");
-      setFileContent(null);
     } else {
       setSelectedSkill(null);
-      setSkillFiles([]);
       setSelectedFilePath("SKILL.md");
       setFileContent(null);
     }
@@ -115,18 +110,23 @@ export function SkillsTab() {
     }
   };
 
-  const fetchSkillFiles = async (name: string) => {
-    setLoadingFiles(true);
+  const fetchSkillFilesForSkill = useCallback(async (name: string) => {
+    // Don't refetch if we already have files for this skill
+    if (skillFiles[name] && skillFiles[name].length > 0) {
+      return;
+    }
+
+    setLoadingFiles((prev) => ({ ...prev, [name]: true }));
     try {
       const files = await listSkillFiles(name);
-      setSkillFiles(files);
+      setSkillFiles((prev) => ({ ...prev, [name]: files }));
     } catch (err) {
       console.error("Error fetching skill files:", err);
-      setSkillFiles([]);
+      setSkillFiles((prev) => ({ ...prev, [name]: [] }));
     } finally {
-      setLoadingFiles(false);
+      setLoadingFiles((prev) => ({ ...prev, [name]: false }));
     }
-  };
+  }, [skillFiles]);
 
   const fetchFileContent = async (name: string, filePath: string) => {
     setLoadingFileContent(true);
@@ -158,6 +158,12 @@ export function SkillsTab() {
         setSelectedSkillName("");
         setSelectedSkill(null);
       }
+      // Remove files from cache
+      setSkillFiles((prev) => {
+        const next = { ...prev };
+        delete next[skillToDelete];
+        return next;
+      });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : `Error deleting skill: ${err}`;
@@ -173,20 +179,32 @@ export function SkillsTab() {
     setIsUploadDialogOpen(false);
   };
 
-  const handleFileSelect = (path: string) => {
-    setSelectedFilePath(path);
+  const handleSelectSkill = (name: string) => {
+    setSelectedSkillName(name);
+    setSelectedFilePath("SKILL.md");
+    setFileContent(null);
+  };
+
+  const handleSelectFile = (skillName: string, filePath: string) => {
+    if (skillName !== selectedSkillName) {
+      setSelectedSkillName(skillName);
+    }
+    setSelectedFilePath(filePath);
+  };
+
+  const handleExpandSkill = (name: string) => {
+    fetchSkillFilesForSkill(name);
   };
 
   const handleLinkClick = (path: string) => {
-    // Handle relative links in markdown - navigate to that file
     setSelectedFilePath(path);
   };
 
   return (
     <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Left Panel - Skills List */}
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={35}>
+        {/* Left Panel - Unified Skills & Files Tree */}
+        <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
           <div className="h-full flex flex-col border-r border-border bg-background">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
@@ -219,7 +237,7 @@ export function SkillsTab() {
               </div>
             </div>
 
-            {/* Skills List */}
+            {/* Unified Tree */}
             <div className="flex-1 overflow-hidden">
               <ScrollArea className="h-full">
                 <div className="p-2">
@@ -230,9 +248,6 @@ export function SkillsTab() {
                       </div>
                       <p className="text-xs text-muted-foreground font-semibold mb-1">
                         Loading skills...
-                      </p>
-                      <p className="text-xs text-muted-foreground/70">
-                        Fetching available skills from .mcpjam/skills
                       </p>
                     </div>
                   ) : skills.length === 0 ? (
@@ -250,38 +265,17 @@ export function SkillsTab() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="space-y-1">
-                      {skills.map((skill) => {
-                        const isSelected = selectedSkillName === skill.name;
-                        return (
-                          <div
-                            key={skill.name}
-                            className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                              isSelected
-                                ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                : "hover:shadow-sm"
-                            }`}
-                            onClick={() => setSelectedSkillName(skill.name)}
-                          >
-                            <div className="flex items-start gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                    {skill.name}
-                                  </code>
-                                </div>
-                                {skill.description && (
-                                  <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                    {skill.description}
-                                  </p>
-                                )}
-                              </div>
-                              <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <SkillsFileTree
+                      skills={skills}
+                      skillFiles={skillFiles}
+                      loadingSkills={fetchingSkills}
+                      loadingFiles={loadingFiles}
+                      selectedSkillName={selectedSkillName}
+                      selectedFilePath={selectedFilePath}
+                      onSelectSkill={handleSelectSkill}
+                      onSelectFile={handleSelectFile}
+                      onExpandSkill={handleExpandSkill}
+                    />
                   )}
                 </div>
               </ScrollArea>
@@ -291,39 +285,8 @@ export function SkillsTab() {
 
         <ResizableHandle withHandle />
 
-        {/* Middle Panel - File Tree */}
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={35}>
-          <div className="h-full flex flex-col border-r border-border bg-background">
-            {/* Header */}
-            <div className="flex items-center gap-3 px-4 py-4 border-b border-border bg-background">
-              <FolderTree className="h-3 w-3 text-muted-foreground" />
-              <h2 className="text-xs font-semibold text-foreground">Files</h2>
-            </div>
-
-            {/* File Tree */}
-            <div className="flex-1 overflow-hidden">
-              <ScrollArea className="h-full">
-                {selectedSkillName ? (
-                  <SkillFileTree
-                    files={skillFiles}
-                    selectedPath={selectedFilePath}
-                    onSelectFile={handleFileSelect}
-                    loading={loadingFiles}
-                  />
-                ) : (
-                  <div className="p-4 text-xs text-muted-foreground text-center">
-                    Select a skill to view files
-                  </div>
-                )}
-              </ScrollArea>
-            </div>
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
         {/* Right Panel - File Content */}
-        <ResizablePanel defaultSize={60} minSize={40}>
+        <ResizablePanel defaultSize={75} minSize={50}>
           <div className="h-full flex flex-col bg-background">
             {selectedSkillName && selectedSkill ? (
               <>
@@ -333,8 +296,8 @@ export function SkillsTab() {
                     <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
                       {selectedSkill.name}
                     </code>
-                    <span className="text-xs text-muted-foreground">
-                      {selectedSkill.description}
+                    <span className="text-xs text-muted-foreground truncate">
+                      {selectedFilePath}
                     </span>
                   </div>
                   <Button

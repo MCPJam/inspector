@@ -204,6 +204,11 @@ export function ChatInput({
               key={`skill-${index}`}
               skillResult={skillResult}
               onRemove={() => removeSkillResult(index)}
+              onUpdate={(updatedSkill) => {
+                const newSkillResults = [...skillResults];
+                newSkillResults[index] = updatedSkill;
+                onChangeSkillResults(newSkillResults);
+              }}
             />
           ))}
         </div>
