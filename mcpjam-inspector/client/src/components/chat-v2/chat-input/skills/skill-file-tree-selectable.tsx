@@ -46,7 +46,7 @@ function getFileIcon(file: SkillFile) {
 
   // Images
   if (mime.startsWith("image/")) {
-    return <Image className="h-3 w-3 text-green-500" />;
+    return <Image className="h-3 w-3 text-success" />;
   }
 
   // Code files
@@ -54,12 +54,12 @@ function getFileIcon(file: SkillFile) {
     [".js", ".ts", ".tsx", ".jsx", ".py", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".sh", ".bash"].includes(ext) ||
     mime.startsWith("text/x-")
   ) {
-    return <FileCode className="h-3 w-3 text-blue-500" />;
+    return <FileCode className="h-3 w-3 text-info" />;
   }
 
   // Markdown files
   if ([".md", ".markdown"].includes(ext)) {
-    return <FileText className="h-3 w-3 text-yellow-500" />;
+    return <FileText className="h-3 w-3 text-warning" />;
   }
 
   // Default file icon
@@ -136,9 +136,9 @@ function FileNode({
         {/* Icon */}
         {isDirectory ? (
           isExpanded ? (
-            <FolderOpen className="h-3 w-3 text-yellow-600 flex-shrink-0" />
+            <FolderOpen className="h-3 w-3 text-warning flex-shrink-0" />
           ) : (
-            <Folder className="h-3 w-3 text-yellow-600 flex-shrink-0" />
+            <Folder className="h-3 w-3 text-warning flex-shrink-0" />
           )
         ) : (
           getFileIcon(file)

@@ -57,18 +57,18 @@ function getFileIcon(file: SkillFile) {
   const mime = file.mimeType || "";
 
   if (mime.startsWith("image/")) {
-    return <Image className="h-3.5 w-3.5 text-green-500" />;
+    return <Image className="h-3.5 w-3.5 text-success" />;
   }
 
   if (
     [".js", ".ts", ".tsx", ".jsx", ".py", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".sh", ".bash"].includes(ext) ||
     mime.startsWith("text/x-")
   ) {
-    return <FileCode className="h-3.5 w-3.5 text-blue-500" />;
+    return <FileCode className="h-3.5 w-3.5 text-info" />;
   }
 
   if ([".md", ".markdown"].includes(ext)) {
-    return <FileText className="h-3.5 w-3.5 text-yellow-500" />;
+    return <FileText className="h-3.5 w-3.5 text-warning" />;
   }
 
   return <File className="h-3.5 w-3.5 text-muted-foreground" />;
@@ -126,9 +126,9 @@ function FileNode({
 
         {isDirectory ? (
           isExpanded ? (
-            <FolderOpen className="h-3.5 w-3.5 text-yellow-600 flex-shrink-0" />
+            <FolderOpen className="h-3.5 w-3.5 text-warning flex-shrink-0" />
           ) : (
-            <Folder className="h-3.5 w-3.5 text-yellow-600 flex-shrink-0" />
+            <Folder className="h-3.5 w-3.5 text-warning flex-shrink-0" />
           )
         ) : (
           getFileIcon(file)
@@ -225,7 +225,7 @@ function SkillNode({
           <ChevronRight className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
         )}
 
-        <SquareSlash className="h-3.5 w-3.5 text-purple-500 flex-shrink-0" />
+        <SquareSlash className="h-3.5 w-3.5 text-primary flex-shrink-0" />
 
         <span className={cn("truncate font-medium", isSelected && "text-foreground")}>
           {skill.name}
