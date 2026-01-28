@@ -51,6 +51,17 @@ function getPrimarySkillsDir(): string {
 }
 
 /**
+ * Format skill path for display - use ~ for home directory paths
+ */
+function formatDisplayPath(fullPath: string): string {
+  const homeDir = os.homedir();
+  if (fullPath.startsWith(homeDir)) {
+    return fullPath.replace(homeDir, "~");
+  }
+  return path.relative(process.cwd(), fullPath);
+}
+
+/**
  * Check if a directory exists
  */
 async function directoryExists(dirPath: string): Promise<boolean> {
@@ -123,9 +134,8 @@ skills.post("/list", async (c) => {
 
         try {
           const fileContent = await fs.readFile(skillFilePath, "utf-8");
-          // Include source directory in the path for clarity
-          const relativePath = path.relative(process.cwd(), path.join(skillsDir, skillPath));
-          const skill = parseSkillFile(fileContent, relativePath);
+          const displayPath = formatDisplayPath(path.join(skillsDir, skillPath));
+          const skill = parseSkillFile(fileContent, displayPath);
 
           if (skill && !seenNames.has(skill.name)) {
             seenNames.add(skill.name);
@@ -181,9 +191,8 @@ skills.post("/get", async (c) => {
 
         try {
           const fileContent = await fs.readFile(skillFilePath, "utf-8");
-          // Include source directory in the path for clarity
-          const relativePath = path.relative(process.cwd(), path.join(skillsDir, skillPath));
-          const skill = parseSkillFile(fileContent, relativePath);
+          const displayPath = formatDisplayPath(path.join(skillsDir, skillPath));
+          const skill = parseSkillFile(fileContent, displayPath);
 
           if (skill && skill.name === name) {
             return c.json({ skill });

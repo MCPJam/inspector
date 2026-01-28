@@ -35,6 +35,17 @@ function getSkillsDirs(): string[] {
 }
 
 /**
+ * Format skill path for display - use ~ for home directory paths
+ */
+function formatDisplayPath(fullPath: string): string {
+  const homeDir = os.homedir();
+  if (fullPath.startsWith(homeDir)) {
+    return fullPath.replace(homeDir, "~");
+  }
+  return path.relative(process.cwd(), fullPath);
+}
+
+/**
  * Check if a directory exists
  */
 async function directoryExists(dirPath: string): Promise<boolean> {
@@ -69,11 +80,8 @@ async function listSkillsMetadata(): Promise<SkillListItem[]> {
 
       try {
         const fileContent = await fs.readFile(skillFilePath, "utf-8");
-        const relativePath = path.relative(
-          process.cwd(),
-          path.join(skillsDir, skillPath)
-        );
-        const skill = parseSkillFile(fileContent, relativePath);
+        const displayPath = formatDisplayPath(path.join(skillsDir, skillPath));
+        const skill = parseSkillFile(fileContent, displayPath);
 
         if (skill && !seenNames.has(skill.name)) {
           seenNames.add(skill.name);
@@ -136,9 +144,9 @@ async function getSkillContent(name: string): Promise<Skill | null> {
 
   const skillFilePath = path.join(skillDir, "SKILL.md");
   const fileContent = await fs.readFile(skillFilePath, "utf-8");
-  const relativePath = path.relative(process.cwd(), skillDir);
+  const displayPath = formatDisplayPath(skillDir);
 
-  return parseSkillFile(fileContent, relativePath);
+  return parseSkillFile(fileContent, displayPath);
 }
 
 /**
