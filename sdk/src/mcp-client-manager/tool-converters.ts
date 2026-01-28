@@ -133,50 +133,48 @@ export function isChatGPTAppTool(
 }
 
 /**
- * Removes only the _meta field from a tool result (shallow).
+ * Removes only the _meta field from a tool result (shallow copy).
  *
  * @param result - The full tool call result
- * @returns The result without _meta
+ * @returns A shallow copy of the result without _meta
  */
 export function scrubMetaFromToolResult(result: CallToolResult): CallToolResult {
-  if (result && (result as Record<string, unknown>)._meta) {
-    delete (result as Record<string, unknown>)._meta;
+  if (!result) return result;
+  const copy = { ...result };
+  if ((copy as Record<string, unknown>)._meta) {
+    delete (copy as Record<string, unknown>)._meta;
   }
-  return result;
+  return copy;
 }
 
 /**
- * Removes only structuredContent from a tool result (shallow).
+ * Removes only structuredContent from a tool result (shallow copy).
  *
  * @param result - The full tool call result
- * @returns The result without structuredContent
+ * @returns A shallow copy of the result without structuredContent
  */
 export function scrubStructuredContentFromToolResult(
   result: CallToolResult
 ): CallToolResult {
-  if (result && (result as Record<string, unknown>).structuredContent) {
-    delete (result as Record<string, unknown>).structuredContent;
+  if (!result) return result;
+  const copy = { ...result };
+  if ((copy as Record<string, unknown>).structuredContent) {
+    delete (copy as Record<string, unknown>).structuredContent;
   }
-  return result;
+  return copy;
 }
 
 /**
  * Returns a shallow copy of a CallToolResult with _meta and structuredContent removed.
- * If neither field is present, returns the original object unchanged.
  *
  * @param result - The full tool call result
- * @returns A scrubbed copy without _meta and structuredContent
+ * @returns A scrubbed shallow copy without _meta and structuredContent
  */
 export function scrubMetaAndStructuredContentFromToolResult(
   result: CallToolResult
 ): CallToolResult {
-  if(result._meta) {
-    delete result._meta;
-  }
-  if(result.structuredContent) {
-    delete result.structuredContent;
-  }
-  return result;
+  if (!result) return result;
+  return scrubMetaFromToolResult(scrubStructuredContentFromToolResult(result));
 }
 
 /**
