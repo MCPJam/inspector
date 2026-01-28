@@ -651,7 +651,6 @@ export function PlaygroundMain({
                     statusCode={errorMessage.statusCode}
                     isRetryable={errorMessage.isRetryable}
                     isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
-                    retryAfter={errorMessage.retryAfter}
                     onResetChat={resetChat}
                   />
                 </div>

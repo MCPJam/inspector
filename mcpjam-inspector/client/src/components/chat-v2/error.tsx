@@ -1,6 +1,6 @@
 import { CircleAlert, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -20,7 +20,6 @@ interface ErrorBoxProps {
   statusCode?: number;
   isRetryable?: boolean;
   isMCPJamPlatformError?: boolean;
-  retryAfter?: number;
   onRetry?: () => void;
 }
 
@@ -34,41 +33,6 @@ const parseErrorDetails = (details: string | undefined) => {
   }
 };
 
-function CountdownTimer({ retryAfterMs, onComplete }: { retryAfterMs: number; onComplete?: () => void }) {
-  const [remainingMs, setRemainingMs] = useState(retryAfterMs);
-
-  useEffect(() => {
-    if (remainingMs <= 0) {
-      onComplete?.();
-      return;
-    }
-
-    const timer = setInterval(() => {
-      setRemainingMs(prev => {
-        const next = prev - 1000;
-        if (next <= 0) {
-          onComplete?.();
-          return 0;
-        }
-        return next;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [remainingMs, onComplete]);
-
-  const minutes = Math.floor(remainingMs / 60000);
-  const seconds = Math.floor((remainingMs % 60000) / 1000);
-
-  if (remainingMs <= 0) return null;
-
-  return (
-    <span className="font-mono text-xs">
-      ({minutes}:{seconds.toString().padStart(2, '0')} remaining)
-    </span>
-  );
-}
-
 export function ErrorBox({
   message,
   errorDetails,
@@ -77,11 +41,9 @@ export function ErrorBox({
   statusCode,
   isRetryable,
   isMCPJamPlatformError,
-  retryAfter,
   onRetry,
 }: ErrorBoxProps) {
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
-  const [canRetry, setCanRetry] = useState(!retryAfter || retryAfter <= 0);
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
   // Platform errors use amber styling to indicate "not your fault"
@@ -122,17 +84,9 @@ export function ErrorBox({
               This is a temporary issue on our end, not something you did wrong.
             </p>
           )}
-          {retryAfter && retryAfter > 0 && (
-            <div className="mt-1">
-              <CountdownTimer
-                retryAfterMs={retryAfter}
-                onComplete={() => setCanRetry(true)}
-              />
-            </div>
-          )}
         </div>
         <div className="flex items-center gap-2 ml-auto flex-shrink-0">
-          {isRetryable && onRetry && canRetry && (
+          {isRetryable && onRetry && (
             <Button
               type="button"
               variant="outline"

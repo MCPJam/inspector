@@ -580,7 +580,6 @@ export function ChatTabV2({
                           statusCode={errorMessage.statusCode}
                           isRetryable={errorMessage.isRetryable}
                           isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
-                          retryAfter={errorMessage.retryAfter}
                           onResetChat={baseResetChat}
                         />
                       </div>

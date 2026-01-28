@@ -142,7 +142,6 @@ export interface FormattedError {
   statusCode?: number;
   isRetryable?: boolean;
   isMCPJamPlatformError?: boolean;
-  retryAfter?: number;
 }
 
 const MCPJAM_PLATFORM_CODES = ['mcpjam_rate_limit', 'mcpjam_api_error', 'mcpjam_config_error'];
@@ -178,7 +177,6 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         statusCode: parsed.statusCode,
         isRetryable: parsed.isRetryable,
         isMCPJamPlatformError: code ? MCPJAM_PLATFORM_CODES.includes(code) : false,
-        retryAfter: parsed.retryAfter
       };
     }
   } catch {
