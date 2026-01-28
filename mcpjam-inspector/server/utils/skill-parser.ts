@@ -1,6 +1,7 @@
 import matter from "gray-matter";
 import fs from "fs/promises";
 import path from "path";
+import logger from "@/utils/logger";
 import {
   isValidSkillName,
   type Skill,
@@ -201,7 +202,7 @@ export function parseSkillFile(
 
     // Validate required fields
     if (!frontmatter.name || typeof frontmatter.name !== "string") {
-      console.warn(`Skill at ${skillPath} missing required 'name' field`);
+      logger.warn(`Skill at ${skillPath} missing required 'name' field`);
       return null;
     }
 
@@ -209,7 +210,7 @@ export function parseSkillFile(
       !frontmatter.description ||
       typeof frontmatter.description !== "string"
     ) {
-      console.warn(
+      logger.warn(
         `Skill at ${skillPath} missing required 'description' field`,
       );
       return null;
@@ -217,7 +218,7 @@ export function parseSkillFile(
 
     // Validate description length per Agent Skills spec (max 1024 characters)
     if (frontmatter.description.length > 1024) {
-      console.warn(
+      logger.warn(
         `Skill at ${skillPath} has description exceeding 1024 characters`,
       );
       return null;
@@ -225,7 +226,7 @@ export function parseSkillFile(
 
     // Validate name format
     if (!isValidSkillName(frontmatter.name)) {
-      console.warn(
+      logger.warn(
         `Skill at ${skillPath} has invalid name format: ${frontmatter.name}`,
       );
       return null;
@@ -238,7 +239,7 @@ export function parseSkillFile(
       path: skillPath,
     };
   } catch (error) {
-    console.error(`Error parsing skill file at ${skillPath}:`, error);
+    logger.error(`Error parsing skill file at ${skillPath}:`, error);
     return null;
   }
 }
