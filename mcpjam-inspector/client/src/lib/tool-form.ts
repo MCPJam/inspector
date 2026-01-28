@@ -34,6 +34,50 @@ function resolveRef(ref: string, rootSchema: any): any | null {
 }
 
 /**
+ * Resolve the effective type of a property, handling composition keywords.
+ * Looks inside anyOf/oneOf/allOf/$ref when there's no top-level `type`.
+ */
+function resolvePropertyType(prop: any, rootSchema: any): string {
+  // Direct type
+  if (prop.type) {
+    // Handle array form: ["number", "null"] → "number"
+    if (Array.isArray(prop.type)) {
+      return prop.type.find((t: string) => t !== "null") || "string";
+    }
+    return prop.type;
+  }
+
+  // $ref — resolve and recurse
+  if (prop.$ref) {
+    const resolved = resolveRef(prop.$ref, rootSchema);
+    if (resolved) return resolvePropertyType(resolved, rootSchema);
+  }
+
+  // anyOf / oneOf — find first non-null type
+  const options = prop.anyOf || prop.oneOf;
+  if (Array.isArray(options)) {
+    for (const opt of options) {
+      if (opt.type === "null") continue;
+      if (opt.$ref) {
+        const resolved = resolveRef(opt.$ref, rootSchema);
+        if (resolved) return resolvePropertyType(resolved, rootSchema);
+      }
+      if (opt.type) return opt.type;
+    }
+  }
+
+  // allOf — find first entry with a concrete type
+  if (Array.isArray(prop.allOf)) {
+    for (const sub of prop.allOf) {
+      const t = resolvePropertyType(sub, rootSchema);
+      if (t !== "string") return t;
+    }
+  }
+
+  return "string";
+}
+
+/**
  * Extract enum values from oneOf/anyOf with const pattern.
  * This is commonly used by some Python MCP servers for enum types.
  * Returns { values, labels } where labels may have custom titles.
@@ -136,7 +180,7 @@ export function generateFormFieldsFromSchema(schema: any): FormField[] {
       enumLabels = extracted.labels;
     }
 
-    const fieldType = enumValues ? "enum" : prop.type || "string";
+    const fieldType = enumValues ? "enum" : resolvePropertyType(prop, schema);
     const isRequired = requiredFields.includes(key);
 
     // Start with type-based default value
