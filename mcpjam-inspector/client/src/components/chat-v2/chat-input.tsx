@@ -1,10 +1,18 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, type ChangeEvent } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, Square, Paperclip } from "lucide-react";
+import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
+import {
+  type FileAttachment,
+  validateFile,
+  createFileAttachment,
+  revokeFileAttachmentUrls,
+  getFileInputAccept,
+} from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
   Tooltip,
   TooltipContent,
@@ -68,6 +76,10 @@ interface ChatInputProps {
   onChangeMcpPromptResults: (mcpPromptResults: MCPPromptResult[]) => void;
   /** When true, shows icons only for a more compact layout */
   compact?: boolean;
+  /** File attachments for the message */
+  fileAttachments?: FileAttachment[];
+  /** Callback when file attachments change */
+  onChangeFileAttachments?: (files: FileAttachment[]) => void;
 }
 
 export function ChatInput({
@@ -99,14 +111,18 @@ export function ChatInput({
   mcpPromptResults,
   onChangeMcpPromptResults,
   compact = false,
+  fileAttachments = [],
+  onChangeFileAttachments,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [caretIndex, setCaretIndex] = useState(0);
   const [mcpPromptPopoverKeyTrigger, setMcpPromptPopoverKeyTrigger] = useState<
     string | null
   >(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const caret = useTextareaCaretPosition(
     textareaRef,
@@ -134,6 +150,61 @@ export function ChatInput({
     onChangeMcpPromptResults(mcpPromptResults.filter((_, i) => i !== index));
   };
 
+  // File attachment handlers
+  const handleFileInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (!files || files.length === 0 || !onChangeFileAttachments) return;
+
+      setFileError(null);
+      const newAttachments: FileAttachment[] = [];
+      const errors: string[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const validation = validateFile(file);
+
+        if (validation.valid) {
+          newAttachments.push(createFileAttachment(file));
+        } else {
+          errors.push(`${file.name}: ${validation.error}`);
+        }
+      }
+
+      if (newAttachments.length > 0) {
+        onChangeFileAttachments([...fileAttachments, ...newAttachments]);
+      }
+
+      if (errors.length > 0) {
+        setFileError(errors.join("\n"));
+        // Clear error after 5 seconds
+        setTimeout(() => setFileError(null), 5000);
+      }
+
+      // Reset input so the same file can be selected again
+      event.target.value = "";
+    },
+    [fileAttachments, onChangeFileAttachments],
+  );
+
+  const removeFileAttachment = useCallback(
+    (id: string) => {
+      if (!onChangeFileAttachments) return;
+
+      const attachment = fileAttachments.find((a) => a.id === id);
+      if (attachment) {
+        revokeFileAttachmentUrls([attachment]);
+      }
+
+      onChangeFileAttachments(fileAttachments.filter((a) => a.id !== id));
+    },
+    [fileAttachments, onChangeFileAttachments],
+  );
+
+  const openFilePicker = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const currentCaretIndex = event.currentTarget.selectionStart;
     if (
@@ -152,12 +223,9 @@ export function ChatInput({
     ) {
       const trimmed = value.trim();
       event.preventDefault();
-      if (
-        (!trimmed && mcpPromptResults.length === 0) ||
-        disabled ||
-        submitDisabled ||
-        isLoading
-      ) {
+      const hasContent =
+        trimmed || mcpPromptResults.length > 0 || fileAttachments.length > 0;
+      if (!hasContent || disabled || submitDisabled || isLoading) {
         return;
       }
       formRef.current?.requestSubmit();
@@ -174,6 +242,23 @@ export function ChatInput({
               key={index}
               mcpPromptResult={mcpPromptResult}
               onRemove={() => removeMCPPromptResult(index)}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderFileAttachmentCards = () => {
+    if (fileAttachments.length === 0) return null;
+    return (
+      <div className="px-4 pt-1 pb-0.5">
+        <div className="flex flex-wrap gap-1.5">
+          {fileAttachments.map((attachment) => (
+            <FileAttachmentCard
+              key={attachment.id}
+              attachment={attachment}
+              onRemove={() => removeFileAttachment(attachment.id)}
             />
           ))}
         </div>
@@ -200,8 +285,31 @@ export function ChatInput({
           caretIndex={caretIndex}
         />
 
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept={getFileInputAccept()}
+          onChange={handleFileInputChange}
+          className="hidden"
+          aria-hidden="true"
+        />
+
+        {/* File Attachment Cards */}
+        {renderFileAttachmentCards()}
+
         {/* MCP Prompts Cards */}
         {renderMcpPromptResultCards()}
+
+        {/* File validation error */}
+        {fileError && (
+          <div className="px-4 py-1">
+            <p className="text-xs text-destructive whitespace-pre-line">
+              {fileError}
+            </p>
+          </div>
+        )}
 
         <TextareaAutosize
           ref={textareaRef}
@@ -227,6 +335,23 @@ export function ChatInput({
 
         <div className="flex items-center justify-between gap-2 px-2 flex-wrap min-w-0">
           <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
+            {onChangeFileAttachments && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-full"
+                    onClick={openFilePicker}
+                    disabled={disabled}
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Attach files</TooltipContent>
+              </Tooltip>
+            )}
             <ModelSelector
               currentModel={currentModel}
               availableModels={availableModels}
@@ -322,14 +447,18 @@ export function ChatInput({
                     size="icon"
                     className={cn(
                       "size-[34px] rounded-full transition-colors",
-                      (value.trim() || mcpPromptResults.length > 0) &&
+                      (value.trim() ||
+                        mcpPromptResults.length > 0 ||
+                        fileAttachments.length > 0) &&
                         !disabled &&
                         !submitDisabled
                         ? "bg-primary text-primary-foreground hover:bg-primary/90"
                         : "bg-muted text-muted-foreground cursor-not-allowed",
                     )}
                     disabled={
-                      (!value.trim() && mcpPromptResults.length === 0) ||
+                      (!value.trim() &&
+                        mcpPromptResults.length === 0 &&
+                        fileAttachments.length === 0) ||
                       disabled ||
                       submitDisabled
                     }
