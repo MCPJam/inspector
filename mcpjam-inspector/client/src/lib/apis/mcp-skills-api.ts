@@ -61,7 +61,7 @@ export async function getSkill(name: string): Promise<Skill> {
 }
 
 /**
- * Upload/create a new skill
+ * Upload/create a new skill (legacy - JSON body)
  */
 export async function uploadSkill(data: {
   name: string;
@@ -72,6 +72,44 @@ export async function uploadSkill(data: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `Upload skill failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return body.skill as Skill;
+}
+
+/**
+ * Upload a skill folder with multiple files
+ */
+export async function uploadSkillFolder(
+  files: File[],
+  skillName: string
+): Promise<Skill> {
+  const formData = new FormData();
+  formData.append("skillName", skillName);
+
+  for (const file of files) {
+    // Use webkitRelativePath if available, otherwise just the filename
+    const relativePath = (file as any).webkitRelativePath || file.name;
+    // Strip the root folder name from the path to get relative path within skill
+    const parts = relativePath.split("/");
+    const pathWithinSkill = parts.length > 1 ? parts.slice(1).join("/") : parts[0];
+
+    formData.append("files", file, pathWithinSkill);
+  }
+
+  const res = await authFetch("/api/mcp/skills/upload-folder", {
+    method: "POST",
+    body: formData,
   });
 
   let body: any = null;

@@ -4,7 +4,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/chat-utils";
-import { SquareSlash, Loader2, Plus } from "lucide-react";
+import { SquareSlash, Loader2 } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import { listSkills, getSkill } from "@/lib/apis/mcp-skills-api";
 import type { SkillListItem, SkillResult } from "./skill-types";
@@ -100,18 +100,8 @@ export function SkillsPopoverSection({
   return (
     <div>
       {/* Section header */}
-      <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground border-t border-border mt-1 pt-2 flex items-center justify-between">
+      <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground border-t border-border mt-1 pt-2">
         <span>SKILLS</span>
-        {onOpenUploadDialog && (
-          <button
-            type="button"
-            onClick={onOpenUploadDialog}
-            className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
-          >
-            <Plus size={10} />
-            <span>Add</span>
-          </button>
-        )}
       </div>
 
       {/* Skills list */}

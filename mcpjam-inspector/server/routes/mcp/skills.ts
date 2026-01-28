@@ -302,6 +302,148 @@ skills.post("/upload", async (c) => {
 });
 
 /**
+ * Upload a skill folder with multiple files (multipart/form-data)
+ */
+skills.post("/upload-folder", async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const skillName = formData.get("skillName") as string | null;
+    const files = formData.getAll("files") as File[];
+
+    if (!skillName) {
+      return c.json({ success: false, error: "skillName is required" }, 400);
+    }
+
+    if (!files || files.length === 0) {
+      return c.json({ success: false, error: "No files uploaded" }, 400);
+    }
+
+    // Validate skill name format
+    if (!isValidSkillName(skillName)) {
+      return c.json(
+        {
+          success: false,
+          error:
+            "Skill name must contain only lowercase letters, numbers, and hyphens",
+        },
+        400,
+      );
+    }
+
+    // Find SKILL.md file
+    const skillMdFile = files.find(
+      (f) => f.name === "SKILL.md" || f.name.endsWith("/SKILL.md")
+    );
+
+    if (!skillMdFile) {
+      return c.json(
+        { success: false, error: "No SKILL.md file found in uploaded files" },
+        400,
+      );
+    }
+
+    // Parse and validate SKILL.md
+    const skillMdContent = await skillMdFile.text();
+    const parsedSkill = parseSkillFile(skillMdContent, skillName);
+
+    if (!parsedSkill) {
+      return c.json(
+        {
+          success: false,
+          error:
+            "Invalid SKILL.md format. Must contain valid frontmatter with 'name' and 'description' fields.",
+        },
+        400,
+      );
+    }
+
+    // Verify the name in SKILL.md matches the provided skillName
+    if (parsedSkill.name !== skillName) {
+      return c.json(
+        {
+          success: false,
+          error: `Skill name mismatch: provided "${skillName}" but SKILL.md contains "${parsedSkill.name}"`,
+        },
+        400,
+      );
+    }
+
+    // Check if skill already exists in any directory
+    const skillsDirs = getSkillsDirs();
+    for (const dir of skillsDirs) {
+      if (await directoryExists(dir)) {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const skillFilePath = path.join(dir, entry.name, "SKILL.md");
+          try {
+            const fileContent = await fs.readFile(skillFilePath, "utf-8");
+            const existingSkill = parseSkillFile(fileContent, entry.name);
+            if (existingSkill && existingSkill.name === skillName) {
+              return c.json(
+                { success: false, error: `Skill '${skillName}' already exists` },
+                409,
+              );
+            }
+          } catch {
+            // Continue
+          }
+        }
+      }
+    }
+
+    // Use primary skills directory for new uploads
+    const skillsDir = getPrimarySkillsDir();
+    const skillDir = path.join(skillsDir, skillName);
+
+    // Create skills directory if it doesn't exist
+    await fs.mkdir(skillsDir, { recursive: true });
+
+    // Create skill directory
+    await fs.mkdir(skillDir, { recursive: true });
+
+    // Write all files
+    for (const file of files) {
+      const fileName = file.name;
+
+      // Security: Validate path doesn't try to escape skill directory
+      if (!isPathWithinDirectory(skillDir, fileName)) {
+        logger.warn(`Skipping file with invalid path: ${fileName}`);
+        continue;
+      }
+
+      const filePath = path.join(skillDir, fileName);
+      const fileDir = path.dirname(filePath);
+
+      // Create subdirectories if needed
+      await fs.mkdir(fileDir, { recursive: true });
+
+      // Write file content
+      const buffer = Buffer.from(await file.arrayBuffer());
+      await fs.writeFile(filePath, buffer);
+    }
+
+    const skill: Skill = {
+      name: parsedSkill.name,
+      description: parsedSkill.description,
+      content: parsedSkill.content,
+      path: `~/.mcpjam/skills/${skillName}`,
+    };
+
+    return c.json({ success: true, skill });
+  } catch (error) {
+    logger.error("Error uploading skill folder", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+/**
  * Delete a skill by name
  */
 skills.post("/delete", async (c) => {

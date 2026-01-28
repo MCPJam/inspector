@@ -220,7 +220,7 @@ export function SkillsTab() {
                   onClick={() => setIsUploadDialogOpen(true)}
                   variant="ghost"
                   size="sm"
-                  title="Create new skill"
+                  title="Upload skill"
                 >
                   <Plus className="h-3 w-3 cursor-pointer" />
                 </Button>
@@ -261,7 +261,7 @@ export function SkillsTab() {
                         onClick={() => setIsUploadDialogOpen(true)}
                       >
                         <Plus className="h-3 w-3 mr-2" />
-                        Create your first skill
+                        Upload your first skill
                       </Button>
                     </div>
                   ) : (
