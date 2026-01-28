@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install SDK dependencies
+        run: npm --prefix ../sdk ci
+
       - name: Run unit tests
         run: |
           echo "🧪 Running unit tests..."
