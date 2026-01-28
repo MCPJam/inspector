@@ -117,8 +117,14 @@ export function PromptsPopover({
     };
   }, [selectedServers]);
 
-  // Fetch skills count for navigation
+  // Fetch skills count for navigation (only when skills UI is enabled)
   useEffect(() => {
+    // If skills UI is disabled, reset count to 0
+    if (!onSkillSelected) {
+      setSkillsCount(0);
+      return;
+    }
+
     let active = true;
     (async () => {
       try {
@@ -132,7 +138,7 @@ export function PromptsPopover({
     return () => {
       active = false;
     };
-  }, []);
+  }, [onSkillSelected]);
 
   // Total items for navigation (prompts + skills)
   const totalItems = promptListItems.length + skillsCount;

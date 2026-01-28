@@ -104,10 +104,11 @@ function FileNode({
   const isExpanded = expandedPaths.has(file.path);
   const isSelected = selectedPaths.has(file.path);
   const isMainFile = file.name === "SKILL.md";
-  const isDisabled = disabledPaths.has(file.name);
+  const isDisabled = disabledPaths.has(file.path);
   const isLoading = loadingPath === file.path;
 
   const handleClick = () => {
+    if (isDisabled) return;
     if (isDirectory) {
       toggleExpanded(file.path);
     } else {
@@ -130,6 +131,7 @@ function FileNode({
         )}
         style={{ paddingLeft: `${depth * 10 + 4}px` }}
         onClick={handleClick}
+        aria-disabled={isDisabled}
       >
         {/* Selection indicator / Expand toggle */}
         {isDirectory ? (

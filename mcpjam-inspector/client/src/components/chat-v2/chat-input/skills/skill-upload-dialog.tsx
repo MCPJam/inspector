@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { uploadSkillFolder } from "@/lib/apis/mcp-skills-api";
 import type { SkillResult } from "./skill-types";
+import { isValidSkillName } from "../../../../../../shared/skill-types";
 
 interface SkillUploadDialogProps {
   open: boolean;
@@ -39,13 +40,6 @@ function parseSkillMdFrontmatter(content: string): ParsedSkillInfo | null {
     name: nameMatch[1].trim(),
     description: descMatch[1].trim(),
   };
-}
-
-/**
- * Validates skill name format: lowercase letters, numbers, hyphens only
- */
-function isValidSkillName(name: string): boolean {
-  return /^[a-z0-9-]+$/.test(name);
 }
 
 export function SkillUploadDialog({
@@ -102,7 +96,7 @@ export function SkillUploadDialog({
 
       if (!isValidSkillName(parsed.name)) {
         setError(
-          `Invalid skill name "${parsed.name}". Name must contain only lowercase letters, numbers, and hyphens.`,
+          `Invalid skill name "${parsed.name}". Name must be 1-64 characters, contain only lowercase letters, numbers, and hyphens, must not start or end with a hyphen, and must not contain consecutive hyphens.`,
         );
         return;
       }

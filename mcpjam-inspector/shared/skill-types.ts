@@ -1,6 +1,26 @@
 // Skill types - shared between client and server
 
 /**
+ * Skill name validation constants
+ */
+export const SKILL_NAME_MIN_LENGTH = 1;
+export const SKILL_NAME_MAX_LENGTH = 64;
+
+/**
+ * Validates skill name format per Agent Skills spec:
+ * - Lowercase letters, numbers, hyphens only
+ * - Must not start or end with hyphen
+ * - Must not contain consecutive hyphens
+ * - 1-64 characters
+ */
+export function isValidSkillName(name: string): boolean {
+  if (name.length < SKILL_NAME_MIN_LENGTH || name.length > SKILL_NAME_MAX_LENGTH)
+    return false;
+  if (name.includes("--")) return false;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$|^[a-z0-9]$/.test(name);
+}
+
+/**
  * Frontmatter structure from SKILL.md files
  */
 export interface SkillFrontmatter {

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { RefreshCw, FileText, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -74,6 +74,29 @@ export function SkillFileViewer({
   onLinkClick,
   rawMode = false,
 }: SkillFileViewerProps) {
+  // Handle clicks on links within markdown content
+  const handleContentClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!onLinkClick) return;
+
+      const target = e.target as HTMLElement;
+      const anchor = target.closest("a");
+      if (!anchor) return;
+
+      const href = anchor.getAttribute("href");
+      if (!href) return;
+
+      // Only intercept relative links (not external URLs)
+      if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("//")) {
+        return;
+      }
+
+      e.preventDefault();
+      onLinkClick(href);
+    },
+    [onLinkClick]
+  );
+
   const handleDownload = () => {
     if (!file) return;
 
@@ -172,6 +195,7 @@ export function SkillFileViewer({
     return (
       <ScrollArea className="h-full">
         <div
+          onClick={handleContentClick}
           className={
             rawMode
               ? "p-4 min-w-max"
@@ -192,7 +216,7 @@ export function SkillFileViewer({
 
     return (
       <ScrollArea className="h-full">
-        <div className="p-4 min-w-max">
+        <div onClick={handleContentClick} className="p-4 min-w-max">
           <MemoizedMarkdown content={codeBlock} />
         </div>
         <ScrollBar orientation="horizontal" />

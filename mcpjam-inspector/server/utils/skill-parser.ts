@@ -1,12 +1,16 @@
 import matter from "gray-matter";
 import fs from "fs/promises";
 import path from "path";
-import type {
-  Skill,
-  SkillListItem,
-  SkillFrontmatter,
-  SkillFile,
+import {
+  isValidSkillName,
+  type Skill,
+  type SkillListItem,
+  type SkillFrontmatter,
+  type SkillFile,
 } from "../../shared/skill-types";
+
+// Re-export for backward compatibility
+export { isValidSkillName };
 
 /**
  * Common MIME type mappings by extension
@@ -181,19 +185,6 @@ export async function listFilesRecursive(
     // Alphabetical within same type
     return a.name.localeCompare(b.name);
   });
-}
-
-/**
- * Validates skill name format per Agent Skills spec:
- * - Lowercase letters, numbers, hyphens only
- * - Must not start or end with hyphen
- * - Must not contain consecutive hyphens
- * - 1-64 characters
- */
-export function isValidSkillName(name: string): boolean {
-  if (name.length < 1 || name.length > 64) return false;
-  if (name.includes("--")) return false;
-  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$|^[a-z0-9]$/.test(name);
 }
 
 /**
