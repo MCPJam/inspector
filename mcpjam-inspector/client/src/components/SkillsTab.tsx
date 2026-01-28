@@ -315,7 +315,11 @@ export function SkillsTab() {
                       <span className="font-medium text-sm text-foreground truncate">
                         {selectedSkill.name}
                       </span>
-                      {selectedFilePath !== "SKILL.md" && (
+                      {selectedFilePath === "SKILL.md" ? (
+                        <span className="text-xs text-muted-foreground/60 font-mono truncate" title={selectedSkill.path}>
+                          {selectedSkill.path}
+                        </span>
+                      ) : (
                         <>
                           <span className="text-muted-foreground">/</span>
                           <span className="text-sm text-muted-foreground truncate">

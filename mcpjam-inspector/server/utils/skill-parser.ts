@@ -171,10 +171,16 @@ export async function listFilesRecursive(
 }
 
 /**
- * Validates skill name format: lowercase letters, numbers, hyphens only
+ * Validates skill name format per Agent Skills spec:
+ * - Lowercase letters, numbers, hyphens only
+ * - Must not start or end with hyphen
+ * - Must not contain consecutive hyphens
+ * - 1-64 characters
  */
 export function isValidSkillName(name: string): boolean {
-  return /^[a-z0-9-]+$/.test(name);
+  if (name.length < 1 || name.length > 64) return false;
+  if (name.includes('--')) return false;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$|^[a-z0-9]$/.test(name);
 }
 
 /**
@@ -200,6 +206,14 @@ export function parseSkillFile(
       typeof frontmatter.description !== "string"
     ) {
       console.warn(`Skill at ${skillPath} missing required 'description' field`);
+      return null;
+    }
+
+    // Validate description length per Agent Skills spec (max 1024 characters)
+    if (frontmatter.description.length > 1024) {
+      console.warn(
+        `Skill at ${skillPath} has description exceeding 1024 characters`,
+      );
       return null;
     }
 
