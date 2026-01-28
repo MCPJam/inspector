@@ -61,7 +61,22 @@ function getFileIcon(file: SkillFile) {
   }
 
   if (
-    [".js", ".ts", ".tsx", ".jsx", ".py", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".sh", ".bash"].includes(ext) ||
+    [
+      ".js",
+      ".ts",
+      ".tsx",
+      ".jsx",
+      ".py",
+      ".rb",
+      ".go",
+      ".rs",
+      ".java",
+      ".c",
+      ".cpp",
+      ".h",
+      ".sh",
+      ".bash",
+    ].includes(ext) ||
     mime.startsWith("text/x-")
   ) {
     return <FileCode className="h-3.5 w-3.5 text-info" />;
@@ -109,7 +124,7 @@ function FileNode({
           isSelected
             ? "bg-primary/10 text-primary"
             : "hover:bg-muted/50 text-muted-foreground hover:text-foreground",
-          isMainFile && !isSelected && "text-foreground font-medium"
+          isMainFile && !isSelected && "text-foreground font-medium",
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={handleClick}
@@ -215,7 +230,7 @@ function SkillNode({
           "flex items-center gap-1.5 py-1.5 px-2 cursor-pointer rounded-sm transition-colors text-xs",
           isSelected && !selectedFilePath
             ? "bg-primary/10 text-primary"
-            : "hover:bg-muted/50"
+            : "hover:bg-muted/50",
         )}
         onClick={onToggle}
       >
@@ -227,7 +242,12 @@ function SkillNode({
 
         <SquareSlash className="h-3.5 w-3.5 text-primary flex-shrink-0" />
 
-        <span className={cn("truncate font-medium", isSelected && "text-foreground")}>
+        <span
+          className={cn(
+            "truncate font-medium",
+            isSelected && "text-foreground",
+          )}
+        >
           {skill.name}
         </span>
       </div>
@@ -236,11 +256,17 @@ function SkillNode({
       {isExpanded && (
         <div>
           {isLoading ? (
-            <div className="py-2 px-2 text-[10px] text-muted-foreground" style={{ paddingLeft: "32px" }}>
+            <div
+              className="py-2 px-2 text-[10px] text-muted-foreground"
+              style={{ paddingLeft: "32px" }}
+            >
               Loading...
             </div>
           ) : files.length === 0 ? (
-            <div className="py-2 px-2 text-[10px] text-muted-foreground" style={{ paddingLeft: "32px" }}>
+            <div
+              className="py-2 px-2 text-[10px] text-muted-foreground"
+              style={{ paddingLeft: "32px" }}
+            >
               No files
             </div>
           ) : (
@@ -328,7 +354,9 @@ export function SkillsFileTree({
           isExpanded={expandedSkills.has(skill.name)}
           isLoading={loadingFiles[skill.name] || false}
           isSelected={selectedSkillName === skill.name}
-          selectedFilePath={selectedSkillName === skill.name ? selectedFilePath : ""}
+          selectedFilePath={
+            selectedSkillName === skill.name ? selectedFilePath : ""
+          }
           onToggle={() => toggleSkillExpanded(skill.name)}
           onSelectFile={(path) => handleFileSelect(skill.name, path)}
         />

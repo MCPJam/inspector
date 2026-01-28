@@ -128,7 +128,9 @@ export function SkillsPopoverSection({
                   }}
                 >
                   <SquareSlash size={16} className="shrink-0 text-primary" />
-                  <span className="flex-1 text-left truncate">{skill.name}</span>
+                  <span className="flex-1 text-left truncate">
+                    {skill.name}
+                  </span>
                   {isLoadingThis && (
                     <Loader2
                       size={14}

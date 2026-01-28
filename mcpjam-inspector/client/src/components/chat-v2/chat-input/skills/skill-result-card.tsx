@@ -10,7 +10,11 @@ interface SkillResultCardProps {
   onUpdate?: (updatedSkill: SkillResult) => void;
 }
 
-export function SkillResultCard({ skillResult, onRemove, onUpdate }: SkillResultCardProps) {
+export function SkillResultCard({
+  skillResult,
+  onRemove,
+  onUpdate,
+}: SkillResultCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [files, setFiles] = useState<SkillFile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -18,7 +22,9 @@ export function SkillResultCard({ skillResult, onRemove, onUpdate }: SkillResult
   const [error, setError] = useState<string | null>(null);
 
   // Track selected file paths (SKILL.md is always selected by default via content)
-  const selectedPaths = new Set(skillResult.selectedFiles?.map(f => f.path) || []);
+  const selectedPaths = new Set(
+    skillResult.selectedFiles?.map((f) => f.path) || [],
+  );
 
   // Fetch files when expanded
   useEffect(() => {
@@ -39,50 +45,55 @@ export function SkillResultCard({ skillResult, onRemove, onUpdate }: SkillResult
   }, [isExpanded, skillResult.name, files.length, loading]);
 
   // Handle file selection toggle
-  const handleFileToggle = useCallback(async (filePath: string, fileName: string) => {
-    if (!onUpdate) return;
+  const handleFileToggle = useCallback(
+    async (filePath: string, fileName: string) => {
+      if (!onUpdate) return;
 
-    // Don't allow toggling SKILL.md - it's always included via content
-    if (fileName === "SKILL.md") return;
+      // Don't allow toggling SKILL.md - it's always included via content
+      if (fileName === "SKILL.md") return;
 
-    const isSelected = selectedPaths.has(filePath);
+      const isSelected = selectedPaths.has(filePath);
 
-    if (isSelected) {
-      // Remove file from selection
-      const newSelectedFiles = skillResult.selectedFiles?.filter(f => f.path !== filePath) || [];
-      onUpdate({
-        ...skillResult,
-        selectedFiles: newSelectedFiles.length > 0 ? newSelectedFiles : undefined,
-      });
-    } else {
-      // Add file to selection - need to fetch content first
-      setLoadingFile(filePath);
-      try {
-        const fileContent = await readSkillFile(skillResult.name, filePath);
-        if (!fileContent.isText || !fileContent.content) {
-          // Skip non-text files
-          setLoadingFile(null);
-          return;
-        }
-
-        const newFile: SelectedSkillFile = {
-          path: filePath,
-          name: fileName,
-          content: fileContent.content,
-          mimeType: fileContent.mimeType,
-        };
-
+      if (isSelected) {
+        // Remove file from selection
+        const newSelectedFiles =
+          skillResult.selectedFiles?.filter((f) => f.path !== filePath) || [];
         onUpdate({
           ...skillResult,
-          selectedFiles: [...(skillResult.selectedFiles || []), newFile],
+          selectedFiles:
+            newSelectedFiles.length > 0 ? newSelectedFiles : undefined,
         });
-      } catch (err) {
-        console.error("Failed to load file:", err);
-      } finally {
-        setLoadingFile(null);
+      } else {
+        // Add file to selection - need to fetch content first
+        setLoadingFile(filePath);
+        try {
+          const fileContent = await readSkillFile(skillResult.name, filePath);
+          if (!fileContent.isText || !fileContent.content) {
+            // Skip non-text files
+            setLoadingFile(null);
+            return;
+          }
+
+          const newFile: SelectedSkillFile = {
+            path: filePath,
+            name: fileName,
+            content: fileContent.content,
+            mimeType: fileContent.mimeType,
+          };
+
+          onUpdate({
+            ...skillResult,
+            selectedFiles: [...(skillResult.selectedFiles || []), newFile],
+          });
+        } catch (err) {
+          console.error("Failed to load file:", err);
+        } finally {
+          setLoadingFile(null);
+        }
       }
-    }
-  }, [skillResult, selectedPaths, onUpdate]);
+    },
+    [skillResult, selectedPaths, onUpdate],
+  );
 
   // Count of additional files selected (not counting SKILL.md which is always included)
   const additionalFilesCount = skillResult.selectedFiles?.length || 0;
@@ -150,9 +161,7 @@ export function SkillResultCard({ skillResult, onRemove, onUpdate }: SkillResult
                 <span className="text-[11px]">Loading files...</span>
               </div>
             ) : error ? (
-              <div className="py-2 text-[11px] text-destructive">
-                {error}
-              </div>
+              <div className="py-2 text-[11px] text-destructive">{error}</div>
             ) : (
               <div className="max-h-[200px] overflow-y-auto">
                 <SkillFileTreeSelectable
@@ -169,7 +178,8 @@ export function SkillResultCard({ skillResult, onRemove, onUpdate }: SkillResult
           {/* Hint */}
           {onUpdate && !loading && !error && files.length > 0 && (
             <p className="text-[10px] text-muted-foreground/70 italic">
-              Click files to add/remove from context. SKILL.md is always included.
+              Click files to add/remove from context. SKILL.md is always
+              included.
             </p>
           )}
         </div>

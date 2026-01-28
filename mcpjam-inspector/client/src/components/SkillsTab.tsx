@@ -7,7 +7,16 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { SquareSlash, RefreshCw, Plus, Trash2, Copy, Check, Code, Eye } from "lucide-react";
+import {
+  SquareSlash,
+  RefreshCw,
+  Plus,
+  Trash2,
+  Copy,
+  Check,
+  Code,
+  Eye,
+} from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -16,7 +25,12 @@ import {
   listSkillFiles,
   readSkillFile,
 } from "@/lib/apis/mcp-skills-api";
-import type { Skill, SkillListItem, SkillFile, SkillFileContent } from "@shared/skill-types";
+import type {
+  Skill,
+  SkillListItem,
+  SkillFile,
+  SkillFileContent,
+} from "@shared/skill-types";
 import { SkillUploadDialog } from "./chat-v2/chat-input/skills/skill-upload-dialog";
 import {
   AlertDialog,
@@ -96,7 +110,11 @@ export function SkillsTab() {
       if (skillsList.length === 0) {
         setSelectedSkillName("");
         setSelectedSkill(null);
-      } else if (!skillsList.some((skill: SkillListItem) => skill.name === selectedSkillName)) {
+      } else if (
+        !skillsList.some(
+          (skill: SkillListItem) => skill.name === selectedSkillName,
+        )
+      ) {
         setSelectedSkillName(skillsList[0].name);
       }
     } catch (err) {
@@ -124,23 +142,26 @@ export function SkillsTab() {
     }
   };
 
-  const fetchSkillFilesForSkill = useCallback(async (name: string) => {
-    // Don't refetch if we already have files for this skill
-    if (skillFiles[name] && skillFiles[name].length > 0) {
-      return;
-    }
+  const fetchSkillFilesForSkill = useCallback(
+    async (name: string) => {
+      // Don't refetch if we already have files for this skill
+      if (skillFiles[name] && skillFiles[name].length > 0) {
+        return;
+      }
 
-    setLoadingFiles((prev) => ({ ...prev, [name]: true }));
-    try {
-      const files = await listSkillFiles(name);
-      setSkillFiles((prev) => ({ ...prev, [name]: files }));
-    } catch (err) {
-      console.error("Error fetching skill files:", err);
-      setSkillFiles((prev) => ({ ...prev, [name]: [] }));
-    } finally {
-      setLoadingFiles((prev) => ({ ...prev, [name]: false }));
-    }
-  }, [skillFiles]);
+      setLoadingFiles((prev) => ({ ...prev, [name]: true }));
+      try {
+        const files = await listSkillFiles(name);
+        setSkillFiles((prev) => ({ ...prev, [name]: files }));
+      } catch (err) {
+        console.error("Error fetching skill files:", err);
+        setSkillFiles((prev) => ({ ...prev, [name]: [] }));
+      } finally {
+        setLoadingFiles((prev) => ({ ...prev, [name]: false }));
+      }
+    },
+    [skillFiles],
+  );
 
   const fetchFileContent = async (name: string, filePath: string) => {
     setLoadingFileContent(true);
@@ -228,7 +249,9 @@ export function SkillsTab() {
             <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
               <div className="flex items-center gap-3">
                 <SquareSlash className="h-3 w-3 text-muted-foreground" />
-                <h2 className="text-xs font-semibold text-foreground">Skills</h2>
+                <h2 className="text-xs font-semibold text-foreground">
+                  Skills
+                </h2>
                 <Badge variant="secondary" className="text-xs font-mono">
                   {skills.length}
                 </Badge>
@@ -316,7 +339,10 @@ export function SkillsTab() {
                         {selectedSkill.name}
                       </span>
                       {selectedFilePath === "SKILL.md" ? (
-                        <span className="text-xs text-muted-foreground/60 font-mono truncate" title={selectedSkill.path}>
+                        <span
+                          className="text-xs text-muted-foreground/60 font-mono truncate"
+                          title={selectedSkill.path}
+                        >
                           {selectedSkill.path}
                         </span>
                       ) : (
@@ -328,27 +354,35 @@ export function SkillsTab() {
                         </>
                       )}
                     </div>
-                    {selectedFilePath === "SKILL.md" && selectedSkill.description && (
-                      <p
-                        onClick={() => setDescriptionExpanded(!descriptionExpanded)}
-                        className={`text-xs text-muted-foreground cursor-pointer hover:text-muted-foreground/80 ${descriptionExpanded ? "" : "line-clamp-1"}`}
-                      >
-                        {selectedSkill.description}
-                      </p>
-                    )}
+                    {selectedFilePath === "SKILL.md" &&
+                      selectedSkill.description && (
+                        <p
+                          onClick={() =>
+                            setDescriptionExpanded(!descriptionExpanded)
+                          }
+                          className={`text-xs text-muted-foreground cursor-pointer hover:text-muted-foreground/80 ${descriptionExpanded ? "" : "line-clamp-1"}`}
+                        >
+                          {selectedSkill.description}
+                        </p>
+                      )}
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    {fileContent?.isText && fileContent.mimeType.includes("markdown") && (
-                      <Button
-                        onClick={() => setRawMode(!rawMode)}
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                        title={rawMode ? "Show rendered" : "Show raw"}
-                      >
-                        {rawMode ? <Eye className="h-4 w-4" /> : <Code className="h-4 w-4" />}
-                      </Button>
-                    )}
+                    {fileContent?.isText &&
+                      fileContent.mimeType.includes("markdown") && (
+                        <Button
+                          onClick={() => setRawMode(!rawMode)}
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          title={rawMode ? "Show rendered" : "Show raw"}
+                        >
+                          {rawMode ? (
+                            <Eye className="h-4 w-4" />
+                          ) : (
+                            <Code className="h-4 w-4" />
+                          )}
+                        </Button>
+                      )}
                     {fileContent?.isText && (
                       <Button
                         onClick={handleCopy}
@@ -357,7 +391,11 @@ export function SkillsTab() {
                         className="h-8 w-8 text-muted-foreground hover:text-foreground"
                         title="Copy"
                       >
-                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        {copied ? (
+                          <Check className="h-4 w-4" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
                       </Button>
                     )}
                     <Button
@@ -404,14 +442,17 @@ export function SkillsTab() {
       />
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog open={!!skillToDelete} onOpenChange={() => setSkillToDelete(null)}>
+      <AlertDialog
+        open={!!skillToDelete}
+        onOpenChange={() => setSkillToDelete(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Skill</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete the skill "{skillToDelete}"? This will
-              remove the skill directory and its SKILL.md file. This action cannot be
-              undone.
+              Are you sure you want to delete the skill "{skillToDelete}"? This
+              will remove the skill directory and its SKILL.md file. This action
+              cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

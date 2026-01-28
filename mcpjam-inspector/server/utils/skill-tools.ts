@@ -201,7 +201,7 @@ export function createSkillTools() {
         name: z
           .string()
           .describe(
-            "The skill name to load (e.g., 'pdf-processing', 'data-analysis')"
+            "The skill name to load (e.g., 'pdf-processing', 'data-analysis')",
           ),
       }),
       execute: async ({ name }) => {
@@ -223,13 +223,13 @@ export function createSkillTools() {
           if (skillDir) {
             const files = await listFilesRecursive(skillDir);
             const supportingFiles = flattenFiles(files).filter(
-              (f) => f.name !== "SKILL.md" && f.type === "file"
+              (f) => f.name !== "SKILL.md" && f.type === "file",
             );
 
             if (supportingFiles.length > 0) {
               response += `\n\n## Supporting Files\n\nThis skill includes the following supporting files:\n\n`;
               response += formatFileTree(
-                files.filter((f) => f.name !== "SKILL.md")
+                files.filter((f) => f.name !== "SKILL.md"),
               );
               response += `\nUse the \`listSkillFiles\` tool to explore directories and \`readSkillFile\` to read file contents.`;
             }
@@ -282,7 +282,7 @@ export function createSkillTools() {
         path: z
           .string()
           .describe(
-            "Relative file path within the skill directory (e.g., 'scripts/process.py', 'templates/form.html')"
+            "Relative file path within the skill directory (e.g., 'scripts/process.py', 'templates/form.html')",
           ),
       }),
       execute: async ({ name, path: filePath }) => {

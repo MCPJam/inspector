@@ -82,7 +82,9 @@ export function SkillFileViewer({
 
     const blob = file.isText
       ? new Blob([content], { type: file.mimeType })
-      : new Blob([Uint8Array.from(atob(content), c => c.charCodeAt(0))], { type: file.mimeType });
+      : new Blob([Uint8Array.from(atob(content), (c) => c.charCodeAt(0))], {
+          type: file.mimeType,
+        });
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -169,7 +171,13 @@ export function SkillFileViewer({
   if (file.mimeType.includes("markdown") && file.content) {
     return (
       <ScrollArea className="h-full">
-        <div className={rawMode ? "p-4 min-w-max" : "p-6 prose prose-sm dark:prose-invert max-w-none"}>
+        <div
+          className={
+            rawMode
+              ? "p-4 min-w-max"
+              : "p-6 prose prose-sm dark:prose-invert max-w-none"
+          }
+        >
           <MemoizedMarkdown content={processedContent || file.content} />
         </div>
         <ScrollBar orientation="horizontal" />

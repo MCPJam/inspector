@@ -1,5 +1,10 @@
 import { authFetch } from "@/lib/session-token";
-import type { Skill, SkillListItem, SkillFile, SkillFileContent } from "../../../../shared/skill-types";
+import type {
+  Skill,
+  SkillListItem,
+  SkillFile,
+  SkillFileContent,
+} from "../../../../shared/skill-types";
 
 export interface ListSkillsResponse {
   skills: SkillListItem[];
@@ -92,7 +97,7 @@ export async function uploadSkill(data: {
  */
 export async function uploadSkillFolder(
   files: File[],
-  skillName: string
+  skillName: string,
 ): Promise<Skill> {
   const formData = new FormData();
   formData.append("skillName", skillName);
@@ -102,7 +107,8 @@ export async function uploadSkillFolder(
     const relativePath = (file as any).webkitRelativePath || file.name;
     // Strip the root folder name from the path to get relative path within skill
     const parts = relativePath.split("/");
-    const pathWithinSkill = parts.length > 1 ? parts.slice(1).join("/") : parts[0];
+    const pathWithinSkill =
+      parts.length > 1 ? parts.slice(1).join("/") : parts[0];
 
     formData.append("files", file, pathWithinSkill);
   }
@@ -174,7 +180,7 @@ export async function listSkillFiles(name: string): Promise<SkillFile[]> {
  */
 export async function readSkillFile(
   name: string,
-  filePath: string
+  filePath: string,
 ): Promise<SkillFileContent> {
   const res = await authFetch("/api/mcp/skills/read-file", {
     method: "POST",

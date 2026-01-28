@@ -14,7 +14,12 @@ import {
   isTextMimeType,
   isPathWithinDirectory,
 } from "../../utils/skill-parser";
-import type { Skill, SkillListItem, SkillFile, SkillFileContent } from "../../../shared/skill-types";
+import type {
+  Skill,
+  SkillListItem,
+  SkillFile,
+  SkillFileContent,
+} from "../../../shared/skill-types";
 
 const skills = new Hono();
 
@@ -33,8 +38,8 @@ function getSkillsDirs(): string[] {
 
   return [
     // Global skills (always accessible regardless of how app is launched)
-    path.join(homeDir, ".mcpjam", "skills"),   // MCPJam global skills
-    path.join(homeDir, ".agents", "skills"),   // npx skills global installs
+    path.join(homeDir, ".mcpjam", "skills"), // MCPJam global skills
+    path.join(homeDir, ".agents", "skills"), // npx skills global installs
 
     // Project-local skills (when launched from project directory)
     path.join(cwd, ".mcpjam", "skills"),
@@ -134,7 +139,9 @@ skills.post("/list", async (c) => {
 
         try {
           const fileContent = await fs.readFile(skillFilePath, "utf-8");
-          const displayPath = formatDisplayPath(path.join(skillsDir, skillPath));
+          const displayPath = formatDisplayPath(
+            path.join(skillsDir, skillPath),
+          );
           const skill = parseSkillFile(fileContent, displayPath);
 
           if (skill && !seenNames.has(skill.name)) {
@@ -143,7 +150,9 @@ skills.post("/list", async (c) => {
           }
         } catch (error) {
           // Skill directory exists but no valid SKILL.md, skip it
-          logger.debug(`Skipping skill directory ${skillPath}: no valid SKILL.md`);
+          logger.debug(
+            `Skipping skill directory ${skillPath}: no valid SKILL.md`,
+          );
         }
       }
     }
@@ -191,7 +200,9 @@ skills.post("/get", async (c) => {
 
         try {
           const fileContent = await fs.readFile(skillFilePath, "utf-8");
-          const displayPath = formatDisplayPath(path.join(skillsDir, skillPath));
+          const displayPath = formatDisplayPath(
+            path.join(skillsDir, skillPath),
+          );
           const skill = parseSkillFile(fileContent, displayPath);
 
           if (skill && skill.name === name) {
@@ -341,7 +352,7 @@ skills.post("/upload-folder", async (c) => {
 
     // Find SKILL.md file
     const skillMdFile = files.find(
-      (f) => f.name === "SKILL.md" || f.name.endsWith("/SKILL.md")
+      (f) => f.name === "SKILL.md" || f.name.endsWith("/SKILL.md"),
     );
 
     if (!skillMdFile) {
@@ -390,7 +401,10 @@ skills.post("/upload-folder", async (c) => {
             const existingSkill = parseSkillFile(fileContent, entry.name);
             if (existingSkill && existingSkill.name === skillName) {
               return c.json(
-                { success: false, error: `Skill '${skillName}' already exists` },
+                {
+                  success: false,
+                  error: `Skill '${skillName}' already exists`,
+                },
                 409,
               );
             }
@@ -522,7 +536,10 @@ skills.post("/files", async (c) => {
 
     const skillDir = await findSkillDirectory(name);
     if (!skillDir) {
-      return c.json({ success: false, error: `Skill '${name}' not found` }, 404);
+      return c.json(
+        { success: false, error: `Skill '${name}' not found` },
+        404,
+      );
     }
 
     const files = await listFilesRecursive(skillDir);
@@ -559,15 +576,15 @@ skills.post("/read-file", async (c) => {
 
     const skillDir = await findSkillDirectory(name);
     if (!skillDir) {
-      return c.json({ success: false, error: `Skill '${name}' not found` }, 404);
+      return c.json(
+        { success: false, error: `Skill '${name}' not found` },
+        404,
+      );
     }
 
     // Security: Validate path doesn't escape skill directory
     if (!isPathWithinDirectory(skillDir, filePath)) {
-      return c.json(
-        { success: false, error: "Invalid file path" },
-        400,
-      );
+      return c.json({ success: false, error: "Invalid file path" }, 400);
     }
 
     const fullPath = path.join(skillDir, filePath);
@@ -576,10 +593,7 @@ skills.post("/read-file", async (c) => {
     try {
       const stat = await fs.stat(fullPath);
       if (!stat.isFile()) {
-        return c.json(
-          { success: false, error: "Path is not a file" },
-          400,
-        );
+        return c.json({ success: false, error: "Path is not a file" }, 400);
       }
 
       const mimeType = getMimeType(filePath);
@@ -616,10 +630,7 @@ skills.post("/read-file", async (c) => {
       return c.json({ file: fileContent });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return c.json(
-          { success: false, error: "File not found" },
-          404,
-        );
+        return c.json({ success: false, error: "File not found" }, 404);
       }
       throw err;
     }

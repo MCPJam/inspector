@@ -180,7 +180,12 @@ export function ChatInput({
     ) {
       const trimmed = value.trim();
       event.preventDefault();
-      if ((!trimmed && !hasResults) || disabled || submitDisabled || isLoading) {
+      if (
+        (!trimmed && !hasResults) ||
+        disabled ||
+        submitDisabled ||
+        isLoading
+      ) {
         return;
       }
       formRef.current?.requestSubmit();
@@ -358,12 +363,16 @@ export function ChatInput({
                     size="icon"
                     className={cn(
                       "size-[34px] rounded-full transition-colors",
-                      (value.trim() || hasResults) && !disabled && !submitDisabled
+                      (value.trim() || hasResults) &&
+                        !disabled &&
+                        !submitDisabled
                         ? "bg-primary text-primary-foreground hover:bg-primary/90"
                         : "bg-muted text-muted-foreground cursor-not-allowed",
                     )}
                     disabled={
-                      (!value.trim() && !hasResults) || disabled || submitDisabled
+                      (!value.trim() && !hasResults) ||
+                      disabled ||
+                      submitDisabled
                     }
                   >
                     <ArrowUp size={16} />

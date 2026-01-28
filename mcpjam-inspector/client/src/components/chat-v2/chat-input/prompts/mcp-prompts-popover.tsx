@@ -200,9 +200,7 @@ export function PromptsPopover({
 
   useEffect(() => {
     // Open popover if prompts or skills are requested (and at least one exists)
-    setOpen(
-      isMCPPromptsRequested(value, caretIndex) && totalItems > 0,
-    );
+    setOpen(isMCPPromptsRequested(value, caretIndex) && totalItems > 0);
   }, [value, caretIndex, totalItems]);
 
   const onCancelPromptArgsDialog = () => {
@@ -329,7 +327,9 @@ export function PromptsPopover({
         onOpenChange={setIsSkillUploadDialogOpen}
         onSkillCreated={(skill) => {
           // Refresh skills count after creation
-          listSkills().then((skills) => setSkillsCount(skills.length)).catch(() => {});
+          listSkills()
+            .then((skills) => setSkillsCount(skills.length))
+            .catch(() => {});
           // Optionally select the newly created skill
           handleSkillSelected(skill);
         }}

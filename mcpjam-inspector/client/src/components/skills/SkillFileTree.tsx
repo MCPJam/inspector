@@ -1,5 +1,14 @@
 import { useState } from "react";
-import { ChevronRight, ChevronDown, File, Folder, FolderOpen, FileText, FileCode, Image } from "lucide-react";
+import {
+  ChevronRight,
+  ChevronDown,
+  File,
+  Folder,
+  FolderOpen,
+  FileText,
+  FileCode,
+  Image,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SkillFile } from "@shared/skill-types";
 
@@ -37,7 +46,22 @@ function getFileIcon(file: SkillFile) {
 
   // Code files
   if (
-    [".js", ".ts", ".tsx", ".jsx", ".py", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".sh", ".bash"].includes(ext) ||
+    [
+      ".js",
+      ".ts",
+      ".tsx",
+      ".jsx",
+      ".py",
+      ".rb",
+      ".go",
+      ".rs",
+      ".java",
+      ".c",
+      ".cpp",
+      ".h",
+      ".sh",
+      ".bash",
+    ].includes(ext) ||
     mime.startsWith("text/x-")
   ) {
     return <FileCode className="h-3.5 w-3.5 text-info" />;
@@ -81,7 +105,7 @@ function FileNode({
           isSelected
             ? "bg-primary/10 text-primary"
             : "hover:bg-muted/50 text-muted-foreground hover:text-foreground",
-          isMainFile && !isSelected && "text-foreground font-medium"
+          isMainFile && !isSelected && "text-foreground font-medium",
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={handleClick}

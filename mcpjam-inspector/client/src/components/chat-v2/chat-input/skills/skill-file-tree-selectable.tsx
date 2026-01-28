@@ -51,7 +51,22 @@ function getFileIcon(file: SkillFile) {
 
   // Code files
   if (
-    [".js", ".ts", ".tsx", ".jsx", ".py", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".sh", ".bash"].includes(ext) ||
+    [
+      ".js",
+      ".ts",
+      ".tsx",
+      ".jsx",
+      ".py",
+      ".rb",
+      ".go",
+      ".rs",
+      ".java",
+      ".c",
+      ".cpp",
+      ".h",
+      ".sh",
+      ".bash",
+    ].includes(ext) ||
     mime.startsWith("text/x-")
   ) {
     return <FileCode className="h-3 w-3 text-info" />;
@@ -108,10 +123,10 @@ function FileNode({
           isDirectory
             ? "cursor-pointer hover:bg-muted/50"
             : isDisabled
-            ? "cursor-default text-muted-foreground"
-            : "cursor-pointer hover:bg-muted/50",
+              ? "cursor-default text-muted-foreground"
+              : "cursor-pointer hover:bg-muted/50",
           isSelected && !isDisabled && "bg-primary/10",
-          isMainFile && "text-foreground font-medium"
+          isMainFile && "text-foreground font-medium",
         )}
         style={{ paddingLeft: `${depth * 10 + 4}px` }}
         onClick={handleClick}

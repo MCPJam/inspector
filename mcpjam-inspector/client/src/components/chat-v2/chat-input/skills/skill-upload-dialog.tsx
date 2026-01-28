@@ -79,7 +79,8 @@ export function SkillUploadDialog({
 
     // Find SKILL.md file
     const skillMdFile = filesArray.find(
-      (f) => f.name === "SKILL.md" || f.webkitRelativePath?.endsWith("/SKILL.md")
+      (f) =>
+        f.name === "SKILL.md" || f.webkitRelativePath?.endsWith("/SKILL.md"),
     );
 
     if (!skillMdFile) {
@@ -94,14 +95,14 @@ export function SkillUploadDialog({
 
       if (!parsed) {
         setError(
-          "Invalid SKILL.md format. Must contain frontmatter with 'name' and 'description' fields."
+          "Invalid SKILL.md format. Must contain frontmatter with 'name' and 'description' fields.",
         );
         return;
       }
 
       if (!isValidSkillName(parsed.name)) {
         setError(
-          `Invalid skill name "${parsed.name}". Name must contain only lowercase letters, numbers, and hyphens.`
+          `Invalid skill name "${parsed.name}". Name must contain only lowercase letters, numbers, and hyphens.`,
         );
         return;
       }
@@ -142,12 +143,14 @@ export function SkillUploadDialog({
 
     // Helper to recursively read directory entries
     const readDirectory = async (
-      entry: FileSystemDirectoryEntry
+      entry: FileSystemDirectoryEntry,
     ): Promise<void> => {
       const reader = entry.createReader();
-      const entries = await new Promise<FileSystemEntry[]>((resolve, reject) => {
-        reader.readEntries(resolve, reject);
-      });
+      const entries = await new Promise<FileSystemEntry[]>(
+        (resolve, reject) => {
+          reader.readEntries(resolve, reject);
+        },
+      );
 
       for (const subEntry of entries) {
         if (subEntry.isFile) {
@@ -276,8 +279,8 @@ export function SkillUploadDialog({
                     Drop a skill folder here or click to browse
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Folder must contain a SKILL.md file with name and description
-                    frontmatter
+                    Folder must contain a SKILL.md file with name and
+                    description frontmatter
                   </p>
                 </div>
               </div>

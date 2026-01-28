@@ -83,7 +83,14 @@ const MIME_TYPES: Record<string, string> = {
 /**
  * Text MIME type prefixes
  */
-const TEXT_MIME_PREFIXES = ["text/", "application/json", "application/xml", "application/x-yaml", "application/toml", "image/svg+xml"];
+const TEXT_MIME_PREFIXES = [
+  "text/",
+  "application/json",
+  "application/xml",
+  "application/x-yaml",
+  "application/toml",
+  "image/svg+xml",
+];
 
 /**
  * Get MIME type from file path
@@ -97,16 +104,22 @@ export function getMimeType(filePath: string): string {
  * Check if MIME type represents text content
  */
 export function isTextMimeType(mimeType: string): boolean {
-  return TEXT_MIME_PREFIXES.some(prefix => mimeType.startsWith(prefix));
+  return TEXT_MIME_PREFIXES.some((prefix) => mimeType.startsWith(prefix));
 }
 
 /**
  * Validate that a path is within a base directory (path traversal protection)
  */
-export function isPathWithinDirectory(baseDir: string, targetPath: string): boolean {
+export function isPathWithinDirectory(
+  baseDir: string,
+  targetPath: string,
+): boolean {
   const resolvedBase = path.resolve(baseDir);
   const resolvedTarget = path.resolve(baseDir, targetPath);
-  return resolvedTarget.startsWith(resolvedBase + path.sep) || resolvedTarget === resolvedBase;
+  return (
+    resolvedTarget.startsWith(resolvedBase + path.sep) ||
+    resolvedTarget === resolvedBase
+  );
 }
 
 /**
@@ -114,7 +127,7 @@ export function isPathWithinDirectory(baseDir: string, targetPath: string): bool
  */
 export async function listFilesRecursive(
   dirPath: string,
-  relativeTo: string = dirPath
+  relativeTo: string = dirPath,
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
 
@@ -179,7 +192,7 @@ export async function listFilesRecursive(
  */
 export function isValidSkillName(name: string): boolean {
   if (name.length < 1 || name.length > 64) return false;
-  if (name.includes('--')) return false;
+  if (name.includes("--")) return false;
   return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$|^[a-z0-9]$/.test(name);
 }
 
@@ -205,7 +218,9 @@ export function parseSkillFile(
       !frontmatter.description ||
       typeof frontmatter.description !== "string"
     ) {
-      console.warn(`Skill at ${skillPath} missing required 'description' field`);
+      console.warn(
+        `Skill at ${skillPath} missing required 'description' field`,
+      );
       return null;
     }
 

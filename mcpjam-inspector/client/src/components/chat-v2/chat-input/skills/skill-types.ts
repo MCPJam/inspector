@@ -1,4 +1,9 @@
-import type { Skill, SkillListItem, SkillFile, SkillFileContent } from "../../../../../../shared/skill-types";
+import type {
+  Skill,
+  SkillListItem,
+  SkillFile,
+  SkillFileContent,
+} from "../../../../../../shared/skill-types";
 
 /**
  * A selected file from a skill directory
