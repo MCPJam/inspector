@@ -647,6 +647,11 @@ export function PlaygroundMain({
                   <ErrorBox
                     message={errorMessage.message}
                     errorDetails={errorMessage.details}
+                    code={errorMessage.code}
+                    statusCode={errorMessage.statusCode}
+                    isRetryable={errorMessage.isRetryable}
+                    isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                    retryAfter={errorMessage.retryAfter}
                     onResetChat={resetChat}
                   />
                 </div>

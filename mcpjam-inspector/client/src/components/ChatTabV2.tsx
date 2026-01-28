@@ -576,6 +576,11 @@ export function ChatTabV2({
                         <ErrorBox
                           message={errorMessage.message}
                           errorDetails={errorMessage.details}
+                          code={errorMessage.code}
+                          statusCode={errorMessage.statusCode}
+                          isRetryable={errorMessage.isRetryable}
+                          isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                          retryAfter={errorMessage.retryAfter}
                           onResetChat={baseResetChat}
                         />
                       </div>
