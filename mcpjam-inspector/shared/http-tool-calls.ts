@@ -2,7 +2,7 @@ import { ModelMessage } from "@ai-sdk/provider-utils";
 import {
   type MCPClientManager,
   isMcpAppTool,
-  scrubMcpAppToolResult,
+  scrubMetaAndStructuredContentFromToolResult,
 } from "@mcpjam/sdk";
 import { ToolResultPart } from "ai";
 
@@ -161,7 +161,9 @@ export async function executeToolCallsFromMessages(
               options.clientManager.getAllToolsMetadata(serverId);
             const toolMeta = toolsMetadata[toolName];
             if (isMcpAppTool(toolMeta)) {
-              const scrubbed = scrubMcpAppToolResult(result as any);
+              const scrubbed = scrubMetaAndStructuredContentFromToolResult(
+                result as any,
+              );
               const scrubbedSerialized = serializeToolResult(scrubbed);
               if (scrubbedSerialized.success) {
                 llmOutput = {

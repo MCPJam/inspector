@@ -64,8 +64,10 @@ export type {
 
 // Tool result scrubbing utilities (for MCP Apps)
 export {
+  isChatGPTAppTool,
   isMcpAppTool,
-  scrubMcpAppToolResult,
+  scrubMetaFromToolResult,
+  scrubMetaAndStructuredContentFromToolResult,
 } from "./mcp-client-manager/index.js";
 
 // Error classes

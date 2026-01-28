@@ -120,20 +120,47 @@ export function isMcpAppTool(
 }
 
 /**
+ * Checks whether a tool is a ChatGPT App by inspecting its _meta for an output template.
+ *
+ * @param toolMeta - The tool's _meta field from listTools result
+ * @returns true if the tool is a ChatGPT App
+ */
+export function isChatGPTAppTool(
+  toolMeta: Record<string, unknown> | undefined
+): boolean {
+  if (!toolMeta) return false;
+  return typeof toolMeta["openai/outputTemplate"] === "string";
+}
+
+/**
+ * Removes only the _meta field from a tool result (shallow).
+ *
+ * @param result - The full tool call result
+ * @returns The result without _meta
+ */
+export function scrubMetaFromToolResult(result: CallToolResult): CallToolResult {
+  if (result && (result as Record<string, unknown>)._meta) {
+    delete (result as Record<string, unknown>)._meta;
+  }
+  return result;
+}
+
+/**
  * Returns a shallow copy of a CallToolResult with _meta and structuredContent removed.
  * If neither field is present, returns the original object unchanged.
  *
  * @param result - The full tool call result
  * @returns A scrubbed copy without _meta and structuredContent
  */
-export function scrubMcpAppToolResult(
+export function scrubMetaAndStructuredContentFromToolResult(
   result: CallToolResult
 ): CallToolResult {
-  if (!("_meta" in result) && !("structuredContent" in result)) {
-    return result;
+  if(result._meta) {
+    delete result._meta;
   }
-  delete result._meta;
-  delete result.structuredContent;
+  if(result.structuredContent) {
+    delete result.structuredContent;
+  }
   return result;
 }
 
@@ -171,9 +198,7 @@ export async function convertMCPToolsToVercelTools(
 
   for (const toolDescription of listToolsResult.tools) {
     const { name, description, inputSchema } = toolDescription;
-    const isApp = isMcpAppTool(
-      toolDescription._meta as Record<string, unknown> | undefined
-    );
+    const toolMeta = toolDescription._meta as Record<string, unknown> | undefined;
 
     // Create the execute function that delegates to the provided callTool
     const execute = async (args: unknown, options?: ToolCallOptions) => {
@@ -185,13 +210,13 @@ export async function convertMCPToolsToVercelTools(
     // For MCP app tools, strip _meta and structuredContent before sending to the LLM.
     // The raw execute() return value still reaches the UI stream unchanged.
     // Runtime signature: ({ toolCallId, input, output }) => ToolResultOutput
-    const toModelOutput = isApp
-      ? ((opts: unknown) => {
-          const output = (opts as { output: unknown }).output;
-          const scrubbed = scrubMcpAppToolResult(output as CallToolResult);
-          return { type: "json" as const, value: scrubbed as any };
-        }) as any
-      : undefined;
+    // Note: Type assertion needed due to slight type misalignment between CallToolResult and JSONValue
+    const toModelOutput = isMcpAppTool(toolMeta)
+      ? ((opts: { toolCallId: string; input: unknown; output: unknown }) => {
+          const scrubbed = scrubMetaAndStructuredContentFromToolResult(opts.output as CallToolResult);
+          return { type: "json" as const, value: scrubbed as any } as any;
+        })
+      : undefined;  
 
     let vercelTool: Tool;
 

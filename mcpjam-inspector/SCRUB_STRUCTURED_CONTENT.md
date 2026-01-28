@@ -45,7 +45,7 @@ Files to Modify
 Add two helper functions:
 
 - isMcpAppTool(toolMeta) - checks if toolMeta["ui/resourceUri"] exists (flat format used by MCP apps spec)
-- scrubMcpAppToolResult(result) - returns a shallow copy of CallToolResult with \_meta and structuredContent removed
+- scrubMetaAndStructuredContentFromToolResult(result) - returns a shallow copy of CallToolResult with \_meta and structuredContent removed
 
 Modify convertMCPToolsToVercelTools:
 
@@ -57,11 +57,11 @@ node_modules/ai/src/prompt/create-tool-model-output.ts:24). The .d.ts types are 
 
 2.  sdk/src/mcp-client-manager/index.ts
 
-Export isMcpAppTool and scrubMcpAppToolResult from the barrel.
+Export isMcpAppTool and scrubMetaAndStructuredContentFromToolResult from the barrel.
 
 3.  sdk/src/index.ts
 
-Re-export isMcpAppTool and scrubMcpAppToolResult from the SDK's public API.
+Re-export isMcpAppTool and scrubMetaAndStructuredContentFromToolResult from the SDK's public API.
 
 4.  mcpjam-inspector/shared/http-tool-calls.ts
 

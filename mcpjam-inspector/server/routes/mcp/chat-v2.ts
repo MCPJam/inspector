@@ -19,39 +19,124 @@ import {
 import { logger } from "../../utils/logger";
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
+import {
+  isChatGPTAppTool,
+  isMcpAppTool,
+  scrubMetaFromToolResult,
+  scrubMetaAndStructuredContentFromToolResult,
+  type MCPClientManager,
+} from "@mcpjam/sdk";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
-const scrubToolResultPayload = (payload: unknown): unknown => {
-  if (!payload || typeof payload !== "object") return payload;
-  const record = payload as Record<string, unknown>;
-  if (!("_meta" in record) && !("structuredContent" in record)) return payload;
-  const {
-    _meta: _removedMeta,
-    structuredContent: _removedStructured,
-    ...rest
-  } = record;
-  return rest;
-};
-
-const scrubToolResultsForBackend = (
+const scrubMcpAppsToolResultsForBackend = (
   messages: ModelMessage[],
+  mcpClientManager: MCPClientManager,
+  selectedServers?: string[] | string,
 ): ModelMessage[] => {
+  const serverIds = Array.isArray(selectedServers)
+    ? selectedServers
+    : selectedServers
+      ? [selectedServers]
+      : mcpClientManager.listServers();
+  const metaByServer = new Map<string, Record<string, any>>();
+  for (const serverId of serverIds) {
+    metaByServer.set(serverId, mcpClientManager.getAllToolsMetadata(serverId));
+  }
+  const shouldScrub = (toolName?: string, serverId?: string): boolean => {
+    if (!toolName) return false;
+    if (serverId) {
+      return isMcpAppTool(metaByServer.get(serverId)?.[toolName]);
+    }
+    for (const metaMap of metaByServer.values()) {
+      if (isMcpAppTool(metaMap?.[toolName])) return true;
+    }
+    return false;
+  };
+
   return messages.map((msg) => {
     if (!msg || msg.role !== "tool" || !Array.isArray((msg as any).content)) {
       return msg;
     }
     const content = (msg as any).content.map((part: any) => {
       if (part?.type !== "tool-result") return part;
+      const toolName = part.toolName ?? part.name;
+      if (!shouldScrub(toolName, part.serverId)) return part;
       const nextPart = { ...part };
       if (nextPart.output?.type === "json") {
         nextPart.output = {
           ...nextPart.output,
-          value: scrubToolResultPayload(nextPart.output.value),
+          value: scrubMetaAndStructuredContentFromToolResult(
+            nextPart.output.value,
+          ),
         };
       }
       if ("result" in nextPart) {
-        nextPart.result = scrubToolResultPayload(nextPart.result);
+        nextPart.result = scrubMetaAndStructuredContentFromToolResult(
+          nextPart.result,
+        );
+      }
+      return nextPart;
+    });
+    return { ...msg, content } as ModelMessage;
+  });
+};
+
+const scrubChatGPTAppsToolResultsForBackend = (
+  messages: ModelMessage[],
+  mcpClientManager: MCPClientManager,
+  selectedServers?: string[] | string,
+): ModelMessage[] => {
+  const serverIds = Array.isArray(selectedServers)
+    ? selectedServers
+    : selectedServers
+      ? [selectedServers]
+      : mcpClientManager.listServers();
+  const metaByServer = new Map<string, Record<string, any>>();
+  for (const serverId of serverIds) {
+    metaByServer.set(serverId, mcpClientManager.getAllToolsMetadata(serverId));
+  }
+  const shouldScrub = (toolName?: string, serverId?: string): boolean => {
+    if (!toolName) return false;
+    if (serverId) {
+      return isChatGPTAppTool(metaByServer.get(serverId)?.[toolName]);
+    }
+    for (const metaMap of metaByServer.values()) {
+      if (isChatGPTAppTool(metaMap?.[toolName])) return true;
+    }
+    return false;
+  };
+
+  const scrubPayload = (payload: unknown): unknown => {
+    if (!payload || typeof payload !== "object") return payload;
+    const withoutMeta = scrubMetaFromToolResult(payload as any);
+    if (!("structuredContent" in (withoutMeta as Record<string, unknown>))) {
+      return withoutMeta;
+    }
+    const { structuredContent: _removed, ...rest } = withoutMeta as Record<
+      string,
+      unknown
+    >;
+    return rest;
+  };
+
+  return messages.map((msg) => {
+    if (!msg || msg.role !== "tool" || !Array.isArray((msg as any).content)) {
+      return msg;
+    }
+    const content = (msg as any).content.map((part: any) => {
+      if (part?.type !== "tool-result") return part;
+      const toolName = part.toolName ?? part.name;
+      if (!shouldScrub(toolName, part.serverId)) return part;
+      const nextPart = { ...part };
+      if (nextPart.output?.type === "json") {
+        nextPart.output = {
+          ...nextPart.output,
+          value: scrubPayload(nextPart.output.value),
+        };
+      }
+      if ("result" in nextPart) {
+        nextPart.result = scrubPayload(nextPart.result);
       }
       return nextPart;
     });
@@ -174,8 +259,15 @@ chatV2.post("/", async (c) => {
 
       // Driver loop that emits AI UIMessage chunks (compatible with DefaultChatTransport)
       const authHeader = c.req.header("authorization") || undefined;
-      let messageHistory = scrubToolResultsForBackend(
+      let messageHistory = scrubMcpAppsToolResultsForBackend(
         (await convertToModelMessages(messages)) as ModelMessage[],
+        mcpClientManager,
+        selectedServers,
+      );
+      messageHistory = scrubChatGPTAppsToolResultsForBackend(
+        messageHistory,
+        mcpClientManager,
+        selectedServers,
       );
       let steps = 0;
       const MAX_STEPS = 20;
@@ -194,7 +286,15 @@ chatV2.post("/", async (c) => {
               body: JSON.stringify({
                 mode: "step",
                 messages: JSON.stringify(
-                  scrubToolResultsForBackend(messageHistory),
+                  scrubChatGPTAppsToolResultsForBackend(
+                    scrubMcpAppsToolResultsForBackend(
+                      messageHistory,
+                      mcpClientManager,
+                      selectedServers,
+                    ),
+                    mcpClientManager,
+                    selectedServers,
+                  ),
                 ),
                 model: String(modelDefinition.id),
                 systemPrompt: enhancedSystemPrompt,
@@ -345,8 +445,14 @@ chatV2.post("/", async (c) => {
 
     const result = streamText({
       model: llmModel,
-      messages: scrubToolResultsForBackend(
-        (await convertToModelMessages(messages)) as ModelMessage[],
+      messages: scrubChatGPTAppsToolResultsForBackend(
+        scrubMcpAppsToolResultsForBackend(
+          (await convertToModelMessages(messages)) as ModelMessage[],
+          mcpClientManager,
+          selectedServers,
+        ),
+        mcpClientManager,
+        selectedServers,
       ),
       ...(resolvedTemperature == undefined
         ? {}
