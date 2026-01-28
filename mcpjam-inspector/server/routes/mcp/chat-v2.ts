@@ -5,6 +5,7 @@ import {
   stepCountIs,
   createUIMessageStream,
   createUIMessageStreamResponse,
+  ToolSet,
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
@@ -15,6 +16,7 @@ import {
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { logger } from "../../utils/logger";
+import { ModelMessage } from "@ai-sdk/provider-utils";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
@@ -106,7 +108,7 @@ chatV2.post("/", async (c) => {
 
       // Driver loop that emits AI UIMessage chunks (compatible with DefaultChatTransport)
       const authHeader = c.req.header("authorization") || undefined;
-      let messageHistory = convertToModelMessages(messages);
+      let messageHistory = await convertToModelMessages(messages);
       let steps = 0;
       const MAX_STEPS = 20;
 
@@ -218,9 +220,12 @@ chatV2.post("/", async (c) => {
                 }
               }
 
-              await executeToolCallsFromMessages(messageHistory, {
-                clientManager: mcpClientManager,
-              });
+              await executeToolCallsFromMessages(
+                messageHistory as ModelMessage[],
+                {
+                  clientManager: mcpClientManager,
+                },
+              );
             }
             const newMessages = messageHistory.slice(beforeLen);
             for (const msg of newMessages) {
@@ -267,12 +272,12 @@ chatV2.post("/", async (c) => {
 
     const result = streamText({
       model: llmModel,
-      messages: convertToModelMessages(messages),
+      messages: await convertToModelMessages(messages),
       ...(resolvedTemperature == undefined
         ? {}
         : { temperature: resolvedTemperature }),
       system: systemPrompt,
-      tools: mcpTools,
+      tools: mcpTools as ToolSet,
       stopWhen: stepCountIs(20),
     });
 
