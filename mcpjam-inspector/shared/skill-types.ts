@@ -36,3 +36,29 @@ export interface SkillResult {
   content: string;
   path: string;
 }
+
+/**
+ * File entry in a skill directory
+ */
+export interface SkillFile {
+  path: string;           // Relative path (e.g., "scripts/fill.py")
+  name: string;           // File name only
+  type: 'file' | 'directory';
+  size?: number;
+  mimeType?: string;
+  extension?: string;
+  children?: SkillFile[]; // For directories
+}
+
+/**
+ * Content of a bundled skill file
+ */
+export interface SkillFileContent {
+  path: string;
+  name: string;
+  content?: string;       // Text content
+  base64?: string;        // Binary content (images)
+  mimeType: string;
+  size: number;
+  isText: boolean;
+}

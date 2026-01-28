@@ -355,7 +355,8 @@ export function ChatTabV2({
   const submitBlocked = baseSubmitBlocked || noServersConnected;
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  let placeholder = 'Ask something… Use Slash "/" commands for MCP prompts';
+  let placeholder =
+    'Ask something… Use Slash "/" commands for Skills & MCP prompts';
   if (noServersConnected) {
     placeholder = "Connect an MCP server to send your first message";
   } else if (isAuthLoading) {
@@ -383,8 +384,7 @@ export function ChatTabV2({
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const hasResults =
-      mcpPromptResults.length > 0 || skillResults.length > 0;
+    const hasResults = mcpPromptResults.length > 0 || skillResults.length > 0;
     if ((input.trim() || hasResults) && status === "ready" && !submitBlocked) {
       posthog.capture("send_message", {
         location: "chat_tab",

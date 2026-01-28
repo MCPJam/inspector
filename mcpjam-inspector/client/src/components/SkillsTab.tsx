@@ -7,14 +7,16 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { Sparkles, RefreshCw, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { Sparkles, RefreshCw, ChevronRight, Plus, Trash2, FolderTree } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
   getSkill,
   deleteSkill,
+  listSkillFiles,
+  readSkillFile,
 } from "@/lib/apis/mcp-skills-api";
-import type { Skill, SkillListItem } from "@shared/skill-types";
+import type { Skill, SkillListItem, SkillFile, SkillFileContent } from "@shared/skill-types";
 import { SkillUploadDialog } from "./chat-v2/chat-input/skills/skill-upload-dialog";
 import {
   AlertDialog,
@@ -26,7 +28,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./ui/alert-dialog";
-import { MemoizedMarkdown } from "./chat-v2/thread/memomized-markdown";
+import { SkillFileTree } from "./skills/SkillFileTree";
+import { SkillFileViewer } from "./skills/SkillFileViewer";
 
 export function SkillsTab() {
   const [skills, setSkills] = useState<SkillListItem[]>([]);
@@ -39,6 +42,14 @@ export function SkillsTab() {
   const [skillToDelete, setSkillToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // File browsing state
+  const [skillFiles, setSkillFiles] = useState<SkillFile[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [selectedFilePath, setSelectedFilePath] = useState<string>("SKILL.md");
+  const [fileContent, setFileContent] = useState<SkillFileContent | null>(null);
+  const [loadingFileContent, setLoadingFileContent] = useState(false);
+  const [fileError, setFileError] = useState<string>("");
+
   useEffect(() => {
     fetchSkills();
   }, []);
@@ -46,10 +57,24 @@ export function SkillsTab() {
   useEffect(() => {
     if (selectedSkillName) {
       fetchSkillContent(selectedSkillName);
+      fetchSkillFiles(selectedSkillName);
+      // Reset file selection to SKILL.md when skill changes
+      setSelectedFilePath("SKILL.md");
+      setFileContent(null);
     } else {
       setSelectedSkill(null);
+      setSkillFiles([]);
+      setSelectedFilePath("SKILL.md");
+      setFileContent(null);
     }
   }, [selectedSkillName]);
+
+  // Load file content when file selection changes
+  useEffect(() => {
+    if (selectedSkillName && selectedFilePath) {
+      fetchFileContent(selectedSkillName, selectedFilePath);
+    }
+  }, [selectedSkillName, selectedFilePath]);
 
   const fetchSkills = async () => {
     setFetchingSkills(true);
@@ -62,7 +87,7 @@ export function SkillsTab() {
       if (skillsList.length === 0) {
         setSelectedSkillName("");
         setSelectedSkill(null);
-      } else if (!skillsList.some((skill) => skill.name === selectedSkillName)) {
+      } else if (!skillsList.some((skill: SkillListItem) => skill.name === selectedSkillName)) {
         setSelectedSkillName(skillsList[0].name);
       }
     } catch (err) {
@@ -87,6 +112,36 @@ export function SkillsTab() {
       setError(message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchSkillFiles = async (name: string) => {
+    setLoadingFiles(true);
+    try {
+      const files = await listSkillFiles(name);
+      setSkillFiles(files);
+    } catch (err) {
+      console.error("Error fetching skill files:", err);
+      setSkillFiles([]);
+    } finally {
+      setLoadingFiles(false);
+    }
+  };
+
+  const fetchFileContent = async (name: string, filePath: string) => {
+    setLoadingFileContent(true);
+    setFileError("");
+
+    try {
+      const content = await readSkillFile(name, filePath);
+      setFileContent(content);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : `Error reading file: ${err}`;
+      setFileError(message);
+      setFileContent(null);
+    } finally {
+      setLoadingFileContent(false);
     }
   };
 
@@ -118,11 +173,20 @@ export function SkillsTab() {
     setIsUploadDialogOpen(false);
   };
 
+  const handleFileSelect = (path: string) => {
+    setSelectedFilePath(path);
+  };
+
+  const handleLinkClick = (path: string) => {
+    // Handle relative links in markdown - navigate to that file
+    setSelectedFilePath(path);
+  };
+
   return (
     <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="horizontal" className="flex-1">
         {/* Left Panel - Skills List */}
-        <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+        <ResizablePanel defaultSize={20} minSize={15} maxSize={35}>
           <div className="h-full flex flex-col border-r border-border bg-background">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
@@ -227,79 +291,71 @@ export function SkillsTab() {
 
         <ResizableHandle withHandle />
 
-        {/* Right Panel - Skill Content */}
-        <ResizablePanel defaultSize={70} minSize={50}>
+        {/* Middle Panel - File Tree */}
+        <ResizablePanel defaultSize={20} minSize={15} maxSize={35}>
+          <div className="h-full flex flex-col border-r border-border bg-background">
+            {/* Header */}
+            <div className="flex items-center gap-3 px-4 py-4 border-b border-border bg-background">
+              <FolderTree className="h-3 w-3 text-muted-foreground" />
+              <h2 className="text-xs font-semibold text-foreground">Files</h2>
+            </div>
+
+            {/* File Tree */}
+            <div className="flex-1 overflow-hidden">
+              <ScrollArea className="h-full">
+                {selectedSkillName ? (
+                  <SkillFileTree
+                    files={skillFiles}
+                    selectedPath={selectedFilePath}
+                    onSelectFile={handleFileSelect}
+                    loading={loadingFiles}
+                  />
+                ) : (
+                  <div className="p-4 text-xs text-muted-foreground text-center">
+                    Select a skill to view files
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+          </div>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        {/* Right Panel - File Content */}
+        <ResizablePanel defaultSize={60} minSize={40}>
           <div className="h-full flex flex-col bg-background">
             {selectedSkillName && selectedSkill ? (
               <>
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3">
-                      <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                        {selectedSkill.name}
-                      </code>
-                    </div>
+                <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
+                      {selectedSkill.name}
+                    </code>
+                    <span className="text-xs text-muted-foreground">
+                      {selectedSkill.description}
+                    </span>
                   </div>
                   <Button
                     onClick={() => setSkillToDelete(selectedSkill.name)}
                     variant="ghost"
                     size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10 flex-shrink-0"
                   >
                     <Trash2 className="h-3 w-3" />
                     Delete
                   </Button>
                 </div>
 
-                {/* Description */}
-                {selectedSkill.description && (
-                  <div className="px-6 py-4 bg-muted/50 border-b border-border">
-                    <p className="text-xs text-muted-foreground leading-relaxed font-medium">
-                      {selectedSkill.description}
-                    </p>
-                  </div>
-                )}
-
-                {/* Content */}
+                {/* File Content Viewer */}
                 <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="px-6 py-6">
-                      {loading ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
-                          <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                            <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-                          </div>
-                          <p className="text-xs text-muted-foreground font-semibold">
-                            Loading skill content...
-                          </p>
-                        </div>
-                      ) : error ? (
-                        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                          {error}
-                        </div>
-                      ) : (
-                        <div className="space-y-4">
-                          <div>
-                            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                              Skill Content
-                            </h3>
-                            <div className="prose prose-sm dark:prose-invert max-w-none bg-muted/30 p-4 rounded-md border border-border">
-                              <MemoizedMarkdown content={selectedSkill.content} />
-                            </div>
-                          </div>
-                          <div>
-                            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                              Path
-                            </h3>
-                            <code className="text-xs font-mono bg-muted px-2 py-1 rounded border border-border">
-                              {selectedSkill.path}/SKILL.md
-                            </code>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </ScrollArea>
+                  <SkillFileViewer
+                    file={fileContent}
+                    loading={loadingFileContent}
+                    error={fileError}
+                    onLinkClick={handleLinkClick}
+                  />
                 </div>
               </>
             ) : (

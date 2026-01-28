@@ -1,5 +1,5 @@
 import { authFetch } from "@/lib/session-token";
-import type { Skill, SkillListItem } from "../../../../shared/skill-types";
+import type { Skill, SkillListItem, SkillFile, SkillFileContent } from "../../../../shared/skill-types";
 
 export interface ListSkillsResponse {
   skills: SkillListItem[];
@@ -106,4 +106,53 @@ export async function deleteSkill(name: string): Promise<void> {
     const message = body?.error || `Delete skill failed (${res.status})`;
     throw new Error(message);
   }
+}
+
+/**
+ * List all files in a skill directory
+ */
+export async function listSkillFiles(name: string): Promise<SkillFile[]> {
+  const res = await authFetch("/api/mcp/skills/files", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `List skill files failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return Array.isArray(body?.files) ? (body.files as SkillFile[]) : [];
+}
+
+/**
+ * Read a specific file from a skill directory
+ */
+export async function readSkillFile(
+  name: string,
+  filePath: string
+): Promise<SkillFileContent> {
+  const res = await authFetch("/api/mcp/skills/read-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, filePath }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    const message = body?.error || `Read skill file failed (${res.status})`;
+    throw new Error(message);
+  }
+
+  return body.file as SkillFileContent;
 }

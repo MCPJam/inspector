@@ -9,8 +9,12 @@ import {
   skillToListItem,
   isValidSkillName,
   generateSkillFileContent,
+  listFilesRecursive,
+  getMimeType,
+  isTextMimeType,
+  isPathWithinDirectory,
 } from "../../utils/skill-parser";
-import type { Skill, SkillListItem } from "../../../shared/skill-types";
+import type { Skill, SkillListItem, SkillFile, SkillFileContent } from "../../../shared/skill-types";
 
 const skills = new Hono();
 
@@ -56,6 +60,42 @@ async function directoryExists(dirPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Find the directory path for a skill by name
+ * Returns the full path to the skill directory, or null if not found
+ */
+async function findSkillDirectory(name: string): Promise<string | null> {
+  const skillsDirs = getSkillsDirs();
+
+  for (const skillsDir of skillsDirs) {
+    if (!(await directoryExists(skillsDir))) {
+      continue;
+    }
+
+    const entries = await fs.readdir(skillsDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const skillDir = path.join(skillsDir, entry.name);
+      const skillFilePath = path.join(skillDir, "SKILL.md");
+
+      try {
+        const fileContent = await fs.readFile(skillFilePath, "utf-8");
+        const skill = parseSkillFile(fileContent, entry.name);
+
+        if (skill && skill.name === name) {
+          return skillDir;
+        }
+      } catch {
+        // Continue searching
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -308,6 +348,132 @@ skills.post("/delete", async (c) => {
     return c.json({ success: false, error: `Skill '${name}' not found` }, 404);
   } catch (error) {
     logger.error("Error deleting skill", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * List all files in a skill directory
+ */
+skills.post("/files", async (c) => {
+  try {
+    const { name } = (await c.req.json()) as { name?: string };
+
+    if (!name) {
+      return c.json({ success: false, error: "name is required" }, 400);
+    }
+
+    const skillDir = await findSkillDirectory(name);
+    if (!skillDir) {
+      return c.json({ success: false, error: `Skill '${name}' not found` }, 404);
+    }
+
+    const files = await listFilesRecursive(skillDir);
+    return c.json({ files });
+  } catch (error) {
+    logger.error("Error listing skill files", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+/**
+ * Read a specific file from a skill directory
+ */
+skills.post("/read-file", async (c) => {
+  try {
+    const { name, filePath } = (await c.req.json()) as {
+      name?: string;
+      filePath?: string;
+    };
+
+    if (!name) {
+      return c.json({ success: false, error: "name is required" }, 400);
+    }
+
+    if (!filePath) {
+      return c.json({ success: false, error: "filePath is required" }, 400);
+    }
+
+    const skillDir = await findSkillDirectory(name);
+    if (!skillDir) {
+      return c.json({ success: false, error: `Skill '${name}' not found` }, 404);
+    }
+
+    // Security: Validate path doesn't escape skill directory
+    if (!isPathWithinDirectory(skillDir, filePath)) {
+      return c.json(
+        { success: false, error: "Invalid file path" },
+        400,
+      );
+    }
+
+    const fullPath = path.join(skillDir, filePath);
+
+    // Check if file exists
+    try {
+      const stat = await fs.stat(fullPath);
+      if (!stat.isFile()) {
+        return c.json(
+          { success: false, error: "Path is not a file" },
+          400,
+        );
+      }
+
+      const mimeType = getMimeType(filePath);
+      const isText = isTextMimeType(mimeType);
+      const fileName = path.basename(filePath);
+
+      const fileContent: SkillFileContent = {
+        path: filePath,
+        name: fileName,
+        mimeType,
+        size: stat.size,
+        isText,
+      };
+
+      // Limit file size to 1MB for text, 5MB for binary
+      const maxSize = isText ? 1024 * 1024 : 5 * 1024 * 1024;
+      if (stat.size > maxSize) {
+        return c.json(
+          {
+            success: false,
+            error: `File too large (${(stat.size / 1024 / 1024).toFixed(2)}MB). Maximum is ${maxSize / 1024 / 1024}MB`,
+          },
+          400,
+        );
+      }
+
+      if (isText) {
+        fileContent.content = await fs.readFile(fullPath, "utf-8");
+      } else {
+        const buffer = await fs.readFile(fullPath);
+        fileContent.base64 = buffer.toString("base64");
+      }
+
+      return c.json({ file: fileContent });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return c.json(
+          { success: false, error: "File not found" },
+          404,
+        );
+      }
+      throw err;
+    }
+  } catch (error) {
+    logger.error("Error reading skill file", error);
     return c.json(
       {
         success: false,
