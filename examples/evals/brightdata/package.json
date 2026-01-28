@@ -1,0 +1,20 @@
+{
+  "name": "brightdata-evals",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run brightdata-unit-test",
+    "test:evals": "vitest run brightdata-evals"
+  },
+  "dependencies": {
+    "@mcpjam/sdk": "file:../../../sdk",
+    "@types/node": "^25.0.10"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
