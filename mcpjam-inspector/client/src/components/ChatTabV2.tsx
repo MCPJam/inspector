@@ -15,7 +15,6 @@ import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
-import { ConnectMcpServerCallout } from "@/components/chat-v2/connect-mcp-server-callout";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
@@ -100,7 +99,6 @@ export function ChatTabV2({
       ),
     [selectedServerNames, connectedServerConfigs],
   );
-  const noServersConnected = selectedConnectedServerNames.length === 0;
 
   // Use shared chat session hook
   const {
@@ -352,24 +350,19 @@ export function ChatTabV2({
   };
 
   // Submit blocking with server check
-  const submitBlocked = baseSubmitBlocked || noServersConnected;
+  const submitBlocked = baseSubmitBlocked;
   const inputDisabled = status !== "ready" || submitBlocked;
 
   let placeholder =
     'Ask something… Use Slash "/" commands for Skills & MCP prompts';
-  if (noServersConnected) {
-    placeholder = "Connect an MCP server to send your first message";
-  } else if (isAuthLoading) {
+  if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
     placeholder = "Sign in to use free chat";
   }
 
   const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
-  const shouldShowConnectCallout =
-    noServersConnected && !shouldShowUpsell && !isAuthLoading;
-  const showDisabledCallout =
-    isThreadEmpty && (shouldShowUpsell || shouldShowConnectCallout);
+  const showDisabledCallout = isThreadEmpty && shouldShowUpsell;
 
   const errorMessage = formatErrorMessage(error);
 
@@ -520,11 +513,7 @@ export function ChatTabV2({
                     </div>
                   ) : showDisabledCallout ? (
                     <div className="space-y-4">
-                      {shouldShowUpsell ? (
-                        <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                      ) : (
-                        <ConnectMcpServerCallout />
-                      )}
+                      <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
                     </div>
                   ) : null}
 
