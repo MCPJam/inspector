@@ -140,13 +140,19 @@ export function SkillUploadDialog({
       entry: FileSystemDirectoryEntry,
     ): Promise<void> => {
       const reader = entry.createReader();
-      const entries = await new Promise<FileSystemEntry[]>(
-        (resolve, reject) => {
-          reader.readEntries(resolve, reject);
-        },
-      );
 
-      for (const subEntry of entries) {
+      // readEntries returns entries in batches, so we must call it
+      // repeatedly until it returns an empty array to get all files
+      const allEntries: FileSystemEntry[] = [];
+      let batch: FileSystemEntry[];
+      do {
+        batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+          reader.readEntries(resolve, reject);
+        });
+        allEntries.push(...batch);
+      } while (batch.length > 0);
+
+      for (const subEntry of allEntries) {
         if (subEntry.isFile) {
           const file = await new Promise<File>((resolve, reject) => {
             (subEntry as FileSystemFileEntry).file(resolve, reject);
