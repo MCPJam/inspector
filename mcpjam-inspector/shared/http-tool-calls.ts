@@ -1,6 +1,6 @@
 import { ModelMessage } from "@ai-sdk/provider-utils";
-import { LanguageModelV2ToolResultOutput } from "@ai-sdk/provider-v5";
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { ToolResultPart } from "ai";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -121,7 +121,7 @@ export async function executeToolCallsFromMessages(
           const input = content.input || {};
           const result = await tool.execute(input);
 
-          let output: LanguageModelV2ToolResultOutput;
+          let output: ToolResultPart;
           if (result !== undefined && result !== null) {
             if (typeof result === "object") {
               const serialized = serializeToolResult(result);
@@ -160,7 +160,7 @@ export async function executeToolCallsFromMessages(
           } as any;
           toolResultsToAdd.push(toolResultMessage);
         } catch (error: any) {
-          const errorOutput: LanguageModelV2ToolResultOutput = {
+          const errorOutput: ToolResultPart = {
             type: "error-text",
             value: error instanceof Error ? error.message : String(error),
           } as any;
