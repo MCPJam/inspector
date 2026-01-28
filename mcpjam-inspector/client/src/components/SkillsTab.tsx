@@ -7,7 +7,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { Sparkles, RefreshCw, Plus, Trash2 } from "lucide-react";
+import { SquareSlash, RefreshCw, Plus, Trash2 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -209,7 +209,7 @@ export function SkillsTab() {
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
               <div className="flex items-center gap-3">
-                <Sparkles className="h-3 w-3 text-muted-foreground" />
+                <SquareSlash className="h-3 w-3 text-muted-foreground" />
                 <h2 className="text-xs font-semibold text-foreground">Skills</h2>
                 <Badge variant="secondary" className="text-xs font-mono">
                   {skills.length}
@@ -324,7 +324,7 @@ export function SkillsTab() {
             ) : (
               <div className="h-full flex items-center justify-center">
                 <EmptyState
-                  icon={Sparkles}
+                  icon={SquareSlash}
                   title="Select a Skill"
                   description="Choose a skill from the left to view its content, or create a new one."
                 />

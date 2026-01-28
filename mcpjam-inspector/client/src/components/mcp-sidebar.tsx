@@ -13,7 +13,7 @@ import {
   Activity,
   Fish,
   ListTodo,
-  Sparkles,
+  SquareSlash,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -51,6 +51,11 @@ const navigationSections = [
         title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
+      },
+      {
+        title: "Skills",
+        url: "#skills",
+        icon: SquareSlash,
       },
     ],
   },
@@ -91,11 +96,6 @@ const navigationSections = [
         title: "Prompts",
         url: "#prompts",
         icon: MessageSquareCode,
-      },
-      {
-        title: "Skills",
-        url: "#skills",
-        icon: Sparkles,
       },
       {
         title: "Tasks",

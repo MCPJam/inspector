@@ -4,7 +4,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/chat-utils";
-import { Sparkles, Loader2, Plus } from "lucide-react";
+import { SquareSlash, Loader2, Plus } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import { listSkills, getSkill } from "@/lib/apis/mcp-skills-api";
 import type { SkillListItem, SkillResult } from "./skill-types";
@@ -137,7 +137,7 @@ export function SkillsPopoverSection({
                     }
                   }}
                 >
-                  <Sparkles size={16} className="shrink-0 text-primary" />
+                  <SquareSlash size={16} className="shrink-0 text-primary" />
                   <span className="flex-1 text-left truncate">{skill.name}</span>
                   {isLoadingThis && (
                     <Loader2

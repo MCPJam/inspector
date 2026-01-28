@@ -1,4 +1,4 @@
-import { X, ChevronDown, ChevronUp, Sparkles, Loader2 } from "lucide-react";
+import { X, ChevronDown, ChevronUp, SquareSlash, Loader2 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import type { SkillResult, SelectedSkillFile, SkillFile } from "./skill-types";
 import { listSkillFiles, readSkillFile } from "@/lib/apis/mcp-skills-api";
@@ -95,7 +95,7 @@ export function SkillResultCard({ skillResult, onRemove, onUpdate }: SkillResult
         onClick={() => setIsExpanded(!isExpanded)}
       >
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          <Sparkles size={12} className="text-primary shrink-0" />
+          <SquareSlash size={12} className="text-primary shrink-0" />
           <span className="font-small text-foreground truncate max-w-[180px]">
             {skillResult.name}
           </span>

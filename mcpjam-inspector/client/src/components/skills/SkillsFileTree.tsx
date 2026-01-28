@@ -8,7 +8,7 @@ import {
   FileText,
   FileCode,
   Image,
-  Sparkles,
+  SquareSlash,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SkillFile, SkillListItem } from "@shared/skill-types";
@@ -225,7 +225,7 @@ function SkillNode({
           <ChevronRight className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
         )}
 
-        <Sparkles className="h-3.5 w-3.5 text-purple-500 flex-shrink-0" />
+        <SquareSlash className="h-3.5 w-3.5 text-purple-500 flex-shrink-0" />
 
         <span className={cn("truncate font-medium", isSelected && "text-foreground")}>
           {skill.name}
