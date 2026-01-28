@@ -30,6 +30,8 @@ import {
   isMCPPromptsRequested,
 } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp-prompt-result-card";
+import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
+import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
 
 interface ChatInputProps {
   value: string;
@@ -66,6 +68,8 @@ interface ChatInputProps {
   systemPromptTokenCountLoading?: boolean;
   mcpPromptResults: MCPPromptResult[];
   onChangeMcpPromptResults: (mcpPromptResults: MCPPromptResult[]) => void;
+  skillResults: SkillResult[];
+  onChangeSkillResults: (skillResults: SkillResult[]) => void;
   /** When true, shows icons only for a more compact layout */
   compact?: boolean;
 }
@@ -98,6 +102,8 @@ export function ChatInput({
   systemPromptTokenCountLoading = false,
   mcpPromptResults,
   onChangeMcpPromptResults,
+  skillResults,
+  onChangeSkillResults,
   compact = false,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -134,6 +140,28 @@ export function ChatInput({
     onChangeMcpPromptResults(mcpPromptResults.filter((_, i) => i !== index));
   };
 
+  const onSkillSelected = useCallback(
+    (skillResult: SkillResult) => {
+      // Add the skill result to the skillResults state
+      onChangeSkillResults([...skillResults, skillResult]);
+
+      // Remove the "/" that triggered the popover
+      const textBeforeCaret = value.slice(0, caretIndex);
+      const textAfterCaret = value.slice(caretIndex);
+      const cleanedBefore = textBeforeCaret.replace(/\/\s*$/, "");
+      const newValue = cleanedBefore + textAfterCaret;
+      onChange(newValue);
+    },
+    [value, caretIndex, onChange, skillResults, onChangeSkillResults],
+  );
+
+  const removeSkillResult = (index: number) => {
+    onChangeSkillResults(skillResults.filter((_, i) => i !== index));
+  };
+
+  // Check if there are any results (prompts or skills) selected
+  const hasResults = mcpPromptResults.length > 0 || skillResults.length > 0;
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const currentCaretIndex = event.currentTarget.selectionStart;
     if (
@@ -153,7 +181,7 @@ export function ChatInput({
       const trimmed = value.trim();
       event.preventDefault();
       if (
-        (!trimmed && mcpPromptResults.length === 0) ||
+        (!trimmed && !hasResults) ||
         disabled ||
         submitDisabled ||
         isLoading
@@ -164,16 +192,28 @@ export function ChatInput({
     }
   };
 
-  const renderMcpPromptResultCards = () => {
-    if (mcpPromptResults.length === 0) return null;
+  const renderResultCards = () => {
+    if (!hasResults) return null;
     return (
       <div className="px-4 pt-1 pb-0.5">
         <div className="flex flex-wrap gap-1.5">
           {mcpPromptResults.map((mcpPromptResult, index) => (
             <MCPPromptResultCard
-              key={index}
+              key={`prompt-${index}`}
               mcpPromptResult={mcpPromptResult}
               onRemove={() => removeMCPPromptResult(index)}
+            />
+          ))}
+          {skillResults.map((skillResult, index) => (
+            <SkillResultCard
+              key={`skill-${index}`}
+              skillResult={skillResult}
+              onRemove={() => removeSkillResult(index)}
+              onUpdate={(updatedSkill) => {
+                const newSkillResults = [...skillResults];
+                newSkillResults[index] = updatedSkill;
+                onChangeSkillResults(newSkillResults);
+              }}
             />
           ))}
         </div>
@@ -194,14 +234,15 @@ export function ChatInput({
           anchor={caret}
           selectedServers={selectedServers}
           onPromptSelected={onMCPPromptSelected}
+          onSkillSelected={onSkillSelected}
           actionTrigger={mcpPromptPopoverKeyTrigger}
           setActionTrigger={setMcpPromptPopoverKeyTrigger}
           value={value}
           caretIndex={caretIndex}
         />
 
-        {/* MCP Prompts Cards */}
-        {renderMcpPromptResultCards()}
+        {/* MCP Prompts and Skills Cards */}
+        {renderResultCards()}
 
         <TextareaAutosize
           ref={textareaRef}
@@ -322,14 +363,14 @@ export function ChatInput({
                     size="icon"
                     className={cn(
                       "size-[34px] rounded-full transition-colors",
-                      (value.trim() || mcpPromptResults.length > 0) &&
+                      (value.trim() || hasResults) &&
                         !disabled &&
                         !submitDisabled
                         ? "bg-primary text-primary-foreground hover:bg-primary/90"
                         : "bg-muted text-muted-foreground cursor-not-allowed",
                     )}
                     disabled={
-                      (!value.trim() && mcpPromptResults.length === 0) ||
+                      (!value.trim() && !hasResults) ||
                       disabled ||
                       submitDisabled
                     }
