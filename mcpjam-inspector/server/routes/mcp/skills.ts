@@ -38,10 +38,12 @@ function getSkillsDirs(): string[] {
 
   return [
     // Global skills (always accessible regardless of how app is launched)
+    path.join(homeDir, ".claude", "skills"), // Claude Desktop global skills
     path.join(homeDir, ".mcpjam", "skills"), // MCPJam global skills
     path.join(homeDir, ".agents", "skills"), // npx skills global installs
 
     // Project-local skills (when launched from project directory)
+    path.join(cwd, ".claude", "skills"), // Claude Desktop project skills
     path.join(cwd, ".mcpjam", "skills"),
     path.join(cwd, ".agents", "skills"),
   ];

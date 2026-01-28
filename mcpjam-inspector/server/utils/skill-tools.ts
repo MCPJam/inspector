@@ -27,8 +27,12 @@ function getSkillsDirs(): string[] {
   const cwd = process.cwd();
 
   return [
+    // Global skills
+    path.join(homeDir, ".claude", "skills"), // Claude Desktop global skills
     path.join(homeDir, ".mcpjam", "skills"),
     path.join(homeDir, ".agents", "skills"),
+    // Project-local skills
+    path.join(cwd, ".claude", "skills"), // Claude Desktop project skills
     path.join(cwd, ".mcpjam", "skills"),
     path.join(cwd, ".agents", "skills"),
   ];
