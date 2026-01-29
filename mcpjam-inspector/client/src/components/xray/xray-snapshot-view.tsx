@@ -235,9 +235,9 @@ export function XRaySnapshotView({
   }
 
   return (
-    <div className="flex flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between p-3 border-b border-border">
+      <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
         <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
 
         <div className="flex items-center gap-1">
@@ -279,8 +279,8 @@ export function XRaySnapshotView({
       </div>
 
       {/* Content */}
-      <div className="p-3">
-        <div className="max-h-[80vh] overflow-auto rounded-sm bg-muted/20 p-2">
+      <div className="flex-1 min-h-0 overflow-auto p-3">
+        <div className="rounded-sm bg-muted/20 p-2">
           <JsonView
             src={payload as object}
             dark={true}
