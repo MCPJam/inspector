@@ -11,19 +11,19 @@ import { z } from "zod";
 import zodToJsonSchema from "zod-to-json-schema";
 import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
 
-export interface XRayPayloadRequest {
+interface XRayPayloadRequest {
   messages: UIMessage[];
   systemPrompt?: string;
   selectedServers?: string[];
 }
 
-export interface SerializedTool {
+interface SerializedTool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
 }
 
-export interface XRayPayloadResponse {
+interface XRayPayloadResponse {
   system: string;
   tools: Record<string, SerializedTool>;
   messages: unknown[]; // Raw messages with metadata (token counts, etc.)

@@ -1,7 +1,7 @@
 import type { UIMessage } from "ai";
 import { authFetch } from "@/lib/session-token";
 
-export interface SerializedTool {
+interface SerializedTool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
