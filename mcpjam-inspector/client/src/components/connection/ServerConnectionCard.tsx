@@ -24,6 +24,7 @@ import {
   Cable,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import {
   getConnectionStatusMeta,
@@ -44,13 +45,13 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 interface ServerConnectionCardProps {
   server: ServerWithName;
-  onDisconnect: (serverId: string) => void;
+  onDisconnect: (serverId: ServerId) => void;
   onReconnect: (
-    serverId: string,
+    serverId: ServerId,
     options?: { forceOAuthFlow?: boolean },
   ) => void;
   onEdit: (server: ServerWithName) => void;
-  onRemove?: (serverId: string) => void;
+  onRemove?: (serverId: ServerId) => void;
   sharedTunnelUrl?: string | null;
 }
 

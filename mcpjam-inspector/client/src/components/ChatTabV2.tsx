@@ -14,6 +14,7 @@ import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -40,8 +41,8 @@ import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 
 interface ChatTabProps {
-  connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
-  selectedServerIds: string[];
+  connectedOrConnectingServerConfigs: Record<ServerId, ServerWithName>;
+  selectedServerIds: ServerId[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
 }
 

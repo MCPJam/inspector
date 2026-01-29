@@ -12,6 +12,7 @@ import {
   Check,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
@@ -53,19 +54,19 @@ import { Skeleton } from "./ui/skeleton";
 import { HOSTED_MODE } from "@/lib/config";
 
 interface ServersTabProps {
-  connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
+  connectedOrConnectingServerConfigs: Record<ServerId, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
-  onDisconnect: (serverId: string) => void;
+  onDisconnect: (serverId: ServerId) => void;
   onReconnect: (
-    serverId: string,
+    serverId: ServerId,
     options?: { forceOAuthFlow?: boolean },
   ) => void;
   onUpdate: (
-    originalServerId: string,
+    originalServerId: ServerId,
     formData: ServerFormData,
     skipAutoConnect?: boolean,
   ) => void;
-  onRemove: (serverId: string) => void;
+  onRemove: (serverId: ServerId) => void;
   isLoadingWorkspaces?: boolean;
 }
 

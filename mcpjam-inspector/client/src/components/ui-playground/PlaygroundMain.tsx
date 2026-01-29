@@ -32,6 +32,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
+import type { ServerId } from "@/state/app-types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
@@ -166,8 +167,7 @@ const CSP_MODE_OPTIONS: {
 ];
 
 interface PlaygroundMainProps {
-  serverId: string;
-  serverName?: string;
+  serverId: ServerId;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   // Execution state for "Invoking" indicator
   isExecuting?: boolean;
@@ -240,7 +240,6 @@ function InvokingIndicator({
 
 export function PlaygroundMain({
   serverId,
-  serverName,
   onWidgetStateChange,
   isExecuting,
   executingToolName,
@@ -312,7 +311,7 @@ export function PlaygroundMain({
 
   const { servers } = useSharedAppState();
   const displayServerName =
-    servers[serverId]?.name ?? serverName ?? serverId ?? "";
+    servers[serverId]?.name ?? serverId ?? "";
   const selectedServers = useMemo(
     () =>
       serverId && servers[serverId]?.connectionStatus === "connected"

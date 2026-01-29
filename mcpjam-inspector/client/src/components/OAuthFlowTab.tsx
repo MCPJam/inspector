@@ -20,6 +20,7 @@ import { type OAuthTestProfile } from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { deriveOAuthProfileFromServer } from "./oauth/utils";
 import { RefreshTokensConfirmModal } from "./oauth/RefreshTokensConfirmModal";
 
@@ -73,20 +74,20 @@ const isHttpServer = (server?: ServerWithName) =>
   Boolean(server && "url" in server.config);
 
 interface OAuthFlowTabProps {
-  serverConfigs: Record<string, ServerWithName>;
-  selectedServerId: string;
-  onSelectServer: (serverId: string) => void;
+  serverConfigs: Record<ServerId, ServerWithName>;
+  selectedServerId: ServerId;
+  onSelectServer: (serverId: ServerId) => void;
   onSaveServerConfig?: (
     formData: ServerFormData,
     options?: { oauthProfile?: OAuthTestProfile },
   ) => void;
   onConnectWithTokens?: (
-    serverId: string,
+    serverId: ServerId,
     tokens: OAuthTokensFromFlow,
     serverUrl: string,
   ) => Promise<void>;
   onRefreshTokens?: (
-    serverId: string,
+    serverId: ServerId,
     tokens: OAuthTokensFromFlow,
     serverUrl: string,
   ) => Promise<void>;
@@ -242,6 +243,7 @@ export const OAuthFlowTab = ({
       getState: () => oauthFlowStateRef.current,
       updateState: updateOAuthFlowState,
       serverUrl: profile.serverUrl,
+      serverId: activeServer?.id ?? serverIdentifier,
       serverName: serverIdentifier,
       redirectUrl: provider.redirectUrl,
       customScopes: profile.scopes.trim() || undefined,

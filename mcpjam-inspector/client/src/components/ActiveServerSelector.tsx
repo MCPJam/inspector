@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
@@ -9,12 +10,12 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { ConfirmChatResetDialog } from "./chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 export interface ActiveServerSelectorProps {
-  serverConfigs: Record<string, ServerWithName>;
-  selectedServer: string;
-  selectedMultipleServers: string[];
+  serverConfigs: Record<ServerId, ServerWithName>;
+  selectedServer: ServerId;
+  selectedMultipleServers: ServerId[];
   isMultiSelectEnabled: boolean;
-  onServerChange: (server: string) => void;
-  onMultiServerToggle: (server: string) => void;
+  onServerChange: (server: ServerId) => void;
+  onMultiServerToggle: (server: ServerId) => void;
   onConnect: (formData: ServerFormData) => void;
   onReconnect?: (serverName: string) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth

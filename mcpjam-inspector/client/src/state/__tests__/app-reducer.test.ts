@@ -815,4 +815,119 @@ describe("appReducer", () => {
       });
     });
   });
+
+  describe("RENAME_SERVER", () => {
+    it("renames server in state.servers", () => {
+      const server = createServer("Old Name", { id: "server-uuid" });
+      const state = createInitialState({ servers: { "server-uuid": server } });
+
+      const result = appReducer(state, {
+        type: "RENAME_SERVER",
+        id: "server-uuid",
+        newName: "New Name",
+      });
+
+      expect(result.servers["server-uuid"].name).toBe("New Name");
+      expect(result.servers["server-uuid"].id).toBe("server-uuid");
+    });
+
+    it("preserves server ID (key) after rename", () => {
+      const server = createServer("Old Name", { id: "server-uuid" });
+      const state = createInitialState({ servers: { "server-uuid": server } });
+
+      const result = appReducer(state, {
+        type: "RENAME_SERVER",
+        id: "server-uuid",
+        newName: "New Name",
+      });
+
+      expect(result.servers["server-uuid"]).toBeDefined();
+      expect(Object.keys(result.servers)).toEqual(["server-uuid"]);
+    });
+
+    it("updates server name in workspace.servers", () => {
+      const server = createServer("Old Name", { id: "server-uuid" });
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Test Workspace",
+        servers: { "server-uuid": server },
+        createdAt: new Date("2024-01-01"),
+        updatedAt: new Date("2024-01-01"),
+        isDefault: true,
+      };
+      const state = createInitialState({
+        servers: { "server-uuid": server },
+        workspaces: { "ws-1": workspace },
+        activeWorkspaceId: "ws-1",
+      });
+
+      const result = appReducer(state, {
+        type: "RENAME_SERVER",
+        id: "server-uuid",
+        newName: "New Name",
+      });
+
+      expect(result.workspaces["ws-1"].servers["server-uuid"].name).toBe("New Name");
+    });
+
+    it("does not affect other servers", () => {
+      const server1 = createServer("Server 1", { id: "uuid-1" });
+      const server2 = createServer("Server 2", { id: "uuid-2" });
+      const state = createInitialState({
+        servers: { "uuid-1": server1, "uuid-2": server2 },
+      });
+
+      const result = appReducer(state, {
+        type: "RENAME_SERVER",
+        id: "uuid-1",
+        newName: "Renamed",
+      });
+
+      expect(result.servers["uuid-1"].name).toBe("Renamed");
+      expect(result.servers["uuid-2"].name).toBe("Server 2");
+    });
+
+    it("returns state unchanged for non-existent server", () => {
+      const state = createInitialState();
+      const result = appReducer(state, {
+        type: "RENAME_SERVER",
+        id: "does-not-exist",
+        newName: "New Name",
+      });
+      expect(result).toBe(state);
+    });
+
+    it("does not touch workspaces that don't contain the server", () => {
+      const server = createServer("Old Name", { id: "server-uuid" });
+      const ws1: Workspace = {
+        id: "ws-1",
+        name: "With Server",
+        servers: { "server-uuid": server },
+        createdAt: new Date("2024-01-01"),
+        updatedAt: new Date("2024-01-01"),
+        isDefault: true,
+      };
+      const ws2: Workspace = {
+        id: "ws-2",
+        name: "Without Server",
+        servers: {},
+        createdAt: new Date("2024-01-01"),
+        updatedAt: new Date("2024-01-01"),
+      };
+      const state = createInitialState({
+        servers: { "server-uuid": server },
+        workspaces: { "ws-1": ws1, "ws-2": ws2 },
+      });
+
+      const result = appReducer(state, {
+        type: "RENAME_SERVER",
+        id: "server-uuid",
+        newName: "New Name",
+      });
+
+      // ws-2 should be the same object reference (untouched)
+      expect(result.workspaces["ws-2"]).toBe(ws2);
+      expect(result.workspaces["ws-1"].servers["server-uuid"].name).toBe("New Name");
+    });
+  });
 });

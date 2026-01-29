@@ -54,15 +54,13 @@ export async function ensureAuthorizedForReconnect(
 
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
-  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
   const storedClientInfo = readWithFallback("mcp-client");
   const storedOAuthConfig = readWithFallback("mcp-oauth-config");
   const storedTokens = getStoredTokens(server.id, server.name);
 
   const url =
     (server.config as any)?.url?.toString?.() ||
-    readWithFallback("mcp-serverUrl") ||
-    storedServerUrl;
+    readWithFallback("mcp-serverUrl");
   if (url) {
     // Get stored OAuth configuration
     const oauthConfig = storedOAuthConfig ? JSON.parse(storedOAuthConfig) : {};

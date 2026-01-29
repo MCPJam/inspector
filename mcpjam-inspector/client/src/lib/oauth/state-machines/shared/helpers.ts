@@ -201,12 +201,14 @@ export async function generateCodeChallenge(verifier: string): Promise<string> {
 /**
  * Helper: Load pre-registered OAuth credentials from localStorage
  */
-export function loadPreregisteredCredentials(serverName: string): {
+export function loadPreregisteredCredentials(serverId: string, serverName?: string): {
   clientId?: string;
   clientSecret?: string;
 } {
   try {
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    const storedClientInfo =
+      localStorage.getItem(`mcp-client-${serverId}`) ||
+      (serverName ? localStorage.getItem(`mcp-client-${serverName}`) : null);
     if (storedClientInfo) {
       const parsed = JSON.parse(storedClientInfo);
       return {

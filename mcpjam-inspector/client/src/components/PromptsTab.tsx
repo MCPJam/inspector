@@ -29,8 +29,7 @@ import { LoggerView } from "./logger-view";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
-  serverId?: string;
-  serverName?: string;
+  serverId: string;
 }
 
 type PromptArgument = NonNullable<MCPPrompt["arguments"]>[number];
@@ -49,9 +48,7 @@ interface FormField {
 export function PromptsTab({
   serverConfig,
   serverId,
-  serverName,
 }: PromptsTabProps) {
-  const activeServerId = serverId ?? serverName;
   const [prompts, setPrompts] = useState<MCPPrompt[]>([]);
   const [selectedPrompt, setSelectedPrompt] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -65,10 +62,10 @@ export function PromptsTab({
   }, [prompts, selectedPrompt]);
 
   useEffect(() => {
-    if (serverConfig && activeServerId) {
+    if (serverConfig && serverId) {
       fetchPrompts();
     }
-  }, [serverConfig, activeServerId]);
+  }, [serverConfig, serverId]);
 
   useEffect(() => {
     if (selectedPromptData?.arguments) {
@@ -79,13 +76,13 @@ export function PromptsTab({
   }, [selectedPromptData]);
 
   const fetchPrompts = async () => {
-    if (!activeServerId) return;
+    if (!serverId) return;
 
     setFetchingPrompts(true);
     setError("");
 
     try {
-      const serverPrompts = await listPromptsApi(activeServerId);
+      const serverPrompts = await listPromptsApi(serverId);
       setPrompts(serverPrompts);
 
       if (serverPrompts.length === 0) {
@@ -161,14 +158,14 @@ export function PromptsTab({
   };
 
   const getPrompt = async () => {
-    if (!selectedPrompt || !activeServerId) return;
+    if (!selectedPrompt || !serverId) return;
 
     setLoading(true);
     setError("");
 
     try {
       const params = buildParameters();
-      const data = await getPromptApi(activeServerId, selectedPrompt, params);
+      const data = await getPromptApi(serverId, selectedPrompt, params);
       setPromptContent(data.content);
     } catch (err) {
       const message =
@@ -211,7 +208,7 @@ export function PromptsTab({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedPrompt, loading]);
 
-  if (!serverConfig || !activeServerId) {
+  if (!serverConfig || !serverId) {
     return (
       <EmptyState
         icon={MessageSquare}
@@ -537,7 +534,7 @@ export function PromptsTab({
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
               <LoggerView
-                serverIds={activeServerId ? [activeServerId] : undefined}
+                serverIds={serverId ? [serverId] : undefined}
               />
             </ResizablePanel>
             <ResizableHandle withHandle />

@@ -22,9 +22,10 @@ import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
+import type { ServerId } from "@/state/app-types";
 
 interface EvalsTabProps {
-  selectedServer?: string;
+  selectedServer?: ServerId;
 }
 
 export function EvalsTab({ selectedServer }: EvalsTabProps) {

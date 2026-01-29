@@ -51,7 +51,7 @@ describe("PromptsTab", () => {
 
   describe("empty state", () => {
     it("shows empty state when no server config provided", () => {
-      render(<PromptsTab />);
+      render(<PromptsTab serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
@@ -62,7 +62,7 @@ describe("PromptsTab", () => {
     });
 
     it("shows empty state when serverConfig is undefined", () => {
-      render(<PromptsTab serverConfig={undefined} serverName="test-server" />);
+      render(<PromptsTab serverConfig={undefined} serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
@@ -77,7 +77,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -94,7 +94,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       // First prompt is auto-selected, so both names appear (list + header)
@@ -116,7 +116,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -130,7 +130,7 @@ describe("PromptsTab", () => {
       mockListPrompts.mockResolvedValue([]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -149,7 +149,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       // First prompt should be auto-selected, showing Get Prompt button
@@ -169,7 +169,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -198,7 +198,7 @@ describe("PromptsTab", () => {
       });
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -226,7 +226,7 @@ describe("PromptsTab", () => {
       mockGetPrompt.mockRejectedValue(new Error("Prompt not found"));
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -258,7 +258,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -273,7 +273,7 @@ describe("PromptsTab", () => {
       mockListPrompts.mockResolvedValue([{ name: "simple-prompt" }]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -294,7 +294,7 @@ describe("PromptsTab", () => {
       mockGetPrompt.mockResolvedValue({ content: "Hello!" });
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -328,7 +328,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       // Description may appear in both list and detail panel
@@ -352,7 +352,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -368,7 +368,7 @@ describe("PromptsTab", () => {
       mockListPrompts.mockResolvedValue([]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -406,7 +406,7 @@ describe("PromptsTab", () => {
       ]);
 
       render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+        <PromptsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {

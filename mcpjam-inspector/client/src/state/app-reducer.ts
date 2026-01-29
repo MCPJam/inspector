@@ -2,7 +2,9 @@ import {
   AppAction,
   AppState,
   ConnectionStatus,
+  ServerId,
   ServerWithName,
+  toServerId,
   Workspace,
 } from "./app-types";
 
@@ -191,7 +193,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             lastError: action.error ?? existing.lastError,
           }),
         },
-        selectedServer: nextSelected,
+        selectedServer: nextSelected as ServerId,
         selectedMultipleServers: state.selectedMultipleServers.filter(
           (n) => n !== action.id,
         ),
@@ -207,7 +209,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         ...state,
         servers: rest,
         selectedServer:
-          state.selectedServer === action.id ? "none" : state.selectedServer,
+          state.selectedServer === action.id
+            ? toServerId("none")
+            : state.selectedServer,
         selectedMultipleServers: state.selectedMultipleServers.filter(
           (n) => n !== action.id,
         ),
@@ -228,7 +232,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case "SYNC_AGENT_STATUS": {
       const map = new Map(action.servers.map((s) => [s.id, s.status]));
       const updated: AppState["servers"] = {};
-      for (const [id, server] of Object.entries(state.servers)) {
+      for (const [key, server] of Object.entries(state.servers)) {
+        const id = key as ServerId;
         const inFlight = server.connectionStatus === "connecting";
         if (inFlight) {
           updated[id] = server;
@@ -341,8 +346,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         activeWorkspaceId: action.workspaceId,
-        servers: disconnectedServers,
-        selectedServer: "none",
+        servers: disconnectedServers as Record<ServerId, ServerWithName>,
+        selectedServer: toServerId("none"),
         selectedMultipleServers: [],
       };
     }

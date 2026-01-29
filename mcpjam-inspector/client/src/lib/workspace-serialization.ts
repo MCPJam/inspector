@@ -1,7 +1,12 @@
-import type { ServerWithName, ConnectionStatus } from "@/state/app-types";
+import type {
+  ServerId,
+  ServerWithName,
+  ConnectionStatus,
+} from "@/state/app-types";
+import { toServerId } from "@/state/app-types";
 
 export function serializeServersForSharing(
-  servers: Record<string, ServerWithName>,
+  servers: Record<ServerId, ServerWithName>,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
@@ -66,12 +71,12 @@ export function serializeServersForSharing(
 
 export function deserializeServersFromConvex(
   servers: Record<string, any>,
-): Record<string, ServerWithName> {
-  const result: Record<string, ServerWithName> = {};
+): Record<ServerId, ServerWithName> {
+  const result: Record<ServerId, ServerWithName> = {};
 
   for (const [serverId, serverData] of Object.entries(servers)) {
     if (!serverData) continue;
-    const revivedId = serverData.id || serverId || crypto.randomUUID();
+    const revivedId = toServerId(serverData.id || serverId || crypto.randomUUID());
 
     const config: any = {};
     if (serverData.config) {
@@ -112,7 +117,7 @@ export function deserializeServersFromConvex(
 }
 
 export function serversHaveChanged(
-  local: Record<string, ServerWithName>,
+  local: Record<ServerId, ServerWithName>,
   remote: Record<string, any>,
 ): boolean {
   const localIds = Object.keys(local);

@@ -304,52 +304,50 @@ export default function App() {
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
             />
           )}
-          {activeTab === "tools" && (
+          {activeTab === "tools" && selectedServerId && (
             <div className="h-full overflow-hidden">
               <ToolsTab
                 serverConfig={selectedMCPConfig}
                 serverId={selectedServerId}
-                serverName={selectedServerName}
               />
             </div>
           )}
           {activeTab === "evals" && (
             <EvalsTab selectedServer={selectedServerId} />
           )}
-          {activeTab === "resources" && (
+          {activeTab === "resources" && selectedServerId && (
             <ResourcesTab
               serverConfig={selectedMCPConfig}
               serverId={selectedServerId}
-              serverName={selectedServerName}
             />
           )}
 
-          {activeTab === "resource-templates" && (
+          {activeTab === "resource-templates" && selectedServerId && (
             <ResourceTemplatesTab
               serverConfig={selectedMCPConfig}
               serverId={selectedServerId}
-              serverName={selectedServerName}
             />
           )}
 
-          {activeTab === "prompts" && (
+          {activeTab === "prompts" && selectedServerId && (
             <PromptsTab
               serverConfig={selectedMCPConfig}
               serverId={selectedServerId}
-              serverName={selectedServerName}
             />
           )}
 
           {activeTab === "skills" && <SkillsTab />}
 
-          <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
-            <TasksTab
-              serverConfig={selectedMCPConfig}
-              serverId={selectedServerId}
-              serverName={selectedServerName}
-              isActive={activeTab === "tasks"}
-            />
-          </div>
+          {selectedServerId && (
+            <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
+              <TasksTab
+                serverConfig={selectedMCPConfig}
+                serverId={selectedServerId}
+                serverName={selectedServerName}
+                isActive={activeTab === "tasks"}
+              />
+            </div>
+          )}
 
           {activeTab === "auth" && (
             <AuthTab
@@ -379,11 +377,10 @@ export default function App() {
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
-          {activeTab === "app-builder" && (
+          {activeTab === "app-builder" && selectedServerId && (
             <UIPlaygroundTab
               serverConfig={selectedMCPConfig}
               serverId={selectedServerId}
-              serverName={selectedServerName}
             />
           )}
           {activeTab === "settings" && <SettingsTab />}

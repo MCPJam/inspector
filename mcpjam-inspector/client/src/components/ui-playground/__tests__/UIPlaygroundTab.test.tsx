@@ -153,14 +153,14 @@ vi.mock("../PlaygroundLeft", () => ({
 // Mock PlaygroundMain
 vi.mock("../PlaygroundMain", () => ({
   PlaygroundMain: ({
-    serverName,
+    serverId,
     isExecuting,
   }: {
-    serverName: string;
+    serverId: string;
     isExecuting: boolean;
   }) => (
     <div data-testid="playground-main">
-      <span data-testid="server-name">{serverName}</span>
+      <span data-testid="server-name">{serverId}</span>
       {isExecuting && <span data-testid="executing">Executing...</span>}
     </div>
   ),
@@ -211,7 +211,7 @@ describe("UIPlaygroundTab", () => {
 
   describe("empty state", () => {
     it("shows empty state when no server config provided", () => {
-      render(<UIPlaygroundTab />);
+      render(<UIPlaygroundTab serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
@@ -222,7 +222,7 @@ describe("UIPlaygroundTab", () => {
     });
 
     it("shows empty state when serverConfig is undefined", () => {
-      render(<UIPlaygroundTab serverConfig={undefined} serverName="test" />);
+      render(<UIPlaygroundTab serverConfig={undefined} serverId="test" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
@@ -242,7 +242,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -257,7 +257,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -280,7 +280,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -297,7 +297,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -317,7 +317,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -333,7 +333,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -348,7 +348,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -361,7 +361,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <UIPlaygroundTab serverConfig={serverConfig} serverName="my-server" />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="my-server" />,
       );
 
       await waitFor(() => {
@@ -382,7 +382,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -406,7 +406,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -426,7 +426,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -448,7 +448,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -465,7 +465,7 @@ describe("UIPlaygroundTab", () => {
       render(
         <UIPlaygroundTab
           serverConfig={serverConfig}
-          serverName="test-server"
+          serverId="test-server"
         />,
       );
 
@@ -483,7 +483,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       const { rerender } = render(
-        <UIPlaygroundTab serverConfig={serverConfig} serverName="server-1" />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="server-1" />,
       );
 
       await waitFor(() => {
@@ -491,7 +491,7 @@ describe("UIPlaygroundTab", () => {
       });
 
       rerender(
-        <UIPlaygroundTab serverConfig={serverConfig} serverName="server-2" />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="server-2" />,
       );
 
       await waitFor(() => {
@@ -503,7 +503,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       const { rerender } = render(
-        <UIPlaygroundTab serverConfig={serverConfig} serverName="server-1" />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="server-1" />,
       );
 
       await waitFor(() => {
@@ -511,7 +511,7 @@ describe("UIPlaygroundTab", () => {
       });
 
       rerender(
-        <UIPlaygroundTab serverConfig={undefined} serverName={undefined} />,
+        <UIPlaygroundTab serverConfig={undefined} serverId="test-server" />,
       );
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();

@@ -163,7 +163,7 @@ export const storePresets = {
       connectionStatus: "connected",
       enabled: true,
     });
-    const servers = { [server.name]: server };
+    const servers = { [server.id]: server };
     const workspace = createWorkspace({
       id: "default-workspace",
       isDefault: true,
@@ -174,7 +174,7 @@ export const storePresets = {
       appState: createMockAppStateWithServers([server]),
       workspaceServers: servers,
       connectedOrConnectingServerConfigs: servers,
-      selectedServer: server.name,
+      selectedServer: server.id,
       selectedServerEntry: server,
       selectedMCPConfig: server.config,
       activeWorkspace: workspace,
@@ -193,11 +193,11 @@ export const storePresets = {
         }),
       );
     }
-    const serversMap = Object.fromEntries(servers.map((s) => [s.name, s]));
+    const serversMap = Object.fromEntries(servers.map((s) => [s.id, s]));
     const connectedMap = Object.fromEntries(
       servers
         .filter((s) => s.connectionStatus === "connected")
-        .map((s) => [s.name, s]),
+        .map((s) => [s.id, s]),
     );
     const workspace = createWorkspace({
       id: "default-workspace",

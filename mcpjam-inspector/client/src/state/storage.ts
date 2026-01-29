@@ -1,7 +1,9 @@
 import {
   AppState,
   initialAppState,
+  ServerId,
   ServerWithName,
+  toServerId,
   Workspace,
 } from "./app-types";
 
@@ -18,7 +20,7 @@ function reviveServer(server: any): ServerWithName {
       // ignore invalid URL
     }
   }
-  const id = server.id || crypto.randomUUID();
+  const id = toServerId(server.id || crypto.randomUUID());
   return {
     ...server,
     id,
@@ -34,7 +36,7 @@ function reviveServer(server: any): ServerWithName {
 
 function reviveServersMap(
   rawServers: Record<string, any> | undefined,
-): Record<string, ServerWithName> {
+): Record<ServerId, ServerWithName> {
   if (!rawServers) return {};
   return Object.fromEntries(
     Object.values(rawServers).map((server) => {
@@ -46,12 +48,13 @@ function reviveServersMap(
 
 function mapSelectionToId(
   value: string | undefined,
-  servers: Record<string, ServerWithName>,
-): string {
-  if (!value || value === "none") return "none";
-  if (servers[value]) return value;
+  servers: Record<ServerId, ServerWithName>,
+): ServerId {
+  if (!value || value === "none") return toServerId("none");
+  const key = toServerId(value);
+  if (servers[key]) return key;
   const match = Object.values(servers).find((s) => s.name === value);
-  return match ? match.id : "none";
+  return match ? match.id : toServerId("none");
 }
 
 export function loadAppState(): AppState {
@@ -89,7 +92,7 @@ export function loadAppState(): AppState {
     // If no workspaces exist or default is missing, create it
     if (Object.keys(workspaces).length === 0 || !workspaces.default) {
       // Try to migrate from old storage format
-      let migratedServers: Record<string, ServerWithName> = {};
+      let migratedServers: Record<ServerId, ServerWithName> = {};
       if (raw) {
         try {
           migratedServers = reviveServersMap(parsed.servers || {});

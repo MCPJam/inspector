@@ -11,7 +11,9 @@ import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
 import {
   initialAppState,
+  type ServerId,
   type ServerWithName,
+  toServerId,
   type Workspace,
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
@@ -51,7 +53,7 @@ export type { ServerWithName } from "@/state/app-types";
  */
 function saveOAuthConfigToLocalStorage(
   formData: ServerFormData,
-  serverId: string,
+  serverId: ServerId,
 ): void {
   if (formData.type !== "http" || !formData.useOAuth || !formData.url) {
     return;
@@ -98,13 +100,13 @@ export function useAppState() {
   const oauthCallbackHandledRef = useRef(false);
   // Operation guard to avoid races
   const opTokenRef = useRef<Map<string, number>>(new Map());
-  const nextOpToken = (serverId: string) => {
+  const nextOpToken = (serverId: ServerId) => {
     const current = opTokenRef.current.get(serverId) ?? 0;
     const next = current + 1;
     opTokenRef.current.set(serverId, next);
     return next;
   };
-  const isStaleOp = (serverId: string, token: number) =>
+  const isStaleOp = (serverId: ServerId, token: number) =>
     (opTokenRef.current.get(serverId) ?? 0) !== token;
 
   // Convex integration for workspaces
@@ -390,10 +392,10 @@ export function useAppState() {
 
     // Overlay server runtime state from appState.servers.
     // Use the union of workspace servers and runtime servers so UI stays in sync even if workspace data lags.
-    const serversWithRuntime: Record<string, ServerWithName> = {};
-    const allServerIds = new Set<string>([
-      ...Object.keys(workspace.servers),
-      ...Object.keys(appState.servers),
+    const serversWithRuntime: Record<ServerId, ServerWithName> = {};
+    const allServerIds = new Set<ServerId>([
+      ...(Object.keys(workspace.servers) as ServerId[]),
+      ...(Object.keys(appState.servers) as ServerId[]),
     ]);
 
     for (const serverId of allServerIds) {
@@ -403,11 +405,14 @@ export function useAppState() {
       // Load env vars from localStorage (not synced to cloud for security)
       let envFromStorage: Record<string, string> | undefined;
       try {
-        const stored =
-          localStorage.getItem(`mcp-env-${serverId}`) ||
-          (workspaceServer?.name
-            ? localStorage.getItem(`mcp-env-${workspaceServer.name}`)
-            : undefined);
+        let stored = localStorage.getItem(`mcp-env-${serverId}`);
+        if (!stored && workspaceServer?.name) {
+          const legacy = localStorage.getItem(`mcp-env-${workspaceServer.name}`);
+          if (legacy) {
+            localStorage.setItem(`mcp-env-${serverId}`, legacy);
+            stored = legacy;
+          }
+        }
         if (stored) envFromStorage = JSON.parse(stored);
       } catch {
         // Ignore parse errors
@@ -448,12 +453,13 @@ export function useAppState() {
   const getServerByIdOrName = useCallback(
     (idOrName?: string) => {
       if (!idOrName) return undefined;
+      const key = idOrName as ServerId;
       return (
-        appState.servers[idOrName] ||
+        appState.servers[key] ||
         Object.values(appState.servers).find(
           (server) => server.name === idOrName,
         ) ||
-        effectiveServers[idOrName] ||
+        effectiveServers[key] ||
         Object.values(effectiveServers).find(
           (server) => server.name === idOrName,
         )
@@ -481,10 +487,10 @@ export function useAppState() {
   };
 
   const setSelectedMultipleServersToAllServers = useCallback(() => {
-    const connectedNames = Object.entries(appState.servers)
+    const connectedIds = Object.entries(appState.servers)
       .filter(([, s]) => s.connectionStatus === "connected")
-      .map(([id]) => id);
-    dispatch({ type: "SET_MULTI_SELECTED", ids: connectedNames });
+      .map(([id]) => id as ServerId);
+    dispatch({ type: "SET_MULTI_SELECTED", ids: connectedIds });
   }, [appState.servers]);
 
   // Helper to sync server config to Convex workspace
@@ -526,7 +532,7 @@ export function useAppState() {
 
   // Helper to remove server from Convex workspace
   const removeServerFromConvex = useCallback(
-    async (serverId: string) => {
+    async (serverId: ServerId) => {
       // Skip Convex sync if using local fallback or not authenticated
       if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId)
         return;
@@ -559,7 +565,7 @@ export function useAppState() {
   );
 
   // Helper to fetch and store initialization info
-  const fetchAndStoreInitInfo = useCallback(async (serverId: string) => {
+  const fetchAndStoreInitInfo = useCallback(async (serverId: ServerId) => {
     try {
       const result = await getInitializationInfo(serverId);
       if (result.success && result.initInfo) {
@@ -599,8 +605,8 @@ export function useAppState() {
             Object.values(
               effectiveWorkspaces[effectiveActiveWorkspaceId]?.servers || {},
             ).find((server) => server.name === serverName);
-          const serverId =
-            result.serverId ?? matchingServer?.id ?? crypto.randomUUID();
+          const serverId: ServerId =
+            result.serverId ? toServerId(result.serverId) : matchingServer?.id ?? toServerId(crypto.randomUUID());
 
           // Move to connecting with fresh OAuth config
           dispatch({
@@ -750,7 +756,7 @@ export function useAppState() {
   ]);
 
   const handleConnect = useCallback(
-    async (formData: ServerFormData, options?: { serverId?: string }) => {
+    async (formData: ServerFormData, options?: { serverId?: ServerId }) => {
       const validationError = validateForm(formData);
       if (validationError) {
         toast.error(validationError);
@@ -767,11 +773,11 @@ export function useAppState() {
       const existingByName = Object.values(
         effectiveWorkspaces[effectiveActiveWorkspaceId]?.servers || {},
       ).find((server) => server.name === formData.name);
-      const serverId =
+      const serverId: ServerId =
         existingById?.id ??
         options?.serverId ??
         existingByName?.id ??
-        crypto.randomUUID();
+        toServerId(crypto.randomUUID());
       const baseServer = existingById ?? existingByName;
 
       const mcpConfig = toMCPConfig(formData);
@@ -1020,7 +1026,7 @@ export function useAppState() {
   const saveServerConfigWithoutConnecting = useCallback(
     async (
       formData: ServerFormData,
-      options?: { oauthProfile?: OAuthTestProfile; serverId?: string },
+      options?: { oauthProfile?: OAuthTestProfile; serverId?: ServerId },
     ) => {
       const validationError = validateForm(formData);
       if (validationError) {
@@ -1044,11 +1050,11 @@ export function useAppState() {
       const existingServerByName = Object.values(
         effectiveWorkspaces[effectiveActiveWorkspaceId]?.servers || {},
       ).find((server) => server.name === serverName);
-      const serverId =
+      const serverId: ServerId =
         existingServerById?.id ??
         options?.serverId ??
         existingServerByName?.id ??
-        crypto.randomUUID();
+        toServerId(crypto.randomUUID());
       const existingServer = existingServerById ?? existingServerByName;
       const mcpConfig = toMCPConfig(formData);
       const nextOAuthProfile = formData.useOAuth
@@ -1141,7 +1147,7 @@ export function useAppState() {
   // Apply tokens from OAuth flow to a server and connect
   const applyTokensFromOAuthFlow = useCallback(
     async (
-      serverId: string,
+      serverId: ServerId,
       tokens: {
         accessToken: string;
         refreshToken?: string;
@@ -1251,7 +1257,7 @@ export function useAppState() {
   // Connect a server with tokens from OAuth flow (for new connections)
   const handleConnectWithTokensFromOAuthFlow = useCallback(
     async (
-      serverId: string,
+      serverId: ServerId,
       tokens: {
         accessToken: string;
         refreshToken?: string;
@@ -1282,7 +1288,7 @@ export function useAppState() {
   // Refresh tokens for an already connected server (replaces existing tokens)
   const handleRefreshTokensFromOAuthFlow = useCallback(
     async (
-      serverId: string,
+      serverId: ServerId,
       tokens: {
         accessToken: string;
         refreshToken?: string;
@@ -1423,7 +1429,7 @@ export function useAppState() {
   }, [isLoading, handleConnect, logger, appState.servers]);
 
   const getValidAccessToken = useCallback(
-    async (serverId: string): Promise<string | null> => {
+    async (serverId: ServerId): Promise<string | null> => {
       const server = getServerByIdOrName(serverId);
       if (!server?.oauthTokens) return null;
       return server.oauthTokens.access_token || null;
@@ -1432,7 +1438,7 @@ export function useAppState() {
   );
 
   const handleDisconnect = useCallback(
-    async (serverId: string) => {
+    async (serverId: ServerId) => {
       const server = getServerByIdOrName(serverId);
       logger.info("Disconnecting from server", {
         serverName: server?.name ?? serverId,
@@ -1455,7 +1461,7 @@ export function useAppState() {
   );
 
   const handleRemoveServer = useCallback(
-    async (serverId: string) => {
+    async (serverId: ServerId) => {
       const server = getServerByIdOrName(serverId);
       logger.info("Removing server", { serverName: server?.name ?? serverId });
       clearOAuthData(serverId, server?.name);
@@ -1472,7 +1478,7 @@ export function useAppState() {
   );
 
   const handleReconnect = useCallback(
-    async (serverId: string, options?: { forceOAuthFlow?: boolean }) => {
+    async (serverId: ServerId, options?: { forceOAuthFlow?: boolean }) => {
       const server = getServerByIdOrName(serverId);
       const serverName = server?.name ?? serverId;
       logger.info("Reconnecting to server", { serverName, options });
@@ -1633,11 +1639,11 @@ export function useAppState() {
     syncServerStatus();
   }, [isLoading, logger]);
 
-  const setSelectedServer = useCallback((serverId: string) => {
+  const setSelectedServer = useCallback((serverId: ServerId) => {
     dispatch({ type: "SELECT_SERVER", id: serverId });
   }, []);
 
-  const setSelectedMCPConfigs = useCallback((serverIds: string[]) => {
+  const setSelectedMCPConfigs = useCallback((serverIds: ServerId[]) => {
     dispatch({ type: "SET_MULTI_SELECTED", ids: serverIds });
   }, []);
 
@@ -1646,7 +1652,7 @@ export function useAppState() {
   }, []);
 
   const toggleServerSelection = useCallback(
-    (serverId: string) => {
+    (serverId: ServerId) => {
       const current = appState.selectedMultipleServers;
       const next = current.includes(serverId)
         ? current.filter((n) => n !== serverId)
@@ -1658,7 +1664,7 @@ export function useAppState() {
 
   const handleUpdate = useCallback(
     async (
-      originalServerId: string,
+      originalServerId: ServerId,
       formData: ServerFormData,
       skipAutoConnect?: boolean,
     ) => {
@@ -1739,7 +1745,7 @@ export function useAppState() {
       });
 
       // Disconnect all currently connected servers before switching
-      const currentServers = Object.keys(appState.servers);
+      const currentServers = Object.keys(appState.servers) as ServerId[];
       for (const serverId of currentServers) {
         const server = appState.servers[serverId];
         if (server.connectionStatus === "connected") {
@@ -1898,7 +1904,7 @@ export function useAppState() {
       }
 
       // Disconnect all servers before leaving
-      const workspaceServers = Object.keys(workspace.servers || {});
+      const workspaceServers = Object.keys(workspace.servers || {}) as ServerId[];
       for (const serverId of workspaceServers) {
         const runtimeServer = appState.servers[serverId];
         if (runtimeServer?.connectionStatus === "connected") {

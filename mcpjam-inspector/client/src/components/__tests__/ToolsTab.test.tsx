@@ -96,7 +96,7 @@ describe("ToolsTab", () => {
 
   describe("empty state", () => {
     it("shows empty state when no server config provided", () => {
-      render(<ToolsTab />);
+      render(<ToolsTab serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
@@ -107,7 +107,7 @@ describe("ToolsTab", () => {
     });
 
     it("shows empty state when serverConfig is undefined", () => {
-      render(<ToolsTab serverConfig={undefined} serverName="test-server" />);
+      render(<ToolsTab serverConfig={undefined} serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
@@ -127,7 +127,7 @@ describe("ToolsTab", () => {
         ],
       });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(mockListTools).toHaveBeenCalledWith(
@@ -156,7 +156,7 @@ describe("ToolsTab", () => {
         ],
       });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("read-file")).toBeInTheDocument();
@@ -175,7 +175,7 @@ describe("ToolsTab", () => {
         ],
       });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         // Tool count should be displayed somewhere
@@ -192,7 +192,7 @@ describe("ToolsTab", () => {
         tools: [{ name: "test-tool", inputSchema: { type: "object" } }],
       });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("Select a tool")).toBeInTheDocument();
@@ -217,7 +217,7 @@ describe("ToolsTab", () => {
         ],
       });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("test-tool")).toBeInTheDocument();
@@ -246,7 +246,7 @@ describe("ToolsTab", () => {
         ],
       });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       // Wait for tools to load
       await waitFor(() => {
@@ -285,7 +285,7 @@ describe("ToolsTab", () => {
         ],
       });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("tool-a")).toBeInTheDocument();
@@ -328,7 +328,7 @@ describe("ToolsTab", () => {
         },
       });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("greet")).toBeInTheDocument();
@@ -363,7 +363,7 @@ describe("ToolsTab", () => {
     it("fetches task capabilities when server changes", async () => {
       const serverConfig = createServerConfig();
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(mockGetTaskCapabilities).toHaveBeenCalledWith("test-server");
@@ -380,7 +380,7 @@ describe("ToolsTab", () => {
       });
 
       const { rerender } = render(
-        <ToolsTab serverConfig={serverConfig} serverName="test-server" />,
+        <ToolsTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -388,7 +388,7 @@ describe("ToolsTab", () => {
       });
 
       // Clear the server
-      rerender(<ToolsTab serverConfig={undefined} serverName={undefined} />);
+      rerender(<ToolsTab serverConfig={undefined} serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
@@ -403,7 +403,7 @@ describe("ToolsTab", () => {
       });
 
       const { rerender } = render(
-        <ToolsTab serverConfig={serverConfig} serverName="server-1" />,
+        <ToolsTab serverConfig={serverConfig} serverId="server-1" />,
       );
 
       await waitFor(() => {
@@ -420,7 +420,7 @@ describe("ToolsTab", () => {
         ],
       });
 
-      rerender(<ToolsTab serverConfig={serverConfig} serverName="server-2" />);
+      rerender(<ToolsTab serverConfig={serverConfig} serverId="server-2" />);
 
       await waitFor(() => {
         expect(mockListTools).toHaveBeenCalledWith(
@@ -438,7 +438,7 @@ describe("ToolsTab", () => {
 
       mockListTools.mockRejectedValue(new Error("Network error"));
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(mockListTools).toHaveBeenCalled();
@@ -462,7 +462,7 @@ describe("ToolsTab", () => {
 
       mockExecuteToolApi.mockRejectedValue(new Error("Execution failed"));
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("failing-tool")).toBeInTheDocument();
@@ -487,7 +487,7 @@ describe("ToolsTab", () => {
 
       mockListTools.mockResolvedValue({ tools: [] });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       // Tools tab should be selected (has active styling)
       const toolsTabButton = screen.getByRole("button", { name: /^tools$/i });
@@ -499,7 +499,7 @@ describe("ToolsTab", () => {
 
       mockListTools.mockResolvedValue({ tools: [] });
 
-      render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
+      render(<ToolsTab serverConfig={serverConfig} serverId="test-server" />);
 
       const savedTabButton = screen.getByRole("button", {
         name: /saved requests/i,
