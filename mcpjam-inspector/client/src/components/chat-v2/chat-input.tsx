@@ -298,22 +298,26 @@ export function ChatInput({
             {onXrayModeChange && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant={xrayMode ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => onXrayModeChange(!xrayMode)}
-                    className={cn(
-                      "h-8 px-2 gap-1.5",
-                      xrayMode && "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20"
-                    )}
-                  >
-                    <Scan className="h-4 w-4" />
-                    {!compact && <span className="text-xs">X-Ray</span>}
-                  </Button>
+                  <span className="inline-flex">
+                    <Button
+                      type="button"
+                      variant={xrayMode ? "secondary" : "ghost"}
+                      size="sm"
+                      onClick={() => onXrayModeChange(!xrayMode)}
+                      disabled={!hasMessages}
+                      className="h-8 px-2 gap-1.5"
+                    >
+                      <Scan className="h-4 w-4" />
+                      {!compact && <span className="text-xs">X-Ray</span>}
+                    </Button>
+                  </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {xrayMode ? "Hide X-Ray view" : "Show X-Ray view (raw AI payload)"}
+                  {!hasMessages
+                    ? "Send a message first to see what's sent to the model"
+                    : xrayMode
+                      ? "Hide X-Ray view"
+                      : "See what is sent to the model"}
                 </TooltipContent>
               </Tooltip>
             )}

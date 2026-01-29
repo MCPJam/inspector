@@ -560,7 +560,7 @@ export function ChatTabV2({
                   <XRaySnapshotView
                     systemPrompt={systemPrompt}
                     messages={messages}
-                    tools={toolsMetadata}
+                    selectedServers={selectedConnectedServerNames}
                     onClose={() => setXrayMode(false)}
                   />
                 </div>
