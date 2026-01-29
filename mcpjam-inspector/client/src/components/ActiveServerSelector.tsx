@@ -3,17 +3,23 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
-import { Check, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
+} from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { ConfirmChatResetDialog } from "./chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 export interface ActiveServerSelectorProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServer: string;
@@ -210,52 +216,63 @@ export function ActiveServerSelector({
               : selectedServer === name;
 
             return (
-              <ContextMenu key={name}>
-                <ContextMenuTrigger asChild>
-                  <button
-                    onClick={() => handleServerClick(name)}
-                    className={cn(
-                      "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer",
-                      "hover:bg-accent hover:text-accent-foreground",
-                      isSelected
-                        ? "bg-muted text-foreground"
-                        : "bg-background text-foreground",
-                    )}
-                  >
-                    {isMultiSelectEnabled && (
-                      <div
-                        className={cn(
-                          "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
-                          isSelected
-                            ? "bg-primary border-primary text-primary-foreground"
-                            : "border-muted-foreground/30 hover:border-primary/50",
-                        )}
-                      >
-                        {isSelected && <Check className="w-3 h-3" />}
-                      </div>
-                    )}
+              <div
+                key={name}
+                className={cn(
+                  "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200",
+                  "hover:bg-accent hover:text-accent-foreground",
+                  isSelected
+                    ? "bg-muted text-foreground"
+                    : "bg-background text-foreground",
+                )}
+              >
+                <button
+                  onClick={() => handleServerClick(name)}
+                  className="flex h-full items-center gap-3 cursor-pointer"
+                >
+                  {isMultiSelectEnabled && (
                     <div
                       className={cn(
-                        "w-2 h-2 rounded-full",
-                        getStatusColor(serverConfig.connectionStatus),
+                        "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
+                        isSelected
+                          ? "bg-primary border-primary text-primary-foreground"
+                          : "border-muted-foreground/30 hover:border-primary/50",
                       )}
-                      title={getStatusText(serverConfig.connectionStatus)}
-                    />
-                    <span className="text-sm font-medium truncate max-w-36">
-                      {name}
-                    </span>
-                    <div className="text-xs opacity-70">
-                      {serverConfig.config.command ? "STDIO" : "HTTP"}
+                    >
+                      {isSelected && <Check className="w-3 h-3" />}
                     </div>
-                  </button>
-                </ContextMenuTrigger>
-                <ContextMenuContent>
-                  <ContextMenuItem onClick={() => onReconnect?.(name)}>
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Reconnect
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
+                  )}
+                  <div
+                    className={cn(
+                      "w-2 h-2 rounded-full",
+                      getStatusColor(serverConfig.connectionStatus),
+                    )}
+                    title={getStatusText(serverConfig.connectionStatus)}
+                  />
+                  <span className="text-sm font-medium truncate max-w-36">
+                    {name}
+                  </span>
+                  <div className="text-xs opacity-70">
+                    {serverConfig.config.command ? "STDIO" : "HTTP"}
+                  </div>
+                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className="p-1 rounded hover:bg-accent-foreground/10 transition-colors cursor-pointer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" sideOffset={0}>
+                    <DropdownMenuItem onClick={() => onReconnect?.(name)}>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Reconnect
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             );
           })}
 
