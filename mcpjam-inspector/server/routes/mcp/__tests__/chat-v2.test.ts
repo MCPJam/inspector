@@ -44,6 +44,16 @@ vi.mock("ai", () => ({
 // Mock chat helpers
 vi.mock("../../../utils/chat-helpers", () => ({
   createLlmModel: vi.fn().mockReturnValue({}),
+  scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
+  scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
+}));
+
+// Mock skill tools
+vi.mock("../../../utils/skill-tools", () => ({
+  getSkillToolsAndPrompt: vi.fn().mockResolvedValue({
+    tools: {},
+    systemPromptSection: "",
+  }),
 }));
 
 // Mock shared types
