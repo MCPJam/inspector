@@ -729,10 +729,7 @@ export async function refreshOAuthTokens(
 /**
  * Clears all OAuth data for a server
  */
-export function migrateOAuthNameKeys(
-  oldName: string,
-  newName: string,
-): void {
+export function migrateOAuthNameKeys(oldName: string, newName: string): void {
   const prefixes: StoragePrefix[] = [
     "mcp-tokens",
     "mcp-client",
