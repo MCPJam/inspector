@@ -1,0 +1,83 @@
+---
+title: "Skills"
+description: "Load and use skills to give your agents the context they need to use MCP tools effectively"
+icon: "wand-magic-sparkles"
+---
+
+[Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam lets you discover skills from your filesystem, upload new ones, and use them in the Chat tab and App Builder — either automatically based on the user's prompt or deterministically with the `/` command.
+
+## Getting Started
+
+1. **Navigate to the Skills tab** in MCPJam Inspector to discover and manage skills
+2. **Load skills** — MCPJam automatically discovers skills from [supported directories](#skill-directories). You can also upload skills directly through the Skills tab, or run `npx skills` to install them
+3. **Use skills in the Chat tab or App Builder** — the LLM discovers them automatically, or you can inject them with the `/` command
+
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.youtube.com/embed/KF6sP-6F3dg"
+  title="Skills demo"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+
+## Skill Directories
+
+MCPJam scans the following directories for skills. Each subdirectory is expected to contain a `SKILL.md` file. When duplicate skill names are found, the first match in search order wins.
+
+**Global:**
+```
+~/.claude/skills/
+~/.mcpjam/skills/
+~/.agents/skills/
+```
+
+**Project-local:**
+```
+./.claude/skills/
+./.mcpjam/skills/
+./.agents/skills/
+```
+
+<Tip>
+  If you have no skills installed, run `npx skills` to get started quickly.
+</Tip>
+
+## Uploading Skills
+
+You can upload skill folders directly from the Skills tab. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time. Uploaded skills are stored in `~/.mcpjam/skills/`.
+
+<Note>
+  Uploading a skill with a name that already exists will be rejected. Delete the existing skill first if you need to replace it.
+</Note>
+
+## Using Skills
+
+### Progressive Disclosure
+
+When you have skills available, MCPJam injects a lightweight list of all skill names and descriptions into the LLM's system prompt. The LLM decides which skills are relevant to your prompt and calls `loadSkill` to load only the instructions it needs. Once a skill is loaded, the LLM can also browse and read its supporting files using `listSkillFiles` and `readSkillFile`.
+
+### Deterministic Injection
+
+Type `/` in the input to open the skills popover. Select a skill to inject it directly into the conversation — this pre-loads the `SKILL.md` content before the LLM processes your message, so the skill is guaranteed to be used.
+
+When you select a skill via `/`, it appears as a card above the input. You can expand the card to browse the skill's file tree and optionally select additional files to include. Only files you explicitly select are pre-loaded — by default, only the `SKILL.md` is injected.
+
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.youtube.com/embed/p2_1Qt7Pfcg"
+  title="Deterministic skill injection demo"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+
+## LLM Tool Integration
+
+When skills are available, the LLM has access to three tools:
+
+| Tool | Description |
+|------|-------------|
+| `loadSkill(name)` | Load the full skill instructions by name |
+| `listSkillFiles(name)` | List all files in the skill directory |
+| `readSkillFile(name, path)` | Read the content of a specific supporting file |
+
+These tools allow the LLM to progressively discover and load skill content as needed during a conversation, rather than injecting all skill content upfront.
