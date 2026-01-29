@@ -100,7 +100,7 @@ export function MessageView({
           </div>
         )}
         {/* Text and other parts inside the bubble */}
-        {otherParts.length > 0 && (
+        {(otherParts.length > 0 || fileParts.length === 0) && (
           <UserMessageBubble>
             {otherParts.map((part, i) => (
               <PartSwitch
