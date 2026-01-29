@@ -39,5 +39,15 @@ export async function getXRayPayload(
     throw new Error(message);
   }
 
+  if (
+    body === null ||
+    typeof body !== "object" ||
+    typeof body.system !== "string" ||
+    typeof body.tools !== "object" ||
+    !Array.isArray(body.messages)
+  ) {
+    throw new Error("Failed to parse X-Ray payload");
+  }
+
   return body as XRayPayloadResponse;
 }
