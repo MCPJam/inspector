@@ -304,7 +304,6 @@ export function ChatInput({
                       variant={xrayMode ? "secondary" : "ghost"}
                       size="sm"
                       onClick={() => onXrayModeChange(!xrayMode)}
-                      disabled={!hasMessages}
                       className="h-8 px-2 gap-1.5"
                     >
                       <Scan className="h-4 w-4" />
@@ -313,11 +312,9 @@ export function ChatInput({
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {!hasMessages
-                    ? "Send a message first to see what's sent to the model"
-                    : xrayMode
-                      ? "Hide X-Ray view"
-                      : "See what is sent to the model"}
+                  {xrayMode
+                    ? "Hide X-Ray view"
+                    : "See what is sent to the model"}
                 </TooltipContent>
               </Tooltip>
             )}

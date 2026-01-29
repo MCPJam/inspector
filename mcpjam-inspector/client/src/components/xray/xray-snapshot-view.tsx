@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Copy, X, RefreshCw, AlertCircle } from "lucide-react";
+import { Copy, X, RefreshCw, AlertCircle, ScanSearch } from "lucide-react";
 import { toast } from "sonner";
 import type { UIMessage } from "ai";
 import JsonView from "react18-json-view";
@@ -59,9 +59,54 @@ export function XRaySnapshotView({
     }
   };
 
+  const hasMessages = messages.length > 0;
+
   useEffect(() => {
-    fetchPayload();
-  }, [messages, systemPrompt, selectedServers]);
+    if (hasMessages) {
+      fetchPayload();
+    } else {
+      setLoading(false);
+      setPayload(null);
+    }
+  }, [messages, systemPrompt, selectedServers, hasMessages]);
+
+  // Empty state - no messages yet
+  if (!hasMessages) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
+          <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
+          <div className="flex items-center gap-1">
+            {onClose && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                className="h-7 w-7"
+                title="Close X-Ray panel"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center">
+            <div className="mx-auto w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
+              <ScanSearch className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <div className="text-sm font-medium text-foreground">
+              No messages yet
+            </div>
+            <div className="text-xs text-muted-foreground mt-1 max-w-[200px]">
+              Send a message first to see the raw input/output sent to the model
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Loading state
   if (loading) {
@@ -84,10 +129,12 @@ export function XRaySnapshotView({
           </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center">
-            <RefreshCw className="h-5 w-5 animate-spin mx-auto text-muted-foreground" />
-            <div className="text-sm text-muted-foreground mt-2">
+            <div className="mx-auto w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
+              <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+            <div className="text-sm text-muted-foreground">
               Loading payload...
             </div>
           </div>
@@ -126,10 +173,15 @@ export function XRaySnapshotView({
           </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center">
-            <AlertCircle className="h-5 w-5 mx-auto text-destructive" />
-            <div className="text-sm text-destructive mt-2">{error}</div>
+            <div className="mx-auto w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mb-3">
+              <AlertCircle className="h-5 w-5 text-destructive" />
+            </div>
+            <div className="text-sm font-medium text-foreground">
+              Failed to load
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">{error}</div>
             <Button
               variant="outline"
               size="sm"
@@ -165,9 +217,14 @@ export function XRaySnapshotView({
           </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center">
-            <div className="text-sm text-muted-foreground">No X-Ray data</div>
+            <div className="mx-auto w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
+              <ScanSearch className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <div className="text-sm font-medium text-foreground">
+              No X-Ray data
+            </div>
             <div className="text-xs text-muted-foreground mt-1">
               Send a message to see the AI request payload
             </div>

@@ -507,7 +507,32 @@ export function ChatTabV2({
               transform: isWidgetFullscreen ? "none" : "translateZ(0)",
             }}
           >
-            {isThreadEmpty ? (
+            {xrayMode ? (
+              // X-Ray mode: show raw JSON view of AI payload
+              <StickToBottom
+                className="relative flex flex-1 flex-col min-h-0"
+                resize="smooth"
+                initial="smooth"
+              >
+                <div className="relative flex-1 min-h-0">
+                  <StickToBottom.Content className="flex flex-col min-h-0">
+                    <XRaySnapshotView
+                      systemPrompt={systemPrompt}
+                      messages={messages}
+                      selectedServers={selectedConnectedServerNames}
+                      onClose={() => setXrayMode(false)}
+                    />
+                  </StickToBottom.Content>
+                  <ScrollToBottomButton />
+                </div>
+
+                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                  <div className="max-w-4xl mx-auto p-4">
+                    <ChatInput {...sharedChatInputProps} hasMessages />
+                  </div>
+                </div>
+              </StickToBottom>
+            ) : isThreadEmpty ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
                   {isAuthLoading ? (
@@ -553,31 +578,6 @@ export function ChatTabV2({
                   </div>
                 </div>
               </div>
-            ) : xrayMode ? (
-              // X-Ray mode: show raw JSON view of AI payload
-              <StickToBottom
-                className="relative flex flex-1 flex-col min-h-0"
-                resize="smooth"
-                initial="smooth"
-              >
-                <div className="relative flex-1 min-h-0">
-                  <StickToBottom.Content className="flex flex-col min-h-0">
-                    <XRaySnapshotView
-                      systemPrompt={systemPrompt}
-                      messages={messages}
-                      selectedServers={selectedConnectedServerNames}
-                      onClose={() => setXrayMode(false)}
-                    />
-                  </StickToBottom.Content>
-                  <ScrollToBottomButton />
-                </div>
-
-                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
-                  <div className="max-w-4xl mx-auto p-4">
-                    <ChatInput {...sharedChatInputProps} hasMessages />
-                  </div>
-                </div>
-              </StickToBottom>
             ) : (
               <StickToBottom
                 className="relative flex flex-1 flex-col min-h-0 animate-in fade-in duration-300"
