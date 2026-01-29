@@ -39,12 +39,12 @@ export interface McpServerRpcItem {
 interface TrafficLogState {
   items: UiLogEvent[];
   mcpServerItems: McpServerRpcItem[];
-  xrayItems: XRayLogEvent[];
+  xrayEvent: XRayLogEvent | null;
   addLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
   addMcpServerLog: (item: Omit<McpServerRpcItem, "id">) => void;
-  addXRayLog: (event: XRayLogEvent) => void;
+  setXRayEvent: (event: XRayLogEvent) => void;
   clear: () => void;
-  clearXRay: () => void;
+  clearXRayEvent: () => void;
 }
 
 const MAX_ITEMS = 1000;
@@ -52,7 +52,7 @@ const MAX_ITEMS = 1000;
 export const useTrafficLogStore = create<TrafficLogState>((set) => ({
   items: [],
   mcpServerItems: [],
-  xrayItems: [],
+  xrayEvent: null,
   addLog: (event) => {
     const newItem: UiLogEvent = {
       ...event,
@@ -72,16 +72,12 @@ export const useTrafficLogStore = create<TrafficLogState>((set) => ({
       mcpServerItems: [newItem, ...state.mcpServerItems].slice(0, MAX_ITEMS),
     }));
   },
-  addXRayLog: (event) => {
-    console.log("[traffic-log-store] Adding X-Ray event:", event.id);
-    set((state) => {
-      const newItems = [event, ...state.xrayItems].slice(0, MAX_ITEMS);
-      console.log("[traffic-log-store] X-Ray items count:", newItems.length);
-      return { xrayItems: newItems };
-    });
+  setXRayEvent: (event) => {
+    console.log("[traffic-log-store] Setting X-Ray event:", event.id);
+    set({ xrayEvent: event });
   },
-  clear: () => set({ items: [], mcpServerItems: [], xrayItems: [] }),
-  clearXRay: () => set({ xrayItems: [] }),
+  clear: () => set({ items: [], mcpServerItems: [], xrayEvent: null }),
+  clearXRayEvent: () => set({ xrayEvent: null }),
 }));
 
 /**
@@ -175,7 +171,6 @@ export function subscribeToXRayStream(): () => void {
 
   if (!xraySseConnection) {
     const params = new URLSearchParams();
-    params.set("replay", "10");
     params.set("_t", Date.now().toString());
 
     const url = addTokenToUrl(`/api/mcp/xray/stream?${params.toString()}`);
@@ -218,8 +213,8 @@ export function subscribeToXRayStream(): () => void {
           path: (data.path as "streamText" | "mcpjam-backend") ?? "streamText",
         };
 
-        console.log("[xray-client] Adding event to store:", xrayEvent.id);
-        useTrafficLogStore.getState().addXRayLog(xrayEvent);
+        console.log("[xray-client] Setting event in store:", xrayEvent.id);
+        useTrafficLogStore.getState().setXRayEvent(xrayEvent);
       } catch (e) {
         console.error("[xray-client] Parse error:", e);
       }

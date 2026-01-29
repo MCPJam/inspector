@@ -24,11 +24,9 @@ import {
 import {
   useTrafficLogStore,
   subscribeToRpcStream,
-  subscribeToXRayStream,
   type UiLogEvent,
   type UiProtocol,
 } from "@/stores/traffic-log-store";
-import { XRayEventCard } from "@/components/xray/xray-event-card";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "sonner";
@@ -50,7 +48,7 @@ import { Filter, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type RpcDirection = "in" | "out" | string;
-type TrafficSource = "mcp-server" | "mcp-apps" | "xray";
+type TrafficSource = "mcp-server" | "mcp-apps";
 
 interface RpcEventMessage {
   serverId: string;
@@ -119,7 +117,6 @@ export function LoggerView({
   // Subscribe to UI log store (includes both MCP Apps and MCP Server RPC traffic)
   const uiLogItems = useTrafficLogStore((s) => s.items);
   const mcpServerRpcItems = useTrafficLogStore((s) => s.mcpServerItems);
-  const xrayItems = useTrafficLogStore((s) => s.xrayItems);
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Convert UI log items to renderable format
@@ -183,7 +180,7 @@ export function LoggerView({
   };
 
   const copyLogs = async () => {
-    const rpcLogs = filteredItems.map((item) => ({
+    const logs = filteredItems.map((item) => ({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
@@ -191,20 +188,8 @@ export function LoggerView({
       method: item.method,
       payload: item.payload,
     }));
-    const xrayLogs = filteredXRayItems.map((item) => ({
-      timestamp: item.timestamp,
-      source: "xray",
-      model: item.model,
-      messages: item.messages,
-      systemPrompt: item.systemPrompt,
-      tools: item.tools,
-      temperature: item.temperature,
-      selectedServers: item.selectedServers,
-      path: item.path,
-    }));
-    const allLogs = [...xrayLogs, ...rpcLogs];
     try {
-      await navigator.clipboard.writeText(JSON.stringify(allLogs, null, 2));
+      await navigator.clipboard.writeText(JSON.stringify(logs, null, 2));
       toast.success("Logs copied to clipboard");
     } catch {
       toast.error("Failed to copy logs");
@@ -214,12 +199,6 @@ export function LoggerView({
   // Subscribe to the singleton SSE connection for RPC traffic
   useEffect(() => {
     const unsubscribe = subscribeToRpcStream();
-    return unsubscribe;
-  }, []);
-
-  // Subscribe to the singleton SSE connection for X-Ray traffic
-  useEffect(() => {
-    const unsubscribe = subscribeToXRayStream();
     return unsubscribe;
   }, []);
 
@@ -233,11 +212,6 @@ export function LoggerView({
   }, [mcpServerItems, mcpAppsItems]);
 
   const filteredItems = useMemo(() => {
-    // If xray filter is selected, don't include regular RPC items
-    if (sourceFilter === "xray") {
-      return [];
-    }
-
     let result = allItems;
 
     // Filter by source type
@@ -267,46 +241,8 @@ export function LoggerView({
     return result;
   }, [allItems, searchQuery, serverIds, sourceFilter]);
 
-  // Filter X-Ray items separately
-  const filteredXRayItems = useMemo(() => {
-    if (sourceFilter !== "all" && sourceFilter !== "xray") {
-      return [];
-    }
-
-    let result = xrayItems;
-
-    // Filter by search query
-    if (searchQuery.trim()) {
-      const queryLower = searchQuery.toLowerCase();
-      result = result.filter((item) => {
-        return (
-          item.model.id.toLowerCase().includes(queryLower) ||
-          item.model.provider.toLowerCase().includes(queryLower) ||
-          item.selectedServers.some((s) =>
-            s.toLowerCase().includes(queryLower),
-          ) ||
-          item.tools.some((t) => t.name.toLowerCase().includes(queryLower)) ||
-          (item.systemPrompt?.toLowerCase().includes(queryLower) ?? false) ||
-          JSON.stringify(item.messages).toLowerCase().includes(queryLower)
-        );
-      });
-    }
-
-    return result;
-  }, [xrayItems, searchQuery, sourceFilter]);
-
-  // Calculate total count for display
-  const totalItemCount = useMemo(() => {
-    if (sourceFilter === "xray") {
-      return xrayItems.length;
-    }
-    if (sourceFilter === "all") {
-      return allItems.length + xrayItems.length;
-    }
-    return allItems.length;
-  }, [allItems.length, xrayItems.length, sourceFilter]);
-
-  const filteredItemCount = filteredItems.length + filteredXRayItems.length;
+  const totalItemCount = allItems.length;
+  const filteredItemCount = filteredItems.length;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -398,9 +334,6 @@ export function LoggerView({
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                     Apps
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="xray" className="text-xs">
-                    X-Ray (AI Requests)
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
@@ -503,12 +436,6 @@ export function LoggerView({
           </div>
         ) : (
           <>
-            {/* X-Ray items (shown at top when included) */}
-            {filteredXRayItems.map((xrayEvent) => (
-              <XRayEventCard key={xrayEvent.id} event={xrayEvent} />
-            ))}
-
-            {/* Regular RPC items */}
             {filteredItems.map((it) => {
               const isExpanded = expanded.has(it.id);
               const isAppsTraffic = it.source === "mcp-apps"; // Both MCP Apps and OpenAI Apps

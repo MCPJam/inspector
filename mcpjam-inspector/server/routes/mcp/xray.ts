@@ -15,13 +15,10 @@ const xray = new Hono();
  * GET /api/mcp/xray/stream
  *
  * SSE endpoint for X-ray events.
- * Query params:
- *   - replay: number of recent events to replay (default: 10)
+ * Sends the latest event on connect, then streams new events as they arrive.
  */
 xray.get("/stream", async (c) => {
   console.log("[xray] SSE connection request received");
-  const url = new URL(c.req.url);
-  const replay = parseInt(url.searchParams.get("replay") || "10", 10);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -38,16 +35,16 @@ xray.get("/stream", async (c) => {
         }
       };
 
-      // Replay recent events
+      // Send the latest event if it exists
       try {
-        const recent = xrayLogBus.getBuffer(isNaN(replay) ? 10 : replay);
-        console.log("[xray] Replaying", recent.length, "events");
-        for (const evt of recent) {
+        const latest = xrayLogBus.getLatest();
+        if (latest) {
+          console.log("[xray] Sending latest event");
           // Use eventType to avoid overwriting with evt.type
-          send({ ...evt, eventType: "xray" });
+          send({ ...latest, eventType: "xray" });
         }
       } catch {
-        // Ignore replay errors
+        // Ignore errors
       }
 
       // Subscribe to live events

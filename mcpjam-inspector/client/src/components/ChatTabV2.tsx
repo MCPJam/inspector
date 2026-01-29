@@ -97,11 +97,8 @@ export function ChatTabV2({
 
   // X-Ray mode state
   const [xrayMode, setXrayMode] = useState(false);
-  const [selectedXrayEventId, setSelectedXrayEventId] = useState<string | null>(
-    null,
-  );
-  const xrayItems = useTrafficLogStore((s) => s.xrayItems);
-  const clearXRay = useTrafficLogStore((s) => s.clearXRay);
+  const xrayEvent = useTrafficLogStore((s) => s.xrayEvent);
+  const clearXRayEvent = useTrafficLogStore((s) => s.clearXRayEvent);
 
   // Subscribe to X-Ray SSE stream
   useEffect(() => {
@@ -500,7 +497,7 @@ export function ChatTabV2({
     onChangeSkillResults: setSkillResults,
     xrayMode,
     onXrayModeChange: setXrayMode,
-    xrayEventCount: xrayItems.length,
+    xrayEventCount: xrayEvent ? 1 : 0,
   };
 
   const showStarterPrompts =
@@ -574,14 +571,8 @@ export function ChatTabV2({
               <div className="flex flex-1 flex-col min-h-0">
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <XRaySnapshotView
-                    event={
-                      xrayItems.find((e) => e.id === selectedXrayEventId) ??
-                      xrayItems[0] ??
-                      null
-                    }
-                    allEvents={xrayItems}
-                    onSelectEvent={setSelectedXrayEventId}
-                    onClear={clearXRay}
+                    event={xrayEvent}
+                    onClear={clearXRayEvent}
                   />
                 </div>
                 <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">

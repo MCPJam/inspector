@@ -2,35 +2,19 @@
  * X-Ray Snapshot View Component
  *
  * Shows the raw payload sent to the AI model's generateText() call.
+ * Displays only the latest snapshot (no history).
  */
 
-import {
-  Copy,
-  Trash2,
-  PanelRightClose,
-  ChevronDown,
-  Code2,
-  MessageSquare,
-} from "lucide-react";
-import { useState } from "react";
+import { Copy, Trash2, PanelRightClose } from "lucide-react";
 import { toast } from "sonner";
 import type { XRayLogEvent } from "@shared/xray-types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { TraceViewer } from "@/components/evals/trace-viewer";
 
 interface XRaySnapshotViewProps {
   event: XRayLogEvent | null;
-  allEvents: XRayLogEvent[];
-  onSelectEvent: (eventId: string) => void;
   onClear: () => void;
   onClose?: () => void;
 }
@@ -44,13 +28,9 @@ function copyToClipboard(data: unknown, label: string) {
 
 export function XRaySnapshotView({
   event,
-  allEvents,
-  onSelectEvent,
   onClear,
   onClose,
 }: XRaySnapshotViewProps) {
-  const [viewMode, setViewMode] = useState<"formatted" | "raw">("formatted");
-
   // Empty state
   if (!event) {
     return (
@@ -115,43 +95,10 @@ export function XRaySnapshotView({
         </div>
 
         <div className="flex items-center gap-1">
-          {/* Event selector dropdown */}
-          {allEvents.length > 1 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-xs gap-1"
-                >
-                  <span className="font-mono">
-                    {new Date(event.timestamp).toLocaleTimeString()}
-                  </span>
-                  <ChevronDown className="h-3 w-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="max-h-[300px] overflow-auto">
-                {allEvents.map((e, idx) => (
-                  <DropdownMenuItem
-                    key={e.id}
-                    onClick={() => onSelectEvent(e.id)}
-                    className={cn(
-                      "text-xs font-mono gap-2",
-                      e.id === event.id && "bg-muted"
-                    )}
-                  >
-                    <span className="text-muted-foreground w-4">
-                      {allEvents.length - idx}
-                    </span>
-                    <span>{new Date(e.timestamp).toLocaleTimeString()}</span>
-                    <span className="text-muted-foreground">
-                      {e.model.provider}/{e.model.id}
-                    </span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          {/* Timestamp display */}
+          <span className="text-xs font-mono text-muted-foreground">
+            {new Date(event.timestamp).toLocaleTimeString()}
+          </span>
 
           {/* Copy button */}
           <Button
@@ -169,9 +116,8 @@ export function XRaySnapshotView({
             variant="ghost"
             size="icon"
             onClick={onClear}
-            disabled={allEvents.length === 0}
             className="h-7 w-7"
-            title="Clear all"
+            title="Clear"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -191,54 +137,12 @@ export function XRaySnapshotView({
         </div>
       </div>
 
-      {/* View mode toggle */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border/40 flex-shrink-0">
-        <div className="text-xs text-muted-foreground">
-          {event.messages.length} message{event.messages.length !== 1 ? "s" : ""}
-        </div>
-        <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
-          <button
-            type="button"
-            onClick={() => setViewMode("formatted")}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-              viewMode === "formatted"
-                ? "bg-primary/10 text-foreground font-medium"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            title="Formatted view"
-          >
-            <MessageSquare className="h-3 w-3" />
-            Formatted
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("raw")}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-              viewMode === "raw"
-                ? "bg-primary/10 text-foreground font-medium"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            title="Raw JSON view"
-          >
-            <Code2 className="h-3 w-3" />
-            Raw
-          </button>
-        </div>
-      </div>
-
       {/* Content */}
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-3">
-          {viewMode === "raw" ? (
-            <pre className="overflow-auto whitespace-pre-wrap break-words text-xs rounded-md border border-border/30 bg-muted/20 p-3 font-mono">
-              {JSON.stringify(modelPayload, null, 2)}
-            </pre>
-          ) : (
-            <TraceViewer
-              trace={{ messages: event.messages as any }}
-              modelProvider={event.model.provider}
-            />
-          )}
+          <pre className="overflow-auto whitespace-pre-wrap break-words text-xs bg-muted/20 p-3 font-mono">
+            {JSON.stringify(modelPayload, null, 2)}
+          </pre>
         </div>
       </ScrollArea>
     </div>
