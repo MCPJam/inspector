@@ -32,7 +32,7 @@ import { useChatSession } from "@/hooks/use-chat-session";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 
 interface ChatTabProps {
-  connectedServerConfigs: Record<string, ServerWithName>;
+  connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
 }
@@ -56,7 +56,7 @@ function ScrollToBottomButton() {
 }
 
 export function ChatTabV2({
-  connectedServerConfigs,
+  connectedOrConnectingServerConfigs,
   selectedServerNames,
   onHasMessagesChange,
 }: ChatTabProps) {
@@ -93,9 +93,9 @@ export function ChatTabV2({
     () =>
       selectedServerNames.filter(
         (name) =>
-          connectedServerConfigs[name]?.connectionStatus === "connected",
+          connectedOrConnectingServerConfigs[name]?.connectionStatus === "connected",
       ),
-    [selectedServerNames, connectedServerConfigs],
+    [selectedServerNames, connectedOrConnectingServerConfigs],
   );
   const noServersConnected = selectedConnectedServerNames.length === 0;
 
@@ -145,14 +145,14 @@ export function ChatTabV2({
   const selectedServerInstructions = useMemo(() => {
     const instructions: Record<string, string> = {};
     for (const serverName of selectedServerNames) {
-      const server = connectedServerConfigs[serverName];
+      const server = connectedOrConnectingServerConfigs[serverName];
       const instruction = server?.initializationInfo?.instructions;
       if (instruction) {
         instructions[serverName] = instruction;
       }
     }
     return instructions;
-  }, [connectedServerConfigs, selectedServerNames]);
+  }, [connectedOrConnectingServerConfigs, selectedServerNames]);
 
   // Keep server instruction system messages in sync with selected servers
   useEffect(() => {
@@ -469,7 +469,7 @@ export function ChatTabV2({
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
     mcpToolsTokenCountLoading,
-    connectedServerConfigs,
+    connectedOrConnectingServerConfigs,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
     mcpPromptResults,

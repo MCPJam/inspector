@@ -61,7 +61,7 @@ interface ChatInputProps {
   selectedServers?: string[];
   mcpToolsTokenCount?: Record<string, number> | null;
   mcpToolsTokenCountLoading?: boolean;
-  connectedServerConfigs?: Record<string, { name: string }>;
+  connectedOrConnectingServerConfigs?: Record<string, { name: string }>;
   systemPromptTokenCount?: number | null;
   systemPromptTokenCountLoading?: boolean;
   mcpPromptResults: MCPPromptResult[];
@@ -93,7 +93,7 @@ export function ChatInput({
   selectedServers,
   mcpToolsTokenCount,
   mcpToolsTokenCountLoading = false,
-  connectedServerConfigs,
+  connectedOrConnectingServerConfigs,
   systemPromptTokenCount,
   systemPromptTokenCountLoading = false,
   mcpPromptResults,
@@ -267,7 +267,7 @@ export function ChatInput({
               selectedServers={selectedServers}
               mcpToolsTokenCount={mcpToolsTokenCount}
               mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
-              connectedServerConfigs={connectedServerConfigs}
+              connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
               systemPromptTokenCount={systemPromptTokenCount}
               systemPromptTokenCountLoading={systemPromptTokenCountLoading}
               hasMessages={hasMessages}

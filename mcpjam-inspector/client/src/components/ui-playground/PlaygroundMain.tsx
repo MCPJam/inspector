@@ -556,7 +556,7 @@ export function PlaygroundMain({
     selectedServers,
     mcpToolsTokenCount: null,
     mcpToolsTokenCountLoading: false,
-    connectedServerConfigs: { [serverName]: { name: serverName } },
+    connectedOrConnectingServerConfigs: { [serverName]: { name: serverName } },
     systemPromptTokenCount: null,
     systemPromptTokenCountLoading: false,
     mcpPromptResults,

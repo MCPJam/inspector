@@ -96,7 +96,7 @@ export default function App() {
     isLoading,
     isLoadingRemoteWorkspaces,
     workspaceServers,
-    connectedServerConfigs,
+    connectedOrConnectingServerConfigs,
     selectedMCPConfig,
     handleConnect,
     handleDisconnect,
@@ -119,16 +119,16 @@ export default function App() {
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
   // Create a stable key for connected servers to avoid infinite loops
-  // (connectedServerConfigs is a new object reference on every render)
+  // (connectedOrConnectingServerConfigs is a new object reference on every render)
   const connectedServerNamesKey = useMemo(
-    () => Object.keys(connectedServerConfigs).sort().join(","),
-    [connectedServerConfigs],
+    () => Object.keys(connectedOrConnectingServerConfigs).sort().join(","),
+    [connectedOrConnectingServerConfigs],
   );
 
   // Check which connected servers have OpenAI apps tools
   useEffect(() => {
     const checkOpenAiAppOrMcpAppsServers = async () => {
-      const connectedServerNames = Object.keys(connectedServerConfigs);
+      const connectedServerNames = Object.keys(connectedOrConnectingServerConfigs);
       const serversWithOpenAiAppOrMcpApps = new Set<string>();
 
       await Promise.all(
@@ -232,7 +232,7 @@ export default function App() {
           serverConfigs:
             activeTab === "oauth-flow"
               ? appState.servers
-              : connectedServerConfigs,
+              : connectedOrConnectingServerConfigs,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
@@ -267,7 +267,7 @@ export default function App() {
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
-              connectedServerConfigs={workspaceServers}
+              connectedOrConnectingServerConfigs={workspaceServers}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
@@ -336,7 +336,7 @@ export default function App() {
           )}
           {activeTab === "chat-v2" && (
             <ChatTabV2
-              connectedServerConfigs={connectedServerConfigs}
+              connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
             />

@@ -31,7 +31,7 @@ type ContextSchema = {
   selectedServers?: string[];
   mcpToolsTokenCount?: Record<string, number> | null;
   mcpToolsTokenCountLoading?: boolean;
-  connectedServerConfigs?: Record<string, { name: string }>;
+  connectedOrConnectingServerConfigs?: Record<string, { name: string }>;
   systemPromptTokenCount?: number | null;
   systemPromptTokenCountLoading?: boolean;
 };
@@ -55,7 +55,7 @@ export type ContextProps = ComponentProps<typeof HoverCard> & {
   selectedServers?: string[];
   mcpToolsTokenCount?: Record<string, number> | null;
   mcpToolsTokenCountLoading?: boolean;
-  connectedServerConfigs?: Record<string, { name: string }>;
+  connectedOrConnectingServerConfigs?: Record<string, { name: string }>;
   systemPromptTokenCount?: number | null;
   systemPromptTokenCountLoading?: boolean;
   hasMessages?: boolean;
@@ -68,7 +68,7 @@ export const Context = ({
   selectedServers,
   mcpToolsTokenCount,
   mcpToolsTokenCountLoading = false,
-  connectedServerConfigs,
+  connectedOrConnectingServerConfigs,
   systemPromptTokenCount,
   systemPromptTokenCountLoading = false,
   ...props
@@ -86,7 +86,7 @@ export const Context = ({
         selectedServers,
         mcpToolsTokenCount,
         mcpToolsTokenCountLoading,
-        connectedServerConfigs,
+        connectedOrConnectingServerConfigs,
         systemPromptTokenCount,
         systemPromptTokenCountLoading,
       }}
@@ -324,7 +324,7 @@ export const ContextMCPServerUsage = ({
     mcpToolsTokenCount,
     mcpToolsTokenCountLoading,
     selectedServers,
-    connectedServerConfigs,
+    connectedOrConnectingServerConfigs,
     usage,
   } = useContextValue();
 
@@ -372,7 +372,7 @@ export const ContextMCPServerUsage = ({
     .filter((serverId) => (mcpToolsTokenCount[serverId] ?? 0) > 0)
     .map((serverId) => ({
       serverId,
-      name: connectedServerConfigs?.[serverId]?.name || serverId,
+      name: connectedOrConnectingServerConfigs?.[serverId]?.name || serverId,
       tokenCount: mcpToolsTokenCount[serverId] ?? 0,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
