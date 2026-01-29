@@ -144,7 +144,11 @@ export interface FormattedError {
   isMCPJamPlatformError?: boolean;
 }
 
-const MCPJAM_PLATFORM_CODES = ['mcpjam_rate_limit', 'mcpjam_api_error', 'mcpjam_config_error'];
+const MCPJAM_PLATFORM_CODES = [
+  "mcpjam_rate_limit",
+  "mcpjam_api_error",
+  "mcpjam_config_error",
+];
 
 export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
@@ -168,7 +172,7 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
     if (parsed && typeof parsed === "object") {
       // Handle structured error with code
       const code = parsed.code;
-      const message = parsed.error || parsed.message || 'An error occurred';
+      const message = parsed.error || parsed.message || "An error occurred";
 
       return {
         message,
@@ -176,7 +180,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
         code,
         statusCode: parsed.statusCode,
         isRetryable: parsed.isRetryable,
-        isMCPJamPlatformError: code ? MCPJAM_PLATFORM_CODES.includes(code) : false,
+        isMCPJamPlatformError: code
+          ? MCPJAM_PLATFORM_CODES.includes(code)
+          : false,
       };
     }
   } catch {
