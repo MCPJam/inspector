@@ -6,7 +6,9 @@ import { FilePart } from "../file-part";
 vi.mock("lucide-react", () => ({
   FileText: (props: any) => <div data-testid="file-text-icon" {...props} />,
   Image: (props: any) => <div data-testid="image-icon" {...props} />,
-  FileSpreadsheet: (props: any) => <div data-testid="file-spreadsheet-icon" {...props} />,
+  FileSpreadsheet: (props: any) => (
+    <div data-testid="file-spreadsheet-icon" {...props} />
+  ),
   File: (props: any) => <div data-testid="file-icon" {...props} />,
 }));
 
@@ -112,7 +114,8 @@ describe("FilePart", () => {
   });
 
   it("truncates long filenames", () => {
-    const longName = "this-is-an-extremely-long-filename-for-testing-purposes.pdf";
+    const longName =
+      "this-is-an-extremely-long-filename-for-testing-purposes.pdf";
     const part = createFilePart({
       mediaType: "application/pdf",
       filename: longName,

@@ -19,7 +19,9 @@ vi.mock("lucide-react", () => ({
   X: (props: any) => <div data-testid="x-icon" {...props} />,
   FileText: (props: any) => <div data-testid="file-text-icon" {...props} />,
   Image: (props: any) => <div data-testid="image-icon" {...props} />,
-  FileSpreadsheet: (props: any) => <div data-testid="file-spreadsheet-icon" {...props} />,
+  FileSpreadsheet: (props: any) => (
+    <div data-testid="file-spreadsheet-icon" {...props} />
+  ),
   File: (props: any) => <div data-testid="file-icon" {...props} />,
 }));
 
@@ -28,9 +30,18 @@ function createMockFile(name: string, size: number, type: string): File {
 }
 
 function createAttachment(
-  overrides: Partial<FileAttachment> & { fileName?: string; fileSize?: number; fileType?: string } = {},
+  overrides: Partial<FileAttachment> & {
+    fileName?: string;
+    fileSize?: number;
+    fileType?: string;
+  } = {},
 ): FileAttachment {
-  const { fileName = "test.txt", fileSize = 1024, fileType = "text/plain", ...rest } = overrides;
+  const {
+    fileName = "test.txt",
+    fileSize = 1024,
+    fileType = "text/plain",
+    ...rest
+  } = overrides;
   return {
     id: "test-id",
     file: createMockFile(fileName, fileSize, fileType),

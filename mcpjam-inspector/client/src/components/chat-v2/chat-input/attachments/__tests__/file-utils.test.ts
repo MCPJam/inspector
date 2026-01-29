@@ -18,22 +18,14 @@ vi.mock("@/lib/chat-utils", () => ({
   formatFileSize: vi.fn((bytes: number) => `${bytes} bytes`),
 }));
 
-import {
-  isValidFileType,
-  isImageFile,
-  formatFileSize,
-} from "@/lib/chat-utils";
+import { isValidFileType, isImageFile, formatFileSize } from "@/lib/chat-utils";
 
 const mockIsValidFileType = vi.mocked(isValidFileType);
 const mockIsImageFile = vi.mocked(isImageFile);
 const mockFormatFileSize = vi.mocked(formatFileSize);
 
 // Helper to create a mock File
-function createMockFile(
-  name: string,
-  size: number,
-  type: string,
-): File {
+function createMockFile(name: string, size: number, type: string): File {
   const content = new Uint8Array(size);
   return new File([content], name, { type });
 }
@@ -61,7 +53,10 @@ describe("validateFile", () => {
       ["data.json", "application/json"],
       ["notes.txt", "text/plain"],
       ["sheet.csv", "text/csv"],
-      ["workbook.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+      [
+        "workbook.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ],
     ]) {
       const file = createMockFile(name, 500, type);
       expect(validateFile(file)).toEqual({ valid: true });
@@ -167,8 +162,16 @@ describe("revokeFileAttachmentUrls", () => {
 
   it("calls revokeObjectURL for each attachment with a previewUrl", () => {
     const attachments: FileAttachment[] = [
-      { id: "1", file: createMockFile("a.png", 10, "image/png"), previewUrl: "blob:a" },
-      { id: "2", file: createMockFile("b.png", 10, "image/png"), previewUrl: "blob:b" },
+      {
+        id: "1",
+        file: createMockFile("a.png", 10, "image/png"),
+        previewUrl: "blob:a",
+      },
+      {
+        id: "2",
+        file: createMockFile("b.png", 10, "image/png"),
+        previewUrl: "blob:b",
+      },
     ];
 
     revokeFileAttachmentUrls(attachments);
@@ -181,7 +184,11 @@ describe("revokeFileAttachmentUrls", () => {
   it("skips attachments without previewUrl", () => {
     const attachments: FileAttachment[] = [
       { id: "1", file: createMockFile("doc.pdf", 10, "application/pdf") },
-      { id: "2", file: createMockFile("a.png", 10, "image/png"), previewUrl: "blob:a" },
+      {
+        id: "2",
+        file: createMockFile("a.png", 10, "image/png"),
+        previewUrl: "blob:a",
+      },
     ];
 
     revokeFileAttachmentUrls(attachments);
@@ -226,7 +233,10 @@ describe("attachmentsToFileUIParts", () => {
       onload: null as (() => void) | null,
       onerror: null as (() => void) | null,
     };
-    vi.stubGlobal("FileReader", vi.fn(() => mockFileReader));
+    vi.stubGlobal(
+      "FileReader",
+      vi.fn(() => mockFileReader),
+    );
   });
 
   afterEach(() => {
