@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import {
+  hasOAuthConfig,
+  getStoredTokens,
+  readWithMigration,
+} from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 
 export function useServerForm(server?: ServerWithName) {
@@ -51,14 +55,11 @@ export function useServerForm(server?: ServerWithName) {
         // 1. Check if server has oauth tokens
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
-        const readWithFallback = (prefix: string) =>
-          localStorage.getItem(`${prefix}-${server.id}`) ||
-          localStorage.getItem(`${prefix}-${server.name}`);
         const hasStoredOAuthConfig = hasOAuthConfig(server.id, server.name);
         hasOAuth = hasOAuthTokens || hasStoredOAuthConfig;
 
-        const storedOAuthConfig = readWithFallback("mcp-oauth-config");
-        const storedClientInfo = readWithFallback("mcp-client");
+        const storedOAuthConfig = readWithMigration("mcp-oauth-config", server.id, server.name);
+        const storedClientInfo = readWithMigration("mcp-client", server.id, server.name);
         const storedTokens = getStoredTokens(server.id, server.name);
 
         const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};

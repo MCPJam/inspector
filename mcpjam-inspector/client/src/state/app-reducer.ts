@@ -159,7 +159,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       // Create server entry if it doesn't exist (for Convex-synced servers)
       const baseServer: ServerWithName = existing ?? {
         id: action.id,
-        name: existing?.name ?? "Server",
+        name: existing?.name ?? action.name,
         config: action.config,
         lastConnectionTime: new Date(),
         connectionStatus: "disconnected",

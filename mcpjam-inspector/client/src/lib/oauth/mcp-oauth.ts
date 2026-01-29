@@ -23,7 +23,7 @@ type StoragePrefix =
 const buildKey = (prefix: StoragePrefix, serverId: string) =>
   `${prefix}-${serverId}`;
 
-function readWithMigration(
+export function readWithMigration(
   prefix: StoragePrefix,
   serverId: string,
   serverName?: string,

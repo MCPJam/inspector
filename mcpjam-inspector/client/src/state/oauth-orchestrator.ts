@@ -2,6 +2,7 @@ import {
   clearOAuthData,
   getStoredTokens,
   initiateOAuth,
+  readWithMigration,
   refreshOAuthTokens,
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
@@ -19,9 +20,6 @@ export type OAuthResult = OAuthReady | OAuthRedirect | OAuthError;
 export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
 ): Promise<OAuthResult> {
-  const readWithFallback = (prefix: string) =>
-    localStorage.getItem(`${prefix}-${server.id}`) ||
-    localStorage.getItem(`${prefix}-${server.name}`);
 
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
   // This handles the case where a server was saved with "No Authentication"
@@ -54,13 +52,13 @@ export async function ensureAuthorizedForReconnect(
 
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
-  const storedClientInfo = readWithFallback("mcp-client");
-  const storedOAuthConfig = readWithFallback("mcp-oauth-config");
+  const storedClientInfo = readWithMigration("mcp-client", server.id, server.name);
+  const storedOAuthConfig = readWithMigration("mcp-oauth-config", server.id, server.name);
   const storedTokens = getStoredTokens(server.id, server.name);
 
   const url =
     (server.config as any)?.url?.toString?.() ||
-    readWithFallback("mcp-serverUrl");
+    readWithMigration("mcp-serverUrl", server.id, server.name);
   if (url) {
     // Get stored OAuth configuration
     const oauthConfig = storedOAuthConfig ? JSON.parse(storedOAuthConfig) : {};

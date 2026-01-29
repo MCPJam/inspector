@@ -42,6 +42,7 @@ import {
   clearOAuthData,
   initiateOAuth,
   migrateOAuthNameKeys,
+  type MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import { MCPServerConfig } from "@mcpjam/sdk";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
@@ -421,8 +422,8 @@ export function useAppState() {
         // Ignore parse errors
       }
 
-      const baseConfig = (runtimeState?.config ||
-        workspaceServer?.config) as MCPServerConfig;
+      const baseConfig = runtimeState?.config ?? workspaceServer?.config;
+      if (!baseConfig) continue;
       // Merge env vars into config if they exist in localStorage
       const configWithEnv = envFromStorage
         ? { ...baseConfig, env: envFromStorage }
@@ -894,16 +895,16 @@ export function useAppState() {
           });
 
           const { initiateOAuth } = await import("@/lib/oauth/mcp-oauth");
-          const oauthOptions: any = {
+          const oauthOptions: MCPOAuthOptions = {
             serverId,
             serverName: formData.name,
-            serverUrl: formData.url,
+            serverUrl: formData.url!,
             clientId: formData.clientId,
             clientSecret: formData.clientSecret,
+            ...(formData.oauthScopes && formData.oauthScopes.length > 0
+              ? { scopes: formData.oauthScopes }
+              : {}),
           };
-          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
-            oauthOptions.scopes = formData.oauthScopes;
-          }
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
@@ -1491,6 +1492,7 @@ export function useAppState() {
       dispatch({
         type: "RECONNECT_REQUEST",
         id: serverId,
+        name: server.name,
         config: server.config,
       });
       const token = nextOpToken(serverId);
@@ -1694,8 +1696,12 @@ export function useAppState() {
 
       const mcpConfig = toMCPConfig(formData);
       const nameChanged = formData.name !== originalServer.name;
+      const normalizeConfig = (config: MCPServerConfig) =>
+        JSON.stringify(config, (_key, value) =>
+          value instanceof URL ? value.toString() : value,
+        );
       const configUnchanged =
-        JSON.stringify(mcpConfig) === JSON.stringify(originalServer.config);
+        normalizeConfig(mcpConfig) === normalizeConfig(originalServer.config);
 
       if (nameChanged && configUnchanged) {
         dispatch({

@@ -90,7 +90,7 @@ export type AppAction =
       tokens?: OauthTokens;
     }
   | { type: "CONNECT_FAILURE"; id: ServerId; error: string }
-  | { type: "RECONNECT_REQUEST"; id: ServerId; config: MCPServerConfig }
+  | { type: "RECONNECT_REQUEST"; id: ServerId; name: string; config: MCPServerConfig }
   | { type: "DISCONNECT"; id: ServerId; error?: string }
   | { type: "REMOVE_SERVER"; id: ServerId }
   | { type: "SYNC_AGENT_STATUS"; servers: AgentServerInfo[] }
