@@ -22,9 +22,10 @@ import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
+import type { ServerId } from "@/state/app-types";
 
 interface EvalsTabProps {
-  selectedServer?: string;
+  selectedServer?: ServerId;
 }
 
 export function EvalsTab({ selectedServer }: EvalsTabProps) {
@@ -52,6 +53,10 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
 
   // Get app state for server connections
   const appState = useSharedAppState();
+  const selectedServerDisplayName =
+    selectedServer && selectedServer !== "none"
+      ? (appState.servers[selectedServer]?.name ?? selectedServer)
+      : null;
 
   // Get connected server names
   const connectedServerNames = useMemo(
@@ -157,8 +162,8 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     if (!suiteId && selectedServer && isServerConnected) {
       try {
         const newSuite = await mutations.createTestSuiteMutation({
-          name: selectedServer,
-          description: `Test suite for ${selectedServer}`,
+          name: selectedServerDisplayName || selectedServer,
+          description: `Test suite for ${selectedServerDisplayName || selectedServer}`,
           environment: { servers: [selectedServer] },
         });
         suiteId = newSuite?._id;
@@ -200,8 +205,8 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     if (!suiteId) {
       try {
         const newSuite = await mutations.createTestSuiteMutation({
-          name: selectedServer,
-          description: `Test suite for ${selectedServer}`,
+          name: selectedServerDisplayName || selectedServer,
+          description: `Test suite for ${selectedServerDisplayName || selectedServer}`,
           environment: { servers: [selectedServer] },
         });
         suiteId = newSuite?._id;
@@ -346,7 +351,8 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
                     No test cases yet
                   </h2>
                   <p className="text-sm text-muted-foreground mb-6">
-                    Create your first test case for "{selectedServer}" to start
+                    Create your first test case for "
+                    {selectedServerDisplayName || selectedServer}" to start
                     evaluating your MCP server.
                   </p>
                 </div>

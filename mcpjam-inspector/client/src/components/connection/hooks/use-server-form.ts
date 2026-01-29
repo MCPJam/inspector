@@ -51,16 +51,15 @@ export function useServerForm(server?: ServerWithName) {
         // 1. Check if server has oauth tokens
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
-        const hasStoredOAuthConfig = hasOAuthConfig(server.name);
+        const readWithFallback = (prefix: string) =>
+          localStorage.getItem(`${prefix}-${server.id}`) ||
+          localStorage.getItem(`${prefix}-${server.name}`);
+        const hasStoredOAuthConfig = hasOAuthConfig(server.id, server.name);
         hasOAuth = hasOAuthTokens || hasStoredOAuthConfig;
 
-        const storedOAuthConfig = localStorage.getItem(
-          `mcp-oauth-config-${server.name}`,
-        );
-        const storedClientInfo = localStorage.getItem(
-          `mcp-client-${server.name}`,
-        );
-        const storedTokens = getStoredTokens(server.name);
+        const storedOAuthConfig = readWithFallback("mcp-oauth-config");
+        const storedClientInfo = readWithFallback("mcp-client");
+        const storedTokens = getStoredTokens(server.id, server.name);
 
         const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
         const oauthConfig = storedOAuthConfig

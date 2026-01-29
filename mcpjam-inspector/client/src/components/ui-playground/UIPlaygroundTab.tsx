@@ -36,12 +36,12 @@ import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface UIPlaygroundTabProps {
   serverConfig?: MCPServerConfig;
-  serverName?: string;
+  serverId: string;
 }
 
 export function UIPlaygroundTab({
   serverConfig,
-  serverName,
+  serverId,
 }: UIPlaygroundTabProps) {
   const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -114,7 +114,7 @@ export function UIPlaygroundTab({
   // Tool execution hook
   const { pendingExecution, clearPendingExecution, executeTool } =
     useToolExecution({
-      serverName,
+      serverId: serverId,
       selectedTool,
       formFields,
       setIsExecuting,
@@ -135,12 +135,12 @@ export function UIPlaygroundTab({
 
   // Fetch tools when server changes
   const fetchTools = useCallback(async () => {
-    if (!serverName) return;
+    if (!serverId) return;
 
     reset();
     setToolsMetadata({});
     try {
-      const data = await listTools(serverName);
+      const data = await listTools(serverId);
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),
@@ -153,15 +153,15 @@ export function UIPlaygroundTab({
         err instanceof Error ? err.message : "Failed to fetch tools",
       );
     }
-  }, [serverName, reset, setTools, setExecutionError]);
+  }, [serverId, reset, setTools, setExecutionError]);
 
   useEffect(() => {
-    if (serverConfig && serverName) {
+    if (serverConfig && serverId) {
       fetchTools();
     } else {
       reset();
     }
-  }, [serverConfig, serverName, fetchTools, reset]);
+  }, [serverConfig, serverId, fetchTools, reset]);
 
   // Update form fields when tool is selected
   useEffect(() => {
@@ -271,7 +271,7 @@ export function UIPlaygroundTab({
           minSize={PANEL_SIZES.CENTER.MIN}
         >
           <PlaygroundMain
-            serverName={serverName || ""}
+            serverId={serverId}
             isExecuting={isExecuting}
             executingToolName={selectedTool}
             invokingMessage={invokingMessage}

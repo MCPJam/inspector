@@ -54,7 +54,7 @@ const DEFAULT_POLL_INTERVAL = 3000;
 
 interface TasksTabProps {
   serverConfig?: MCPServerConfig;
-  serverName?: string;
+  serverId: string;
   isActive?: boolean;
 }
 
@@ -84,7 +84,7 @@ function isTerminalStatus(status: Task["status"]): boolean {
 
 export function TasksTab({
   serverConfig,
-  serverName,
+  serverId,
   isActive = true,
 }: TasksTabProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -203,26 +203,26 @@ export function TasksTab({
   }, [serverSuggestedPollInterval]);
 
   const handleClearTasks = useCallback(() => {
-    if (!serverName) return;
+    if (!serverId) return;
     // Dismiss all current tasks so they won't show after refresh
     const taskIds = tasks.map((t) => t.taskId);
-    dismissTasksForServer(serverName, taskIds);
-    clearTrackedTasksForServer(serverName);
+    dismissTasksForServer(serverId, taskIds);
+    clearTrackedTasksForServer(serverId);
     setTasks([]);
     setSelectedTaskId("");
     setTaskResult(null);
     setPendingRequest(null);
-  }, [serverName, tasks]);
+  }, [serverId, tasks]);
 
   const fetchTasks = useCallback(async () => {
-    if (!serverName) return;
+    if (!serverId) return;
 
     setFetchingTasks(true);
     setError("");
 
     try {
       // Get dismissed task IDs to filter them out
-      const dismissedIds = getDismissedTaskIds(serverName);
+      const dismissedIds = getDismissedTaskIds(serverId);
 
       // Per MCP Tasks spec (2025-11-25): clients SHOULD only call tasks/list
       // if the server declares tasks.list capability
@@ -231,19 +231,19 @@ export function TasksTab({
 
       if (taskCapabilities?.supportsList) {
         // Server supports tasks/list - fetch from server
-        serverResult = await listTasks(serverName);
+        serverResult = await listTasks(serverId);
         serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
       }
 
       // Get locally tracked tasks and fetch their current status
-      const trackedTasks = getTrackedTasksForServer(serverName);
+      const trackedTasks = getTrackedTasksForServer(serverId);
       const trackedTaskStatuses = await Promise.all(
         trackedTasks
           .filter((t) => !serverTaskIds.has(t.taskId)) // Skip if already in server list
           .filter((t) => !dismissedIds.has(t.taskId)) // Skip dismissed tasks
           .map(async (tracked) => {
             try {
-              return await getTask(serverName, tracked.taskId);
+              return await getTask(serverId, tracked.taskId);
             } catch {
               // Task no longer exists on server, remove from tracking
               untrackTask(tracked.taskId);
@@ -272,7 +272,7 @@ export function TasksTab({
     } finally {
       setFetchingTasks(false);
     }
-  }, [serverName, taskCapabilities]);
+  }, [serverId, taskCapabilities]);
 
   // Handle elicitation response from the dialog
   const handleElicitationResponse = useCallback(
@@ -297,13 +297,13 @@ export function TasksTab({
 
   const fetchTaskResult = useCallback(
     async (taskId: string) => {
-      if (!serverName) return;
+      if (!serverId) return;
 
       setLoading(true);
       setError("");
 
       try {
-        const result = await getTaskResult(serverName, taskId);
+        const result = await getTaskResult(serverId, taskId);
         setTaskResult(result);
       } catch (err) {
         setError(
@@ -313,17 +313,17 @@ export function TasksTab({
         setLoading(false);
       }
     },
-    [serverName],
+    [serverId],
   );
 
   const handleCancelTask = useCallback(async () => {
-    if (!serverName || !selectedTaskId) return;
+    if (!serverId || !selectedTaskId) return;
 
     setCancelling(true);
     setError("");
 
     try {
-      await cancelTask(serverName, selectedTaskId);
+      await cancelTask(serverId, selectedTaskId);
       // Refresh task list to get updated status
       await fetchTasks();
     } catch (err) {
@@ -331,12 +331,12 @@ export function TasksTab({
     } finally {
       setCancelling(false);
     }
-  }, [serverName, selectedTaskId, fetchTasks]);
+  }, [serverId, selectedTaskId, fetchTasks]);
 
   // Fetch task capabilities when server changes
   // Per MCP Tasks spec (2025-11-25): clients SHOULD check capabilities before using task features
   useEffect(() => {
-    if (!serverConfig || !serverName) {
+    if (!serverConfig || !serverId) {
       setTaskCapabilities(undefined);
       return;
     }
@@ -346,7 +346,7 @@ export function TasksTab({
 
     const fetchCapabilities = async () => {
       try {
-        const capabilities = await getTaskCapabilities(serverName);
+        const capabilities = await getTaskCapabilities(serverId);
         setTaskCapabilities(capabilities);
       } catch {
         // Server may not support tasks - set to null (vs undefined = loading)
@@ -355,14 +355,14 @@ export function TasksTab({
     };
 
     fetchCapabilities();
-  }, [serverConfig, serverName]);
+  }, [serverConfig, serverId]);
 
   // Fetch tasks on mount and when server changes (only when tab is active)
   // Wait for capabilities to be fetched first (undefined = still loading)
   useEffect(() => {
     if (
       serverConfig &&
-      serverName &&
+      serverId &&
       isActive &&
       taskCapabilities !== undefined
     ) {
@@ -371,19 +371,19 @@ export function TasksTab({
       setTaskResult(null);
       fetchTasks();
     }
-  }, [serverConfig, serverName, fetchTasks, isActive, taskCapabilities]);
+  }, [serverConfig, serverId, fetchTasks, isActive, taskCapabilities]);
 
   // Auto-refresh logic - uses user-configured pollInterval (persisted in localStorage)
   // Only poll when tab is active
   useEffect(() => {
-    if (!autoRefresh || !serverName || !isActive) return;
+    if (!autoRefresh || !serverId || !isActive) return;
 
     const interval = setInterval(() => {
       fetchTasks();
     }, pollInterval);
 
     return () => clearInterval(interval);
-  }, [autoRefresh, serverName, fetchTasks, pollInterval, isActive]);
+  }, [autoRefresh, serverId, fetchTasks, pollInterval, isActive]);
 
   // Fetch result when selecting a completed or failed task, or pending request for input_required
   // Per MCP Tasks spec: when task is input_required, tasks/result returns the pending request
@@ -405,10 +405,10 @@ export function TasksTab({
       pendingInputRequestTaskIdRef.current = currentTaskId;
       // Fetch the pending request (e.g., elicitation)
       (async () => {
-        if (!serverName) return;
+        if (!serverId) return;
         setLoading(true);
         try {
-          const result = await getTaskResult(serverName, currentTaskId);
+          const result = await getTaskResult(serverId, currentTaskId);
           // Only update state if this is still the active request (avoid race condition)
           if (pendingInputRequestTaskIdRef.current === currentTaskId) {
             setPendingRequest(result);
@@ -427,11 +427,11 @@ export function TasksTab({
       setPendingRequest(null);
       pendingInputRequestTaskIdRef.current = null;
     }
-  }, [selectedTaskId, selectedTask?.status, fetchTaskResult, serverName]);
+  }, [selectedTaskId, selectedTask?.status, fetchTaskResult, serverId]);
 
   // Poll for progress when there are working tasks (only when tab is active)
   useEffect(() => {
-    if (!serverName || !isActive) return;
+    if (!serverId || !isActive) return;
 
     // Check if any task is currently working
     const hasWorkingTasks = tasks.some((t) => t.status === "working");
@@ -443,7 +443,7 @@ export function TasksTab({
     // Fetch progress immediately
     const fetchProgress = async () => {
       try {
-        const latestProgress = await getLatestProgress(serverName);
+        const latestProgress = await getLatestProgress(serverId);
         setProgress(latestProgress);
       } catch (err) {
         console.debug("Failed to fetch progress:", err);
@@ -456,9 +456,9 @@ export function TasksTab({
     const interval = setInterval(fetchProgress, 500);
 
     return () => clearInterval(interval);
-  }, [serverName, tasks, isActive]);
+  }, [serverId, tasks, isActive]);
 
-  if (!serverConfig || !serverName) {
+  if (!serverConfig || !serverId) {
     return (
       <EmptyState
         icon={ListTodo}
@@ -660,7 +660,7 @@ export function TasksTab({
                                     {/* Inline progress for working tasks */}
                                     {task.status === "working" && (
                                       <TaskInlineProgress
-                                        serverId={serverName}
+                                        serverId={serverId}
                                         startedAt={task.createdAt}
                                       />
                                     )}
@@ -909,7 +909,7 @@ export function TasksTab({
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={50} minSize={20}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
+              <LoggerView serverIds={serverId ? [serverId] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={50} minSize={20}>

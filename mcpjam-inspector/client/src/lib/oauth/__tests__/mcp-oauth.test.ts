@@ -55,6 +55,7 @@ describe("OAuth fetch interceptor", () => {
 
       // Attempt OAuth flow - this will use the interceptor internally
       const result = await initiateOAuth({
+        serverId: "test-server",
         serverName: "test-server",
         serverUrl: "https://example.com/mcp",
       });
@@ -89,6 +90,7 @@ describe("OAuth fetch interceptor", () => {
       const mcpOauth = await import("../mcp-oauth");
 
       const result = await mcpOauth.initiateOAuth({
+        serverId: "test-server",
         serverName: "test-server",
         serverUrl: "https://example.com/mcp",
       });
@@ -117,6 +119,7 @@ describe("OAuth fetch interceptor", () => {
       // This will fail later in the OAuth flow (no real auth server),
       // but the metadata fetch should succeed
       const result = await mcpOauth.initiateOAuth({
+        serverId: "test-server",
         serverName: "test-server",
         serverUrl: "https://example.com/mcp",
       });

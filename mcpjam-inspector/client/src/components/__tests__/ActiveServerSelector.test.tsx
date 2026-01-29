@@ -71,6 +71,7 @@ describe("ActiveServerSelector", () => {
     overrides: Partial<ServerWithName> = {},
   ): ServerWithName =>
     ({
+      id: overrides.id ?? overrides.name ?? "test-server",
       name: "test-server",
       connectionStatus: "connected",
       enabled: true,

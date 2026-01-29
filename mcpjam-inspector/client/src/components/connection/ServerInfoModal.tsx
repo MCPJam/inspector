@@ -38,7 +38,8 @@ export function ServerInfoModal({
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
 
-  const oauthTokens = server.oauthTokens || getStoredTokens(server.name);
+  const oauthTokens =
+    server.oauthTokens || getStoredTokens(server.id, server.name);
   const isHttpServer = "url" in server.config;
 
   useEffect(() => {
@@ -46,7 +47,7 @@ export function ServerInfoModal({
       setCopiedField(null);
       setExpandedTokens(new Set());
     }
-  }, [isOpen, server.name]);
+  }, [isOpen, server.id]);
 
   const initializationInfo = server.initializationInfo;
 

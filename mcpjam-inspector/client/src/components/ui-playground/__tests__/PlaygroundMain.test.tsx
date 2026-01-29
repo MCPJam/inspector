@@ -340,6 +340,7 @@ vi.mock("@/lib/utils", () => ({
 
 describe("PlaygroundMain", () => {
   const defaultProps = {
+    serverId: "test-server",
     serverName: "test-server",
     pendingExecution: null,
     onExecutionInjected: vi.fn(),

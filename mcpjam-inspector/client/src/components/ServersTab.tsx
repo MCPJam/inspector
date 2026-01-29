@@ -12,6 +12,7 @@ import {
   Check,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
@@ -53,19 +54,19 @@ import { Skeleton } from "./ui/skeleton";
 import { HOSTED_MODE } from "@/lib/config";
 
 interface ServersTabProps {
-  connectedServerConfigs: Record<string, ServerWithName>;
+  connectedServerConfigs: Record<ServerId, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
-  onDisconnect: (serverName: string) => void;
+  onDisconnect: (serverId: ServerId) => void;
   onReconnect: (
-    serverName: string,
+    serverId: ServerId,
     options?: { forceOAuthFlow?: boolean },
   ) => void;
   onUpdate: (
-    originalServerName: string,
+    originalServerId: ServerId,
     formData: ServerFormData,
     skipAutoConnect?: boolean,
   ) => void;
-  onRemove: (serverName: string) => void;
+  onRemove: (serverId: ServerId) => void;
   isLoadingWorkspaces?: boolean;
 }
 
@@ -446,17 +447,19 @@ export function ServersTab({
 
           {/* Server Cards Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
-            {Object.entries(connectedServerConfigs).map(([name, server]) => (
-              <ServerConnectionCard
-                key={name}
-                server={server}
-                onDisconnect={onDisconnect}
-                onReconnect={onReconnect}
-                onEdit={handleEditServer}
-                onRemove={onRemove}
-                sharedTunnelUrl={tunnelUrl}
-              />
-            ))}
+            {Object.entries(connectedServerConfigs).map(
+              ([serverId, server]) => (
+                <ServerConnectionCard
+                  key={serverId}
+                  server={server}
+                  onDisconnect={onDisconnect}
+                  onReconnect={onReconnect}
+                  onEdit={handleEditServer}
+                  onRemove={onRemove}
+                  sharedTunnelUrl={tunnelUrl}
+                />
+              ),
+            )}
           </div>
         </div>
       </ResizablePanel>
@@ -567,8 +570,8 @@ export function ServersTab({
         <EditServerModal
           isOpen={isEditingServer}
           onClose={handleCloseEditModal}
-          onSubmit={(formData, originalName) =>
-            onUpdate(originalName, formData)
+          onSubmit={(formData, originalServerId) =>
+            onUpdate(originalServerId, formData)
           }
           server={serverToEdit}
         />

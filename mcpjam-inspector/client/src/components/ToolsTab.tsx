@@ -94,10 +94,10 @@ function normalizeElicitationContent(
 
 interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
-  serverName?: string;
+  serverId: string;
 }
 
-export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
+export function ToolsTab({ serverConfig, serverId }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
@@ -201,7 +201,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     taskCapabilities?.supportsToolCalls ?? false;
 
   useEffect(() => {
-    if (!serverConfig || !serverName) {
+    if (!serverConfig || !serverId) {
       setTools({});
       setSelectedTool("");
       setFormFields([]);
@@ -218,7 +218,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     void fetchTools();
     // Fetch task capabilities for this server (MCP Tasks spec 2025-11-25)
     void fetchTaskCapabilities();
-  }, [serverConfig, serverName]);
+  }, [serverConfig, serverId]);
 
   const toolNames = Object.keys(tools);
   const filteredToolNames = searchQuery.trim()
@@ -254,12 +254,12 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   // Fetch task capabilities for the server
   const fetchTaskCapabilities = async () => {
-    if (!serverName) return;
+    if (!serverId) return;
     try {
-      const capabilities = await getTaskCapabilities(serverName);
+      const capabilities = await getTaskCapabilities(serverId);
       setTaskCapabilities(capabilities);
       logger.info("Task capabilities fetched", {
-        serverId: serverName,
+        serverId: serverId,
         supportsToolCalls: capabilities.supportsToolCalls,
         supportsList: capabilities.supportsList,
         supportsCancel: capabilities.supportsCancel,
@@ -295,7 +295,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   }, []);
 
   const fetchTools = async (reset = false) => {
-    if (!serverName) {
+    if (!serverId) {
       logger.warn("Cannot fetch tools: no serverId available");
       return;
     }
@@ -314,7 +314,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
     try {
       // Call to get all of the tools for server
-      const data = await listTools(serverName, undefined, cursor);
+      const data = await listTools(serverId, undefined, cursor);
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),
@@ -322,7 +322,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setTools((prev) => ({ ...prev, ...dictionary }));
       setCursor(data.nextCursor);
       logger.info("Tools fetched", {
-        serverId: serverName,
+        serverId: serverId,
         toolCount: toolArray.length,
       });
     } catch (err) {
@@ -423,10 +423,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setCreatedTaskId(task.taskId);
 
       // Track the task locally so it appears in the Tasks tab
-      if (serverName) {
+      if (serverId) {
         trackTask({
           taskId: task.taskId,
-          serverId: serverName,
+          serverId: serverId,
           createdAt: task.createdAt,
           toolName,
           primitiveType: "tool",
@@ -460,7 +460,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       logger.warn("Cannot execute tool: no tool selected");
       return;
     }
-    if (!serverName) {
+    if (!serverId) {
       logger.warn("Cannot execute tool: no serverId available");
       return;
     }
@@ -496,7 +496,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         : undefined;
 
       const response = await executeToolApi(
-        serverName,
+        serverId,
         selectedTool,
         params,
         taskOptions,
@@ -731,7 +731,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
+              <LoggerView serverIds={serverId ? [serverId] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>
@@ -743,18 +743,18 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                 result={result}
                 validationErrors={validationErrors}
                 unstructuredValidationResult={unstructuredValidationResult}
-                serverId={serverName}
+                serverId={serverId}
                 toolCallId={lastToolCallId ?? undefined}
                 toolName={lastToolName ?? undefined}
                 toolParameters={lastToolParameters ?? undefined}
                 toolMeta={getToolMeta(lastToolName)}
                 onExecuteFromUI={async (name, params) => {
-                  if (!serverName) return { error: "No server selected" };
-                  return await executeToolApi(serverName, name, params || {});
+                  if (!serverId) return { error: "No server selected" };
+                  return await executeToolApi(serverId, name, params || {});
                 }}
                 onHandleIntent={async (intent, params) => {
-                  if (!serverName) return;
-                  await executeToolApi(serverName, "handleIntent", {
+                  if (!serverId) return;
+                  await executeToolApi(serverId, "handleIntent", {
                     intent,
                     params: params || {},
                   });

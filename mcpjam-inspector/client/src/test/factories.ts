@@ -54,6 +54,7 @@ export function createServer(
 ): ServerWithName {
   const name = overrides.name || uniqueId("server");
   return {
+    id: overrides.id || name,
     name,
     config: createServerConfig(),
     connectionStatus: "disconnected" as ConnectionStatus,
@@ -124,7 +125,7 @@ export function createWorkspaceWithServers(
   const servers: Record<string, ServerWithName> = {};
   for (let i = 0; i < serverCount; i++) {
     const server = createServer();
-    servers[server.name] = server;
+    servers[server.id] = server;
   }
   return createWorkspace({ servers, ...overrides });
 }
