@@ -75,7 +75,7 @@ const isHttpServer = (server?: ServerWithName) =>
 
 interface OAuthFlowTabProps {
   serverConfigs: Record<ServerId, ServerWithName>;
-  selectedServerId: ServerId;
+  selectedServerId: ServerId | undefined;
   onSelectServer: (serverId: ServerId) => void;
   onSaveServerConfig?: (
     formData: ServerFormData,
@@ -119,8 +119,9 @@ export const OAuthFlowTab = ({
     [serverConfigs],
   );
 
-  const selectedServer =
-    selectedServerId !== "none" ? serverConfigs[selectedServerId] : undefined;
+  const selectedServer = selectedServerId
+    ? serverConfigs[selectedServerId]
+    : undefined;
   const activeServer = isHttpServer(selectedServer)
     ? selectedServer
     : undefined;

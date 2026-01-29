@@ -360,7 +360,7 @@ export default function App() {
           {activeTab === "oauth-flow" && (
             <OAuthFlowTab
               serverConfigs={workspaceServers}
-              selectedServerId={selectedServerId ?? "none"}
+              selectedServerId={selectedServerId}
               onSelectServer={setSelectedServer}
               onSaveServerConfig={saveServerConfigWithoutConnecting}
               onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}

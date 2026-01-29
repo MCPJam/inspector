@@ -729,6 +729,27 @@ export async function refreshOAuthTokens(
 /**
  * Clears all OAuth data for a server
  */
+export function migrateOAuthNameKeys(
+  oldName: string,
+  newName: string,
+): void {
+  const prefixes: StoragePrefix[] = [
+    "mcp-tokens",
+    "mcp-client",
+    "mcp-verifier",
+    "mcp-serverUrl",
+    "mcp-oauth-config",
+  ];
+  for (const prefix of prefixes) {
+    const oldKey = `${prefix}-${oldName}`;
+    const value = localStorage.getItem(oldKey);
+    if (value !== null) {
+      localStorage.setItem(`${prefix}-${newName}`, value);
+      localStorage.removeItem(oldKey);
+    }
+  }
+}
+
 export function clearOAuthData(serverId: string, serverName?: string): void {
   removeWithLegacy("mcp-tokens", serverId, serverName);
   removeWithLegacy("mcp-client", serverId, serverName);

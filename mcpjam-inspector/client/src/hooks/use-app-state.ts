@@ -41,6 +41,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  migrateOAuthNameKeys,
 } from "@/lib/oauth/mcp-oauth";
 import { MCPServerConfig } from "@mcpjam/sdk";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
@@ -1702,6 +1703,7 @@ export function useAppState() {
           id: originalServerId,
           newName: formData.name,
         });
+        migrateOAuthNameKeys(originalServer.name, formData.name);
         syncServerToConvex({ ...originalServer, name: formData.name }).catch(
           (err) =>
             logger.warn("Background sync to Convex failed (rename)", {

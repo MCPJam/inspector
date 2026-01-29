@@ -209,9 +209,17 @@ export function loadPreregisteredCredentials(
   clientSecret?: string;
 } {
   try {
-    const storedClientInfo =
-      localStorage.getItem(`mcp-client-${serverId}`) ||
-      (serverName ? localStorage.getItem(`mcp-client-${serverName}`) : null);
+    const idKey = `mcp-client-${serverId}`;
+    let storedClientInfo = localStorage.getItem(idKey);
+    if (!storedClientInfo && serverName) {
+      const nameKey = `mcp-client-${serverName}`;
+      storedClientInfo = localStorage.getItem(nameKey);
+      if (storedClientInfo) {
+        // Migrate legacy name-keyed data to the canonical id-based key
+        localStorage.setItem(idKey, storedClientInfo);
+        localStorage.removeItem(nameKey);
+      }
+    }
     if (storedClientInfo) {
       const parsed = JSON.parse(storedClientInfo);
       return {

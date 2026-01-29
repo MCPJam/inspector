@@ -2,7 +2,17 @@
  * Tests for localStorage migration path (name-keyed → ID-keyed storage)
  * and the dual-write / read-with-fallback patterns.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Mock transitive dependencies so the module can be imported
+vi.mock("@/lib/session-token", () => ({
+  authFetch: vi.fn(),
+}));
+
+vi.mock("../state-machines/shared/helpers", () => ({
+  generateRandomString: vi.fn(() => "mock-random-string"),
+}));
+
 import {
   getStoredTokens,
   hasOAuthConfig,
