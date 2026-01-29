@@ -135,9 +135,22 @@ export const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
   },
 ];
 
-export function formatErrorMessage(
-  error: unknown,
-): { message: string; details?: string } | null {
+export interface FormattedError {
+  message: string;
+  details?: string;
+  code?: string;
+  statusCode?: number;
+  isRetryable?: boolean;
+  isMCPJamPlatformError?: boolean;
+}
+
+const MCPJAM_PLATFORM_CODES = [
+  "mcpjam_rate_limit",
+  "mcpjam_api_error",
+  "mcpjam_config_error",
+];
+
+export function formatErrorMessage(error: unknown): FormattedError | null {
   if (!error) return null;
 
   let errorString: string;
@@ -153,13 +166,23 @@ export function formatErrorMessage(
     }
   }
 
-  // Try to parse as JSON to extract message and details
+  // Try to parse as JSON to extract structured error
   try {
     const parsed = JSON.parse(errorString);
-    if (parsed && typeof parsed === "object" && parsed.message) {
+    if (parsed && typeof parsed === "object") {
+      // Handle structured error with code
+      const code = parsed.code;
+      const message = parsed.error || parsed.message || "An error occurred";
+
       return {
-        message: parsed.message,
+        message,
         details: parsed.details,
+        code,
+        statusCode: parsed.statusCode,
+        isRetryable: parsed.isRetryable,
+        isMCPJamPlatformError: code
+          ? MCPJAM_PLATFORM_CODES.includes(code)
+          : false,
       };
     }
   } catch {
