@@ -241,17 +241,6 @@ export function XRaySnapshotView({
         <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
 
         <div className="flex items-center gap-1">
-          {/* Refresh button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={fetchPayload}
-            className="h-7 w-7"
-            title="Refresh payload"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
-
           {/* Copy button */}
           <Button
             variant="ghost"
