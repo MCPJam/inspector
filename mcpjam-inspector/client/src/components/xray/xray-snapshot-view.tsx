@@ -10,7 +10,6 @@ import { Copy, X, RefreshCw, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import type { UIMessage } from "ai";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   getXRayPayload,
   type XRayPayloadResponse,
@@ -176,9 +175,9 @@ export function XRaySnapshotView({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    <div className="flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
+      <div className="flex items-center justify-between p-3 border-b border-border">
         <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
 
         <div className="flex items-center gap-1">
@@ -220,13 +219,11 @@ export function XRaySnapshotView({
       </div>
 
       {/* Content */}
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="p-3">
-          <pre className="overflow-auto whitespace-pre-wrap break-words text-xs bg-muted/20 p-3 font-mono">
-            {JSON.stringify(payload, null, 2)}
-          </pre>
-        </div>
-      </ScrollArea>
+      <div className="p-3">
+        <pre className="whitespace-pre-wrap break-words text-xs bg-muted/20 p-3 font-mono">
+          {JSON.stringify(payload, null, 2)}
+        </pre>
+      </div>
     </div>
   );
 }
