@@ -1,13 +1,18 @@
 /**
  * X-Ray Snapshot View Component
  *
- * Shows the raw JSON payload sent to the AI model - exactly what the model sees.
+ * Shows the raw payload sent to the AI model's generateText() call.
  */
 
-import { Copy, Trash2, PanelRightClose, ChevronDown } from "lucide-react";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import {
+  Copy,
+  Trash2,
+  PanelRightClose,
+  ChevronDown,
+  Code2,
+  MessageSquare,
+} from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import type { XRayLogEvent } from "@shared/xray-types";
 import { Button } from "@/components/ui/button";
@@ -20,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { TraceViewer } from "@/components/evals/trace-viewer";
 
 interface XRaySnapshotViewProps {
   event: XRayLogEvent | null;
@@ -43,6 +49,8 @@ export function XRaySnapshotView({
   onClear,
   onClose,
 }: XRaySnapshotViewProps) {
+  const [viewMode, setViewMode] = useState<"formatted" | "raw">("formatted");
+
   // Empty state
   if (!event) {
     return (
@@ -77,6 +85,15 @@ export function XRaySnapshotView({
       </div>
     );
   }
+
+  // Extract just the model payload from the event
+  // This is exactly what gets sent to generateText()
+  // Order: system (instructions), tools (capabilities), messages (conversation)
+  const modelPayload = {
+    system: event.systemPrompt,
+    tools: event.tools,
+    messages: event.messages,
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -140,7 +157,7 @@ export function XRaySnapshotView({
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => copyToClipboard(event, "X-Ray payload")}
+            onClick={() => copyToClipboard(modelPayload, "Model payload")}
             className="h-7 w-7"
             title="Copy payload"
           >
@@ -174,23 +191,54 @@ export function XRaySnapshotView({
         </div>
       </div>
 
-      {/* Raw JSON View */}
+      {/* View mode toggle */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border/40 flex-shrink-0">
+        <div className="text-xs text-muted-foreground">
+          {event.messages.length} message{event.messages.length !== 1 ? "s" : ""}
+        </div>
+        <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode("formatted")}
+            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+              viewMode === "formatted"
+                ? "bg-primary/10 text-foreground font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            title="Formatted view"
+          >
+            <MessageSquare className="h-3 w-3" />
+            Formatted
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("raw")}
+            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+              viewMode === "raw"
+                ? "bg-primary/10 text-foreground font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            title="Raw JSON view"
+          >
+            <Code2 className="h-3 w-3" />
+            Raw
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-3">
-          <JsonView
-            src={event}
-            dark={true}
-            theme="atom"
-            enableClipboard={true}
-            displaySize={false}
-            collapsed={2}
-            style={{
-              fontSize: "11px",
-              fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-              backgroundColor: "transparent",
-              padding: "0",
-            }}
-          />
+          {viewMode === "raw" ? (
+            <pre className="overflow-auto whitespace-pre-wrap break-words text-xs rounded-md border border-border/30 bg-muted/20 p-3 font-mono">
+              {JSON.stringify(modelPayload, null, 2)}
+            </pre>
+          ) : (
+            <TraceViewer
+              trace={{ messages: event.messages as any }}
+              modelProvider={event.model.provider}
+            />
+          )}
         </div>
       </ScrollArea>
     </div>

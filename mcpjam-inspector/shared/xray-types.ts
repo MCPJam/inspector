@@ -6,12 +6,23 @@
  */
 
 /**
+ * Token usage metadata for assistant messages.
+ */
+export interface XRayMessageMetadata {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+/**
  * Represents a single message in the model message format.
- * This is a simplified representation of ai-sdk's ModelMessage.
+ * This matches ai-sdk's ModelMessage structure with optional metadata.
  */
 export interface XRayModelMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: unknown;
+  /** Token usage metadata (for assistant messages) */
+  metadata?: XRayMessageMetadata;
 }
 
 /**

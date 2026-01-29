@@ -67,6 +67,8 @@ function emitXRayEvent(params: {
     messages: params.messages.map((m) => ({
       role: m.role as "system" | "user" | "assistant" | "tool",
       content: m.content,
+      // Include metadata if present (for assistant messages with token counts)
+      ...((m as any).metadata && { metadata: (m as any).metadata }),
     })),
     systemPrompt: params.systemPrompt,
     tools: buildXRayToolDefs(params.tools),
@@ -196,17 +198,6 @@ chatV2.post("/", async (c) => {
       let steps = 0;
       const MAX_STEPS = 20;
 
-      // Emit X-Ray event for MCPJam backend path
-      emitXRayEvent({
-        model: { id: modelDefinition.id, provider: modelDefinition.provider },
-        messages: messageHistory,
-        systemPrompt: enhancedSystemPrompt,
-        tools: allTools as Record<string, unknown>,
-        temperature: resolvedTemperature,
-        selectedServers: selectedServers ?? [],
-        path: "mcpjam-backend",
-      });
-
       const stream = createUIMessageStream({
         execute: async ({ writer }) => {
           const msgId = `asst_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -246,6 +237,14 @@ chatV2.post("/", async (c) => {
 
             for (const m of json.messages as any[]) {
               if (m?.role === "assistant" && Array.isArray(m.content)) {
+                // Attach token usage metadata to assistant messages
+                if (json.usage) {
+                  m.metadata = {
+                    inputTokens: json.usage.inputTokens ?? json.usage.promptTokens,
+                    outputTokens: json.usage.outputTokens ?? json.usage.completionTokens,
+                    totalTokens: json.usage.totalTokens,
+                  };
+                }
                 for (const item of m.content) {
                   if (item?.type === "text" && typeof item.text === "string") {
                     writer.write({ type: "text-start", id: msgId } as any);
@@ -352,6 +351,17 @@ chatV2.post("/", async (c) => {
               break;
             }
           }
+
+          // Emit X-Ray event after agentic loop completes with full conversation
+          emitXRayEvent({
+            model: { id: modelDefinition.id, provider: modelDefinition.provider },
+            messages: messageHistory,
+            systemPrompt: enhancedSystemPrompt,
+            tools: allTools as Record<string, unknown>,
+            temperature: resolvedTemperature,
+            selectedServers: selectedServers ?? [],
+            path: "mcpjam-backend",
+          });
         },
       });
 
@@ -366,17 +376,7 @@ chatV2.post("/", async (c) => {
       openai: body.openaiBaseUrl,
     });
 
-    // Transform messages and emit X-Ray event for external provider path
     const transformedMessages = await convertToModelMessages(messages);
-    emitXRayEvent({
-      model: { id: modelDefinition.id, provider: modelDefinition.provider },
-      messages: transformedMessages,
-      systemPrompt: enhancedSystemPrompt,
-      tools: allTools as Record<string, unknown>,
-      temperature: resolvedTemperature,
-      selectedServers: selectedServers ?? [],
-      path: "streamText",
-    });
 
     const result = streamText({
       model: llmModel,
@@ -388,6 +388,49 @@ chatV2.post("/", async (c) => {
       tools: allTools as ToolSet,
       stopWhen: stepCountIs(20),
     });
+
+    // Emit X-Ray event after stream completes with full conversation (non-blocking)
+    Promise.all([result.response, result.steps])
+      .then(([response, steps]) => {
+        // Build messages with metadata from steps
+        const messagesWithMetadata: any[] = [];
+        let stepIndex = 0;
+
+        for (const msg of response.messages) {
+          if (msg.role === "assistant") {
+            // Attach usage metadata from corresponding step
+            const step = steps[stepIndex];
+            if (step?.usage) {
+              messagesWithMetadata.push({
+                ...msg,
+                metadata: {
+                  inputTokens: step.usage.inputTokens,
+                  outputTokens: step.usage.outputTokens,
+                  totalTokens: step.usage.totalTokens,
+                },
+              });
+            } else {
+              messagesWithMetadata.push(msg);
+            }
+            stepIndex++;
+          } else {
+            messagesWithMetadata.push(msg);
+          }
+        }
+
+        emitXRayEvent({
+          model: { id: modelDefinition.id, provider: modelDefinition.provider },
+          messages: messagesWithMetadata as ModelMessage[],
+          systemPrompt: enhancedSystemPrompt,
+          tools: allTools as Record<string, unknown>,
+          temperature: resolvedTemperature,
+          selectedServers: selectedServers ?? [],
+          path: "streamText",
+        });
+      })
+      .catch(() => {
+        // Ignore errors - X-Ray is best-effort
+      });
 
     return result.toUIMessageStreamResponse({
       messageMetadata: ({ part }) => {
