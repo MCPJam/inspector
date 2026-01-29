@@ -100,6 +100,8 @@ describe("ChatInput", () => {
     onResetChat: vi.fn(),
     mcpPromptResults: [],
     onChangeMcpPromptResults: vi.fn(),
+    skillResults: [],
+    onChangeSkillResults: vi.fn(),
   };
 
   beforeEach(() => {

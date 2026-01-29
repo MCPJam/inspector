@@ -4,7 +4,7 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square, Paperclip } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Scan } from "lucide-react";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -38,6 +38,8 @@ import {
   isMCPPromptsRequested,
 } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp-prompt-result-card";
+import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
+import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
 
 interface ChatInputProps {
   value: string;
@@ -74,12 +76,17 @@ interface ChatInputProps {
   systemPromptTokenCountLoading?: boolean;
   mcpPromptResults: MCPPromptResult[];
   onChangeMcpPromptResults: (mcpPromptResults: MCPPromptResult[]) => void;
+  skillResults: SkillResult[];
+  onChangeSkillResults: (skillResults: SkillResult[]) => void;
   /** When true, shows icons only for a more compact layout */
   compact?: boolean;
   /** File attachments for the message */
   fileAttachments?: FileAttachment[];
   /** Callback when file attachments change */
   onChangeFileAttachments?: (files: FileAttachment[]) => void;
+  /** X-Ray mode toggle */
+  xrayMode?: boolean;
+  onXrayModeChange?: (enabled: boolean) => void;
 }
 
 export function ChatInput({
@@ -110,9 +117,13 @@ export function ChatInput({
   systemPromptTokenCountLoading = false,
   mcpPromptResults,
   onChangeMcpPromptResults,
+  skillResults,
+  onChangeSkillResults,
   compact = false,
   fileAttachments = [],
   onChangeFileAttachments,
+  xrayMode = false,
+  onXrayModeChange,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -205,6 +216,28 @@ export function ChatInput({
     fileInputRef.current?.click();
   }, []);
 
+  const onSkillSelected = useCallback(
+    (skillResult: SkillResult) => {
+      // Add the skill result to the skillResults state
+      onChangeSkillResults([...skillResults, skillResult]);
+
+      // Remove the "/" that triggered the popover
+      const textBeforeCaret = value.slice(0, caretIndex);
+      const textAfterCaret = value.slice(caretIndex);
+      const cleanedBefore = textBeforeCaret.replace(/\/\s*$/, "");
+      const newValue = cleanedBefore + textAfterCaret;
+      onChange(newValue);
+    },
+    [value, caretIndex, onChange, skillResults, onChangeSkillResults],
+  );
+
+  const removeSkillResult = (index: number) => {
+    onChangeSkillResults(skillResults.filter((_, i) => i !== index));
+  };
+
+  // Check if there are any results (prompts, skills, or files) selected
+  const hasResults = mcpPromptResults.length > 0 || skillResults.length > 0 || fileAttachments.length > 0;
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const currentCaretIndex = event.currentTarget.selectionStart;
     if (
@@ -223,25 +256,40 @@ export function ChatInput({
     ) {
       const trimmed = value.trim();
       event.preventDefault();
-      const hasContent =
-        trimmed || mcpPromptResults.length > 0 || fileAttachments.length > 0;
-      if (!hasContent || disabled || submitDisabled || isLoading) {
+      if (
+        (!trimmed && !hasResults) ||
+        disabled ||
+        submitDisabled ||
+        isLoading
+      ) {
         return;
       }
       formRef.current?.requestSubmit();
     }
   };
 
-  const renderMcpPromptResultCards = () => {
-    if (mcpPromptResults.length === 0) return null;
+  const renderResultCards = () => {
+    if (!hasResults) return null;
     return (
       <div className="px-4 pt-1 pb-0.5">
         <div className="flex flex-wrap gap-1.5">
           {mcpPromptResults.map((mcpPromptResult, index) => (
             <MCPPromptResultCard
-              key={index}
+              key={`prompt-${index}`}
               mcpPromptResult={mcpPromptResult}
               onRemove={() => removeMCPPromptResult(index)}
+            />
+          ))}
+          {skillResults.map((skillResult, index) => (
+            <SkillResultCard
+              key={`skill-${index}`}
+              skillResult={skillResult}
+              onRemove={() => removeSkillResult(index)}
+              onUpdate={(updatedSkill) => {
+                const newSkillResults = [...skillResults];
+                newSkillResults[index] = updatedSkill;
+                onChangeSkillResults(newSkillResults);
+              }}
             />
           ))}
         </div>
@@ -279,6 +327,7 @@ export function ChatInput({
           anchor={caret}
           selectedServers={selectedServers}
           onPromptSelected={onMCPPromptSelected}
+          onSkillSelected={onSkillSelected}
           actionTrigger={mcpPromptPopoverKeyTrigger}
           setActionTrigger={setMcpPromptPopoverKeyTrigger}
           value={value}
@@ -299,8 +348,8 @@ export function ChatInput({
         {/* File Attachment Cards */}
         {renderFileAttachmentCards()}
 
-        {/* MCP Prompts Cards */}
-        {renderMcpPromptResultCards()}
+        {/* MCP Prompts and Skills Cards */}
+        {renderResultCards()}
 
         {/* File validation error */}
         {fileError && (
@@ -374,9 +423,29 @@ export function ChatInput({
               currentModel={currentModel}
               compact={compact}
             />
+            {onXrayModeChange && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={xrayMode ? "secondary" : "ghost"}
+                    size="icon"
+                    onClick={() => onXrayModeChange(!xrayMode)}
+                    className="h-8 w-8"
+                  >
+                    <Scan className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {xrayMode
+                    ? "Hide X-Ray view"
+                    : "See what is sent to the model"}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <Context
               usedTokens={tokenUsage?.totalTokens ?? 0}
               usage={
@@ -447,18 +516,14 @@ export function ChatInput({
                     size="icon"
                     className={cn(
                       "size-[34px] rounded-full transition-colors",
-                      (value.trim() ||
-                        mcpPromptResults.length > 0 ||
-                        fileAttachments.length > 0) &&
+                      (value.trim() || hasResults) &&
                         !disabled &&
                         !submitDisabled
                         ? "bg-primary text-primary-foreground hover:bg-primary/90"
                         : "bg-muted text-muted-foreground cursor-not-allowed",
                     )}
                     disabled={
-                      (!value.trim() &&
-                        mcpPromptResults.length === 0 &&
-                        fileAttachments.length === 0) ||
+                      (!value.trim() && !hasResults) ||
                       disabled ||
                       submitDisabled
                     }

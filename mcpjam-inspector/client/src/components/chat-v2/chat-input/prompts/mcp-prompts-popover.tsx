@@ -26,6 +26,10 @@ import {
   getPrompt,
   PromptContentResponse,
 } from "@/lib/apis/mcp-prompts-api";
+import { SkillsPopoverSection } from "../skills/skills-popover-section";
+import { SkillUploadDialog } from "../skills/skill-upload-dialog";
+import type { SkillResult } from "../skills/skill-types";
+import { listSkills } from "@/lib/apis/mcp-skills-api";
 
 export interface MCPPromptResult extends PromptListItem {
   result: PromptContentResponse;
@@ -40,6 +44,7 @@ interface PromptsPopoverProps {
   anchor: { x: number; y: number };
   selectedServers?: string[];
   onPromptSelected: (mcpPromptResult: MCPPromptResult) => void;
+  onSkillSelected?: (skillResult: SkillResult) => void;
   actionTrigger: string | null;
   setActionTrigger: (trigger: string | null) => void;
   value: string;
@@ -62,6 +67,7 @@ export function PromptsPopover({
   anchor,
   selectedServers,
   onPromptSelected,
+  onSkillSelected,
   actionTrigger,
   setActionTrigger,
   value,
@@ -75,6 +81,8 @@ export function PromptsPopover({
   const [isPromptArgsDialogOpen, setIsPromptArgsDialogOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [isHovering, setIsHovering] = useState(false);
+  const [skillsCount, setSkillsCount] = useState(0);
+  const [isSkillUploadDialogOpen, setIsSkillUploadDialogOpen] = useState(false);
 
   useEffect(() => {
     // Fetch prompts for selected servers
@@ -108,6 +116,32 @@ export function PromptsPopover({
       active = false;
     };
   }, [selectedServers]);
+
+  // Fetch skills count for navigation (only when skills UI is enabled)
+  useEffect(() => {
+    // If skills UI is disabled, reset count to 0
+    if (!onSkillSelected) {
+      setSkillsCount(0);
+      return;
+    }
+
+    let active = true;
+    (async () => {
+      try {
+        const skills = await listSkills();
+        if (!active) return;
+        setSkillsCount(skills.length);
+      } catch {
+        // Ignore errors, just set count to 0
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [onSkillSelected]);
+
+  // Total items for navigation (prompts + skills)
+  const totalItems = promptListItems.length + skillsCount;
 
   const getPromptResult = useCallback(
     async (promptListItem: PromptListItem, values: Record<string, string>) => {
@@ -148,37 +182,50 @@ export function PromptsPopover({
     // Handle key press events from textarea
     try {
       if (actionTrigger === null) return;
+      if (totalItems === 0) return;
 
       if (actionTrigger === "ArrowDown") {
-        setHighlightedIndex((prev) => (prev + 1) % promptListItems.length);
+        setHighlightedIndex((prev) => (prev + 1) % totalItems);
       } else if (actionTrigger === "ArrowUp") {
-        setHighlightedIndex(
-          (prev) =>
-            (prev - 1 + promptListItems.length) % promptListItems.length,
-        );
+        setHighlightedIndex((prev) => (prev - 1 + totalItems) % totalItems);
       } else if (actionTrigger === "Enter") {
         if (highlightedIndex === -1) return;
         setIsHovering(false);
-        setSelectedPrompt(promptListItems[highlightedIndex]);
+        // Only handle prompt selection here, skill selection is handled by SkillsPopoverSection
+        if (highlightedIndex < promptListItems.length) {
+          setSelectedPrompt(promptListItems[highlightedIndex]);
+        }
+        // Skills handle their own Enter key via actionTrigger prop
       } else if (actionTrigger === "Escape") {
         setOpen(false);
       }
     } finally {
       setActionTrigger(null);
     }
-  }, [actionTrigger]);
+  }, [actionTrigger, totalItems, promptListItems.length]);
 
   useEffect(() => {
-    // Open popover if prompts are requested
-    setOpen(
-      isMCPPromptsRequested(value, caretIndex) && promptListItems.length > 0,
-    );
-  }, [value, caretIndex]);
+    // Open popover if prompts or skills are requested (and at least one exists)
+    setOpen(isMCPPromptsRequested(value, caretIndex) && totalItems > 0);
+  }, [value, caretIndex, totalItems]);
 
   const onCancelPromptArgsDialog = () => {
     setIsPromptArgsDialogOpen(false);
     setSelectedPrompt(null);
   };
+
+  const handleSkillSelected = useCallback(
+    (skillResult: SkillResult) => {
+      onSkillSelected?.(skillResult);
+      setOpen(false);
+    },
+    [onSkillSelected],
+  );
+
+  const handleOpenUploadDialog = useCallback(() => {
+    setOpen(false);
+    setIsSkillUploadDialogOpen(true);
+  }, []);
 
   return (
     <div className="relative">
@@ -206,54 +253,72 @@ export function PromptsPopover({
           onMouseEnter={() => setIsHovering(true)}
           onMouseLeave={() => setIsHovering(false)}
           onOpenAutoFocus={(event) => event.preventDefault()}
-          className="w-auto min-w-[200px] p-1"
+          className="w-auto min-w-[200px] p-1 max-h-[400px] overflow-y-auto"
         >
-          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-            SELECT A PROMPT
-          </div>
-          <div className="flex flex-col">
-            {promptListItems.map((prompt, index) => (
-              <Tooltip key={prompt.namespacedName} delayDuration={1000}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
-                      highlightedIndex === index
-                        ? "bg-accent text-accent-foreground"
-                        : "",
-                    )}
-                    onClick={() => setSelectedPrompt(prompt)}
-                    onMouseEnter={() => {
-                      if (isHovering) {
-                        setHighlightedIndex(index);
-                      }
-                    }}
-                  >
-                    <MessageSquareCode size={16} className="shrink-0" />
-                    <span className="flex-1 text-left truncate">
-                      {prompt.namespacedName}
-                    </span>
-                    {prompt.namespacedName ===
-                    selectedPrompt?.namespacedName ? (
-                      <Loader2
-                        size={14}
-                        className="text-muted-foreground shrink-0 ml-2 animate-spin"
-                        aria-label="Loading"
-                      />
-                    ) : prompt.arguments && prompt.arguments.length > 0 ? (
-                      <ListChecks
-                        size={14}
-                        className="text-muted-foreground shrink-0 ml-2"
-                        aria-label="Requires inputs"
-                      />
-                    ) : null}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>{prompt.description}</TooltipContent>
-              </Tooltip>
-            ))}
-          </div>
+          {/* Prompts section */}
+          {promptListItems.length > 0 && (
+            <>
+              <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                PROMPTS
+              </div>
+              <div className="flex flex-col">
+                {promptListItems.map((prompt, index) => (
+                  <Tooltip key={prompt.namespacedName} delayDuration={1000}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className={cn(
+                          "flex items-center gap-2 rounded-sm px-2 max-w-[300px] py-1.5 text-xs select-none hover:bg-accent hover:text-accent-foreground",
+                          highlightedIndex === index
+                            ? "bg-accent text-accent-foreground"
+                            : "",
+                        )}
+                        onClick={() => setSelectedPrompt(prompt)}
+                        onMouseEnter={() => {
+                          if (isHovering) {
+                            setHighlightedIndex(index);
+                          }
+                        }}
+                      >
+                        <MessageSquareCode size={16} className="shrink-0" />
+                        <span className="flex-1 text-left truncate">
+                          {prompt.namespacedName}
+                        </span>
+                        {prompt.namespacedName ===
+                        selectedPrompt?.namespacedName ? (
+                          <Loader2
+                            size={14}
+                            className="text-muted-foreground shrink-0 ml-2 animate-spin"
+                            aria-label="Loading"
+                          />
+                        ) : prompt.arguments && prompt.arguments.length > 0 ? (
+                          <ListChecks
+                            size={14}
+                            className="text-muted-foreground shrink-0 ml-2"
+                            aria-label="Requires inputs"
+                          />
+                        ) : null}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{prompt.description}</TooltipContent>
+                  </Tooltip>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Skills section */}
+          {onSkillSelected && (
+            <SkillsPopoverSection
+              onSkillSelected={handleSkillSelected}
+              highlightedIndex={highlightedIndex}
+              setHighlightedIndex={setHighlightedIndex}
+              startIndex={promptListItems.length}
+              isHovering={isHovering}
+              actionTrigger={actionTrigger}
+              onOpenUploadDialog={handleOpenUploadDialog}
+            />
+          )}
         </PopoverContent>
       </Popover>
       <PromptsArgumentsDialog
@@ -262,6 +327,18 @@ export function PromptsPopover({
         promptListItem={selectedPrompt}
         onSubmit={getPromptResult}
         onCancel={onCancelPromptArgsDialog}
+      />
+      <SkillUploadDialog
+        open={isSkillUploadDialogOpen}
+        onOpenChange={setIsSkillUploadDialogOpen}
+        onSkillCreated={(skill) => {
+          // Refresh skills count after creation
+          listSkills()
+            .then((skills) => setSkillsCount(skills.length))
+            .catch(() => {});
+          // Optionally select the newly created skill
+          handleSkillSelected(skill);
+        }}
       />
     </div>
   );

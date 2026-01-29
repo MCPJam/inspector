@@ -1,6 +1,10 @@
 import { ModelMessage } from "@ai-sdk/provider-utils";
-import { LanguageModelV2ToolResultOutput } from "@ai-sdk/provider-v5";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import {
+  type MCPClientManager,
+  isMcpAppTool,
+  scrubMetaAndStructuredContentFromToolResult,
+} from "@mcpjam/sdk";
+import { ToolResultPart } from "ai";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -121,7 +125,7 @@ export async function executeToolCallsFromMessages(
           const input = content.input || {};
           const result = await tool.execute(input);
 
-          let output: LanguageModelV2ToolResultOutput;
+          let output: ToolResultPart;
           if (result !== undefined && result !== null) {
             if (typeof result === "object") {
               const serialized = serializeToolResult(result);
@@ -143,6 +147,33 @@ export async function executeToolCallsFromMessages(
           // Extract serverId from tool name
           const serverId = extractServerId(toolName);
 
+          // For MCP app tools, scrub _meta and structuredContent from the
+          // output that goes to the LLM, while preserving the full result
+          // for the UI.
+          let llmOutput = output;
+          if (
+            "clientManager" in options &&
+            serverId &&
+            result &&
+            typeof result === "object"
+          ) {
+            const toolsMetadata =
+              options.clientManager.getAllToolsMetadata(serverId);
+            const toolMeta = toolsMetadata[toolName];
+            if (isMcpAppTool(toolMeta)) {
+              const scrubbed = scrubMetaAndStructuredContentFromToolResult(
+                result as any,
+              );
+              const scrubbedSerialized = serializeToolResult(scrubbed);
+              if (scrubbedSerialized.success) {
+                llmOutput = {
+                  type: "json",
+                  value: scrubbedSerialized.value,
+                } as any;
+              }
+            }
+          }
+
           const toolResultMessage: ModelMessage = {
             role: "tool" as const,
             content: [
@@ -150,8 +181,8 @@ export async function executeToolCallsFromMessages(
                 type: "tool-result",
                 toolCallId: content.toolCallId,
                 toolName: toolName,
-                output,
-                // Preserve full result including _meta for OpenAI Apps SDK
+                output: llmOutput,
+                // Preserve full result including _meta for UI hydration
                 result: result,
                 // Add serverId for OpenAI component resolution
                 serverId,
@@ -160,7 +191,7 @@ export async function executeToolCallsFromMessages(
           } as any;
           toolResultsToAdd.push(toolResultMessage);
         } catch (error: any) {
-          const errorOutput: LanguageModelV2ToolResultOutput = {
+          const errorOutput: ToolResultPart = {
             type: "error-text",
             value: error instanceof Error ? error.message : String(error),
           } as any;

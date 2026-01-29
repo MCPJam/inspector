@@ -50,6 +50,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
+import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import {
   type FileAttachment,
   attachmentsToFileUIParts,
@@ -77,6 +78,7 @@ import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -260,6 +262,7 @@ export function PlaygroundMain({
     [],
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+  const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
   const [modelContextQueue, setModelContextQueue] = useState<
     {
       toolCallId: string;
@@ -270,6 +273,7 @@ export function PlaygroundMain({
     }[]
   >([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [xrayMode, setXrayMode] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [devicePopoverOpen, setDevicePopoverOpen] = useState(false);
@@ -574,9 +578,13 @@ export function PlaygroundMain({
     systemPromptTokenCountLoading: false,
     mcpPromptResults,
     onChangeMcpPromptResults: setMcpPromptResults,
+    skillResults,
+    onChangeSkillResults: setSkillResults,
     compact: isCompact,
     fileAttachments,
     onChangeFileAttachments: setFileAttachments,
+    xrayMode,
+    onXrayModeChange: setXrayMode,
   };
 
   // Check if widget should take over the full container
@@ -1404,7 +1412,28 @@ export function PlaygroundMain({
             transform: isWidgetFullscreen ? "none" : "translateZ(0)",
           }}
         >
-          {threadContent}
+          {xrayMode ? (
+            <div className="flex flex-col flex-1 min-h-0">
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <XRaySnapshotView
+                  systemPrompt={systemPrompt}
+                  messages={messages}
+                  selectedServers={selectedServers}
+                  onClose={() => setXrayMode(false)}
+                />
+              </div>
+              <div className="flex-shrink-0 bg-background/80 backdrop-blur-sm border-t border-border">
+                <div className="max-w-xl mx-auto w-full p-3">
+                  <ChatInput
+                    {...sharedChatInputProps}
+                    hasMessages={!isThreadEmpty}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            threadContent
+          )}
         </div>
       </div>
     </div>
