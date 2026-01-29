@@ -571,26 +571,26 @@ export function ChatTabV2({
                       fullscreenChatPlaceholder={placeholder}
                       fullscreenChatDisabled={inputDisabled}
                     />
-                    {errorMessage && (
-                      <div className="px-4 pb-4 pt-4">
-                        <ErrorBox
-                          message={errorMessage.message}
-                          errorDetails={errorMessage.details}
-                          code={errorMessage.code}
-                          statusCode={errorMessage.statusCode}
-                          isRetryable={errorMessage.isRetryable}
-                          isMCPJamPlatformError={
-                            errorMessage.isMCPJamPlatformError
-                          }
-                          onResetChat={baseResetChat}
-                        />
-                      </div>
-                    )}
                   </StickToBottom.Content>
                   <ScrollToBottomButton />
                 </div>
 
                 <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                  {errorMessage && (
+                    <div className="max-w-4xl mx-auto px-4 pt-4">
+                      <ErrorBox
+                        message={errorMessage.message}
+                        errorDetails={errorMessage.details}
+                        code={errorMessage.code}
+                        statusCode={errorMessage.statusCode}
+                        isRetryable={errorMessage.isRetryable}
+                        isMCPJamPlatformError={
+                          errorMessage.isMCPJamPlatformError
+                        }
+                        onResetChat={baseResetChat}
+                      />
+                    </div>
+                  )}
                   <div className="max-w-4xl mx-auto p-4">
                     <ChatInput {...sharedChatInputProps} hasMessages />
                   </div>

@@ -51,28 +51,28 @@ export function ErrorBox({
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
   const errorDetailsJson = parseErrorDetails(errorDetails);
 
-  // Platform errors use amber styling to indicate "not your fault"
+  // Platform errors use warning styling to indicate "not your fault"
   const isPlatformError = isMCPJamPlatformError === true;
 
   const containerClasses = isPlatformError
-    ? "border-amber-500 bg-amber-200/80 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-600"
-    : "border-red-500 bg-red-300/80 text-red-900 dark:bg-red-900/30 dark:text-red-200 dark:border-red-600";
+    ? "border-warning bg-warning/20 text-warning-foreground"
+    : "border-destructive bg-destructive/20 text-destructive-foreground";
 
   const iconClasses = isPlatformError
-    ? "text-amber-900 dark:text-amber-200"
-    : "text-red-900 dark:text-red-200";
+    ? "text-warning"
+    : "text-destructive";
 
   const triggerClasses = isPlatformError
-    ? "text-amber-700 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
-    : "text-red-700 hover:text-red-800 dark:text-red-300 dark:hover:text-red-200";
+    ? "text-warning hover:text-warning/80"
+    : "text-destructive hover:text-destructive/80";
 
   const borderClasses = isPlatformError
-    ? "border-amber-500/30"
-    : "border-red-500/30";
+    ? "border-warning/30"
+    : "border-destructive/30";
 
   const preClasses = isPlatformError
-    ? "text-amber-700 dark:text-amber-300"
-    : "text-red-700 dark:text-red-300";
+    ? "text-warning-foreground"
+    : "text-destructive-foreground";
 
   const errorLabel = isPlatformError
     ? "MCPJam platform issue"

@@ -642,19 +642,6 @@ export function PlaygroundMain({
                   customMessage={invokingMessage}
                 />
               )}
-              {errorMessage && (
-                <div className="px-4 pb-4 pt-4">
-                  <ErrorBox
-                    message={errorMessage.message}
-                    errorDetails={errorMessage.details}
-                    code={errorMessage.code}
-                    statusCode={errorMessage.statusCode}
-                    isRetryable={errorMessage.isRetryable}
-                    isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
-                    onResetChat={resetChat}
-                  />
-                </div>
-              )}
             </StickToBottom.Content>
             <ScrollToBottomButton />
           </div>
@@ -671,6 +658,19 @@ export function PlaygroundMain({
               : "bg-background/80 backdrop-blur-sm p-3",
           )}
         >
+          {errorMessage && (
+            <div className="pb-3">
+              <ErrorBox
+                message={errorMessage.message}
+                errorDetails={errorMessage.details}
+                code={errorMessage.code}
+                statusCode={errorMessage.statusCode}
+                isRetryable={errorMessage.isRetryable}
+                isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                onResetChat={resetChat}
+              />
+            </div>
+          )}
           <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
         </div>
       )}
