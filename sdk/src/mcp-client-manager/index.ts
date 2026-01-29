@@ -70,6 +70,10 @@ export type { Tool, ToolExecuteOptions, AiSdkTool } from "./types.js";
 export {
   convertMCPToolsToVercelTools,
   ensureJsonSchemaObject,
+  isChatGPTAppTool,
+  isMcpAppTool,
+  scrubMetaFromToolResult,
+  scrubMetaAndStructuredContentFromToolResult,
   type ToolSchemaOverrides,
   type ConvertedToolSet,
   type CallToolExecutor,

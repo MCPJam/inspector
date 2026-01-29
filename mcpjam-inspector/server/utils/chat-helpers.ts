@@ -8,6 +8,14 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createOllama } from "ollama-ai-provider-v2";
+import type { ModelMessage } from "@ai-sdk/provider-utils";
+import {
+  isChatGPTAppTool,
+  isMcpAppTool,
+  scrubMetaFromToolResult,
+  scrubMetaAndStructuredContentFromToolResult,
+  type MCPClientManager,
+} from "@mcpjam/sdk";
 
 export interface BaseUrls {
   ollama?: string;
@@ -76,4 +84,119 @@ export const createLlmModel = (
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,
       );
   }
+};
+
+export const scrubMcpAppsToolResultsForBackend = (
+  messages: ModelMessage[],
+  mcpClientManager: MCPClientManager,
+  selectedServers?: string[] | string,
+): ModelMessage[] => {
+  const serverIds = Array.isArray(selectedServers)
+    ? selectedServers
+    : selectedServers
+      ? [selectedServers]
+      : mcpClientManager.listServers();
+  const metaByServer = new Map<string, Record<string, any>>();
+  for (const serverId of serverIds) {
+    metaByServer.set(serverId, mcpClientManager.getAllToolsMetadata(serverId));
+  }
+  const shouldScrub = (toolName?: string, serverId?: string): boolean => {
+    if (!toolName) return false;
+    if (serverId) {
+      return isMcpAppTool(metaByServer.get(serverId)?.[toolName]);
+    }
+    for (const metaMap of metaByServer.values()) {
+      if (isMcpAppTool(metaMap?.[toolName])) return true;
+    }
+    return false;
+  };
+
+  return messages.map((msg) => {
+    if (!msg || msg.role !== "tool" || !Array.isArray((msg as any).content)) {
+      return msg;
+    }
+    const content = (msg as any).content.map((part: any) => {
+      if (part?.type !== "tool-result") return part;
+      const toolName = part.toolName ?? part.name;
+      if (!shouldScrub(toolName, part.serverId)) return part;
+      const nextPart = { ...part };
+      if (nextPart.output?.type === "json") {
+        nextPart.output = {
+          ...nextPart.output,
+          value: scrubMetaAndStructuredContentFromToolResult(
+            nextPart.output.value,
+          ),
+        };
+      }
+      if ("result" in nextPart) {
+        nextPart.result = scrubMetaAndStructuredContentFromToolResult(
+          nextPart.result,
+        );
+      }
+      return nextPart;
+    });
+    return { ...msg, content } as ModelMessage;
+  });
+};
+
+export const scrubChatGPTAppsToolResultsForBackend = (
+  messages: ModelMessage[],
+  mcpClientManager: MCPClientManager,
+  selectedServers?: string[] | string,
+): ModelMessage[] => {
+  const serverIds = Array.isArray(selectedServers)
+    ? selectedServers
+    : selectedServers
+      ? [selectedServers]
+      : mcpClientManager.listServers();
+  const metaByServer = new Map<string, Record<string, any>>();
+  for (const serverId of serverIds) {
+    metaByServer.set(serverId, mcpClientManager.getAllToolsMetadata(serverId));
+  }
+  const shouldScrub = (toolName?: string, serverId?: string): boolean => {
+    if (!toolName) return false;
+    if (serverId) {
+      return isChatGPTAppTool(metaByServer.get(serverId)?.[toolName]);
+    }
+    for (const metaMap of metaByServer.values()) {
+      if (isChatGPTAppTool(metaMap?.[toolName])) return true;
+    }
+    return false;
+  };
+
+  const scrubPayload = (payload: unknown): unknown => {
+    if (!payload || typeof payload !== "object") return payload;
+    const withoutMeta = scrubMetaFromToolResult(payload as any);
+    if (!("structuredContent" in (withoutMeta as Record<string, unknown>))) {
+      return withoutMeta;
+    }
+    const { structuredContent: _removed, ...rest } = withoutMeta as Record<
+      string,
+      unknown
+    >;
+    return rest;
+  };
+
+  return messages.map((msg) => {
+    if (!msg || msg.role !== "tool" || !Array.isArray((msg as any).content)) {
+      return msg;
+    }
+    const content = (msg as any).content.map((part: any) => {
+      if (part?.type !== "tool-result") return part;
+      const toolName = part.toolName ?? part.name;
+      if (!shouldScrub(toolName, part.serverId)) return part;
+      const nextPart = { ...part };
+      if (nextPart.output?.type === "json") {
+        nextPart.output = {
+          ...nextPart.output,
+          value: scrubPayload(nextPart.output.value),
+        };
+      }
+      if ("result" in nextPart) {
+        nextPart.result = scrubPayload(nextPart.result);
+      }
+      return nextPart;
+    });
+    return { ...msg, content } as ModelMessage;
+  });
 };

@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import posthog from "posthog-js";
+import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   Dialog,
   DialogContent,
@@ -66,6 +68,18 @@ export function ShareWorkspaceDialog({
         m.email.toLowerCase() === currentUser.email?.toLowerCase() && m.isOwner,
     );
 
+  useEffect(() => {
+    if (isOpen) {
+      posthog.capture("share_dialog_opened", {
+        workspace_name: workspaceName,
+        is_already_shared: !!sharedWorkspaceId,
+        member_count: activeMembers.length + pendingMembers.length,
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
+    }
+  }, [isOpen]);
+
   const handleInvite = async () => {
     if (!email.trim()) return;
 
@@ -98,6 +112,13 @@ export function ShareWorkspaceDialog({
         toast.success(`${email} has been added to the workspace.`);
       }
       setEmail("");
+      posthog.capture("workspace_invite_sent", {
+        workspace_name: workspaceName,
+        is_new_share: !sharedWorkspaceId,
+        is_pending: result.isPending,
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
     } catch (error) {
       toast.error((error as Error).message || "Failed to add member");
     } finally {
@@ -113,6 +134,11 @@ export function ShareWorkspaceDialog({
         email: memberEmail,
       });
       toast.success("Member removed");
+      posthog.capture("workspace_member_removed", {
+        workspace_name: workspaceName,
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
     } catch (error) {
       toast.error((error as Error).message || "Failed to remove member");
     }
@@ -127,6 +153,11 @@ export function ShareWorkspaceDialog({
         email: currentUser.email,
       });
       toast.success("You have left the workspace");
+      posthog.capture("workspace_left", {
+        workspace_name: workspaceName,
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
       onClose();
       onLeaveWorkspace?.();
     } catch (error) {
