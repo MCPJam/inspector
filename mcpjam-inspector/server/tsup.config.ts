@@ -49,10 +49,6 @@ export default defineConfig({
   esbuildOptions(options) {
     options.platform = "node";
     options.mainFields = ["module", "main"];
-    // Configure path alias for @mcpjam/sdk
-    options.alias = {
-      "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.mjs"),
-    };
   },
   async onSuccess() {
     // Copy static assets to dist folder

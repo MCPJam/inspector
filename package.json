@@ -1,0 +1,16 @@
+{
+  "name": "@mcpjam/monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "build:sdk": "pnpm --filter @mcpjam/sdk run build",
+    "build:inspector": "pnpm --filter @mcpjam/inspector run build",
+    "dev": "pnpm --filter @mcpjam/inspector run dev",
+    "test": "pnpm -r run test",
+    "clean": "pnpm -r run clean"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

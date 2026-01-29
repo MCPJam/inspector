@@ -20,9 +20,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@/shared/*": ["../shared/*"],
-      "@mcpjam/sdk": ["../sdk/src/index.ts"],
-      "@mcpjam/sdk/*": ["../sdk/src/*"]
+      "@/shared/*": ["../shared/*"]
     },
     "types": ["node"]
   },

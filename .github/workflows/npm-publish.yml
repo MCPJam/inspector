@@ -17,48 +17,36 @@ env:
 jobs:
   publish-npm:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mcpjam-inspector
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
+          cache: "pnpm"
 
-      - name: Clear npm cache and rebuild native modules
-        run: |
-          npm cache clean --force
-          rm -rf ~/.npm
-          rm -rf node_modules package-lock.json
-          rm -rf client/node_modules client/package-lock.json
-          rm -rf server/node_modules server/package-lock.json
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-      - name: Install dependencies with fresh state
-        run: |
-          npm install --legacy-peer-deps --no-optional
-          npm run install:deps
-
-      - name: Rebuild native dependencies
-        run: |
-          cd server && npm rebuild esbuild
-          cd ../client && npm rebuild
-
-      - name: Build for npm
-        run: npm run build
+      - name: Build
+        run: pnpm build
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: cd mcpjam-inspector && pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create success summary
         run: |
-          echo "## ✅ NPM Package Published Successfully!" >> $GITHUB_STEP_SUMMARY
+          echo "## NPM Package Published Successfully!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Package:** [@mcpjam/inspector](https://www.npmjs.com/package/@mcpjam/inspector)" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ github.ref_name || inputs.version }}" >> $GITHUB_STEP_SUMMARY
