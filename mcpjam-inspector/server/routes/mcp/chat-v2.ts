@@ -183,8 +183,10 @@ chatV2.post("/", async (c) => {
                 // Attach token usage metadata to assistant messages
                 if (json.usage) {
                   m.metadata = {
-                    inputTokens: json.usage.inputTokens ?? json.usage.promptTokens,
-                    outputTokens: json.usage.outputTokens ?? json.usage.completionTokens,
+                    inputTokens:
+                      json.usage.inputTokens ?? json.usage.promptTokens,
+                    outputTokens:
+                      json.usage.outputTokens ?? json.usage.completionTokens,
                     totalTokens: json.usage.totalTokens,
                   };
                 }

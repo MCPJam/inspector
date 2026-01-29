@@ -34,7 +34,8 @@ export async function getXRayPayload(
   } catch {}
 
   if (!res.ok) {
-    const message = body?.error || `Failed to get X-Ray payload (${res.status})`;
+    const message =
+      body?.error || `Failed to get X-Ray payload (${res.status})`;
     throw new Error(message);
   }
 
