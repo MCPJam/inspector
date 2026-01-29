@@ -240,10 +240,7 @@ describe("UIPlaygroundTab", () => {
       });
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -255,10 +252,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -278,10 +272,7 @@ describe("UIPlaygroundTab", () => {
       });
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -295,10 +286,7 @@ describe("UIPlaygroundTab", () => {
       mockListTools.mockRejectedValue(new Error("Network error"));
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -315,10 +303,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = true;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -331,10 +316,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = false;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -346,10 +328,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -380,10 +359,7 @@ describe("UIPlaygroundTab", () => {
       };
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -404,10 +380,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = true;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -424,10 +397,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = false;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -446,10 +416,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isExecuting = true;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -463,10 +430,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverId="test-server"
-        />,
+        <UIPlaygroundTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {

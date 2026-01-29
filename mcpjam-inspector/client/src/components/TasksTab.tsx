@@ -909,9 +909,7 @@ export function TasksTab({
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={50} minSize={20}>
-              <LoggerView
-                serverIds={serverId ? [serverId] : undefined}
-              />
+              <LoggerView serverIds={serverId ? [serverId] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={50} minSize={20}>

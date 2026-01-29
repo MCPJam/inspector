@@ -25,10 +25,7 @@ interface ResourcesTabProps {
   serverId: string;
 }
 
-export function ResourcesTab({
-  serverConfig,
-  serverId,
-}: ResourcesTabProps) {
+export function ResourcesTab({ serverConfig, serverId }: ResourcesTabProps) {
   const [resources, setResources] = useState<MCPResource[]>([]);
   const [selectedResource, setSelectedResource] = useState<string>("");
   const [resourceContent, setResourceContent] =
@@ -384,9 +381,7 @@ export function ResourcesTab({
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView
-                serverIds={serverId ? [serverId] : undefined}
-              />
+              <LoggerView serverIds={serverId ? [serverId] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>

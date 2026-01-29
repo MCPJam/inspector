@@ -310,8 +310,7 @@ export function PlaygroundMain({
   }, [themeMode, setThemeMode]);
 
   const { servers } = useSharedAppState();
-  const displayServerName =
-    servers[serverId]?.name ?? serverId ?? "";
+  const displayServerName = servers[serverId]?.name ?? serverId ?? "";
   const selectedServers = useMemo(
     () =>
       serverId && servers[serverId]?.connectionStatus === "connected"

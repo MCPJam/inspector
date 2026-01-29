@@ -57,31 +57,47 @@ describe("getServerByIdOrName", () => {
   });
 
   it("falls back to direct ID lookup in effectiveServers", () => {
-    expect(getServerByIdOrName("uuid-c", {}, effectiveServers)).toBe(workspaceServer);
+    expect(getServerByIdOrName("uuid-c", {}, effectiveServers)).toBe(
+      workspaceServer,
+    );
   });
 
   it("falls back to name search in effectiveServers", () => {
-    expect(getServerByIdOrName("Gamma", {}, effectiveServers)).toBe(workspaceServer);
+    expect(getServerByIdOrName("Gamma", {}, effectiveServers)).toBe(
+      workspaceServer,
+    );
   });
 
   it("returns undefined for non-existent server", () => {
-    expect(getServerByIdOrName("nope", appServers, effectiveServers)).toBeUndefined();
+    expect(
+      getServerByIdOrName("nope", appServers, effectiveServers),
+    ).toBeUndefined();
   });
 
   it("returns undefined for undefined input", () => {
-    expect(getServerByIdOrName(undefined, appServers, effectiveServers)).toBeUndefined();
+    expect(
+      getServerByIdOrName(undefined, appServers, effectiveServers),
+    ).toBeUndefined();
   });
 
   it("prefers appServers ID match over effectiveServers", () => {
     const dup = createServer("Dup", { id: "shared-id" });
     const dup2 = createServer("Dup2", { id: "shared-id" });
-    expect(getServerByIdOrName("shared-id", { "shared-id": dup }, { "shared-id": dup2 })).toBe(dup);
+    expect(
+      getServerByIdOrName(
+        "shared-id",
+        { "shared-id": dup },
+        { "shared-id": dup2 },
+      ),
+    ).toBe(dup);
   });
 
   it("prefers appServers name match over effectiveServers name match", () => {
     const s1 = createServer("Same Name", { id: "id-1" });
     const s2 = createServer("Same Name", { id: "id-2" });
-    expect(getServerByIdOrName("Same Name", { "id-1": s1 }, { "id-2": s2 })).toBe(s1);
+    expect(
+      getServerByIdOrName("Same Name", { "id-1": s1 }, { "id-2": s2 }),
+    ).toBe(s1);
   });
 
   it("prefers ID match over name match", () => {

@@ -1199,8 +1199,10 @@ export const createDebugOAuthStateMachine = (
               return;
             } else if (registrationStrategy === "preregistered") {
               // Skip DCR - load pre-registered client credentials from localStorage
-              const { clientId, clientSecret } =
-                loadPreregisteredCredentials(serverId, serverName);
+              const { clientId, clientSecret } = loadPreregisteredCredentials(
+                serverId,
+                serverName,
+              );
 
               if (!clientId) {
                 updateState({

@@ -29,19 +29,28 @@ beforeEach(() => {
 
 describe("readWithMigration (tested via getStoredTokens)", () => {
   it("reads from ID-keyed storage", () => {
-    localStorage.setItem(`mcp-tokens-${SERVER_ID}`, JSON.stringify(sampleTokens));
+    localStorage.setItem(
+      `mcp-tokens-${SERVER_ID}`,
+      JSON.stringify(sampleTokens),
+    );
     const result = getStoredTokens(SERVER_ID, SERVER_NAME);
     expect(result).toMatchObject({ access_token: "at_123" });
   });
 
   it("falls back to name-keyed storage when ID key is missing", () => {
-    localStorage.setItem(`mcp-tokens-${SERVER_NAME}`, JSON.stringify(sampleTokens));
+    localStorage.setItem(
+      `mcp-tokens-${SERVER_NAME}`,
+      JSON.stringify(sampleTokens),
+    );
     const result = getStoredTokens(SERVER_ID, SERVER_NAME);
     expect(result).toMatchObject({ access_token: "at_123" });
   });
 
   it("auto-migrates name-keyed data to ID key on read", () => {
-    localStorage.setItem(`mcp-tokens-${SERVER_NAME}`, JSON.stringify(sampleTokens));
+    localStorage.setItem(
+      `mcp-tokens-${SERVER_NAME}`,
+      JSON.stringify(sampleTokens),
+    );
     getStoredTokens(SERVER_ID, SERVER_NAME);
     // After reading, the ID key should now exist
     expect(localStorage.getItem(`mcp-tokens-${SERVER_ID}`)).toBe(
@@ -50,8 +59,14 @@ describe("readWithMigration (tested via getStoredTokens)", () => {
   });
 
   it("prefers ID-keyed data over name-keyed data", () => {
-    localStorage.setItem(`mcp-tokens-${SERVER_ID}`, JSON.stringify({ ...sampleTokens, access_token: "id_token" }));
-    localStorage.setItem(`mcp-tokens-${SERVER_NAME}`, JSON.stringify({ ...sampleTokens, access_token: "name_token" }));
+    localStorage.setItem(
+      `mcp-tokens-${SERVER_ID}`,
+      JSON.stringify({ ...sampleTokens, access_token: "id_token" }),
+    );
+    localStorage.setItem(
+      `mcp-tokens-${SERVER_NAME}`,
+      JSON.stringify({ ...sampleTokens, access_token: "name_token" }),
+    );
     const result = getStoredTokens(SERVER_ID, SERVER_NAME);
     expect(result.access_token).toBe("id_token");
   });
@@ -61,14 +76,23 @@ describe("readWithMigration (tested via getStoredTokens)", () => {
   });
 
   it("returns undefined when serverName is not provided and ID key is missing", () => {
-    localStorage.setItem(`mcp-tokens-${SERVER_NAME}`, JSON.stringify(sampleTokens));
+    localStorage.setItem(
+      `mcp-tokens-${SERVER_NAME}`,
+      JSON.stringify(sampleTokens),
+    );
     // Without serverName, can't fall back
     expect(getStoredTokens(SERVER_ID)).toBeUndefined();
   });
 
   it("merges client_id from client info into tokens", () => {
-    localStorage.setItem(`mcp-tokens-${SERVER_ID}`, JSON.stringify(sampleTokens));
-    localStorage.setItem(`mcp-client-${SERVER_ID}`, JSON.stringify(sampleClient));
+    localStorage.setItem(
+      `mcp-tokens-${SERVER_ID}`,
+      JSON.stringify(sampleTokens),
+    );
+    localStorage.setItem(
+      `mcp-client-${SERVER_ID}`,
+      JSON.stringify(sampleClient),
+    );
     const result = getStoredTokens(SERVER_ID, SERVER_NAME);
     expect(result.client_id).toBe("cid_789");
   });
@@ -77,13 +101,19 @@ describe("readWithMigration (tested via getStoredTokens)", () => {
 describe("hasOAuthConfig (tests readWithMigration for multiple prefixes)", () => {
   it("detects config from ID-keyed storage", () => {
     localStorage.setItem(`mcp-serverUrl-${SERVER_ID}`, "https://example.com");
-    localStorage.setItem(`mcp-client-${SERVER_ID}`, JSON.stringify(sampleClient));
+    localStorage.setItem(
+      `mcp-client-${SERVER_ID}`,
+      JSON.stringify(sampleClient),
+    );
     expect(hasOAuthConfig(SERVER_ID, SERVER_NAME)).toBe(true);
   });
 
   it("detects config from name-keyed storage (migration fallback)", () => {
     localStorage.setItem(`mcp-serverUrl-${SERVER_NAME}`, "https://example.com");
-    localStorage.setItem(`mcp-client-${SERVER_NAME}`, JSON.stringify(sampleClient));
+    localStorage.setItem(
+      `mcp-client-${SERVER_NAME}`,
+      JSON.stringify(sampleClient),
+    );
     expect(hasOAuthConfig(SERVER_ID, SERVER_NAME)).toBe(true);
   });
 
@@ -94,7 +124,13 @@ describe("hasOAuthConfig (tests readWithMigration for multiple prefixes)", () =>
 
 describe("clearOAuthData (tests removeWithLegacy)", () => {
   it("removes both ID-keyed and name-keyed entries", () => {
-    const prefixes = ["mcp-tokens", "mcp-client", "mcp-verifier", "mcp-serverUrl", "mcp-oauth-config"];
+    const prefixes = [
+      "mcp-tokens",
+      "mcp-client",
+      "mcp-verifier",
+      "mcp-serverUrl",
+      "mcp-oauth-config",
+    ];
     for (const prefix of prefixes) {
       localStorage.setItem(`${prefix}-${SERVER_ID}`, "data");
       localStorage.setItem(`${prefix}-${SERVER_NAME}`, "data");

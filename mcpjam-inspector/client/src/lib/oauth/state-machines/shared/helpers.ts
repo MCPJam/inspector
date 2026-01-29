@@ -201,7 +201,10 @@ export async function generateCodeChallenge(verifier: string): Promise<string> {
 /**
  * Helper: Load pre-registered OAuth credentials from localStorage
  */
-export function loadPreregisteredCredentials(serverId: string, serverName?: string): {
+export function loadPreregisteredCredentials(
+  serverId: string,
+  serverName?: string,
+): {
   clientId?: string;
   clientSecret?: string;
 } {

@@ -867,7 +867,9 @@ describe("appReducer", () => {
         newName: "New Name",
       });
 
-      expect(result.workspaces["ws-1"].servers["server-uuid"].name).toBe("New Name");
+      expect(result.workspaces["ws-1"].servers["server-uuid"].name).toBe(
+        "New Name",
+      );
     });
 
     it("does not affect other servers", () => {
@@ -927,7 +929,9 @@ describe("appReducer", () => {
 
       // ws-2 should be the same object reference (untouched)
       expect(result.workspaces["ws-2"]).toBe(ws2);
-      expect(result.workspaces["ws-1"].servers["server-uuid"].name).toBe("New Name");
+      expect(result.workspaces["ws-1"].servers["server-uuid"].name).toBe(
+        "New Name",
+      );
     });
   });
 });

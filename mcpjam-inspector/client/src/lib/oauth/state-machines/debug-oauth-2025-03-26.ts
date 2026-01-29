@@ -714,8 +714,10 @@ export const createDebugOAuthStateMachine = (
             }
 
             if (registrationStrategy === "preregistered") {
-              const { clientId, clientSecret } =
-                loadPreregisteredCredentials(serverId, serverName);
+              const { clientId, clientSecret } = loadPreregisteredCredentials(
+                serverId,
+                serverName,
+              );
 
               if (!clientId) {
                 updateState({

@@ -45,10 +45,7 @@ interface FormField {
   maximum?: number;
 }
 
-export function PromptsTab({
-  serverConfig,
-  serverId,
-}: PromptsTabProps) {
+export function PromptsTab({ serverConfig, serverId }: PromptsTabProps) {
   const [prompts, setPrompts] = useState<MCPPrompt[]>([]);
   const [selectedPrompt, setSelectedPrompt] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -533,9 +530,7 @@ export function PromptsTab({
         <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView
-                serverIds={serverId ? [serverId] : undefined}
-              />
+              <LoggerView serverIds={serverId ? [serverId] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>

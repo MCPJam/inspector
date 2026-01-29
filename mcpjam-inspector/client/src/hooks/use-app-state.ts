@@ -407,7 +407,9 @@ export function useAppState() {
       try {
         let stored = localStorage.getItem(`mcp-env-${serverId}`);
         if (!stored && workspaceServer?.name) {
-          const legacy = localStorage.getItem(`mcp-env-${workspaceServer.name}`);
+          const legacy = localStorage.getItem(
+            `mcp-env-${workspaceServer.name}`,
+          );
           if (legacy) {
             localStorage.setItem(`mcp-env-${serverId}`, legacy);
             stored = legacy;
@@ -605,8 +607,9 @@ export function useAppState() {
             Object.values(
               effectiveWorkspaces[effectiveActiveWorkspaceId]?.servers || {},
             ).find((server) => server.name === serverName);
-          const serverId: ServerId =
-            result.serverId ? toServerId(result.serverId) : matchingServer?.id ?? toServerId(crypto.randomUUID());
+          const serverId: ServerId = result.serverId
+            ? toServerId(result.serverId)
+            : (matchingServer?.id ?? toServerId(crypto.randomUUID()));
 
           // Move to connecting with fresh OAuth config
           dispatch({
@@ -1904,7 +1907,9 @@ export function useAppState() {
       }
 
       // Disconnect all servers before leaving
-      const workspaceServers = Object.keys(workspace.servers || {}) as ServerId[];
+      const workspaceServers = Object.keys(
+        workspace.servers || {},
+      ) as ServerId[];
       for (const serverId of workspaceServers) {
         const runtimeServer = appState.servers[serverId];
         if (runtimeServer?.connectionStatus === "connected") {

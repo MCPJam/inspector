@@ -97,10 +97,7 @@ interface ToolsTabProps {
   serverId: string;
 }
 
-export function ToolsTab({
-  serverConfig,
-  serverId,
-}: ToolsTabProps) {
+export function ToolsTab({ serverConfig, serverId }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
@@ -734,9 +731,7 @@ export function ToolsTab({
         <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
             <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView
-                serverIds={serverId ? [serverId] : undefined}
-              />
+              <LoggerView serverIds={serverId ? [serverId] : undefined} />
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={60} minSize={30}>
@@ -755,11 +750,7 @@ export function ToolsTab({
                 toolMeta={getToolMeta(lastToolName)}
                 onExecuteFromUI={async (name, params) => {
                   if (!serverId) return { error: "No server selected" };
-                  return await executeToolApi(
-                    serverId,
-                    name,
-                    params || {},
-                  );
+                  return await executeToolApi(serverId, name, params || {});
                 }}
                 onHandleIntent={async (intent, params) => {
                   if (!serverId) return;

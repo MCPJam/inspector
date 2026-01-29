@@ -66,9 +66,7 @@ describe("ResourcesTab", () => {
     });
 
     it("shows empty state when serverConfig is undefined", () => {
-      render(
-        <ResourcesTab serverConfig={undefined} serverId="test-server" />,
-      );
+      render(<ResourcesTab serverConfig={undefined} serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });

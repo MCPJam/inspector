@@ -76,7 +76,9 @@ export function deserializeServersFromConvex(
 
   for (const [serverId, serverData] of Object.entries(servers)) {
     if (!serverData) continue;
-    const revivedId = toServerId(serverData.id || serverId || crypto.randomUUID());
+    const revivedId = toServerId(
+      serverData.id || serverId || crypto.randomUUID(),
+    );
 
     const config: any = {};
     if (serverData.config) {
