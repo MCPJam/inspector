@@ -10,7 +10,6 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { isGPT5Model, isMCPJamProvidedModel } from "@/shared/types";
-import zodToJsonSchema from "zod-to-json-schema";
 import { z } from "zod";
 import {
   hasUnresolvedToolCalls,
@@ -100,23 +99,10 @@ chatV2.post("/", async (c) => {
             >;
           } else {
             try {
-              // Zod v4 introduced a built-in toJSONSchema() method on the z namespace,
-              // while Zod v3 requires the external zod-to-json-schema library.
-              // We detect the version at runtime by checking if z.toJSONSchema exists,
-              // since the project may use either version depending on dependencies.
-              const toJSONSchema = (z as any).toJSONSchema;
-              if (typeof toJSONSchema === "function") {
-                serializedSchema = toJSONSchema(schema) as Record<
-                  string,
-                  unknown
-                >;
-              } else {
-                // Fall back to zod-to-json-schema for Zod v3
-                serializedSchema = zodToJsonSchema(schema) as Record<
-                  string,
-                  unknown
-                >;
-              }
+              serializedSchema = z.toJSONSchema(schema) as Record<
+                string,
+                unknown
+              >;
             } catch {
               serializedSchema = {
                 type: "object",

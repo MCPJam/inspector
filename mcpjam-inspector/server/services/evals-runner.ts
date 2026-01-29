@@ -19,7 +19,7 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import zodToJsonSchema from "zod-to-json-schema";
+import { z } from "zod";
 import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
@@ -534,7 +534,7 @@ const runIterationViaBackend = async ({
         >;
       } else if (typeof schema === "object" && "safeParse" in (schema as any)) {
         try {
-          serializedSchema = zodToJsonSchema(schema) as Record<string, unknown>;
+          serializedSchema = z.toJSONSchema(schema) as Record<string, unknown>;
         } catch {
           serializedSchema = undefined;
         }

@@ -8,7 +8,6 @@
 import { Hono } from "hono";
 import type { UIMessage } from "ai";
 import { z } from "zod";
-import zodToJsonSchema from "zod-to-json-schema";
 import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
 
 interface XRayPayloadRequest {
@@ -75,21 +74,10 @@ xrayPayload.post("/", async (c) => {
           >;
         } else {
           try {
-            // Zod v4 introduced a built-in toJSONSchema() method on the z namespace,
-            // while Zod v3 requires the external zod-to-json-schema library.
-            const toJSONSchema = (z as any).toJSONSchema;
-            if (typeof toJSONSchema === "function") {
-              serializedSchema = toJSONSchema(schema) as Record<
-                string,
-                unknown
-              >;
-            } else {
-              // Fall back to zod-to-json-schema for Zod v3
-              serializedSchema = zodToJsonSchema(schema) as Record<
-                string,
-                unknown
-              >;
-            }
+            serializedSchema = z.toJSONSchema(schema) as Record<
+              string,
+              unknown
+            >;
           } catch {
             serializedSchema = {
               type: "object",
