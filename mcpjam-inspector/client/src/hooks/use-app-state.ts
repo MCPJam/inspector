@@ -1951,10 +1951,12 @@ export function useAppState() {
     // Computed values - use effective servers (from active workspace with runtime state)
     // All servers from the active workspace (for display in ServersTab)
     workspaceServers: effectiveServers,
-    // Only connected servers (for features requiring active connections)
+    // Connected or connecting servers (for features requiring active/reconnecting connections)
     connectedServerConfigs: Object.fromEntries(
       Object.entries(effectiveServers).filter(
-        ([, server]) => server.connectionStatus === "connected",
+        ([, server]) =>
+          server.connectionStatus === "connected" ||
+          server.connectionStatus === "connecting",
       ),
     ),
     selectedServerEntry: effectiveServers[appState.selectedServer],

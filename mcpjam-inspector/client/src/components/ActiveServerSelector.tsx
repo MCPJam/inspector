@@ -3,11 +3,17 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
-import { Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { ConfirmChatResetDialog } from "./chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 export interface ActiveServerSelectorProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServer: string;
@@ -16,6 +22,7 @@ export interface ActiveServerSelectorProps {
   onServerChange: (server: string) => void;
   onMultiServerToggle: (server: string) => void;
   onConnect: (formData: ServerFormData) => void;
+  onReconnect?: (serverName: string) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyOpenAIAppsServers?: boolean; // Only show servers that have OpenAI apps tools
   openAiAppOrMcpAppsServers?: Set<string>; // Set of server names that have OpenAI apps or MCP apps
@@ -61,6 +68,7 @@ export function ActiveServerSelector({
   onServerChange,
   onMultiServerToggle,
   onConnect,
+  onReconnect,
   showOnlyOAuthServers = false,
   showOnlyOpenAIAppsServers = false,
   openAiAppOrMcpAppsServers,
@@ -202,43 +210,52 @@ export function ActiveServerSelector({
               : selectedServer === name;
 
             return (
-              <button
-                key={name}
-                onClick={() => handleServerClick(name)}
-                className={cn(
-                  "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer",
-                  "hover:bg-accent hover:text-accent-foreground",
-                  isSelected
-                    ? "bg-muted text-foreground"
-                    : "bg-background text-foreground",
-                )}
-              >
-                {isMultiSelectEnabled && (
-                  <div
+              <ContextMenu key={name}>
+                <ContextMenuTrigger asChild>
+                  <button
+                    onClick={() => handleServerClick(name)}
                     className={cn(
-                      "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
+                      "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer",
+                      "hover:bg-accent hover:text-accent-foreground",
                       isSelected
-                        ? "bg-primary border-primary text-primary-foreground"
-                        : "border-muted-foreground/30 hover:border-primary/50",
+                        ? "bg-muted text-foreground"
+                        : "bg-background text-foreground",
                     )}
                   >
-                    {isSelected && <Check className="w-3 h-3" />}
-                  </div>
-                )}
-                <div
-                  className={cn(
-                    "w-2 h-2 rounded-full",
-                    getStatusColor(serverConfig.connectionStatus),
-                  )}
-                  title={getStatusText(serverConfig.connectionStatus)}
-                />
-                <span className="text-sm font-medium truncate max-w-36">
-                  {name}
-                </span>
-                <div className="text-xs opacity-70">
-                  {serverConfig.config.command ? "STDIO" : "HTTP"}
-                </div>
-              </button>
+                    {isMultiSelectEnabled && (
+                      <div
+                        className={cn(
+                          "w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
+                          isSelected
+                            ? "bg-primary border-primary text-primary-foreground"
+                            : "border-muted-foreground/30 hover:border-primary/50",
+                        )}
+                      >
+                        {isSelected && <Check className="w-3 h-3" />}
+                      </div>
+                    )}
+                    <div
+                      className={cn(
+                        "w-2 h-2 rounded-full",
+                        getStatusColor(serverConfig.connectionStatus),
+                      )}
+                      title={getStatusText(serverConfig.connectionStatus)}
+                    />
+                    <span className="text-sm font-medium truncate max-w-36">
+                      {name}
+                    </span>
+                    <div className="text-xs opacity-70">
+                      {serverConfig.config.command ? "STDIO" : "HTTP"}
+                    </div>
+                  </button>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => onReconnect?.(name)}>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Reconnect
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
 
