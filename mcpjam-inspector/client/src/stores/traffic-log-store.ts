@@ -6,7 +6,7 @@
  * - MCP Server RPC traffic (client ↔ server messages)
  *
  * This is a singleton store - no provider required.
- * The SSE subscriptions are also singletons to prevent duplicate connections.
+ * The SSE subscription is also a singleton to prevent duplicate connections.
  */
 
 import { create } from "zustand";
