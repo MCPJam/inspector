@@ -58,9 +58,7 @@ export function ErrorBox({
     ? "border-warning bg-warning/20 text-warning-foreground"
     : "border-destructive bg-destructive/20 text-destructive-foreground";
 
-  const iconClasses = isPlatformError
-    ? "text-warning"
-    : "text-destructive";
+  const iconClasses = isPlatformError ? "text-warning" : "text-destructive";
 
   const triggerClasses = isPlatformError
     ? "text-warning hover:text-warning/80"
