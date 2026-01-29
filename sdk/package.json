@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

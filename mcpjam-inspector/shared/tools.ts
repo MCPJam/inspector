@@ -1,5 +1,4 @@
 import { z, ZodTypeAny } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import { tool, type Tool as VercelTool, type ToolCallOptions } from "ai";
 
 type MastraToolExecuteArgs = {
@@ -67,16 +66,7 @@ function canConvertToJSONSchema(schema: ZodTypeAny): boolean {
     }
   }
 
-  try {
-    zodToJsonSchema(schema);
-    return true;
-  } catch (error) {
-    if (isUnrepresentableSchemaError(error)) {
-      return false;
-    }
-
-    throw error;
-  }
+  return false;
 }
 
 function ensureInputSchema(schema: unknown): ZodTypeAny {

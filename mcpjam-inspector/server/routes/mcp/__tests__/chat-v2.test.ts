@@ -44,6 +44,8 @@ vi.mock("ai", () => ({
 // Mock chat helpers
 vi.mock("../../../utils/chat-helpers", () => ({
   createLlmModel: vi.fn().mockReturnValue({}),
+  scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
+  scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
 }));
 
 // Mock shared types
@@ -56,6 +58,14 @@ vi.mock("@/shared/types", () => ({
 vi.mock("@/shared/http-tool-calls", () => ({
   hasUnresolvedToolCalls: vi.fn().mockReturnValue(false),
   executeToolCallsFromMessages: vi.fn(),
+}));
+
+// Mock skill-tools to avoid file system operations
+vi.mock("../../../utils/skill-tools", () => ({
+  getSkillToolsAndPrompt: vi.fn().mockResolvedValue({
+    tools: {},
+    systemPromptSection: "",
+  }),
 }));
 
 describe("POST /api/mcp/chat-v2", () => {

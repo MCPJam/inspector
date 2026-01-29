@@ -26,7 +26,6 @@ export default defineConfig({
     "@ai-sdk/deepseek",
     "ollama-ai-provider",
     "zod",
-    "zod-to-json-schema",
     "clsx",
     "tailwind-merge",
     // Keep environment PATH fixers external (these may use CJS internals and dynamic requires)

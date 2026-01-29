@@ -1,6 +1,5 @@
 import { MCPClientManager } from "@mcpjam/sdk";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -50,7 +49,7 @@ function toJsonSchemaMaybe(schema: any): any {
         schema instanceof z.ZodType ||
         ("_def" in schema && "parse" in schema)
       ) {
-        return zodToJsonSchema(schema as z.ZodType<any>);
+        return z.toJSONSchema(schema as z.ZodType<any>);
       }
     }
   } catch {}

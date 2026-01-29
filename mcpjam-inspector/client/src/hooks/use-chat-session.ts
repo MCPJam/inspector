@@ -69,7 +69,15 @@ export interface UseChatSessionReturn {
   // Chat state
   messages: UIMessage[];
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
-  sendMessage: (options: { text: string }) => void;
+  sendMessage: (options: {
+    text: string;
+    files?: Array<{
+      type: "file";
+      mediaType: string;
+      filename?: string;
+      url: string;
+    }>;
+  }) => void;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
@@ -237,13 +245,42 @@ export function useChatSession({
   ]);
 
   // useChat hook
-  const { messages, sendMessage, stop, status, error, setMessages } = useChat({
+  const {
+    messages,
+    sendMessage: baseSendMessage,
+    stop,
+    status,
+    error,
+    setMessages,
+  } = useChat({
     id: chatSessionId,
     transport: transport!,
     sendAutomaticallyWhen: isMcpJamModel
       ? undefined
       : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  // Wrapped sendMessage that accepts FileUIPart[]
+  const sendMessage = useCallback(
+    (options: {
+      text: string;
+      files?: Array<{
+        type: "file";
+        mediaType: string;
+        filename?: string;
+        url: string;
+      }>;
+    }) => {
+      const { text, files } = options;
+      if (files && files.length > 0) {
+        // AI SDK accepts FileUIPart[] with data URLs
+        baseSendMessage({ text, files });
+      } else {
+        baseSendMessage({ text });
+      }
+    },
+    [baseSendMessage],
+  );
 
   // Reset chat
   const resetChat = useCallback(() => {

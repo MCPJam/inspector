@@ -22,6 +22,12 @@ import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import {
+  type FileAttachment,
+  type FileUIPart,
+  attachmentsToFileUIParts,
+  revokeFileAttachmentUrls,
+} from "@/components/chat-v2/chat-input/attachments/file-utils";
+import {
   STARTER_PROMPTS,
   formatErrorMessage,
   buildMcpPromptMessages,
@@ -31,6 +37,7 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
+import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 
 interface ChatTabProps {
   connectedServerConfigs: Record<string, ServerWithName>;
@@ -71,6 +78,7 @@ export function ChatTabV2({
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
+  const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
@@ -89,6 +97,9 @@ export function ChatTabV2({
   );
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
+
+  // X-Ray mode state
+  const [xrayMode, setXrayMode] = useState(false);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -375,10 +386,14 @@ export function ChatTabV2({
     signUp();
   };
 
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const hasResults = mcpPromptResults.length > 0 || skillResults.length > 0;
-    if ((input.trim() || hasResults) && status === "ready" && !submitBlocked) {
+    const hasContent =
+      input.trim() ||
+      mcpPromptResults.length > 0 ||
+      skillResults.length > 0 ||
+      fileAttachments.length > 0;
+    if (hasContent && status === "ready" && !submitBlocked) {
       posthog.capture("send_message", {
         location: "chat_tab",
         platform: detectPlatform(),
@@ -423,10 +438,19 @@ export function ChatTabV2({
         setMessages((prev) => [...prev, ...contextMessages]);
       }
 
-      sendMessage({ text: input });
+      // Convert file attachments to FileUIPart[] format for the AI SDK
+      const files =
+        fileAttachments.length > 0
+          ? await attachmentsToFileUIParts(fileAttachments)
+          : undefined;
+
+      sendMessage({ text: input, files });
       setInput("");
       setMcpPromptResults([]);
       setSkillResults([]);
+      // Revoke object URLs and clear file attachments
+      revokeFileAttachmentUrls(fileAttachments);
+      setFileAttachments([]);
       setModelContextQueue([]); // Clear after sending
     }
   };
@@ -446,6 +470,9 @@ export function ChatTabV2({
     });
     sendMessage({ text: prompt });
     setInput("");
+    // Clear any pending file attachments
+    revokeFileAttachmentUrls(fileAttachments);
+    setFileAttachments([]);
   };
 
   const sharedChatInputProps = {
@@ -477,8 +504,12 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     mcpPromptResults,
     onChangeMcpPromptResults: setMcpPromptResults,
+    fileAttachments,
+    onChangeFileAttachments: setFileAttachments,
     skillResults,
     onChangeSkillResults: setSkillResults,
+    xrayMode,
+    onXrayModeChange: setXrayMode,
   };
 
   const showStarterPrompts =
@@ -501,7 +532,35 @@ export function ChatTabV2({
               transform: isWidgetFullscreen ? "none" : "translateZ(0)",
             }}
           >
-            {isThreadEmpty ? (
+            {xrayMode ? (
+              // X-Ray mode: show raw JSON view of AI payload
+              <StickToBottom
+                className="relative flex flex-1 flex-col min-h-0"
+                resize="smooth"
+                initial="smooth"
+              >
+                <div className="relative flex-1 min-h-0">
+                  <StickToBottom.Content className="flex flex-col min-h-0">
+                    <XRaySnapshotView
+                      systemPrompt={systemPrompt}
+                      messages={messages}
+                      selectedServers={selectedConnectedServerNames}
+                      onClose={() => setXrayMode(false)}
+                    />
+                  </StickToBottom.Content>
+                  <ScrollToBottomButton />
+                </div>
+
+                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                  <div className="max-w-4xl mx-auto p-4">
+                    <ChatInput
+                      {...sharedChatInputProps}
+                      hasMessages={!isThreadEmpty}
+                    />
+                  </div>
+                </div>
+              </StickToBottom>
+            ) : isThreadEmpty ? (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
                   {isAuthLoading ? (

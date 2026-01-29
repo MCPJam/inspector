@@ -201,7 +201,7 @@ export function createSkillTools() {
     loadSkill: tool({
       description:
         "Load a skill's full content and instructions. Use when you need detailed guidance for a task that matches a skill's purpose. The skill content includes step-by-step instructions, examples, and references to supporting files.",
-      parameters: z.object({
+      inputSchema: z.object({
         name: z
           .string()
           .describe(
@@ -249,7 +249,7 @@ export function createSkillTools() {
     listSkillFiles: tool({
       description:
         "List all files and directories in a skill's directory. Use this to discover available rules, templates, or other supporting files that the skill provides.",
-      parameters: z.object({
+      inputSchema: z.object({
         name: z.string().describe("The skill name"),
       }),
       execute: async ({ name }) => {
@@ -281,7 +281,7 @@ export function createSkillTools() {
     readSkillFile: tool({
       description:
         "Read the content of a specific file from a skill directory. Use this to access rules, templates, or other supporting resources referenced in the skill instructions.",
-      parameters: z.object({
+      inputSchema: z.object({
         name: z.string().describe("The skill name"),
         path: z
           .string()

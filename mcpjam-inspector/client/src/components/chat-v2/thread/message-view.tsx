@@ -63,32 +63,71 @@ export function MessageView({
   if (role !== "user" && role !== "assistant") return null;
 
   if (role === "user") {
+    // Separate file parts from other parts - files render above the bubble
+    const fileParts =
+      message.parts?.filter((part) => part.type === "file") ?? [];
+    const otherParts =
+      message.parts?.filter((part) => part.type !== "file") ?? [];
+
     return (
-      <UserMessageBubble>
-        {message.parts?.map((part, i) => (
-          <PartSwitch
-            key={i}
-            part={part}
-            role={role}
-            onSendFollowUp={onSendFollowUp}
-            toolsMetadata={toolsMetadata}
-            toolServerMap={toolServerMap}
-            onWidgetStateChange={onWidgetStateChange}
-            onModelContextUpdate={onModelContextUpdate}
-            pipWidgetId={pipWidgetId}
-            fullscreenWidgetId={fullscreenWidgetId}
-            onRequestPip={onRequestPip}
-            onExitPip={onExitPip}
-            onRequestFullscreen={onRequestFullscreen}
-            onExitFullscreen={onExitFullscreen}
-            displayMode={displayMode}
-            onDisplayModeChange={onDisplayModeChange}
-            selectedProtocolOverrideIfBothExists={
-              selectedProtocolOverrideIfBothExists
-            }
-          />
-        ))}
-      </UserMessageBubble>
+      <div className="flex flex-col items-end gap-2">
+        {/* File attachments above the bubble */}
+        {fileParts.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-2 max-w-3xl">
+            {fileParts.map((part, i) => (
+              <PartSwitch
+                key={`file-${i}`}
+                part={part}
+                role={role}
+                onSendFollowUp={onSendFollowUp}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                onWidgetStateChange={onWidgetStateChange}
+                onModelContextUpdate={onModelContextUpdate}
+                pipWidgetId={pipWidgetId}
+                fullscreenWidgetId={fullscreenWidgetId}
+                onRequestPip={onRequestPip}
+                onExitPip={onExitPip}
+                onRequestFullscreen={onRequestFullscreen}
+                onExitFullscreen={onExitFullscreen}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocolOverrideIfBothExists
+                }
+              />
+            ))}
+          </div>
+        )}
+        {/* Text and other parts inside the bubble */}
+        {(otherParts.length > 0 || fileParts.length === 0) && (
+          <UserMessageBubble>
+            {otherParts.map((part, i) => (
+              <PartSwitch
+                key={i}
+                part={part}
+                role={role}
+                onSendFollowUp={onSendFollowUp}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                onWidgetStateChange={onWidgetStateChange}
+                onModelContextUpdate={onModelContextUpdate}
+                pipWidgetId={pipWidgetId}
+                fullscreenWidgetId={fullscreenWidgetId}
+                onRequestPip={onRequestPip}
+                onExitPip={onExitPip}
+                onRequestFullscreen={onRequestFullscreen}
+                onExitFullscreen={onExitFullscreen}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocolOverrideIfBothExists
+                }
+              />
+            ))}
+          </UserMessageBubble>
+        )}
+      </div>
     );
   }
 
