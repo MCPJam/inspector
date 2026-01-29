@@ -17,8 +17,12 @@ import {
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import { logger } from "../../utils/logger";
-import { ModelMessage } from "@ai-sdk/provider-utils";
 import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
+import type { ModelMessage } from "@ai-sdk/provider-utils";
+import {
+  scrubChatGPTAppsToolResultsForBackend,
+  scrubMcpAppsToolResultsForBackend,
+} from "../../utils/chat-helpers";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
@@ -137,7 +141,16 @@ chatV2.post("/", async (c) => {
 
       // Driver loop that emits AI UIMessage chunks (compatible with DefaultChatTransport)
       const authHeader = c.req.header("authorization") || undefined;
-      let messageHistory = await convertToModelMessages(messages);
+      let messageHistory = scrubMcpAppsToolResultsForBackend(
+        (await convertToModelMessages(messages)) as ModelMessage[],
+        mcpClientManager,
+        selectedServers,
+      );
+      messageHistory = scrubChatGPTAppsToolResultsForBackend(
+        messageHistory,
+        mcpClientManager,
+        selectedServers,
+      );
       let steps = 0;
       const MAX_STEPS = 20;
 
@@ -154,7 +167,17 @@ chatV2.post("/", async (c) => {
               },
               body: JSON.stringify({
                 mode: "step",
-                messages: JSON.stringify(messageHistory),
+                messages: JSON.stringify(
+                  scrubChatGPTAppsToolResultsForBackend(
+                    scrubMcpAppsToolResultsForBackend(
+                      messageHistory,
+                      mcpClientManager,
+                      selectedServers,
+                    ),
+                    mcpClientManager,
+                    selectedServers,
+                  ),
+                ),
                 model: String(modelDefinition.id),
                 systemPrompt: enhancedSystemPrompt,
                 ...(resolvedTemperature == undefined
@@ -265,7 +288,9 @@ chatV2.post("/", async (c) => {
                     writer.write({
                       type: "tool-output-available",
                       toolCallId: item.toolCallId,
-                      output: item.output ?? item.result ?? item.value,
+                      // Prefer full result (with _meta/structuredContent) for the UI;
+                      // the scrubbed output stays in messageHistory for the LLM.
+                      output: item.result ?? item.output ?? item.value,
                     } as any);
                   }
                 }
@@ -302,7 +327,15 @@ chatV2.post("/", async (c) => {
 
     const result = streamText({
       model: llmModel,
-      messages: await convertToModelMessages(messages),
+      messages: scrubChatGPTAppsToolResultsForBackend(
+        scrubMcpAppsToolResultsForBackend(
+          (await convertToModelMessages(messages)) as ModelMessage[],
+          mcpClientManager,
+          selectedServers,
+        ),
+        mcpClientManager,
+        selectedServers,
+      ),
       ...(resolvedTemperature == undefined
         ? {}
         : { temperature: resolvedTemperature }),
