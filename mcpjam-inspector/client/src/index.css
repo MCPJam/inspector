@@ -120,11 +120,11 @@
   --success: oklch(0.648 0.15 152);
   --success-foreground: oklch(1 0 0);
   --warning: oklch(0.75 0.183 55);
-  --warning-foreground: oklch(0.239 0.06 60);
+  --warning-foreground: oklch(0.95 0.06 70);
   --info: oklch(0.623 0.214 259);
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.75 0.183 55);
-  --pending-foreground: oklch(0.239 0.06 60);
+  --pending-foreground: oklch(0.95 0.06 70);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --chart-1: oklch(0.5583 0.1276 42.9956);
