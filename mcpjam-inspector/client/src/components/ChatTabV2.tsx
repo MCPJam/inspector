@@ -93,7 +93,8 @@ export function ChatTabV2({
     () =>
       selectedServerNames.filter(
         (name) =>
-          connectedOrConnectingServerConfigs[name]?.connectionStatus === "connected",
+          connectedOrConnectingServerConfigs[name]?.connectionStatus ===
+          "connected",
       ),
     [selectedServerNames, connectedOrConnectingServerConfigs],
   );

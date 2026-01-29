@@ -267,7 +267,9 @@ export function ChatInput({
               selectedServers={selectedServers}
               mcpToolsTokenCount={mcpToolsTokenCount}
               mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
-              connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
+              connectedOrConnectingServerConfigs={
+                connectedOrConnectingServerConfigs
+              }
               systemPromptTokenCount={systemPromptTokenCount}
               systemPromptTokenCountLoading={systemPromptTokenCountLoading}
               hasMessages={hasMessages}

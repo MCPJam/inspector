@@ -128,7 +128,9 @@ export default function App() {
   // Check which connected servers have OpenAI apps tools
   useEffect(() => {
     const checkOpenAiAppOrMcpAppsServers = async () => {
-      const connectedServerNames = Object.keys(connectedOrConnectingServerConfigs);
+      const connectedServerNames = Object.keys(
+        connectedOrConnectingServerConfigs,
+      );
       const serversWithOpenAiAppOrMcpApps = new Set<string>();
 
       await Promise.all(
@@ -336,7 +338,9 @@ export default function App() {
           )}
           {activeTab === "chat-v2" && (
             <ChatTabV2
-              connectedOrConnectingServerConfigs={connectedOrConnectingServerConfigs}
+              connectedOrConnectingServerConfigs={
+                connectedOrConnectingServerConfigs
+              }
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
             />
