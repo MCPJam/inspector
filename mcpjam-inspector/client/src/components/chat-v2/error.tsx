@@ -1,4 +1,9 @@
-import { CircleAlert, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
+import {
+  CircleAlert,
+  ChevronDown,
+  ChevronRight,
+  RefreshCw,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import {
@@ -74,14 +79,18 @@ export function ErrorBox({
     : "An error occurred";
 
   return (
-    <div className={cn("flex flex-col gap-3 border rounded p-4", containerClasses)}>
+    <div
+      className={cn("flex flex-col gap-3 border rounded p-4", containerClasses)}
+    >
       <div className="flex items-center gap-3">
         <CircleAlert className={cn("h-6 w-6 flex-shrink-0", iconClasses)} />
         <div className="flex-1">
-          <p className="text-sm leading-6">{errorLabel}: {message}</p>
+          <p className="text-sm leading-6">
+            {errorLabel}: {message}
+          </p>
           {isPlatformError && (
             <p className="text-xs opacity-75 mt-0.5">
-              This is a temporary issue on our end, not something you did wrong.
+              This is a temporary issue on our end.
             </p>
           )}
         </div>
@@ -98,11 +107,7 @@ export function ErrorBox({
               Retry
             </Button>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onResetChat}
-          >
+          <Button type="button" variant="outline" onClick={onResetChat}>
             Reset chat
           </Button>
         </div>
@@ -112,7 +117,12 @@ export function ErrorBox({
           open={isErrorDetailsOpen}
           onOpenChange={setIsErrorDetailsOpen}
         >
-          <CollapsibleTrigger className={cn("flex items-center gap-1.5 text-xs transition-colors", triggerClasses)}>
+          <CollapsibleTrigger
+            className={cn(
+              "flex items-center gap-1.5 text-xs transition-colors",
+              triggerClasses,
+            )}
+          >
             <span>More details</span>
             {isErrorDetailsOpen ? (
               <ChevronDown className="h-3 w-3" />
@@ -121,7 +131,12 @@ export function ErrorBox({
             )}
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2">
-            <div className={cn("rounded border bg-background/50 p-2", borderClasses)}>
+            <div
+              className={cn(
+                "rounded border bg-background/50 p-2",
+                borderClasses,
+              )}
+            >
               {errorDetailsJson ? (
                 <JsonView
                   src={errorDetailsJson}
@@ -131,7 +146,12 @@ export function ErrorBox({
                   }}
                 />
               ) : (
-                <pre className={cn("text-xs font-mono whitespace-pre-wrap overflow-x-auto", preClasses)}>
+                <pre
+                  className={cn(
+                    "text-xs font-mono whitespace-pre-wrap overflow-x-auto",
+                    preClasses,
+                  )}
+                >
                   {errorDetails}
                 </pre>
               )}
