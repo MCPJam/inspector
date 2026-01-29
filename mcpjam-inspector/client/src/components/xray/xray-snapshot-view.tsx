@@ -57,8 +57,12 @@ export function XRaySnapshotView({
         selectedServers,
       });
       setPayload(response);
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch payload");
+      // Only set error if we don't have existing payload to show
+      if (!payload) {
+        setError(err instanceof Error ? err.message : "Failed to fetch payload");
+      }
     } finally {
       setLoading(false);
     }
@@ -76,11 +80,20 @@ export function XRaySnapshotView({
   }, [messages, systemPrompt, selectedServers, hasMessages]);
 
   // Shared header component
-  const Header = ({ showCopy = false }: { showCopy?: boolean }) => (
+  const Header = ({
+    showCopy = false,
+    showLoading = false,
+  }: {
+    showCopy?: boolean;
+    showLoading?: boolean;
+  }) => (
     <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0 bg-muted/30">
       <div className="flex items-center gap-2">
         <ScanSearch className="h-4 w-4 text-primary" />
         <h2 className="text-sm font-medium text-foreground">X-Ray View</h2>
+        {showLoading && (
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        )}
       </div>
 
       <div className="flex items-center gap-1">
@@ -140,11 +153,11 @@ export function XRaySnapshotView({
     );
   }
 
-  // Loading state
-  if (loading) {
+  // Loading state - only show full-screen loading if no payload exists yet
+  if (loading && !payload) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <Header />
+        <Header showLoading />
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center">
             <div className="mx-auto w-14 h-14 rounded-full bg-muted/50 flex items-center justify-center mb-4">
@@ -206,10 +219,10 @@ export function XRaySnapshotView({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <Header showCopy />
+      <Header showCopy showLoading={loading} />
 
-      {/* Content */}
-      <div className="flex-1 min-h-0 overflow-auto">
+      {/* Content - no overflow-auto here, parent StickToBottom.Content handles scrolling */}
+      <div className="flex-1 min-h-0">
         <div className="p-4">
           <div className="rounded-lg border border-border bg-muted/20 p-3">
             <JsonView
