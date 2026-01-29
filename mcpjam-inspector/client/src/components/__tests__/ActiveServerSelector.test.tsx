@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import {
   ActiveServerSelector,
   type ActiveServerSelectorProps,
@@ -531,6 +537,122 @@ describe("ActiveServerSelector", () => {
       // Give time for any effects to run
       await new Promise((r) => setTimeout(r, 50));
 
+      expect(onServerChange).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("reconnect button", () => {
+    const clickReconnectButton = (serverName: string) => {
+      const row = screen.getByText(serverName).closest("button");
+      if (!row) throw new Error(`Server row not found for ${serverName}`);
+      const btn = within(row).getByTitle("Reconnect");
+      fireEvent.click(btn);
+    };
+
+    it("renders reconnect button for servers", () => {
+      const serverConfigs = {
+        "server-1": createServer({
+          name: "server-1",
+          connectionStatus: "connected",
+        }),
+        "server-2": createServer({
+          name: "server-2",
+          connectionStatus: "disconnected",
+        }),
+      };
+
+      const onReconnect = vi.fn();
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          onReconnect={onReconnect}
+        />,
+      );
+
+      // Should render reconnect button for both
+      const buttons = screen.getAllByTitle("Reconnect");
+      expect(buttons).toHaveLength(2);
+    });
+
+    it("calls onReconnect when clicked", () => {
+      const onReconnect = vi.fn();
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          onReconnect={onReconnect}
+        />,
+      );
+
+      clickReconnectButton("server-1");
+      expect(onReconnect).toHaveBeenCalledWith("server-1");
+    });
+
+    it("does not change selection when reconnecting a non-active server", () => {
+      const onReconnect = vi.fn();
+      const onServerChange = vi.fn();
+      const serverConfigs = {
+        "active-server": createServer({
+          name: "active-server",
+          connectionStatus: "connected",
+        }),
+        "inactive-server": createServer({
+          name: "inactive-server",
+          connectionStatus: "disconnected",
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="active-server"
+          onReconnect={onReconnect}
+          onServerChange={onServerChange}
+        />,
+      );
+
+      clickReconnectButton("inactive-server");
+
+      expect(onReconnect).toHaveBeenCalledWith("inactive-server");
+      expect(onReconnect).not.toHaveBeenCalledWith("active-server");
+      expect(onServerChange).not.toHaveBeenCalled();
+    });
+
+    it("keeps selection when reconnecting the active server", () => {
+      const onReconnect = vi.fn();
+      const onServerChange = vi.fn();
+      const serverConfigs = {
+        "active-server": createServer({
+          name: "active-server",
+          connectionStatus: "disconnected",
+        }),
+        "other-server": createServer({
+          name: "other-server",
+          connectionStatus: "connected",
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="active-server"
+          onReconnect={onReconnect}
+          onServerChange={onServerChange}
+        />,
+      );
+
+      clickReconnectButton("active-server");
+
+      expect(onReconnect).toHaveBeenCalledWith("active-server");
+      expect(onReconnect).not.toHaveBeenCalledWith("other-server");
       expect(onServerChange).not.toHaveBeenCalled();
     });
   });
