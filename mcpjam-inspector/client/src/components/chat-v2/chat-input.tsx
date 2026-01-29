@@ -236,7 +236,10 @@ export function ChatInput({
   };
 
   // Check if there are any results (prompts, skills, or files) selected
-  const hasResults = mcpPromptResults.length > 0 || skillResults.length > 0 || fileAttachments.length > 0;
+  const hasResults =
+    mcpPromptResults.length > 0 ||
+    skillResults.length > 0 ||
+    fileAttachments.length > 0;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const currentCaretIndex = event.currentTarget.selectionStart;

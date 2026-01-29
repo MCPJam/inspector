@@ -389,7 +389,10 @@ export function ChatTabV2({
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasContent =
-      input.trim() || mcpPromptResults.length > 0 || skillResults.length > 0 || fileAttachments.length > 0;
+      input.trim() ||
+      mcpPromptResults.length > 0 ||
+      skillResults.length > 0 ||
+      fileAttachments.length > 0;
     if (hasContent && status === "ready" && !submitBlocked) {
       posthog.capture("send_message", {
         location: "chat_tab",

@@ -71,7 +71,12 @@ export interface UseChatSessionReturn {
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
   sendMessage: (options: {
     text: string;
-    files?: Array<{ type: "file"; mediaType: string; filename?: string; url: string }>;
+    files?: Array<{
+      type: "file";
+      mediaType: string;
+      filename?: string;
+      url: string;
+    }>;
   }) => void;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";

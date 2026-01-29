@@ -64,8 +64,10 @@ export function MessageView({
 
   if (role === "user") {
     // Separate file parts from other parts - files render above the bubble
-    const fileParts = message.parts?.filter((part) => part.type === "file") ?? [];
-    const otherParts = message.parts?.filter((part) => part.type !== "file") ?? [];
+    const fileParts =
+      message.parts?.filter((part) => part.type === "file") ?? [];
+    const otherParts =
+      message.parts?.filter((part) => part.type !== "file") ?? [];
 
     return (
       <div className="flex flex-col items-end gap-2">
