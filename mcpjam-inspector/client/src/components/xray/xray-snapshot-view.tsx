@@ -14,6 +14,11 @@ import "react18-json-view/src/style.css";
 import "react18-json-view/src/dark.css";
 import { Button } from "@/components/ui/button";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   getXRayPayload,
   type XRayPayloadResponse,
 } from "@/lib/apis/mcp-xray-api";
@@ -70,37 +75,85 @@ export function XRaySnapshotView({
     }
   }, [messages, systemPrompt, selectedServers, hasMessages]);
 
-  // Empty state - no messages yet
-  if (!hasMessages) {
-    return (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
-          <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
-          <div className="flex items-center gap-1">
-            {onClose && (
+  // Shared header component
+  const Header = ({
+    showCopy = false,
+    showRefresh = false,
+  }: {
+    showCopy?: boolean;
+    showRefresh?: boolean;
+  }) => (
+    <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0 bg-muted/30">
+      <div className="flex items-center gap-2">
+        <ScanSearch className="h-4 w-4 text-primary" />
+        <h2 className="text-sm font-medium text-foreground">X-Ray View</h2>
+      </div>
+
+      <div className="flex items-center gap-1">
+        {showRefresh && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={fetchPayload}
+                className="h-7 w-7"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh</TooltipContent>
+          </Tooltip>
+        )}
+        {showCopy && payload && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => copyToClipboard(payload, "Model payload")}
+                className="h-7 w-7"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Copy payload</TooltipContent>
+          </Tooltip>
+        )}
+        {onClose && (
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={onClose}
                 className="h-7 w-7"
-                title="Close X-Ray panel"
               >
                 <X className="h-3.5 w-3.5" />
               </Button>
-            )}
-          </div>
-        </div>
+            </TooltipTrigger>
+            <TooltipContent>Close</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </div>
+  );
 
+  // Empty state - no messages yet
+  if (!hasMessages) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <Header />
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center">
-            <div className="mx-auto w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
-              <ScanSearch className="h-6 w-6 text-muted-foreground" />
+            <div className="mx-auto w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+              <ScanSearch className="h-7 w-7 text-primary/70" />
             </div>
-            <div className="text-sm font-medium text-foreground">
+            <div className="text-sm font-medium text-foreground mb-1">
               No messages yet
             </div>
-            <div className="text-xs text-muted-foreground mt-1 max-w-[200px]">
-              Send a message first to see the raw input/output sent to the model
+            <div className="text-xs text-muted-foreground max-w-[220px]">
+              Send a message to inspect the raw payload sent to the model
             </div>
           </div>
         </div>
@@ -112,27 +165,11 @@ export function XRaySnapshotView({
   if (loading) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
-          <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
-          <div className="flex items-center gap-1">
-            {onClose && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onClose}
-                className="h-7 w-7"
-                title="Close X-Ray panel"
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </div>
-        </div>
-
+        <Header />
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center">
-            <div className="mx-auto w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
-              <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+            <div className="mx-auto w-14 h-14 rounded-full bg-muted/50 flex items-center justify-center mb-4">
+              <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
             <div className="text-sm text-muted-foreground">
               Loading payload...
@@ -147,48 +184,18 @@ export function XRaySnapshotView({
   if (error) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
-          <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={fetchPayload}
-              className="h-7 w-7"
-              title="Retry"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </Button>
-            {onClose && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onClose}
-                className="h-7 w-7"
-                title="Close X-Ray panel"
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </div>
-        </div>
-
+        <Header showRefresh />
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center">
-            <div className="mx-auto w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mb-3">
-              <AlertCircle className="h-5 w-5 text-destructive" />
+            <div className="mx-auto w-14 h-14 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
+              <AlertCircle className="h-6 w-6 text-destructive" />
             </div>
-            <div className="text-sm font-medium text-foreground">
+            <div className="text-sm font-medium text-foreground mb-1">
               Failed to load
             </div>
-            <div className="text-xs text-muted-foreground mt-1">{error}</div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchPayload}
-              className="mt-3"
-            >
-              Retry
+            <div className="text-xs text-muted-foreground mb-3">{error}</div>
+            <Button variant="outline" size="sm" onClick={fetchPayload}>
+              Try again
             </Button>
           </div>
         </div>
@@ -196,36 +203,20 @@ export function XRaySnapshotView({
     );
   }
 
-  // Empty state
+  // Empty payload state
   if (!payload) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
-          <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
-          <div className="flex items-center gap-1">
-            {onClose && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={onClose}
-                className="h-7 w-7"
-                title="Close X-Ray panel"
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
-            )}
-          </div>
-        </div>
-
+        <Header />
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center">
-            <div className="mx-auto w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
-              <ScanSearch className="h-6 w-6 text-muted-foreground" />
+            <div className="mx-auto w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+              <ScanSearch className="h-7 w-7 text-primary/70" />
             </div>
-            <div className="text-sm font-medium text-foreground">
-              No X-Ray data
+            <div className="text-sm font-medium text-foreground mb-1">
+              No payload data
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="text-xs text-muted-foreground">
               Send a message to see the AI request payload
             </div>
           </div>
@@ -236,56 +227,30 @@ export function XRaySnapshotView({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between p-3 border-b border-border flex-shrink-0">
-        <h2 className="text-xs font-semibold text-foreground">X-Ray</h2>
-
-        <div className="flex items-center gap-1">
-          {/* Copy button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => copyToClipboard(payload, "Model payload")}
-            className="h-7 w-7"
-            title="Copy payload"
-          >
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
-
-          {/* Close button */}
-          {onClose && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              className="h-7 w-7"
-              title="Close"
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          )}
-        </div>
-      </div>
+      <Header showCopy showRefresh />
 
       {/* Content */}
-      <div className="flex-1 min-h-0 overflow-auto p-3">
-        <div className="rounded-sm bg-muted/20 p-2">
-          <JsonView
-            src={payload as object}
-            dark={true}
-            theme="atom"
-            enableClipboard={true}
-            displaySize={false}
-            collapseStringsAfterLength={100}
-            style={{
-              fontSize: "11px",
-              fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-              backgroundColor: "transparent",
-              padding: "0",
-              borderRadius: "0",
-              border: "none",
-            }}
-          />
+      <div className="flex-1 min-h-0 overflow-auto">
+        <div className="p-4">
+          <div className="rounded-lg border border-border bg-muted/20 p-3">
+            <JsonView
+              src={payload as object}
+              dark={true}
+              theme="atom"
+              enableClipboard={true}
+              displaySize={false}
+              collapseStringsAfterLength={100}
+              style={{
+                fontSize: "11px",
+                fontFamily:
+                  "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                backgroundColor: "transparent",
+                padding: "0",
+                borderRadius: "0",
+                border: "none",
+              }}
+            />
+          </div>
         </div>
       </div>
     </div>

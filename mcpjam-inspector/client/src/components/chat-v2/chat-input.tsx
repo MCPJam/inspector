@@ -271,8 +271,8 @@ export function ChatInput({
           autoFocus={!disabled}
         />
 
-        <div className="flex items-center justify-between gap-2 px-2 flex-wrap min-w-0">
-          <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
+        <div className="flex items-center justify-between gap-2 px-2 min-w-0">
+          <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden">
             <ModelSelector
               currentModel={currentModel}
               availableModels={availableModels}
@@ -298,18 +298,15 @@ export function ChatInput({
             {onXrayModeChange && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      type="button"
-                      variant={xrayMode ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => onXrayModeChange(!xrayMode)}
-                      className="h-8 px-2 gap-1.5"
-                    >
-                      <Scan className="h-4 w-4" />
-                      {!compact && <span className="text-xs">X-Ray</span>}
-                    </Button>
-                  </span>
+                  <Button
+                    type="button"
+                    variant={xrayMode ? "secondary" : "ghost"}
+                    size="icon"
+                    onClick={() => onXrayModeChange(!xrayMode)}
+                    className="h-8 w-8"
+                  >
+                    <Scan className="h-4 w-4" />
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent>
                   {xrayMode
@@ -320,7 +317,7 @@ export function ChatInput({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <Context
               usedTokens={tokenUsage?.totalTokens ?? 0}
               usage={
