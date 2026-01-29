@@ -1409,7 +1409,10 @@ export function PlaygroundMain({
               </div>
               <div className="flex-shrink-0 bg-background/80 backdrop-blur-sm border-t border-border">
                 <div className="max-w-xl mx-auto w-full p-3">
-                  <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
+                  <ChatInput
+                    {...sharedChatInputProps}
+                    hasMessages={!isThreadEmpty}
+                  />
                 </div>
               </div>
             </div>

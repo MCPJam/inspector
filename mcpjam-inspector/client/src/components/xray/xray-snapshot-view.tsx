@@ -61,7 +61,9 @@ export function XRaySnapshotView({
     } catch (err) {
       // Only set error if we don't have existing payload to show
       if (!payload) {
-        setError(err instanceof Error ? err.message : "Failed to fetch payload");
+        setError(
+          err instanceof Error ? err.message : "Failed to fetch payload",
+        );
       }
     } finally {
       setLoading(false);

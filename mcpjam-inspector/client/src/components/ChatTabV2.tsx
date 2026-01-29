@@ -528,7 +528,10 @@ export function ChatTabV2({
 
                 <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                   <div className="max-w-4xl mx-auto p-4">
-                    <ChatInput {...sharedChatInputProps} hasMessages />
+                    <ChatInput
+                      {...sharedChatInputProps}
+                      hasMessages={!isThreadEmpty}
+                    />
                   </div>
                 </div>
               </StickToBottom>
