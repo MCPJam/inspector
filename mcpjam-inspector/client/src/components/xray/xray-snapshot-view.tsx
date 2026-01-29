@@ -5,7 +5,7 @@
  * Uses existing client state directly - no server-side storage needed.
  */
 
-import { Copy, PanelRightClose } from "lucide-react";
+import { Copy, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -54,7 +54,7 @@ export function XRaySnapshotView({
                 className="h-7 w-7"
                 title="Close X-Ray panel"
               >
-                <PanelRightClose className="h-3.5 w-3.5" />
+                <X className="h-3.5 w-3.5" />
               </Button>
             )}
           </div>
@@ -99,7 +99,7 @@ export function XRaySnapshotView({
               className="h-7 w-7"
               title="Close"
             >
-              <PanelRightClose className="h-3.5 w-3.5" />
+              <X className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
