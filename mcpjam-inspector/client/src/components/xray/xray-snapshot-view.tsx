@@ -9,6 +9,9 @@ import { useEffect, useState } from "react";
 import { Copy, X, RefreshCw, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import type { UIMessage } from "ai";
+import JsonView from "react18-json-view";
+import "react18-json-view/src/style.css";
+import "react18-json-view/src/dark.css";
 import { Button } from "@/components/ui/button";
 import {
   getXRayPayload,
@@ -220,9 +223,24 @@ export function XRaySnapshotView({
 
       {/* Content */}
       <div className="p-3">
-        <pre className="whitespace-pre-wrap break-words text-xs bg-muted/20 p-3 font-mono">
-          {JSON.stringify(payload, null, 2)}
-        </pre>
+        <div className="max-h-[80vh] overflow-auto rounded-sm bg-muted/20 p-2">
+          <JsonView
+            src={payload as object}
+            dark={true}
+            theme="atom"
+            enableClipboard={true}
+            displaySize={false}
+            collapseStringsAfterLength={100}
+            style={{
+              fontSize: "11px",
+              fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+              backgroundColor: "transparent",
+              padding: "0",
+              borderRadius: "0",
+              border: "none",
+            }}
+          />
+        </div>
       </div>
     </div>
   );
