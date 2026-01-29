@@ -31,10 +31,6 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
-import {
-  useTrafficLogStore,
-  subscribeToXRayStream,
-} from "@/stores/traffic-log-store";
 import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 
 interface ChatTabProps {
@@ -97,14 +93,6 @@ export function ChatTabV2({
 
   // X-Ray mode state
   const [xrayMode, setXrayMode] = useState(false);
-  const xrayEvent = useTrafficLogStore((s) => s.xrayEvent);
-  const clearXRayEvent = useTrafficLogStore((s) => s.clearXRayEvent);
-
-  // Subscribe to X-Ray SSE stream
-  useEffect(() => {
-    const unsubscribe = subscribeToXRayStream();
-    return () => unsubscribe();
-  }, []);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -497,7 +485,6 @@ export function ChatTabV2({
     onChangeSkillResults: setSkillResults,
     xrayMode,
     onXrayModeChange: setXrayMode,
-    xrayEventCount: xrayEvent ? 1 : 0,
   };
 
   const showStarterPrompts =
@@ -571,8 +558,10 @@ export function ChatTabV2({
               <div className="flex flex-1 flex-col min-h-0">
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <XRaySnapshotView
-                    event={xrayEvent}
-                    onClear={clearXRayEvent}
+                    systemPrompt={systemPrompt}
+                    messages={messages}
+                    tools={toolsMetadata}
+                    onClose={() => setXrayMode(false)}
                   />
                 </div>
                 <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">

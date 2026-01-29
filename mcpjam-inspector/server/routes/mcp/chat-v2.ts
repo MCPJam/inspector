@@ -19,65 +19,8 @@ import {
 import { logger } from "../../utils/logger";
 import { ModelMessage } from "@ai-sdk/provider-utils";
 import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
-import { xrayLogBus } from "../../services/xray-log-bus";
-import type { XRayLogEvent, XRayToolDefinition } from "@/shared/xray-types";
 
 const DEFAULT_TEMPERATURE = 0.7;
-
-/**
- * Build tool definitions for X-Ray logging from the tools object.
- */
-function buildXRayToolDefs(
-  tools: Record<string, unknown>,
-): XRayToolDefinition[] {
-  const result: XRayToolDefinition[] = [];
-  for (const [name, tool] of Object.entries(tools)) {
-    if (!tool) continue;
-    const t = tool as {
-      description?: string;
-      parameters?: unknown;
-      inputSchema?: unknown;
-    };
-    result.push({
-      name,
-      description: t.description,
-      parameters: t.parameters ?? t.inputSchema,
-    });
-  }
-  return result;
-}
-
-/**
- * Emit an X-Ray event for AI request inspection.
- */
-function emitXRayEvent(params: {
-  model: { id: string; provider: string };
-  messages: ModelMessage[];
-  systemPrompt: string | undefined;
-  tools: Record<string, unknown>;
-  temperature: number | undefined;
-  selectedServers: string[];
-  path: "streamText" | "mcpjam-backend";
-}): void {
-  const event: XRayLogEvent = {
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    type: "ai-request",
-    model: params.model,
-    messages: params.messages.map((m) => ({
-      role: m.role as "system" | "user" | "assistant" | "tool",
-      content: m.content,
-      // Include metadata if present (for assistant messages with token counts)
-      ...((m as any).metadata && { metadata: (m as any).metadata }),
-    })),
-    systemPrompt: params.systemPrompt,
-    tools: buildXRayToolDefs(params.tools),
-    temperature: params.temperature,
-    selectedServers: params.selectedServers,
-    path: params.path,
-  };
-  xrayLogBus.publish(event);
-}
 
 const chatV2 = new Hono();
 
@@ -351,17 +294,6 @@ chatV2.post("/", async (c) => {
               break;
             }
           }
-
-          // Emit X-Ray event after agentic loop completes with full conversation
-          emitXRayEvent({
-            model: { id: modelDefinition.id, provider: modelDefinition.provider },
-            messages: messageHistory,
-            systemPrompt: enhancedSystemPrompt,
-            tools: allTools as Record<string, unknown>,
-            temperature: resolvedTemperature,
-            selectedServers: selectedServers ?? [],
-            path: "mcpjam-backend",
-          });
         },
       });
 
@@ -388,49 +320,6 @@ chatV2.post("/", async (c) => {
       tools: allTools as ToolSet,
       stopWhen: stepCountIs(20),
     });
-
-    // Emit X-Ray event after stream completes with full conversation (non-blocking)
-    Promise.all([result.response, result.steps])
-      .then(([response, steps]) => {
-        // Build messages with metadata from steps
-        const messagesWithMetadata: any[] = [];
-        let stepIndex = 0;
-
-        for (const msg of response.messages) {
-          if (msg.role === "assistant") {
-            // Attach usage metadata from corresponding step
-            const step = steps[stepIndex];
-            if (step?.usage) {
-              messagesWithMetadata.push({
-                ...msg,
-                metadata: {
-                  inputTokens: step.usage.inputTokens,
-                  outputTokens: step.usage.outputTokens,
-                  totalTokens: step.usage.totalTokens,
-                },
-              });
-            } else {
-              messagesWithMetadata.push(msg);
-            }
-            stepIndex++;
-          } else {
-            messagesWithMetadata.push(msg);
-          }
-        }
-
-        emitXRayEvent({
-          model: { id: modelDefinition.id, provider: modelDefinition.provider },
-          messages: messagesWithMetadata as ModelMessage[],
-          systemPrompt: enhancedSystemPrompt,
-          tools: allTools as Record<string, unknown>,
-          temperature: resolvedTemperature,
-          selectedServers: selectedServers ?? [],
-          path: "streamText",
-        });
-      })
-      .catch(() => {
-        // Ignore errors - X-Ray is best-effort
-      });
 
     return result.toUIMessageStreamResponse({
       messageMetadata: ({ part }) => {

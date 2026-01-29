@@ -75,7 +75,6 @@ interface ChatInputProps {
   /** X-Ray mode toggle */
   xrayMode?: boolean;
   onXrayModeChange?: (enabled: boolean) => void;
-  xrayEventCount?: number;
 }
 
 export function ChatInput({
@@ -111,7 +110,6 @@ export function ChatInput({
   compact = false,
   xrayMode = false,
   onXrayModeChange,
-  xrayEventCount = 0,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -306,17 +304,12 @@ export function ChatInput({
                     size="sm"
                     onClick={() => onXrayModeChange(!xrayMode)}
                     className={cn(
-                      "h-8 px-2 gap-1.5 relative",
+                      "h-8 px-2 gap-1.5",
                       xrayMode && "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20"
                     )}
                   >
                     <Scan className="h-4 w-4" />
                     {!compact && <span className="text-xs">X-Ray</span>}
-                    {xrayEventCount > 0 && (
-                      <span className="absolute -top-1 -right-1 h-4 min-w-4 px-1 text-[10px] font-medium bg-cyan-500 text-white rounded-full flex items-center justify-center">
-                        {xrayEventCount > 99 ? "99+" : xrayEventCount}
-                      </span>
-                    )}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
