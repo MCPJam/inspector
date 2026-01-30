@@ -107,7 +107,8 @@ export function ChatTabV2({
     () =>
       selectedServerIds.filter(
         (id) =>
-          connectedOrConnectingServerConfigs[id]?.connectionStatus === "connected",
+          connectedOrConnectingServerConfigs[id]?.connectionStatus ===
+          "connected",
       ),
     [selectedServerIds, connectedOrConnectingServerConfigs],
   );
@@ -184,7 +185,8 @@ export function ChatTabV2({
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([serverId, instruction]) => {
           const displayName =
-            connectedServerConfigs[serverId]?.name ?? serverId;
+            connectedOrConnectingServerConfigs[serverId as ServerId]?.name ??
+            serverId;
           return {
             id: `server-instruction-${serverId}`,
             role: "system" as const,
@@ -550,7 +552,7 @@ export function ChatTabV2({
                     <XRaySnapshotView
                       systemPrompt={systemPrompt}
                       messages={messages}
-                      selectedServers={selectedConnectedServerNames}
+                      selectedServers={selectedConnectedServerIds}
                       onClose={() => setXrayMode(false)}
                     />
                   </StickToBottom.Content>

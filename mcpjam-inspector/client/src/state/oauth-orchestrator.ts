@@ -20,7 +20,6 @@ export type OAuthResult = OAuthReady | OAuthRedirect | OAuthError;
 export async function ensureAuthorizedForReconnect(
   server: ServerWithName,
 ): Promise<OAuthResult> {
-
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
   // This handles the case where a server was saved with "No Authentication"
   if (server.useOAuth === false) {
@@ -52,8 +51,16 @@ export async function ensureAuthorizedForReconnect(
 
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
-  const storedClientInfo = readWithMigration("mcp-client", server.id, server.name);
-  const storedOAuthConfig = readWithMigration("mcp-oauth-config", server.id, server.name);
+  const storedClientInfo = readWithMigration(
+    "mcp-client",
+    server.id,
+    server.name,
+  );
+  const storedOAuthConfig = readWithMigration(
+    "mcp-oauth-config",
+    server.id,
+    server.name,
+  );
   const storedTokens = getStoredTokens(server.id, server.name);
 
   const url =

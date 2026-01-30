@@ -12,7 +12,8 @@ beforeEach(() => {
   localStorage.clear();
   uuidCounter = 0;
   vi.spyOn(crypto, "randomUUID").mockImplementation(
-    () => `${MOCK_UUID.slice(0, -1)}${++uuidCounter}` as `${string}-${string}-${string}-${string}-${string}`,
+    () =>
+      `${MOCK_UUID.slice(0, -1)}${++uuidCounter}` as `${string}-${string}-${string}-${string}-${string}`,
   );
 });
 

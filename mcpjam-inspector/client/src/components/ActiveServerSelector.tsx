@@ -17,7 +17,7 @@ export interface ActiveServerSelectorProps {
   onServerChange: (server: ServerId) => void;
   onMultiServerToggle: (server: ServerId) => void;
   onConnect: (formData: ServerFormData) => void;
-  onReconnect?: (serverName: string) => void;
+  onReconnect?: (serverId: ServerId) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyOpenAIAppsServers?: boolean; // Only show servers that have OpenAI apps tools
   openAiAppOrMcpAppsServers?: Set<string>; // Set of server names that have OpenAI apps or MCP apps
@@ -72,7 +72,7 @@ export function ActiveServerSelector({
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [pendingServer, setPendingServer] = useState<string | null>(null);
+  const [pendingServer, setPendingServer] = useState<ServerId | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -96,7 +96,7 @@ export function ActiveServerSelector({
     if (
       showOnlyOpenAIAppsServers &&
       openAiAppOrMcpAppsServers &&
-      !openAiAppOrMcpAppsServers.has(id)
+      !openAiAppOrMcpAppsServers.has(server.name)
     )
       return false;
     return true;
@@ -106,7 +106,7 @@ export function ActiveServerSelector({
   useEffect(() => {
     if (isMultiSelectEnabled) return; // Don't auto-select in multi-select mode
 
-    const serverIds = servers.map(([id]) => id);
+    const serverIds = servers.map(([id]) => id as ServerId);
     const isCurrentSelectionValid = serverIds.includes(selectedServer);
 
     if (!isCurrentSelectionValid && serverIds.length > 0) {
@@ -114,7 +114,7 @@ export function ActiveServerSelector({
     }
   }, [servers.length, selectedServer, isMultiSelectEnabled, onServerChange]);
 
-  const handleServerClick = (id: string) => {
+  const handleServerClick = (id: ServerId) => {
     if (isMultiSelectEnabled) {
       if (hasMessages) {
         setPendingServer(id);
@@ -199,7 +199,8 @@ export function ActiveServerSelector({
         )}
       >
         <div className="flex flex-nowrap min-w-fit h-full">
-          {servers.map(([serverId, serverConfig]) => {
+          {servers.map(([rawId, serverConfig]) => {
+            const serverId = rawId as ServerId;
             const isSelected = isMultiSelectEnabled
               ? selectedMultipleServers.includes(serverId)
               : selectedServer === serverId;
@@ -259,7 +260,7 @@ export function ActiveServerSelector({
                       e.nativeEvent.stopImmediatePropagation();
                       // Also prevent default to avoid double actions if standard button behavior applies
                       e.preventDefault();
-                      onReconnect(name);
+                      onReconnect(serverId);
                     }}
                     className="ml-auto p-1 rounded-md hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors"
                     title="Reconnect"

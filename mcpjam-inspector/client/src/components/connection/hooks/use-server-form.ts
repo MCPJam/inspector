@@ -58,8 +58,16 @@ export function useServerForm(server?: ServerWithName) {
         const hasStoredOAuthConfig = hasOAuthConfig(server.id, server.name);
         hasOAuth = hasOAuthTokens || hasStoredOAuthConfig;
 
-        const storedOAuthConfig = readWithMigration("mcp-oauth-config", server.id, server.name);
-        const storedClientInfo = readWithMigration("mcp-client", server.id, server.name);
+        const storedOAuthConfig = readWithMigration(
+          "mcp-oauth-config",
+          server.id,
+          server.name,
+        );
+        const storedClientInfo = readWithMigration(
+          "mcp-client",
+          server.id,
+          server.name,
+        );
         const storedTokens = getStoredTokens(server.id, server.name);
 
         const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
