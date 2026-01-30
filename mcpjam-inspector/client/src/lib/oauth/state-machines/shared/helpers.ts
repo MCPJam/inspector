@@ -11,6 +11,7 @@ import type {
   OAuthFlowStep,
 } from "../types";
 import { authFetch } from "@/lib/session-token";
+import { readWithMigration } from "@/lib/oauth/mcp-oauth";
 
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
@@ -209,17 +210,11 @@ export function loadPreregisteredCredentials(
   clientSecret?: string;
 } {
   try {
-    const idKey = `mcp-client-${serverId}`;
-    let storedClientInfo = localStorage.getItem(idKey);
-    if (!storedClientInfo && serverName) {
-      const nameKey = `mcp-client-${serverName}`;
-      storedClientInfo = localStorage.getItem(nameKey);
-      if (storedClientInfo) {
-        // Migrate legacy name-keyed data to the canonical id-based key
-        localStorage.setItem(idKey, storedClientInfo);
-        localStorage.removeItem(nameKey);
-      }
-    }
+    const storedClientInfo = readWithMigration(
+      "mcp-client",
+      serverId,
+      serverName,
+    );
     if (storedClientInfo) {
       const parsed = JSON.parse(storedClientInfo);
       return {

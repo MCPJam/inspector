@@ -17,6 +17,7 @@ import {
 } from "../lib/oauth/mcp-oauth";
 import { DebugMCPOAuthClientProvider } from "../lib/oauth/debug-oauth-provider";
 import { ServerWithName } from "../hooks/use-app-state";
+import { toServerId } from "@/state/app-types";
 import {
   OAuthFlowState,
   EMPTY_OAUTH_FLOW_STATE,
@@ -76,7 +77,7 @@ export const AuthTab = ({
   serverEntry,
   serverName,
 }: AuthTabProps) => {
-  const resolvedServerId = serverEntry?.id ?? serverName;
+  const resolvedServerId = serverEntry?.id ?? toServerId(serverName ?? "none");
   const resolvedServerName = serverEntry?.name ?? serverName ?? "";
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,

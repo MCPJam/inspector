@@ -11,7 +11,14 @@ export function serializeServersForSharing(
   const result: Record<string, unknown> = {};
 
   for (const server of Object.values(servers)) {
-    const serverId = server.id || crypto.randomUUID();
+    const serverId = server.id;
+    if (!serverId) {
+      console.warn(
+        "Server missing ID during serialization, skipping:",
+        server.name,
+      );
+      continue;
+    }
     const serializedServer: Record<string, unknown> = {
       name: server.name,
       enabled: server.enabled,

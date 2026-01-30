@@ -45,12 +45,9 @@ function writeWithLegacy(
   prefix: StoragePrefix,
   serverId: string,
   value: string,
-  serverName?: string,
+  _serverName?: string,
 ) {
   localStorage.setItem(buildKey(prefix, serverId), value);
-  if (serverName && serverName !== serverId) {
-    localStorage.setItem(`${prefix}-${serverName}`, value);
-  }
 }
 
 function removeWithLegacy(
@@ -463,8 +460,12 @@ export async function handleOAuthCallback(
     if (pending) {
       try {
         const parsed = JSON.parse(pending);
-        serverId = parsed?.id || parsed?.serverId || parsed?.name;
-        serverName = parsed?.name || parsed?.serverName || parsed?.id;
+        serverId = parsed?.id || parsed?.serverId;
+        serverName = parsed?.name || parsed?.serverName;
+        // Only fall back to name as ID when there's genuinely no ID stored (legacy compat)
+        if (!serverId && serverName) {
+          serverId = serverName;
+        }
       } catch {
         serverId = pending;
         serverName = pending;

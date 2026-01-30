@@ -63,9 +63,6 @@ function saveOAuthConfigToLocalStorage(
 
   const maybeMirror = (prefix: string, value: string) => {
     localStorage.setItem(`${prefix}-${serverId}`, value);
-    if (serverId !== formData.name) {
-      localStorage.setItem(`${prefix}-${formData.name}`, value);
-    }
   };
 
   maybeMirror("mcp-serverUrl", formData.url);
