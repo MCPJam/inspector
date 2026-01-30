@@ -47,6 +47,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers"
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
+import { useToolApprovalStatusStore } from "@/stores/tool-approval-status-store";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -221,6 +222,12 @@ export function useChatSession({
   // This allows us to update requireToolApproval without recreating the transport
   const transportBodyRef = useRef<Record<string, unknown>>({});
 
+  // Track session-approved tools count to trigger effect when tools are added
+  // We use the Set size for efficient change detection, then get the full list in the effect
+  const sessionApprovedToolsCount = useToolApprovalStatusStore(
+    (s) => s.sessionApprovedTools.size,
+  );
+
   // Update the body ref whenever dependencies change
   useEffect(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
@@ -235,6 +242,11 @@ export function useChatSession({
     transportBodyRef.current.systemPrompt = systemPrompt;
     transportBodyRef.current.selectedServers = selectedServers;
     transportBodyRef.current.requireToolApproval = requireToolApproval;
+    // Include session-approved tools so server can skip approval prompts
+    // We use getState() to get the actual tool names when the count changes
+    transportBodyRef.current.sessionApprovedTools = useToolApprovalStatusStore
+      .getState()
+      .getSessionApprovedTools();
   }, [
     selectedModel,
     getToken,
@@ -242,6 +254,7 @@ export function useChatSession({
     systemPrompt,
     selectedServers,
     requireToolApproval,
+    sessionApprovedToolsCount, // Triggers effect when tools are added
   ]);
 
   // Create transport once - it holds a reference to the mutable body object
@@ -296,10 +309,12 @@ export function useChatSession({
     [baseSendMessage],
   );
 
-  // Reset chat
+  // Reset chat - clears messages and session-approved tools
   const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
+    // Clear session-approved tools when starting a new chat
+    useToolApprovalStatusStore.getState().clearSessionApprovedTools();
     onResetRef.current?.();
   }, [setMessages]);
 

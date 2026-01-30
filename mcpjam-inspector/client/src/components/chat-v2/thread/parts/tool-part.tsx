@@ -15,6 +15,7 @@ import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import { useIsToolDenied } from "@/stores/tool-approval-status-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getToolNameFromType,
@@ -77,11 +78,18 @@ export function ToolPart({
   const hasOutput = outputData !== undefined && outputData !== null;
   const hasError = state === "output-error" && !!errorText;
 
-  // Check if tool was denied by user (output has error-text type with denial message)
-  const isDenied =
+  // Primary: Check store for explicit denial status (robust, type-safe)
+  const isDeniedFromStore = useIsToolDenied(toolCallId);
+
+  // Fallback: Check output data for denial message (backwards compatibility)
+  // This handles cases where the store wasn't populated (e.g., page refresh)
+  const isDeniedFromOutput =
     outputData?.type === "error-text" &&
     typeof outputData?.value === "string" &&
     outputData.value.includes("denied by user");
+
+  // Use store status if available, otherwise fall back to output inspection
+  const isDenied = isDeniedFromStore || isDeniedFromOutput;
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,

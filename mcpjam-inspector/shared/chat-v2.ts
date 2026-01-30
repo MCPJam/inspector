@@ -16,4 +16,6 @@ export interface ChatV2Request {
   selectedServers?: string[];
   /** If true, require user approval before executing each tool call */
   requireToolApproval?: boolean;
+  /** Tool names that have been approved for auto-execution this session */
+  sessionApprovedTools?: string[];
 }

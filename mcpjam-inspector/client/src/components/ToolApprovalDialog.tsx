@@ -39,6 +39,14 @@ export function ToolApprovalDialog({
     await onResponse(action, rememberForSession);
   };
 
+  // Handle dialog close (X button, clicking outside, or pressing Escape)
+  const handleOpenChange = (open: boolean) => {
+    if (!open && pendingApproval && !loading) {
+      // Closing the dialog should deny the tool call
+      handleResponse("deny");
+    }
+  };
+
   // Format parameters for display
   const formatParameters = (params: Record<string, unknown>): string => {
     try {
@@ -49,7 +57,7 @@ export function ToolApprovalDialog({
   };
 
   return (
-    <Dialog open={!!pendingApproval} onOpenChange={() => {}}>
+    <Dialog open={!!pendingApproval} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm font-medium">

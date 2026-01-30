@@ -13,6 +13,7 @@ import { ElicitationDialog } from "@/components/ElicitationDialog";
 import { ToolApprovalDialog } from "@/components/ToolApprovalDialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { useToolApproval } from "@/hooks/use-tool-approval";
+import { useToolApprovalStatusStore } from "@/stores/tool-approval-status-store";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -161,6 +162,59 @@ export function ChatTabV2({
     isResponding: isToolApprovalResponding,
     respond: respondToToolApproval,
   } = useToolApproval(requireToolApproval);
+
+  // Track pending approval in store for UI components to query
+  const setPending = useToolApprovalStatusStore((s) => s.setPending);
+  const setApproved = useToolApprovalStatusStore((s) => s.setApproved);
+  const setDenied = useToolApprovalStatusStore((s) => s.setDenied);
+  const addSessionApprovedTool = useToolApprovalStatusStore(
+    (s) => s.addSessionApprovedTool,
+  );
+
+  // Update store when a new pending approval arrives
+  useEffect(() => {
+    if (pendingApproval) {
+      setPending(
+        pendingApproval.toolCallId,
+        pendingApproval.approvalId,
+        pendingApproval.toolName,
+      );
+    }
+  }, [pendingApproval, setPending]);
+
+  // Wrapper to update store when user responds to approval
+  const handleToolApprovalResponse = useCallback(
+    async (action: "approve" | "deny", rememberForSession?: boolean) => {
+      if (!pendingApproval) return;
+
+      // Update store with the response status
+      if (action === "approve") {
+        setApproved(
+          pendingApproval.toolCallId,
+          pendingApproval.approvalId,
+          rememberForSession,
+        );
+
+        // If "remember for session" is checked, add to session-approved list
+        // This will be sent with subsequent requests to skip approval prompts
+        if (rememberForSession) {
+          addSessionApprovedTool(pendingApproval.toolName);
+        }
+      } else {
+        setDenied(pendingApproval.toolCallId, pendingApproval.approvalId);
+      }
+
+      // Call the original respond function
+      await respondToToolApproval(action, rememberForSession);
+    },
+    [
+      pendingApproval,
+      respondToToolApproval,
+      setApproved,
+      setDenied,
+      addSessionApprovedTool,
+    ],
+  );
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -681,7 +735,7 @@ export function ChatTabV2({
 
             <ToolApprovalDialog
               pendingApproval={pendingApproval}
-              onResponse={respondToToolApproval}
+              onResponse={handleToolApprovalResponse}
               loading={isToolApprovalResponding}
             />
           </div>

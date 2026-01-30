@@ -40,10 +40,14 @@ chatV2.post("/", async (c) => {
       temperature,
       selectedServers,
       requireToolApproval,
+      sessionApprovedTools: clientSessionApprovedTools,
     } = body;
 
-    // Track tools that have been auto-approved for this session
-    const sessionApprovedTools = new Set<string>();
+    // Initialize session-approved tools from client request (persists across messages)
+    // New tools approved during this request will be added and sent back to client
+    const sessionApprovedTools = new Set<string>(
+      clientSessionApprovedTools ?? [],
+    );
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: "messages are required" }, 400);
