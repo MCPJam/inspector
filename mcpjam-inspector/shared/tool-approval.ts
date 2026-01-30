@@ -52,11 +52,24 @@ export interface ToolApprovalRequestEvent {
   timestamp: string;
 }
 
-export interface ToolApprovalCompleteEvent {
+/** Completion event sent when user approves/denies a tool */
+export interface ToolApprovalCompleteEventWithAction {
   type: "tool_approval_complete";
   approvalId: string;
   action: "approve" | "deny";
+  rememberForSession?: boolean;
 }
+
+/** Completion event sent when server-side timeout expires */
+export interface ToolApprovalCompleteEventWithStatus {
+  type: "tool_approval_complete";
+  approvalId: string;
+  status: "expired";
+}
+
+export type ToolApprovalCompleteEvent =
+  | ToolApprovalCompleteEventWithAction
+  | ToolApprovalCompleteEventWithStatus;
 
 export type ToolApprovalEvent =
   | ToolApprovalRequestEvent

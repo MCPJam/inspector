@@ -67,6 +67,14 @@ export async function requestToolApproval(
       () => {
         if (pendingApprovals.has(approval.approvalId)) {
           pendingApprovals.delete(approval.approvalId);
+
+          // Broadcast expiration to connected clients so they can update UI state
+          broadcastToolApproval({
+            type: "tool_approval_complete",
+            approvalId: approval.approvalId,
+            status: "expired",
+          });
+
           reject(new Error("Tool approval request timed out"));
         }
       },

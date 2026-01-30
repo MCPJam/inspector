@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import type { PendingToolApproval } from "@/shared/tool-approval";
+import { useToolApprovalStatusStore } from "@/stores/tool-approval-status-store";
 
 /**
  * Hook to subscribe to tool approval events via SSE.
@@ -44,9 +45,38 @@ export function useToolApproval(enabled: boolean = true) {
             timestamp: data.timestamp || new Date().toISOString(),
           });
         } else if (data?.type === "tool_approval_complete") {
+          const completedApprovalId = data.approvalId;
+
+          // Update the store with the final status from the server
+          // This handles both user-initiated responses and server-side timeouts
+          // Note: Server sends "action" for user responses, "status" for timeouts
+          if (completedApprovalId) {
+            const store = useToolApprovalStatusStore.getState();
+            // Server may send: action="approve"/"deny" for user responses
+            // or status="expired"/"timeout" for server timeouts
+            const serverValue = data.action || data.status;
+            let finalStatus: "approved" | "denied" | "expired" | null = null;
+
+            if (serverValue === "approve" || serverValue === "approved") {
+              finalStatus = "approved";
+            } else if (serverValue === "deny" || serverValue === "denied") {
+              finalStatus = "denied";
+            } else if (serverValue === "expired" || serverValue === "timeout") {
+              finalStatus = "expired";
+            }
+
+            if (finalStatus) {
+              store.updateByApprovalId(
+                completedApprovalId,
+                finalStatus,
+                data.rememberForSession,
+              );
+            }
+          }
+
           setPendingApproval((current) =>
             current &&
-            (!data.approvalId || data.approvalId === current.approvalId)
+            (!completedApprovalId || completedApprovalId === current.approvalId)
               ? null
               : current,
           );

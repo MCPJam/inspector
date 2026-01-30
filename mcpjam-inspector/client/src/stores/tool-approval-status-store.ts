@@ -11,7 +11,7 @@ import { create } from "zustand";
 /**
  * Possible approval statuses for a tool call
  */
-export type ToolApprovalStatus = "pending" | "approved" | "denied";
+export type ToolApprovalStatus = "pending" | "approved" | "denied" | "expired";
 
 /**
  * Detailed information about a tool's approval status
@@ -84,7 +84,7 @@ interface ToolApprovalStatusState {
    */
   updateByApprovalId: (
     approvalId: string,
-    status: "approved" | "denied",
+    status: "approved" | "denied" | "expired",
     rememberedForSession?: boolean,
   ) => void;
 
@@ -107,6 +107,11 @@ interface ToolApprovalStatusState {
    * Check if a tool call is pending approval
    */
   isPending: (toolCallId: string) => boolean;
+
+  /**
+   * Check if a tool call expired (server timeout)
+   */
+  isExpired: (toolCallId: string) => boolean;
 
   /**
    * Remove status for a tool call
@@ -196,6 +201,7 @@ export const useToolApprovalStatusStore = create<ToolApprovalStatusState>(
               ...info,
               status,
               updatedAt: Date.now(),
+              // Only set rememberedForSession for approved status
               rememberedForSession:
                 status === "approved" ? rememberedForSession : undefined,
             });
@@ -221,6 +227,10 @@ export const useToolApprovalStatusStore = create<ToolApprovalStatusState>(
 
     isPending: (toolCallId) => {
       return get().statuses.get(toolCallId)?.status === "pending";
+    },
+
+    isExpired: (toolCallId) => {
+      return get().statuses.get(toolCallId)?.status === "expired";
     },
 
     remove: (toolCallId) => {
@@ -280,5 +290,16 @@ export function useIsToolPending(toolCallId: string | undefined): boolean {
     (state) =>
       toolCallId !== undefined &&
       state.statuses.get(toolCallId)?.status === "pending",
+  );
+}
+
+/**
+ * Hook to check if a tool call expired (server timeout).
+ */
+export function useIsToolExpired(toolCallId: string | undefined): boolean {
+  return useToolApprovalStatusStore(
+    (state) =>
+      toolCallId !== undefined &&
+      state.statuses.get(toolCallId)?.status === "expired",
   );
 }
