@@ -77,7 +77,8 @@ export const AuthTab = ({
   serverEntry,
   serverName,
 }: AuthTabProps) => {
-  const resolvedServerId = serverEntry?.id ?? (serverName ? toServerId(serverName) : undefined);
+  const resolvedServerId =
+    serverEntry?.id ?? (serverName ? toServerId(serverName) : undefined);
   const resolvedServerName = serverEntry?.name ?? serverName ?? "";
   const [authSettings, setAuthSettings] = useState<AuthSettings>(
     DEFAULT_AUTH_SETTINGS,
