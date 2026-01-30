@@ -34,6 +34,68 @@ function resolveRef(ref: string, rootSchema: any): any | null {
 }
 
 /**
+ * Normalize a type value that may be a string or an array (e.g. ["number", "null"]).
+ * Returns the first non-null type string, or null if none found.
+ */
+function normalizeType(type: any): string | null {
+  if (Array.isArray(type)) {
+    return type.find((t: string) => t !== "null") || null;
+  }
+  return typeof type === "string" ? type : null;
+}
+
+/**
+ * Resolve the effective type of a property, handling composition keywords.
+ * Looks inside anyOf/oneOf/allOf/$ref when there's no top-level `type`.
+ * Tracks visited $refs to prevent infinite recursion on cyclic schemas.
+ */
+function resolvePropertyType(
+  prop: any,
+  rootSchema: any,
+  visitedRefs: Set<string> = new Set(),
+): string {
+  // Direct type
+  if (prop.type) {
+    return normalizeType(prop.type) || "string";
+  }
+
+  // $ref — resolve and recurse (with cycle detection)
+  if (prop.$ref) {
+    if (visitedRefs.has(prop.$ref)) return "string";
+    visitedRefs.add(prop.$ref);
+    const resolved = resolveRef(prop.$ref, rootSchema);
+    if (resolved) return resolvePropertyType(resolved, rootSchema, visitedRefs);
+  }
+
+  // anyOf / oneOf — find first non-null type
+  const options = prop.anyOf || prop.oneOf;
+  if (Array.isArray(options)) {
+    for (const opt of options) {
+      const optType = normalizeType(opt.type);
+      if (optType === "null") continue;
+      if (optType) return optType;
+      if (opt.$ref) {
+        if (visitedRefs.has(opt.$ref)) continue;
+        visitedRefs.add(opt.$ref);
+        const resolved = resolveRef(opt.$ref, rootSchema);
+        if (resolved)
+          return resolvePropertyType(resolved, rootSchema, visitedRefs);
+      }
+    }
+  }
+
+  // allOf — find first entry with a concrete type
+  if (Array.isArray(prop.allOf)) {
+    for (const sub of prop.allOf) {
+      const t = resolvePropertyType(sub, rootSchema, visitedRefs);
+      if (t !== "string") return t;
+    }
+  }
+
+  return "string";
+}
+
+/**
  * Extract enum values from oneOf/anyOf with const pattern.
  * This is commonly used by some Python MCP servers for enum types.
  * Returns { values, labels } where labels may have custom titles.
@@ -136,7 +198,7 @@ export function generateFormFieldsFromSchema(schema: any): FormField[] {
       enumLabels = extracted.labels;
     }
 
-    const fieldType = enumValues ? "enum" : prop.type || "string";
+    const fieldType = enumValues ? "enum" : resolvePropertyType(prop, schema);
     const isRequired = requiredFields.includes(key);
 
     // Start with type-based default value
