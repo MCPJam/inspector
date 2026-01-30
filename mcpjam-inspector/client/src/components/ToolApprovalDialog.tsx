@@ -40,10 +40,16 @@ export function ToolApprovalDialog({
   };
 
   // Handle dialog close (X button, clicking outside, or pressing Escape)
-  const handleOpenChange = (open: boolean) => {
+  const handleOpenChange = async (open: boolean) => {
     if (!open && pendingApproval && !loading) {
       // Closing the dialog should deny the tool call
-      handleResponse("deny");
+      try {
+        await handleResponse("deny");
+      } catch (error) {
+        // Log error but allow dialog state to update
+        // The error will be visible in the parent component's error state
+        console.error("[ToolApprovalDialog] Failed to deny on close:", error);
+      }
     }
   };
 

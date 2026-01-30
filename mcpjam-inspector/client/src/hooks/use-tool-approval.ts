@@ -20,6 +20,9 @@ export function useToolApproval(enabled: boolean = true) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      // Clear pending state when disabling to prevent stale dialogs
+      setPendingApproval(null);
+      setError(null);
       return;
     }
 
@@ -63,6 +66,8 @@ export function useToolApproval(enabled: boolean = true) {
     return () => {
       es.close();
       eventSourceRef.current = null;
+      // Clear pending state on unmount to prevent stale dialogs
+      setPendingApproval(null);
     };
   }, [enabled]);
 

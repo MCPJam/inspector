@@ -183,29 +183,29 @@ export function ChatTabV2({
   }, [pendingApproval, setPending]);
 
   // Wrapper to update store when user responds to approval
+  // Uses pessimistic updates - only update store AFTER server confirms success
   const handleToolApprovalResponse = useCallback(
     async (action: "approve" | "deny", rememberForSession?: boolean) => {
       if (!pendingApproval) return;
 
-      // Update store with the response status
+      const { toolCallId, approvalId, toolName } = pendingApproval;
+
+      // Call the server FIRST - wait for confirmation before updating store
+      await respondToToolApproval(action, rememberForSession);
+
+      // Only update store AFTER server confirms success
+      // This ensures UI state is consistent with server state
       if (action === "approve") {
-        setApproved(
-          pendingApproval.toolCallId,
-          pendingApproval.approvalId,
-          rememberForSession,
-        );
+        setApproved(toolCallId, approvalId, rememberForSession);
 
         // If "remember for session" is checked, add to session-approved list
         // This will be sent with subsequent requests to skip approval prompts
         if (rememberForSession) {
-          addSessionApprovedTool(pendingApproval.toolName);
+          addSessionApprovedTool(toolName);
         }
       } else {
-        setDenied(pendingApproval.toolCallId, pendingApproval.approvalId);
+        setDenied(toolCallId, approvalId);
       }
-
-      // Call the original respond function
-      await respondToToolApproval(action, rememberForSession);
     },
     [
       pendingApproval,
