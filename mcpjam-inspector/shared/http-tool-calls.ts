@@ -151,11 +151,13 @@ export async function executeToolCallsFromMessages(
           // Check if approval is required
           if (onToolApprovalRequired) {
             // Skip approval if tool was auto-approved for this session
-            const isSessionApproved = sessionApprovedTools?.has(toolName);
+            // Use composite key (serverId:toolName) to prevent cross-server auto-approval
+            const serverId = extractServerId(toolName);
+            const approvalKey = serverId ? `${serverId}:${toolName}` : toolName;
+            const isSessionApproved = sessionApprovedTools?.has(approvalKey);
 
             if (!isSessionApproved) {
               const approvalId = `approval_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-              const serverId = extractServerId(toolName);
 
               const approval: PendingToolApproval = {
                 approvalId,
@@ -192,7 +194,7 @@ export async function executeToolCallsFromMessages(
 
               // If approved with rememberForSession, add to session set
               if (response.rememberForSession && sessionApprovedTools) {
-                sessionApprovedTools.add(toolName);
+                sessionApprovedTools.add(approvalKey);
               }
             }
           }

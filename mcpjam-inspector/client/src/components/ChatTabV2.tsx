@@ -188,7 +188,7 @@ export function ChatTabV2({
     async (action: "approve" | "deny", rememberForSession?: boolean) => {
       if (!pendingApproval) return;
 
-      const { toolCallId, approvalId, toolName } = pendingApproval;
+      const { toolCallId, approvalId, toolName, serverName } = pendingApproval;
 
       // Call the server FIRST - wait for confirmation before updating store
       await respondToToolApproval(action, rememberForSession);
@@ -200,8 +200,9 @@ export function ChatTabV2({
 
         // If "remember for session" is checked, add to session-approved list
         // This will be sent with subsequent requests to skip approval prompts
+        // Uses composite key (serverName:toolName) to prevent cross-server auto-approval
         if (rememberForSession) {
-          addSessionApprovedTool(toolName);
+          addSessionApprovedTool(serverName, toolName);
         }
       } else {
         setDenied(toolCallId, approvalId);

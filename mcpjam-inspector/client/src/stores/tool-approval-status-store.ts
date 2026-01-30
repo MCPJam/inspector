@@ -42,9 +42,10 @@ interface ToolApprovalStatusState {
   sessionApprovedTools: Set<string>;
 
   /**
-   * Add a tool name to the session-approved list
+   * Add a tool to the session-approved list using composite key (serverName:toolName)
+   * to prevent cross-server auto-approval
    */
-  addSessionApprovedTool: (toolName: string) => void;
+  addSessionApprovedTool: (serverName: string | undefined, toolName: string) => void;
 
   /**
    * Get all session-approved tool names as an array (for sending to server)
@@ -129,10 +130,12 @@ export const useToolApprovalStatusStore = create<ToolApprovalStatusState>(
     statuses: new Map(),
     sessionApprovedTools: new Set(),
 
-    addSessionApprovedTool: (toolName) => {
+    addSessionApprovedTool: (serverName, toolName) => {
+      // Use composite key (serverName:toolName) to prevent cross-server auto-approval
+      const approvalKey = serverName ? `${serverName}:${toolName}` : toolName;
       set((state) => {
         const sessionApprovedTools = new Set(state.sessionApprovedTools);
-        sessionApprovedTools.add(toolName);
+        sessionApprovedTools.add(approvalKey);
         return { sessionApprovedTools };
       });
     },
