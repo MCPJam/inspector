@@ -671,7 +671,7 @@ export function PlaygroundMain({
       {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
         <div
           className={cn(
-            "flex-shrink-0 max-w-xl mx-auto w-full",
+            "flex-shrink-0 w-full",
             isThreadEmpty
               ? "px-4 pb-4"
               : "bg-background/80 backdrop-blur-sm p-3",
