@@ -257,7 +257,7 @@ export function useChatSession({
     sessionApprovedToolsCount, // Triggers effect when tools are added
   ]);
 
-  // Create transport once - it holds a reference to the mutable body object
+  // Create transport once - body is a factory function that returns fresh object each send
   const transport = useMemo(() => {
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
@@ -265,7 +265,7 @@ export function useChatSession({
 
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
-      body: transportBodyRef.current,
+      body: () => ({ ...transportBodyRef.current }),
       headers:
         Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
     });
