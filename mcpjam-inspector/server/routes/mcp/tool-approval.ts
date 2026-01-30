@@ -14,12 +14,13 @@ const toolApprovalSubscribers = new Set<{
   close: () => void;
 }>();
 
-// Track pending approval promises - resolve/reject functions keyed by approvalId
+// Track pending approval promises - resolve/reject functions and timeout keyed by approvalId
 const pendingApprovals = new Map<
   string,
   {
     resolve: (response: ToolApprovalResponse) => void;
     reject: (error: Error) => void;
+    timeoutId: ReturnType<typeof setTimeout>;
   }
 >();
 
@@ -47,9 +48,6 @@ export async function requestToolApproval(
   approval: PendingToolApproval,
 ): Promise<ToolApprovalResponse> {
   return new Promise<ToolApprovalResponse>((resolve, reject) => {
-    // Store the resolve/reject functions
-    pendingApprovals.set(approval.approvalId, { resolve, reject });
-
     // Broadcast the approval request to connected clients
     broadcastToolApproval({
       type: "tool_approval_request",
@@ -63,7 +61,7 @@ export async function requestToolApproval(
     });
 
     // Set a timeout to auto-reject after 5 minutes (user may have left)
-    setTimeout(
+    const timeoutId = setTimeout(
       () => {
         if (pendingApprovals.has(approval.approvalId)) {
           pendingApprovals.delete(approval.approvalId);
@@ -80,6 +78,9 @@ export async function requestToolApproval(
       },
       5 * 60 * 1000,
     );
+
+    // Store the resolve/reject functions and timeout ID
+    pendingApprovals.set(approval.approvalId, { resolve, reject, timeoutId });
   });
 }
 
@@ -95,6 +96,8 @@ function respondToToolApproval(
     return false;
   }
 
+  // Clear the timeout to prevent timer leak
+  clearTimeout(pending.timeoutId);
   pendingApprovals.delete(approvalId);
   pending.resolve(response);
   return true;
