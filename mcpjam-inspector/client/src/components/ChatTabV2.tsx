@@ -10,7 +10,10 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
+import { ToolApprovalDialog } from "@/components/ToolApprovalDialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
+import { useToolApproval } from "@/hooks/use-tool-approval";
+import { useToolApprovalStatusStore } from "@/stores/tool-approval-status-store";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -101,6 +104,9 @@ export function ChatTabV2({
   // X-Ray mode state
   const [xrayMode, setXrayMode] = useState(false);
 
+  // Tool approval state
+  const [requireToolApproval, setRequireToolApproval] = useState(false);
+
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
     () =>
@@ -147,7 +153,69 @@ export function ChatTabV2({
       setInput("");
       setWidgetStateQueue([]);
     },
+    requireToolApproval,
   });
+
+  // Tool approval hook - only enabled when requireToolApproval is true
+  const {
+    pendingApproval,
+    isResponding: isToolApprovalResponding,
+    respond: respondToToolApproval,
+  } = useToolApproval(requireToolApproval);
+
+  // Track pending approval in store for UI components to query
+  const setPending = useToolApprovalStatusStore((s) => s.setPending);
+  const setApproved = useToolApprovalStatusStore((s) => s.setApproved);
+  const setDenied = useToolApprovalStatusStore((s) => s.setDenied);
+  const addSessionApprovedTool = useToolApprovalStatusStore(
+    (s) => s.addSessionApprovedTool,
+  );
+
+  // Update store when a new pending approval arrives
+  useEffect(() => {
+    if (pendingApproval) {
+      setPending(
+        pendingApproval.toolCallId,
+        pendingApproval.approvalId,
+        pendingApproval.toolName,
+      );
+    }
+  }, [pendingApproval, setPending]);
+
+  // Wrapper to update store when user responds to approval
+  // Uses pessimistic updates - only update store AFTER server confirms success
+  const handleToolApprovalResponse = useCallback(
+    async (action: "approve" | "deny", rememberForSession?: boolean) => {
+      if (!pendingApproval) return;
+
+      const { toolCallId, approvalId, toolName, serverName } = pendingApproval;
+
+      // Call the server FIRST - wait for confirmation before updating store
+      await respondToToolApproval(action, rememberForSession);
+
+      // Only update store AFTER server confirms success
+      // This ensures UI state is consistent with server state
+      if (action === "approve") {
+        setApproved(toolCallId, approvalId, rememberForSession);
+
+        // If "remember for session" is checked, add to session-approved list
+        // This will be sent with subsequent requests to skip approval prompts
+        // Uses composite key (serverName:toolName) to prevent cross-server auto-approval
+        if (rememberForSession) {
+          addSessionApprovedTool(serverName, toolName);
+        }
+      } else {
+        setDenied(toolCallId, approvalId);
+      }
+    },
+    [
+      pendingApproval,
+      respondToToolApproval,
+      setApproved,
+      setDenied,
+      addSessionApprovedTool,
+    ],
+  );
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -511,6 +579,8 @@ export function ChatTabV2({
     onChangeSkillResults: setSkillResults,
     xrayMode,
     onXrayModeChange: setXrayMode,
+    requireToolApproval,
+    onRequireToolApprovalChange: setRequireToolApproval,
   };
 
   const showStarterPrompts =
@@ -662,6 +732,12 @@ export function ChatTabV2({
               elicitationRequest={elicitation}
               onResponse={handleElicitationResponse}
               loading={elicitationLoading}
+            />
+
+            <ToolApprovalDialog
+              pendingApproval={pendingApproval}
+              onResponse={handleToolApprovalResponse}
+              loading={isToolApprovalResponding}
             />
           </div>
         </ResizablePanel>

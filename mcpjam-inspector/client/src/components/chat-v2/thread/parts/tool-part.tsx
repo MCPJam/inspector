@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Box,
   ChevronDown,
   Database,
@@ -7,12 +8,14 @@ import {
   MessageCircle,
   PictureInPicture2,
   Shield,
+  XCircle,
 } from "lucide-react";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import { useIsToolDenied } from "@/stores/tool-approval-status-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   getToolNameFromType,
@@ -74,6 +77,19 @@ export function ToolPart({
   const hasInput = inputData !== undefined && inputData !== null;
   const hasOutput = outputData !== undefined && outputData !== null;
   const hasError = state === "output-error" && !!errorText;
+
+  // Primary: Check store for explicit denial status (robust, type-safe)
+  const isDeniedFromStore = useIsToolDenied(toolCallId);
+
+  // Fallback: Check output data for denial message (backwards compatibility)
+  // This handles cases where the store wasn't populated (e.g., page refresh)
+  const isDeniedFromOutput =
+    outputData?.type === "error-text" &&
+    typeof outputData?.value === "string" &&
+    outputData.value.includes("denied by user");
+
+  // Use store status if available, otherwise fall back to output inspection
+  const isDenied = isDeniedFromStore || isDeniedFromOutput;
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
@@ -260,7 +276,15 @@ export function ToolPart({
               </span>
             </>
           )}
-          {toolState && StatusIcon && (
+          {isDenied ? (
+            <span
+              className="inline-flex h-5 w-5 items-center justify-center"
+              title="Tool denied by user"
+            >
+              <XCircle className="h-4 w-4 text-amber-500" />
+              <span className="sr-only">Tool denied by user</span>
+            </span>
+          ) : toolState && StatusIcon ? (
             <span
               className="inline-flex h-5 w-5 items-center justify-center"
               title={toolState.label}
@@ -268,7 +292,7 @@ export function ToolPart({
               <StatusIcon className={toolState.className} />
               <span className="sr-only">{toolState.label}</span>
             </span>
-          )}
+          ) : null}
           <ChevronDown
             className={`h-4 w-4 transition-transform duration-150 ${
               isExpanded ? "rotate-180" : ""
