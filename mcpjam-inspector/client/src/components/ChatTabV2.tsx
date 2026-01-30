@@ -10,7 +10,9 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
+import { ToolApprovalDialog } from "@/components/ToolApprovalDialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
+import { useToolApproval } from "@/hooks/use-tool-approval";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -101,6 +103,9 @@ export function ChatTabV2({
   // X-Ray mode state
   const [xrayMode, setXrayMode] = useState(false);
 
+  // Tool approval state
+  const [requireToolApproval, setRequireToolApproval] = useState(false);
+
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
     () =>
@@ -147,7 +152,15 @@ export function ChatTabV2({
       setInput("");
       setWidgetStateQueue([]);
     },
+    requireToolApproval,
   });
+
+  // Tool approval hook - only enabled when requireToolApproval is true
+  const {
+    pendingApproval,
+    isResponding: isToolApprovalResponding,
+    respond: respondToToolApproval,
+  } = useToolApproval(requireToolApproval);
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -511,6 +524,8 @@ export function ChatTabV2({
     onChangeSkillResults: setSkillResults,
     xrayMode,
     onXrayModeChange: setXrayMode,
+    requireToolApproval,
+    onRequireToolApprovalChange: setRequireToolApproval,
   };
 
   const showStarterPrompts =
@@ -662,6 +677,12 @@ export function ChatTabV2({
               elicitationRequest={elicitation}
               onResponse={handleElicitationResponse}
               loading={elicitationLoading}
+            />
+
+            <ToolApprovalDialog
+              pendingApproval={pendingApproval}
+              onResponse={respondToToolApproval}
+              loading={isToolApprovalResponding}
             />
           </div>
         </ResizablePanel>

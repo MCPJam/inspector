@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  AlertTriangle,
   Box,
   ChevronDown,
   Database,
@@ -7,6 +8,7 @@ import {
   MessageCircle,
   PictureInPicture2,
   Shield,
+  XCircle,
 } from "lucide-react";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
@@ -74,6 +76,12 @@ export function ToolPart({
   const hasInput = inputData !== undefined && inputData !== null;
   const hasOutput = outputData !== undefined && outputData !== null;
   const hasError = state === "output-error" && !!errorText;
+
+  // Check if tool was denied by user (output has error-text type with denial message)
+  const isDenied =
+    outputData?.type === "error-text" &&
+    typeof outputData?.value === "string" &&
+    outputData.value.includes("denied by user");
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
@@ -260,7 +268,15 @@ export function ToolPart({
               </span>
             </>
           )}
-          {toolState && StatusIcon && (
+          {isDenied ? (
+            <span
+              className="inline-flex h-5 w-5 items-center justify-center"
+              title="Tool denied by user"
+            >
+              <XCircle className="h-4 w-4 text-amber-500" />
+              <span className="sr-only">Tool denied by user</span>
+            </span>
+          ) : toolState && StatusIcon ? (
             <span
               className="inline-flex h-5 w-5 items-center justify-center"
               title={toolState.label}
@@ -268,7 +284,7 @@ export function ToolPart({
               <StatusIcon className={toolState.className} />
               <span className="sr-only">{toolState.label}</span>
             </span>
-          )}
+          ) : null}
           <ChevronDown
             className={`h-4 w-4 transition-transform duration-150 ${
               isExpanded ? "rotate-180" : ""

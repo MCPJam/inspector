@@ -5,9 +5,30 @@ import {
   scrubMetaAndStructuredContentFromToolResult,
 } from "@mcpjam/sdk";
 import { ToolResultPart } from "ai";
+import type {
+  PendingToolApproval,
+  ToolApprovalResponse,
+} from "./tool-approval";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
+
+/** Options for tool approval callback */
+export interface ToolApprovalCallbackOptions {
+  /**
+   * Called before each tool execution to request user approval.
+   * If not provided, tools execute automatically.
+   * Return response with action: 'approve' to execute, or 'deny' to skip.
+   */
+  onToolApprovalRequired?: (
+    approval: PendingToolApproval,
+  ) => Promise<ToolApprovalResponse>;
+  /**
+   * Set of tool names that have been auto-approved this session.
+   * Tools in this set skip the approval callback.
+   */
+  sessionApprovedTools?: Set<string>;
+}
 
 /**
  * Flatten toolsets and attach serverId metadata to each tool
@@ -64,15 +85,18 @@ export const hasUnresolvedToolCalls = (messages: ModelMessage[]): boolean => {
   return false;
 };
 
-type ExecuteToolCallOptions =
+type ExecuteToolCallOptions = (
   | { tools: ToolsMap }
   | { toolsets: Toolsets }
-  | { clientManager: MCPClientManager; serverIds?: string[] };
+  | { clientManager: MCPClientManager; serverIds?: string[] }
+) &
+  ToolApprovalCallbackOptions;
 
 export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
   options: ExecuteToolCallOptions,
 ): Promise<void> {
+  const { onToolApprovalRequired, sessionApprovedTools } = options;
   // Build tools with serverId metadata
   let tools: ToolsMap = {};
 
@@ -123,6 +147,56 @@ export async function executeToolCallsFromMessages(
           const tool = index[toolName];
           if (!tool) throw new Error(`Tool '${toolName}' not found`);
           const input = content.input || {};
+
+          // Check if approval is required
+          if (onToolApprovalRequired) {
+            // Skip approval if tool was auto-approved for this session
+            const isSessionApproved = sessionApprovedTools?.has(toolName);
+
+            if (!isSessionApproved) {
+              const approvalId = `approval_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+              const serverId = extractServerId(toolName);
+
+              const approval: PendingToolApproval = {
+                approvalId,
+                toolCallId: content.toolCallId,
+                toolName,
+                toolDescription: (tool as any).description,
+                parameters: input,
+                serverName: serverId,
+                timestamp: new Date().toISOString(),
+              };
+
+              const response = await onToolApprovalRequired(approval);
+
+              // If denied, add error result and skip execution
+              if (response.action === "deny") {
+                const deniedOutput: ToolResultPart = {
+                  type: "error-text",
+                  value: `Tool execution denied by user: ${toolName}`,
+                } as any;
+                const deniedToolResultMessage: ModelMessage = {
+                  role: "tool" as const,
+                  content: [
+                    {
+                      type: "tool-result",
+                      toolCallId: content.toolCallId,
+                      toolName: toolName,
+                      output: deniedOutput,
+                    },
+                  ],
+                } as any;
+                toolResultsToAdd.push(deniedToolResultMessage);
+                continue;
+              }
+
+              // If approved with rememberForSession, add to session set
+              if (response.rememberForSession && sessionApprovedTools) {
+                sessionApprovedTools.add(toolName);
+              }
+            }
+          }
+
           const result = await tool.execute(input);
 
           let output: ToolResultPart;

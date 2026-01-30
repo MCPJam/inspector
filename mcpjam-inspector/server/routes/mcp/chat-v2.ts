@@ -22,6 +22,7 @@ import {
   scrubChatGPTAppsToolResultsForBackend,
   scrubMcpAppsToolResultsForBackend,
 } from "../../utils/chat-helpers";
+import { requestToolApproval } from "./tool-approval";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
@@ -38,7 +39,11 @@ chatV2.post("/", async (c) => {
       systemPrompt,
       temperature,
       selectedServers,
+      requireToolApproval,
     } = body;
+
+    // Track tools that have been auto-approved for this session
+    const sessionApprovedTools = new Set<string>();
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: "messages are required" }, 400);
@@ -273,6 +278,13 @@ chatV2.post("/", async (c) => {
                 messageHistory as ModelMessage[],
                 {
                   tools: allTools as Record<string, any>,
+                  // If tool approval is required, request approval before executing each tool
+                  onToolApprovalRequired: requireToolApproval
+                    ? requestToolApproval
+                    : undefined,
+                  sessionApprovedTools: requireToolApproval
+                    ? sessionApprovedTools
+                    : undefined,
                 },
               );
             }

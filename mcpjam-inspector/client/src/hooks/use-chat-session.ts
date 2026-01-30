@@ -57,6 +57,8 @@ export interface UseChatSessionOptions {
   initialTemperature?: number;
   /** Callback when chat is reset */
   onReset?: () => void;
+  /** Whether to require user approval before executing tools */
+  requireToolApproval?: boolean;
 }
 
 export interface TokenUsage {
@@ -127,6 +129,7 @@ export function useChatSession({
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
   onReset,
+  requireToolApproval = false,
 }: UseChatSessionOptions): UseChatSessionReturn {
   const { getAccessToken } = useAuth();
 
@@ -214,35 +217,46 @@ export function useChatSession({
       : false;
   }, [selectedModel]);
 
-  // Create transport
-  const transport = useMemo(() => {
+  // Create a mutable body object that the transport will reference
+  // This allows us to update requireToolApproval without recreating the transport
+  const transportBodyRef = useRef<Record<string, unknown>>({});
+
+  // Update the body ref whenever dependencies change
+  useEffect(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     const isGpt5 = isGPT5Model(selectedModel.id);
 
+    // Update properties in place so the transport sees the latest values
+    transportBodyRef.current.model = selectedModel;
+    transportBodyRef.current.apiKey = apiKey;
+    if (!isGpt5) {
+      transportBodyRef.current.temperature = temperature;
+    }
+    transportBodyRef.current.systemPrompt = systemPrompt;
+    transportBodyRef.current.selectedServers = selectedServers;
+    transportBodyRef.current.requireToolApproval = requireToolApproval;
+  }, [
+    selectedModel,
+    getToken,
+    temperature,
+    systemPrompt,
+    selectedServers,
+    requireToolApproval,
+  ]);
+
+  // Create transport once - it holds a reference to the mutable body object
+  const transport = useMemo(() => {
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
     const mergedHeaders = { ...sessionHeaders, ...authHeaders };
 
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
-      body: {
-        model: selectedModel,
-        apiKey: apiKey,
-        ...(isGpt5 ? {} : { temperature }),
-        systemPrompt,
-        selectedServers,
-      },
+      body: transportBodyRef.current,
       headers:
         Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
     });
-  }, [
-    selectedModel,
-    getToken,
-    authHeaders,
-    temperature,
-    systemPrompt,
-    selectedServers,
-  ]);
+  }, [authHeaders]);
 
   // useChat hook
   const {
