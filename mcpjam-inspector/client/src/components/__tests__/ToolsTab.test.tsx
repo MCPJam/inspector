@@ -130,11 +130,10 @@ describe("ToolsTab", () => {
       render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith(
-          "test-server",
-          undefined,
-          undefined,
-        );
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "test-server",
+          cursor: undefined,
+        });
       });
     });
 
@@ -407,11 +406,10 @@ describe("ToolsTab", () => {
       );
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith(
-          "server-1",
-          undefined,
-          undefined,
-        );
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "server-1",
+          cursor: undefined,
+        });
       });
 
       mockListTools.mockResolvedValue({
@@ -423,11 +421,10 @@ describe("ToolsTab", () => {
       rerender(<ToolsTab serverConfig={serverConfig} serverName="server-2" />);
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith(
-          "server-2",
-          undefined,
-          undefined,
-        );
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "server-2",
+          cursor: undefined,
+        });
       });
     });
   });

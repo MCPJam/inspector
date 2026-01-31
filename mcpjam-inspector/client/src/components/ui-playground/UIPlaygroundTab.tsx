@@ -140,7 +140,7 @@ export function UIPlaygroundTab({
     reset();
     setToolsMetadata({});
     try {
-      const data = await listTools(serverName);
+      const data = await listTools({ serverId: serverName });
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),

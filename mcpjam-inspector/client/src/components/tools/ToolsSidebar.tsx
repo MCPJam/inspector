@@ -134,7 +134,7 @@ export function ToolsSidebar({
           {activeTab === "tools" ? (
             <ScrollArea className="h-full">
               <div className="p-2 pb-16">
-                {fetchingTools ? (
+                {fetchingTools && !cursor ? (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
                     <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
                       <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />

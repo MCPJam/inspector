@@ -141,7 +141,7 @@ export default function App() {
       await Promise.all(
         connectedServerNames.map(async (serverName) => {
           try {
-            const toolsData = await listTools(serverName);
+            const toolsData = await listTools({ serverId: serverName });
             if (
               isOpenAIApp(toolsData) ||
               isMCPApp(toolsData) ||

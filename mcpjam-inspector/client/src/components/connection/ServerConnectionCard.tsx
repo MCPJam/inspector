@@ -126,7 +126,7 @@ export function ServerConnectionCard({
         return;
       }
       try {
-        const result = await listTools(server.name);
+        const result = await listTools({ serverId: server.name });
         setToolsData(result);
       } catch (err) {
         // Silently fail - tools metadata is optional

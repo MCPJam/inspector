@@ -300,7 +300,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       return;
     }
 
-    setFetchingTools(true);
     setError("");
     if (reset) {
       setSelectedTool("");
@@ -310,16 +309,23 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setShowStructured(false);
       setValidationErrors(undefined);
       setUnstructuredValidationResult("not_applicable");
+      setTools({});
+      setCursor(undefined);
+    } else {
+      setFetchingTools(true);
     }
 
     try {
       // Call to get all of the tools for server
-      const data = await listTools(serverName, undefined, cursor);
+      const data = await listTools({
+        serverId: serverName,
+        cursor: reset ? undefined : cursor,
+      });
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),
       );
-      setTools((prev) => ({ ...prev, ...dictionary }));
+      setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
       setCursor(data.nextCursor);
       logger.info("Tools fetched", {
         serverId: serverName,
