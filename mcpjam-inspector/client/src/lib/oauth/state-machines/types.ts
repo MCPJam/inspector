@@ -161,6 +161,7 @@ export interface BaseOAuthStateMachineConfig {
   getState?: () => OAuthFlowState;
   updateState: (updates: Partial<OAuthFlowState>) => void;
   serverUrl: string;
+  serverId: string;
   serverName: string;
   redirectUrl?: string;
   fetchFn?: typeof fetch;

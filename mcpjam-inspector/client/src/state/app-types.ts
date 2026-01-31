@@ -2,6 +2,11 @@ import { MCPServerConfig } from "@mcpjam/sdk";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 
+/** Branded type for server IDs — prevents accidental use of server names as keys. */
+export type ServerId = string & { readonly __brand: "ServerId" };
+/** Cast a plain string to ServerId at creation/deserialization boundaries. */
+export const toServerId = (id: string) => id as ServerId;
+
 export type ConnectionStatus =
   | "connected"
   | "connecting"
@@ -29,6 +34,7 @@ export interface InitializationInfo {
 }
 
 export interface ServerWithName {
+  id: ServerId;
   name: string;
   config: MCPServerConfig;
   oauthTokens?: OauthTokens;
@@ -47,7 +53,7 @@ export interface Workspace {
   id: string;
   name: string;
   description?: string;
-  servers: Record<string, ServerWithName>;
+  servers: Record<ServerId, ServerWithName>;
   createdAt: Date;
   updatedAt: Date;
   isDefault?: boolean;
@@ -57,40 +63,48 @@ export interface Workspace {
 export interface AppState {
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
-  servers: Record<string, ServerWithName>;
-  selectedServer: string;
-  selectedMultipleServers: string[];
+  servers: Record<ServerId, ServerWithName>;
+  selectedServer: ServerId;
+  selectedMultipleServers: ServerId[];
   isMultiSelectMode: boolean;
 }
 
-export type AgentServerInfo = { id: string; status: ConnectionStatus };
+export type AgentServerInfo = { id: ServerId; status: ConnectionStatus };
 
 export type AppAction =
   | { type: "HYDRATE_STATE"; payload: AppState }
-  | { type: "UPSERT_SERVER"; name: string; server: ServerWithName }
+  | { type: "UPSERT_SERVER"; server: ServerWithName }
+  | { type: "RENAME_SERVER"; id: ServerId; newName: string }
   | {
       type: "CONNECT_REQUEST";
+      id: ServerId;
       name: string;
       config: MCPServerConfig;
       select?: boolean;
     }
   | {
       type: "CONNECT_SUCCESS";
+      id: ServerId;
       name: string;
       config: MCPServerConfig;
       tokens?: OauthTokens;
     }
-  | { type: "CONNECT_FAILURE"; name: string; error: string }
-  | { type: "RECONNECT_REQUEST"; name: string; config: MCPServerConfig }
-  | { type: "DISCONNECT"; name: string; error?: string }
-  | { type: "REMOVE_SERVER"; name: string }
+  | { type: "CONNECT_FAILURE"; id: ServerId; error: string }
+  | {
+      type: "RECONNECT_REQUEST";
+      id: ServerId;
+      name: string;
+      config: MCPServerConfig;
+    }
+  | { type: "DISCONNECT"; id: ServerId; error?: string }
+  | { type: "REMOVE_SERVER"; id: ServerId }
   | { type: "SYNC_AGENT_STATUS"; servers: AgentServerInfo[] }
-  | { type: "SELECT_SERVER"; name: string }
-  | { type: "SET_MULTI_SELECTED"; names: string[] }
+  | { type: "SELECT_SERVER"; id: ServerId }
+  | { type: "SET_MULTI_SELECTED"; ids: ServerId[] }
   | { type: "SET_MULTI_MODE"; enabled: boolean }
   | {
       type: "SET_INITIALIZATION_INFO";
-      name: string;
+      id: ServerId;
       initInfo: InitializationInfo;
     }
   | { type: "CREATE_WORKSPACE"; workspace: Workspace }
@@ -119,7 +133,7 @@ export const initialAppState: AppState = {
   },
   activeWorkspaceId: "default",
   servers: {},
-  selectedServer: "none",
+  selectedServer: toServerId("none"),
   selectedMultipleServers: [],
   isMultiSelectMode: false,
 };

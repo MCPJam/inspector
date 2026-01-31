@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
@@ -9,14 +10,14 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { ConfirmChatResetDialog } from "./chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 export interface ActiveServerSelectorProps {
-  serverConfigs: Record<string, ServerWithName>;
-  selectedServer: string;
-  selectedMultipleServers: string[];
+  serverConfigs: Record<ServerId, ServerWithName>;
+  selectedServer: ServerId;
+  selectedMultipleServers: ServerId[];
   isMultiSelectEnabled: boolean;
-  onServerChange: (server: string) => void;
-  onMultiServerToggle: (server: string) => void;
+  onServerChange: (server: ServerId) => void;
+  onMultiServerToggle: (server: ServerId) => void;
   onConnect: (formData: ServerFormData) => void;
-  onReconnect?: (serverName: string) => void;
+  onReconnect?: (serverId: ServerId) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyOpenAIAppsServers?: boolean; // Only show servers that have OpenAI apps tools
   openAiAppOrMcpAppsServers?: Set<string>; // Set of server names that have OpenAI apps or MCP apps
@@ -71,7 +72,7 @@ export function ActiveServerSelector({
 }: ActiveServerSelectorProps) {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [pendingServer, setPendingServer] = useState<string | null>(null);
+  const [pendingServer, setPendingServer] = useState<ServerId | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -85,17 +86,17 @@ export function ActiveServerSelector({
     // Check if server has OAuth tokens, OAuth config in localStorage, or is in oauth-flow state
     return !!(
       server.oauthTokens ||
-      hasOAuthConfig(server.name) ||
+      hasOAuthConfig(server.id, server.name) ||
       server.connectionStatus === "oauth-flow"
     );
   };
 
-  const servers = Object.entries(serverConfigs).filter(([name, server]) => {
+  const servers = Object.entries(serverConfigs).filter(([id, server]) => {
     if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
     if (
       showOnlyOpenAIAppsServers &&
       openAiAppOrMcpAppsServers &&
-      !openAiAppOrMcpAppsServers.has(name)
+      !openAiAppOrMcpAppsServers.has(server.name)
     )
       return false;
     return true;
@@ -105,30 +106,30 @@ export function ActiveServerSelector({
   useEffect(() => {
     if (isMultiSelectEnabled) return; // Don't auto-select in multi-select mode
 
-    const serverNames = servers.map(([name]) => name);
-    const isCurrentSelectionValid = serverNames.includes(selectedServer);
+    const serverIds = servers.map(([id]) => id as ServerId);
+    const isCurrentSelectionValid = serverIds.includes(selectedServer);
 
-    if (!isCurrentSelectionValid && serverNames.length > 0) {
-      onServerChange(serverNames[0]);
+    if (!isCurrentSelectionValid && serverIds.length > 0) {
+      onServerChange(serverIds[0]);
     }
   }, [servers.length, selectedServer, isMultiSelectEnabled, onServerChange]);
 
-  const handleServerClick = (name: string) => {
+  const handleServerClick = (id: ServerId) => {
     if (isMultiSelectEnabled) {
       if (hasMessages) {
-        setPendingServer(name);
+        setPendingServer(id);
         setShowConfirmDialog(true);
         return;
       }
-      onMultiServerToggle(name);
+      onMultiServerToggle(id);
     } else {
-      const isDifferentServer = selectedServer !== name;
+      const isDifferentServer = selectedServer !== id;
       if (isDifferentServer && hasMessages) {
-        setPendingServer(name);
+        setPendingServer(id);
         setShowConfirmDialog(true);
         return;
       }
-      onServerChange(name);
+      onServerChange(id);
     }
   };
 
@@ -198,23 +199,23 @@ export function ActiveServerSelector({
         )}
       >
         <div className="flex flex-nowrap min-w-fit h-full">
-          {servers.map(([name, serverConfig]) => {
+          {servers.map(([rawId, serverConfig]) => {
+            const serverId = rawId as ServerId;
             const isSelected = isMultiSelectEnabled
-              ? selectedMultipleServers.includes(name)
-              : selectedServer === name;
+              ? selectedMultipleServers.includes(serverId)
+              : selectedServer === serverId;
 
             return (
               <button
-                key={name}
+                key={serverId}
                 onClick={(e) => {
                   // Check if click originated from reconnect button
-                  // Using Element to cover SVG elements too
                   if (
                     (e.target as Element).closest("[data-reconnect-button]")
                   ) {
                     return;
                   }
-                  handleServerClick(name);
+                  handleServerClick(serverId);
                 }}
                 className={cn(
                   "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer outline-none focus-visible:bg-accent focus-visible:text-accent-foreground",
@@ -244,7 +245,7 @@ export function ActiveServerSelector({
                   title={getStatusText(serverConfig.connectionStatus)}
                 />
                 <span className="text-sm font-medium truncate max-w-36">
-                  {name}
+                  {serverConfig.name}
                 </span>
                 <div className="text-xs opacity-70">
                   {serverConfig.config.command ? "STDIO" : "HTTP"}
@@ -259,7 +260,7 @@ export function ActiveServerSelector({
                       e.nativeEvent.stopImmediatePropagation();
                       // Also prevent default to avoid double actions if standard button behavior applies
                       e.preventDefault();
-                      onReconnect(name);
+                      onReconnect(serverId);
                     }}
                     className="ml-auto p-1 rounded-md hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors"
                     title="Reconnect"

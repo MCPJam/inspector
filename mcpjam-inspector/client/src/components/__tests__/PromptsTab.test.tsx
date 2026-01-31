@@ -51,7 +51,7 @@ describe("PromptsTab", () => {
 
   describe("empty state", () => {
     it("shows empty state when no server config provided", () => {
-      render(<PromptsTab />);
+      render(<PromptsTab serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
@@ -62,7 +62,7 @@ describe("PromptsTab", () => {
     });
 
     it("shows empty state when serverConfig is undefined", () => {
-      render(<PromptsTab serverConfig={undefined} serverName="test-server" />);
+      render(<PromptsTab serverConfig={undefined} serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
@@ -76,9 +76,7 @@ describe("PromptsTab", () => {
         { name: "greeting", description: "A greeting prompt" },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(mockListPrompts).toHaveBeenCalledWith("test-server");
@@ -93,9 +91,7 @@ describe("PromptsTab", () => {
         { name: "farewell", description: "A farewell prompt" },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       // First prompt is auto-selected, so both names appear (list + header)
       // Check that both prompt names exist in the list
@@ -115,9 +111,7 @@ describe("PromptsTab", () => {
         { name: "prompt3" },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("3")).toBeInTheDocument();
@@ -129,9 +123,7 @@ describe("PromptsTab", () => {
 
       mockListPrompts.mockResolvedValue([]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("No prompts available")).toBeInTheDocument();
@@ -148,9 +140,7 @@ describe("PromptsTab", () => {
         { name: "second-prompt", description: "Second prompt" },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       // First prompt should be auto-selected, showing Get Prompt button
       await waitFor(() => {
@@ -168,9 +158,7 @@ describe("PromptsTab", () => {
         { name: "prompt-b", description: "Prompt B" },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("prompt-b")).toBeInTheDocument();
@@ -197,9 +185,7 @@ describe("PromptsTab", () => {
         content: [{ role: "user", content: { type: "text", text: "Hello!" } }],
       });
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(
@@ -225,9 +211,7 @@ describe("PromptsTab", () => {
 
       mockGetPrompt.mockRejectedValue(new Error("Prompt not found"));
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(
@@ -257,9 +241,7 @@ describe("PromptsTab", () => {
         },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("name")).toBeInTheDocument();
@@ -272,9 +254,7 @@ describe("PromptsTab", () => {
 
       mockListPrompts.mockResolvedValue([{ name: "simple-prompt" }]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("No parameters required")).toBeInTheDocument();
@@ -293,9 +273,7 @@ describe("PromptsTab", () => {
 
       mockGetPrompt.mockResolvedValue({ content: "Hello!" });
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByPlaceholderText("Enter name")).toBeInTheDocument();
@@ -327,9 +305,7 @@ describe("PromptsTab", () => {
         },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       // Description may appear in both list and detail panel
       await waitFor(() => {
@@ -351,9 +327,7 @@ describe("PromptsTab", () => {
         },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("Code Review Assistant")).toBeInTheDocument();
@@ -367,9 +341,7 @@ describe("PromptsTab", () => {
 
       mockListPrompts.mockResolvedValue([]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(mockListPrompts).toHaveBeenCalledTimes(1);
@@ -405,9 +377,7 @@ describe("PromptsTab", () => {
         },
       ]);
 
-      render(
-        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
-      );
+      render(<PromptsTab serverConfig={serverConfig} serverId="test-server" />);
 
       await waitFor(() => {
         expect(screen.getByText("required_field")).toBeInTheDocument();

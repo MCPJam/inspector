@@ -77,6 +77,7 @@ export interface DebugOAuthStateMachineConfig {
   getState?: () => OauthFlowStateJune2025;
   updateState: (updates: Partial<OauthFlowStateJune2025>) => void;
   serverUrl: string;
+  serverId: string;
   serverName: string;
   redirectUrl?: string;
   fetchFn?: typeof fetch;
@@ -540,6 +541,7 @@ export const createDebugOAuthStateMachine = (
     getState,
     updateState,
     serverUrl,
+    serverId,
     serverName,
     redirectUrl,
     fetchFn = fetch,
@@ -1197,8 +1199,10 @@ export const createDebugOAuthStateMachine = (
               return;
             } else if (registrationStrategy === "preregistered") {
               // Skip DCR - load pre-registered client credentials from localStorage
-              const { clientId, clientSecret } =
-                loadPreregisteredCredentials(serverName);
+              const { clientId, clientSecret } = loadPreregisteredCredentials(
+                serverId,
+                serverName,
+              );
 
               if (!clientId) {
                 updateState({

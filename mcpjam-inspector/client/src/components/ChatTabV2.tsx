@@ -14,6 +14,7 @@ import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { ServerWithName } from "@/hooks/use-app-state";
+import type { ServerId } from "@/state/app-types";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -40,8 +41,8 @@ import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 
 interface ChatTabProps {
-  connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
-  selectedServerNames: string[];
+  connectedOrConnectingServerConfigs: Record<ServerId, ServerWithName>;
+  selectedServerIds: ServerId[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
 }
 
@@ -65,7 +66,7 @@ function ScrollToBottomButton() {
 
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
-  selectedServerNames,
+  selectedServerIds,
   onHasMessagesChange,
 }: ChatTabProps) {
   const { signUp } = useAuth();
@@ -102,15 +103,16 @@ export function ChatTabV2({
   const [xrayMode, setXrayMode] = useState(false);
 
   // Filter to only connected servers
-  const selectedConnectedServerNames = useMemo(
+  const selectedConnectedServerIds = useMemo(
     () =>
-      selectedServerNames.filter(
-        (name) =>
-          connectedOrConnectingServerConfigs[name]?.connectionStatus ===
+      selectedServerIds.filter(
+        (id) =>
+          connectedOrConnectingServerConfigs[id]?.connectionStatus ===
           "connected",
       ),
-    [selectedServerNames, connectedOrConnectingServerConfigs],
+    [selectedServerIds, connectedOrConnectingServerConfigs],
   );
+  const noServersConnected = selectedConnectedServerIds.length === 0;
 
   // Use shared chat session hook
   const {
@@ -142,7 +144,7 @@ export function ChatTabV2({
     disableForAuthentication,
     submitBlocked: baseSubmitBlocked,
   } = useChatSession({
-    selectedServers: selectedConnectedServerNames,
+    selectedServers: selectedConnectedServerIds,
     onReset: () => {
       setInput("");
       setWidgetStateQueue([]);
@@ -157,15 +159,15 @@ export function ChatTabV2({
   // Server instructions
   const selectedServerInstructions = useMemo(() => {
     const instructions: Record<string, string> = {};
-    for (const serverName of selectedServerNames) {
-      const server = connectedOrConnectingServerConfigs[serverName];
+    for (const serverId of selectedServerIds) {
+      const server = connectedOrConnectingServerConfigs[serverId];
       const instruction = server?.initializationInfo?.instructions;
       if (instruction) {
-        instructions[serverName] = instruction;
+        instructions[serverId] = instruction;
       }
     }
     return instructions;
-  }, [connectedOrConnectingServerConfigs, selectedServerNames]);
+  }, [connectedOrConnectingServerConfigs, selectedServerIds]);
 
   // Keep server instruction system messages in sync with selected servers
   useEffect(() => {
@@ -181,17 +183,22 @@ export function ChatTabV2({
 
       const instructionMessages = Object.entries(selectedServerInstructions)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([serverName, instruction]) => ({
-          id: `server-instruction-${serverName}`,
-          role: "system" as const,
-          parts: [
-            {
-              type: "text" as const,
-              text: `Server ${serverName} instructions: ${instruction}`,
-            },
-          ],
-          metadata: { source: "server-instruction", serverName },
-        }));
+        .map(([serverId, instruction]) => {
+          const displayName =
+            connectedOrConnectingServerConfigs[serverId as ServerId]?.name ??
+            serverId;
+          return {
+            id: `server-instruction-${serverId}`,
+            role: "system" as const,
+            parts: [
+              {
+                type: "text" as const,
+                text: `Server ${displayName} instructions: ${instruction}`,
+              },
+            ],
+            metadata: { source: "server-instruction", serverName: displayName },
+          };
+        });
 
       return [...instructionMessages, ...filtered];
     });
@@ -497,7 +504,7 @@ export function ChatTabV2({
     onResetChat: baseResetChat,
     submitDisabled: submitBlocked,
     tokenUsage,
-    selectedServers: selectedConnectedServerNames,
+    selectedServers: selectedConnectedServerIds,
     mcpToolsTokenCount,
     mcpToolsTokenCountLoading,
     connectedOrConnectingServerConfigs,
@@ -545,7 +552,7 @@ export function ChatTabV2({
                     <XRaySnapshotView
                       systemPrompt={systemPrompt}
                       messages={messages}
-                      selectedServers={selectedConnectedServerNames}
+                      selectedServers={selectedConnectedServerIds}
                       onClose={() => setXrayMode(false)}
                     />
                   </StickToBottom.Content>

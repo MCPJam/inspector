@@ -55,7 +55,7 @@ describe("ResourcesTab", () => {
 
   describe("empty state", () => {
     it("shows empty state when no server config provided", () => {
-      render(<ResourcesTab />);
+      render(<ResourcesTab serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
@@ -66,9 +66,7 @@ describe("ResourcesTab", () => {
     });
 
     it("shows empty state when serverConfig is undefined", () => {
-      render(
-        <ResourcesTab serverConfig={undefined} serverName="test-server" />,
-      );
+      render(<ResourcesTab serverConfig={undefined} serverId="test-server" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
@@ -83,7 +81,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -112,7 +110,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -132,7 +130,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -146,7 +144,7 @@ describe("ResourcesTab", () => {
       mockListResources.mockResolvedValue({ resources: [] });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -164,7 +162,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -186,7 +184,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -223,7 +221,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -267,7 +265,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -294,7 +292,7 @@ describe("ResourcesTab", () => {
       mockListResources.mockResolvedValue({ resources: [] });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -332,7 +330,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {
@@ -353,7 +351,7 @@ describe("ResourcesTab", () => {
       });
 
       render(
-        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+        <ResourcesTab serverConfig={serverConfig} serverId="test-server" />,
       );
 
       await waitFor(() => {

@@ -11,6 +11,7 @@ import {
   type ActiveServerSelectorProps,
 } from "../ActiveServerSelector";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { toServerId } from "@/state/app-types";
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
@@ -77,6 +78,7 @@ describe("ActiveServerSelector", () => {
     overrides: Partial<ServerWithName> = {},
   ): ServerWithName =>
     ({
+      id: overrides.id ?? overrides.name ?? "test-server",
       name: "test-server",
       connectionStatus: "connected",
       enabled: true,
@@ -92,7 +94,7 @@ describe("ActiveServerSelector", () => {
 
   const defaultProps: ActiveServerSelectorProps = {
     serverConfigs: {},
-    selectedServer: "",
+    selectedServer: toServerId(""),
     selectedMultipleServers: [],
     isMultiSelectEnabled: false,
     onServerChange: vi.fn(),
@@ -115,7 +117,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
         />,
       );
 
@@ -145,7 +147,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="stdio-server"
+          selectedServer={toServerId("stdio-server")}
         />,
       );
 
@@ -167,7 +169,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="http-server"
+          selectedServer={toServerId("http-server")}
         />,
       );
 
@@ -187,7 +189,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
           onServerChange={onServerChange}
         />,
       );
@@ -207,7 +209,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
           onServerChange={onServerChange}
         />,
       );
@@ -229,7 +231,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
         />,
       );
 
@@ -292,7 +294,7 @@ describe("ActiveServerSelector", () => {
           {...defaultProps}
           serverConfigs={serverConfigs}
           isMultiSelectEnabled={true}
-          selectedMultipleServers={["server-1"]}
+          selectedMultipleServers={[toServerId("server-1")]}
         />,
       );
 
@@ -323,7 +325,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
         />,
       );
 
@@ -343,7 +345,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
         />,
       );
 
@@ -365,7 +367,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
         />,
       );
 
@@ -418,7 +420,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
           hasMessages={true}
         />,
       );
@@ -439,7 +441,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
           hasMessages={true}
           onServerChange={onServerChange}
         />,
@@ -462,7 +464,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          selectedServer={toServerId("server-1")}
           hasMessages={true}
           onServerChange={onServerChange}
         />,
@@ -508,7 +510,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="non-existent"
+          selectedServer={toServerId("non-existent")}
           onServerChange={onServerChange}
         />,
       );
@@ -528,7 +530,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="non-existent"
+          selectedServer={toServerId("non-existent")}
           isMultiSelectEnabled={true}
           onServerChange={onServerChange}
         />,
@@ -612,7 +614,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="active-server"
+          selectedServer={toServerId("active-server")}
           onReconnect={onReconnect}
           onServerChange={onServerChange}
         />,
@@ -643,7 +645,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="active-server"
+          selectedServer={toServerId("active-server")}
           onReconnect={onReconnect}
           onServerChange={onServerChange}
         />,

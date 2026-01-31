@@ -11,6 +11,7 @@ import type {
   OAuthFlowStep,
 } from "../types";
 import { authFetch } from "@/lib/session-token";
+import { readWithMigration } from "@/lib/oauth/mcp-oauth";
 
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
@@ -201,12 +202,19 @@ export async function generateCodeChallenge(verifier: string): Promise<string> {
 /**
  * Helper: Load pre-registered OAuth credentials from localStorage
  */
-export function loadPreregisteredCredentials(serverName: string): {
+export function loadPreregisteredCredentials(
+  serverId: string,
+  serverName?: string,
+): {
   clientId?: string;
   clientSecret?: string;
 } {
   try {
-    const storedClientInfo = localStorage.getItem(`mcp-client-${serverName}`);
+    const storedClientInfo = readWithMigration(
+      "mcp-client",
+      serverId,
+      serverName,
+    );
     if (storedClientInfo) {
       const parsed = JSON.parse(storedClientInfo);
       return {

@@ -1,8 +1,8 @@
 import {
   clearOAuthData,
   getStoredTokens,
-  hasOAuthConfig,
   initiateOAuth,
+  readWithMigration,
   refreshOAuthTokens,
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
@@ -24,7 +24,7 @@ export async function ensureAuthorizedForReconnect(
   // This handles the case where a server was saved with "No Authentication"
   if (server.useOAuth === false) {
     // Also clear any lingering OAuth data in localStorage
-    clearOAuthData(server.name);
+    clearOAuthData(server.id, server.name);
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 
@@ -32,39 +32,47 @@ export async function ensureAuthorizedForReconnect(
   // skip OAuth (handles legacy servers and non-OAuth connections)
   if (server.useOAuth !== true && !server.oauthTokens) {
     // Clear any lingering OAuth data that might cause confusion
-    clearOAuthData(server.name);
+    clearOAuthData(server.id, server.name);
     return { kind: "ready", serverConfig: server.config, tokens: undefined };
   }
 
   // If OAuth was configured, try to refresh or re-initiate
   if (server.oauthTokens) {
     // Try refresh first
-    const refreshed = await refreshOAuthTokens(server.name);
+    const refreshed = await refreshOAuthTokens(server.id, server.name);
     if (refreshed.success && refreshed.serverConfig) {
       return {
         kind: "ready",
         serverConfig: refreshed.serverConfig,
-        tokens: getStoredTokens(server.name),
+        tokens: getStoredTokens(server.id, server.name),
       };
     }
   }
 
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
-  const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
-  const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
-  const storedOAuthConfig = localStorage.getItem(
-    `mcp-oauth-config-${server.name}`,
+  const storedClientInfo = readWithMigration(
+    "mcp-client",
+    server.id,
+    server.name,
   );
-  const storedTokens = getStoredTokens(server.name);
+  const storedOAuthConfig = readWithMigration(
+    "mcp-oauth-config",
+    server.id,
+    server.name,
+  );
+  const storedTokens = getStoredTokens(server.id, server.name);
 
-  const url = (server.config as any)?.url?.toString?.() || storedServerUrl;
+  const url =
+    (server.config as any)?.url?.toString?.() ||
+    readWithMigration("mcp-serverUrl", server.id, server.name);
   if (url) {
     // Get stored OAuth configuration
     const oauthConfig = storedOAuthConfig ? JSON.parse(storedOAuthConfig) : {};
     const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
 
     const opts: MCPOAuthOptions = {
+      serverId: server.id,
       serverName: server.name,
       serverUrl: url,
       clientId:

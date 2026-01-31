@@ -32,6 +32,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
+import type { ServerId } from "@/state/app-types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
 import { ChatInput } from "@/components/chat-v2/chat-input";
@@ -166,7 +167,7 @@ const CSP_MODE_OPTIONS: {
 ];
 
 interface PlaygroundMainProps {
-  serverName: string;
+  serverId: ServerId;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   // Execution state for "Invoking" indicator
   isExecuting?: boolean;
@@ -238,7 +239,7 @@ function InvokingIndicator({
 }
 
 export function PlaygroundMain({
-  serverName,
+  serverId,
   onWidgetStateChange,
   isExecuting,
   executingToolName,
@@ -309,12 +310,13 @@ export function PlaygroundMain({
   }, [themeMode, setThemeMode]);
 
   const { servers } = useSharedAppState();
+  const displayServerName = servers[serverId]?.name ?? serverId ?? "";
   const selectedServers = useMemo(
     () =>
-      serverName && servers[serverName]?.connectionStatus === "connected"
-        ? [serverName]
+      serverId && servers[serverId]?.connectionStatus === "connected"
+        ? [serverId]
         : [],
-    [serverName, servers],
+    [serverId, servers],
   );
 
   // Use shared chat session hook
@@ -573,7 +575,9 @@ export function PlaygroundMain({
     selectedServers,
     mcpToolsTokenCount: null,
     mcpToolsTokenCountLoading: false,
-    connectedOrConnectingServerConfigs: { [serverName]: { name: serverName } },
+    connectedOrConnectingServerConfigs: displayServerName
+      ? { [serverId]: { name: displayServerName } }
+      : {},
     systemPromptTokenCount: null,
     systemPromptTokenCountLoading: false,
     mcpPromptResults,

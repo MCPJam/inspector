@@ -102,6 +102,7 @@ export default function App() {
     isLoadingRemoteWorkspaces,
     workspaceServers,
     connectedOrConnectingServerConfigs,
+    selectedServerEntry,
     selectedMCPConfig,
     handleConnect,
     handleDisconnect,
@@ -233,6 +234,10 @@ export default function App() {
     return <LoadingScreen />;
   }
 
+  const selectedServerId =
+    appState.selectedServer !== "none" ? appState.selectedServer : undefined;
+  const selectedServerName = selectedServerEntry?.name;
+
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
@@ -299,60 +304,63 @@ export default function App() {
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
             />
           )}
-          {activeTab === "tools" && (
+          {activeTab === "tools" && selectedServerId && (
             <div className="h-full overflow-hidden">
               <ToolsTab
                 serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
+                serverId={selectedServerId}
               />
             </div>
           )}
           {activeTab === "evals" && (
-            <EvalsTab selectedServer={appState.selectedServer} />
+            <EvalsTab selectedServer={selectedServerId} />
           )}
-          {activeTab === "resources" && (
+          {activeTab === "resources" && selectedServerId && (
             <ResourcesTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
             />
           )}
 
-          {activeTab === "resource-templates" && (
+          {activeTab === "resource-templates" && selectedServerId && (
             <ResourceTemplatesTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
             />
           )}
 
-          {activeTab === "prompts" && (
+          {activeTab === "prompts" && selectedServerId && (
             <PromptsTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
             />
           )}
 
           {activeTab === "skills" && <SkillsTab />}
 
-          <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
-            <TasksTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-              isActive={activeTab === "tasks"}
-            />
-          </div>
+          {selectedServerId && (
+            <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
+              <TasksTab
+                serverConfig={selectedMCPConfig}
+                serverId={selectedServerId}
+                serverName={selectedServerName}
+                isActive={activeTab === "tasks"}
+              />
+            </div>
+          )}
 
           {activeTab === "auth" && (
             <AuthTab
               serverConfig={selectedMCPConfig}
-              serverEntry={appState.servers[appState.selectedServer]}
-              serverName={appState.selectedServer}
+              serverEntry={selectedServerEntry}
+              serverName={selectedServerName}
             />
           )}
 
           {activeTab === "oauth-flow" && (
             <OAuthFlowTab
-              serverConfigs={appState.servers}
-              selectedServerName={appState.selectedServer}
+              serverConfigs={workspaceServers}
+              selectedServerId={selectedServerId}
               onSelectServer={setSelectedServer}
               onSaveServerConfig={saveServerConfigWithoutConnecting}
               onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
@@ -364,15 +372,15 @@ export default function App() {
               connectedOrConnectingServerConfigs={
                 connectedOrConnectingServerConfigs
               }
-              selectedServerNames={appState.selectedMultipleServers}
+              selectedServerIds={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
-          {activeTab === "app-builder" && (
+          {activeTab === "app-builder" && selectedServerId && (
             <UIPlaygroundTab
               serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
+              serverId={selectedServerId}
             />
           )}
           {activeTab === "settings" && <SettingsTab />}
