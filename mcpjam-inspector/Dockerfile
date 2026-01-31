@@ -3,22 +3,21 @@
 ARG NODE_VERSION=20.20.0
 
 FROM node:${NODE_VERSION}-alpine AS base
-
-# Use /usr/src/app/mcpjam-inspector as working directory to preserve sibling structure
-# This matches local dev where sdk is at ../sdk relative to mcpjam-inspector
-WORKDIR /usr/src/app/mcpjam-inspector
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+WORKDIR /usr/src/app
 
 ################################################################################
-# Create a stage for installing production dependecies.
+# Create a stage for installing production dependencies.
 FROM base AS deps
 
-# Download dependencies as a separate step to take advantage of Docker's caching.
-COPY mcpjam-inspector/package.json mcpjam-inspector/package-lock.json ./
-RUN npm ci --legacy-peer-deps
+# Copy workspace configuration files first
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY mcpjam-inspector/package.json ./mcpjam-inspector/
+COPY sdk/package.json ./sdk/
 
-# SDK is at ../sdk (sibling directory) to match local dev structure
-COPY sdk/package.json sdk/package-lock.json ../sdk/
-RUN npm ci --legacy-peer-deps --prefix ../sdk
+# Install all dependencies using pnpm workspaces
+RUN pnpm install --frozen-lockfile
+
 ################################################################################
 # Create a stage for building the application.
 FROM deps AS build
@@ -41,33 +40,33 @@ ARG VITE_WORKOS_CLIENT_ID
 ENV VITE_WORKOS_CLIENT_ID=${VITE_WORKOS_CLIENT_ID}
 
 # Layer 1: Copy configuration files (rarely change)
-COPY mcpjam-inspector/tsconfig.json mcpjam-inspector/package.json ./
-COPY mcpjam-inspector/lib/tsconfig.json mcpjam-inspector/lib/tsup.config.ts ./lib/
-COPY mcpjam-inspector/server/tsconfig.json mcpjam-inspector/server/tsup.config.ts ./server/
-COPY sdk/tsconfig.json sdk/tsup.config.ts sdk/package.json ../sdk/
+COPY mcpjam-inspector/tsconfig.json ./mcpjam-inspector/
+COPY mcpjam-inspector/lib/tsconfig.json mcpjam-inspector/lib/tsup.config.ts ./mcpjam-inspector/lib/
+COPY mcpjam-inspector/server/tsconfig.json mcpjam-inspector/server/tsup.config.ts ./mcpjam-inspector/server/
+COPY sdk/tsconfig.json sdk/tsup.config.ts ./sdk/
 
 # Layer 2: Copy static files that don't need building
-COPY mcpjam-inspector/bin ./bin
+COPY mcpjam-inspector/bin ./mcpjam-inspector/bin
 
 # Layer 3: Copy shared code (used by all modules, changes infrequently)
-COPY mcpjam-inspector/shared ./shared
+COPY mcpjam-inspector/shared ./mcpjam-inspector/shared
 
 # Layer 4: Build SDK first (changes infrequently, required by server and client)
-COPY sdk/src ../sdk/src
-RUN npm run build:sdk
+COPY sdk/src ./sdk/src
+RUN pnpm --filter @mcpjam/sdk run build
 
 # Layer 5: Build lib (changes infrequently)
-COPY mcpjam-inspector/lib ./lib
-RUN npm run build:lib
+COPY mcpjam-inspector/lib ./mcpjam-inspector/lib
+RUN pnpm --filter @mcpjam/inspector run build:lib
 
 # Layer 6: Build server (changes moderately, depends on SDK)
-COPY mcpjam-inspector/server ./server
-RUN npm run build:server
+COPY mcpjam-inspector/server ./mcpjam-inspector/server
+RUN pnpm --filter @mcpjam/inspector run build:server
 
 # Layer 7: Build client (changes most frequently, depends on SDK and shared)
-COPY mcpjam-inspector/client ./client
-COPY mcpjam-inspector/.env.production ./
-RUN npm run build:client
+COPY mcpjam-inspector/client ./mcpjam-inspector/client
+COPY mcpjam-inspector/.env.production ./mcpjam-inspector/
+RUN pnpm --filter @mcpjam/inspector run build:client
 
 ################################################################################
 # Create a new stage to run the application with minimal runtime dependencies
@@ -84,21 +83,25 @@ ENV DOCKER_CONTAINER=true
 # Run the application as a non-root user.
 USER node
 
-# Copy package.json so that package manager commands can be used.
-COPY mcpjam-inspector/package.json .
-COPY sdk/package.json ../sdk/
+# Copy workspace files for pnpm to work
+COPY pnpm-workspace.yaml ./
+COPY mcpjam-inspector/package.json ./mcpjam-inspector/
+COPY sdk/package.json ./sdk/
 
 # Copy the production dependencies from the deps stage and also
 # the built application from the build stage into the image.
-COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./node_modules
-COPY --from=deps /usr/src/app/sdk/node_modules ../sdk/node_modules
-COPY --from=build /usr/src/app/mcpjam-inspector/bin ./bin
-COPY --from=build /usr/src/app/mcpjam-inspector/dist ./dist
-COPY --from=build /usr/src/app/sdk/dist ../sdk/dist
-COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./.env.production
+COPY --from=deps /usr/src/app/node_modules ./node_modules
+COPY --from=deps /usr/src/app/mcpjam-inspector/node_modules ./mcpjam-inspector/node_modules
+COPY --from=deps /usr/src/app/sdk/node_modules ./sdk/node_modules
+COPY --from=build /usr/src/app/mcpjam-inspector/bin ./mcpjam-inspector/bin
+COPY --from=build /usr/src/app/mcpjam-inspector/dist ./mcpjam-inspector/dist
+COPY --from=build /usr/src/app/sdk/dist ./sdk/dist
+COPY --from=build /usr/src/app/mcpjam-inspector/.env.production ./mcpjam-inspector/.env.production
+
+WORKDIR /usr/src/app/mcpjam-inspector
 
 # Expose the port that the application listens on.
 EXPOSE 6274
 
 # Run the application.
-ENTRYPOINT ["npm", "start"]
+ENTRYPOINT ["pnpm", "start"]
