@@ -495,7 +495,14 @@ export function LoggerView({
                     <div className="border-t bg-muted/20">
                       <div className="p-3">
                         <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                          <JsonEditor value={normalizePayload(it.payload) as object} readOnly showToolbar={false} />
+                          <JsonEditor
+                            value={normalizePayload(it.payload) as object}
+                            readOnly
+                            showToolbar={false}
+                            collapsible
+                            defaultExpandDepth={2}
+                            collapseStringsAfterLength={100}
+                          />
                         </div>
                       </div>
                     </div>

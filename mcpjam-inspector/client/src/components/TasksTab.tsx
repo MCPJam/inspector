@@ -815,7 +815,7 @@ export function TasksTab({
                             </div>
                           ) : selectedTask.status === "input_required" ? (
                             pendingRequest ? (
-                              <JsonEditor value={pendingRequest as object} readOnly showToolbar={false} />
+                              <JsonEditor value={pendingRequest as object} readOnly showToolbar={false} collapsible defaultExpandDepth={2} collapseStringsAfterLength={100} />
                             ) : (
                               <div className="flex flex-col items-center justify-center py-8 text-center">
                                 <AlertCircle className="h-4 w-4 text-warning mb-2" />
@@ -827,7 +827,7 @@ export function TasksTab({
                           ) : selectedTask.status === "completed" ||
                             selectedTask.status === "failed" ? (
                             taskResult !== null ? (
-                              <JsonEditor value={taskResult as object} readOnly showToolbar={false} />
+                              <JsonEditor value={taskResult as object} readOnly showToolbar={false} collapsible defaultExpandDepth={2} collapseStringsAfterLength={100} />
                             ) : (
                               <div className="flex flex-col items-center justify-center py-8 text-center">
                                 <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
@@ -900,7 +900,7 @@ export function TasksTab({
                           </p>
                         </div>
                       ) : (
-                        <JsonEditor value={selectedTask as object} readOnly showToolbar={false} />
+                        <JsonEditor value={selectedTask as object} readOnly showToolbar={false} collapsible defaultExpandDepth={2} collapseStringsAfterLength={100} />
                       )}
                     </div>
                   </ScrollArea>

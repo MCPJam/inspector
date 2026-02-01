@@ -19,6 +19,15 @@ export interface JsonEditorProps {
   maxHeight?: string | number;
   className?: string;
   onValidationError?: (error: string | null) => void;
+
+  // Collapsible tree view options (view mode only)
+  collapsible?: boolean;
+  defaultExpandDepth?: number;
+  collapsedPaths?: Set<string>;
+  onCollapseChange?: (paths: Set<string>) => void;
+
+  // String truncation (view mode only)
+  collapseStringsAfterLength?: number;
 }
 
 export interface CursorPosition {

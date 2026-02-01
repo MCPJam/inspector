@@ -225,7 +225,12 @@ export function XRaySnapshotView({
       <div className="flex-1 min-h-0">
         <div className="p-4">
           <div className="rounded-lg border border-border bg-muted/20">
-            <JsonEditorView value={payload as object} />
+            <JsonEditorView
+              value={payload as object}
+              collapsible
+              defaultExpandDepth={2}
+              collapseStringsAfterLength={100}
+            />
           </div>
         </div>
       </div>

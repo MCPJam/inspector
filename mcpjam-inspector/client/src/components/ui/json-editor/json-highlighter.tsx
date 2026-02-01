@@ -2,10 +2,12 @@ import { useState, useCallback, useMemo, Fragment } from "react";
 import { Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tokenizeJson } from "./json-syntax-highlighter";
+import { TruncatableString } from "./truncatable-string";
 
 interface JsonHighlighterProps {
   content: string;
   onCopy?: (value: string) => void;
+  collapseStringsAfterLength?: number;
 }
 
 interface CopyableValueProps {
@@ -69,7 +71,11 @@ function CopyableValue({ children, value, onCopy }: CopyableValueProps) {
   );
 }
 
-export function JsonHighlighter({ content, onCopy }: JsonHighlighterProps) {
+export function JsonHighlighter({
+  content,
+  onCopy,
+  collapseStringsAfterLength,
+}: JsonHighlighterProps) {
   const elements = useMemo(() => {
     const tokens = tokenizeJson(content);
     const result: React.ReactNode[] = [];
@@ -111,9 +117,25 @@ export function JsonHighlighter({ content, onCopy }: JsonHighlighterProps) {
         return token.value;
       };
 
-      if (isCopyable) {
+      // Use TruncatableString for strings when truncation is enabled
+      if (token.type === "string" && collapseStringsAfterLength !== undefined) {
+        const rawValue = getCopyValue();
         result.push(
-          <CopyableValue key={`token-${i}`} value={getCopyValue()} onCopy={onCopy}>
+          <TruncatableString
+            key={`token-${i}`}
+            value={rawValue}
+            displayValue={token.value}
+            maxLength={collapseStringsAfterLength}
+            onCopy={onCopy}
+          />
+        );
+      } else if (isCopyable) {
+        result.push(
+          <CopyableValue
+            key={`token-${i}`}
+            value={getCopyValue()}
+            onCopy={onCopy}
+          >
             <span className={className}>{token.value}</span>
           </CopyableValue>
         );
@@ -139,7 +161,7 @@ export function JsonHighlighter({ content, onCopy }: JsonHighlighterProps) {
     result.push(<Fragment key="trailing-newline">{"\n"}</Fragment>);
 
     return result;
-  }, [content, onCopy]);
+  }, [content, onCopy, collapseStringsAfterLength]);
 
   return <>{elements}</>;
 }

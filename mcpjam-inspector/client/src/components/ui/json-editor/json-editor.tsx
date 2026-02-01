@@ -23,6 +23,11 @@ export function JsonEditor({
   maxHeight,
   className,
   onValidationError,
+  collapsible = false,
+  defaultExpandDepth,
+  collapsedPaths,
+  onCollapseChange,
+  collapseStringsAfterLength,
 }: JsonEditorProps) {
   // Determine if we're in raw mode (string content) vs parsed mode
   const isRawMode = rawContent !== undefined;
@@ -153,7 +158,14 @@ export function JsonEditor({
       <div className="flex-1 min-h-0">
         {mode === "view" ? (
           <ScrollArea className="h-full">
-            <JsonEditorView value={isRawMode ? editor.getParsedValue() : value} />
+            <JsonEditorView
+              value={isRawMode ? editor.getParsedValue() : value}
+              collapsible={collapsible}
+              defaultExpandDepth={defaultExpandDepth}
+              collapsedPaths={collapsedPaths}
+              onCollapseChange={onCollapseChange}
+              collapseStringsAfterLength={collapseStringsAfterLength}
+            />
           </ScrollArea>
         ) : (
           <JsonEditorEdit

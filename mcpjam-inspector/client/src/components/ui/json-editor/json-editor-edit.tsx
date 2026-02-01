@@ -16,6 +16,7 @@ interface JsonEditorEditProps {
   className?: string;
   height?: string | number;
   maxHeight?: string | number;
+  collapseStringsAfterLength?: number;
 }
 
 function getLineNumbers(content: string): number[] {
@@ -45,6 +46,7 @@ export function JsonEditorEdit({
   className,
   height,
   maxHeight,
+  collapseStringsAfterLength,
 }: JsonEditorEditProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
@@ -276,7 +278,10 @@ export function JsonEditorEdit({
             style={fontStyle}
             onScroll={handleReadOnlyScroll}
           >
-            <JsonHighlighter content={content} />
+            <JsonHighlighter
+              content={content}
+              collapseStringsAfterLength={collapseStringsAfterLength}
+            />
           </pre>
         ) : (
           <>

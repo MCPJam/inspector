@@ -388,6 +388,20 @@
   color: var(--json-punctuation);
 }
 
+/* JSON string truncation */
+.json-string-truncated {
+  cursor: pointer;
+}
+
+/* JSON collapse toggle */
+.json-collapse-toggle {
+  transition: transform 150ms ease-out;
+}
+
+.json-collapse-toggle[data-state="open"] {
+  transform: rotate(90deg);
+}
+
 /* JSON editor validation pulse animation */
 @keyframes validation-pulse {
   0%,
