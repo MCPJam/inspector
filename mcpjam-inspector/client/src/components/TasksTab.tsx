@@ -16,8 +16,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { MCPServerConfig } from "@mcpjam/sdk";
 import { LoggerView } from "./logger-view";
 import {
@@ -816,23 +815,7 @@ export function TasksTab({
                             </div>
                           ) : selectedTask.status === "input_required" ? (
                             pendingRequest ? (
-                              <JsonView
-                                src={pendingRequest as object}
-                                dark={true}
-                                theme="atom"
-                                enableClipboard={true}
-                                displaySize={false}
-                                collapseStringsAfterLength={100}
-                                style={{
-                                  fontSize: "12px",
-                                  fontFamily:
-                                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                  backgroundColor: "hsl(var(--background))",
-                                  padding: "0",
-                                  borderRadius: "0",
-                                  border: "none",
-                                }}
-                              />
+                              <JsonEditor value={pendingRequest as object} readOnly showToolbar={false} />
                             ) : (
                               <div className="flex flex-col items-center justify-center py-8 text-center">
                                 <AlertCircle className="h-4 w-4 text-warning mb-2" />
@@ -844,23 +827,7 @@ export function TasksTab({
                           ) : selectedTask.status === "completed" ||
                             selectedTask.status === "failed" ? (
                             taskResult !== null ? (
-                              <JsonView
-                                src={taskResult as object}
-                                dark={true}
-                                theme="atom"
-                                enableClipboard={true}
-                                displaySize={false}
-                                collapseStringsAfterLength={100}
-                                style={{
-                                  fontSize: "12px",
-                                  fontFamily:
-                                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                  backgroundColor: "hsl(var(--background))",
-                                  padding: "0",
-                                  borderRadius: "0",
-                                  border: "none",
-                                }}
-                              />
+                              <JsonEditor value={taskResult as object} readOnly showToolbar={false} />
                             ) : (
                               <div className="flex flex-col items-center justify-center py-8 text-center">
                                 <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
@@ -933,23 +900,7 @@ export function TasksTab({
                           </p>
                         </div>
                       ) : (
-                        <JsonView
-                          src={selectedTask as object}
-                          dark={true}
-                          theme="atom"
-                          enableClipboard={true}
-                          displaySize={false}
-                          collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "12px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "hsl(var(--background))",
-                            padding: "0",
-                            borderRadius: "0",
-                            border: "none",
-                          }}
-                        />
+                        <JsonEditor value={selectedTask as object} readOnly showToolbar={false} />
                       )}
                     </div>
                   </ScrollArea>

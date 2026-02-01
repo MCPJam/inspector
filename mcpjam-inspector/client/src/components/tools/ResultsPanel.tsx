@@ -20,8 +20,7 @@ import {
   getUIResourceUri,
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 
 type UnstructuredStatus =
   | "not_applicable"
@@ -49,20 +48,7 @@ function WidgetDebugView({
             Globals
           </h4>
           <div className="bg-muted/30 rounded-lg border border-border p-3">
-            <JsonView
-              src={widgetDebugInfo.globals}
-              dark={true}
-              theme="atom"
-              enableClipboard={true}
-              displaySize={false}
-              style={{
-                fontSize: "12px",
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                backgroundColor: "transparent",
-                padding: "0",
-              }}
-            />
+            <JsonEditor value={widgetDebugInfo.globals} readOnly showToolbar={false} />
           </div>
         </div>
 
@@ -74,20 +60,7 @@ function WidgetDebugView({
                 Widget State
               </h4>
               <div className="bg-muted/30 rounded-lg border border-border p-3">
-                <JsonView
-                  src={widgetDebugInfo.widgetState as object}
-                  dark={true}
-                  theme="atom"
-                  enableClipboard={true}
-                  displaySize={false}
-                  style={{
-                    fontSize: "12px",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                    backgroundColor: "transparent",
-                    padding: "0",
-                  }}
-                />
+                <JsonEditor value={widgetDebugInfo.widgetState as object} readOnly showToolbar={false} />
               </div>
             </div>
           )}
@@ -274,23 +247,7 @@ export function ResultsPanel({
               Validation Errors
             </h3>
             <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-              <JsonView
-                src={validationErrors}
-                theme="atom"
-                dark={true}
-                enableClipboard={true}
-                displaySize={false}
-                collapseStringsAfterLength={100}
-                style={{
-                  fontSize: "12px",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                  backgroundColor: "hsl(var(--background))",
-                  padding: "16px",
-                  borderRadius: "8px",
-                  border: "1px solid hsl(var(--border))",
-                }}
-              />
+              <JsonEditor value={validationErrors} readOnly showToolbar={false} />
               {Array.isArray(validationErrors) &&
                 validationErrors.length > 0 && (
                   <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath?.slice(1) ?? ""} ${validationErrors[0].message ?? ""}`}</span>
@@ -300,23 +257,7 @@ export function ResultsPanel({
         ) : showStructured && rawResult && hasOpenAIComponent ? (
           <ScrollArea className="h-full">
             <div className="p-4">
-              <JsonView
-                src={rawResult}
-                dark={true}
-                theme="atom"
-                enableClipboard={true}
-                displaySize={false}
-                collapseStringsAfterLength={100}
-                style={{
-                  fontSize: "12px",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                  backgroundColor: "hsl(var(--background))",
-                  padding: "16px",
-                  borderRadius: "8px",
-                  border: "1px solid hsl(var(--border))",
-                }}
-              />
+              <JsonEditor value={rawResult} readOnly showToolbar={false} />
             </div>
           </ScrollArea>
         ) : showStructured &&
@@ -324,23 +265,7 @@ export function ResultsPanel({
           (validationErrors === null || validationErrors === undefined) ? (
           <ScrollArea className="h-full">
             <div className="p-4">
-              <JsonView
-                src={structuredResult}
-                dark={true}
-                theme="atom"
-                enableClipboard={true}
-                displaySize={false}
-                collapseStringsAfterLength={100}
-                style={{
-                  fontSize: "12px",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                  backgroundColor: "hsl(var(--background))",
-                  padding: "16px",
-                  borderRadius: "8px",
-                  border: "1px solid hsl(var(--border))",
-                }}
-              />
+              <JsonEditor value={structuredResult} readOnly showToolbar={false} />
             </div>
           </ScrollArea>
         ) : rawResult ? (
@@ -498,23 +423,7 @@ export function ResultsPanel({
                       Warning: Output schema provided by the tool is invalid.
                     </Badge>
                   )}
-                  <JsonView
-                    src={rawResult}
-                    dark={true}
-                    theme="atom"
-                    enableClipboard={true}
-                    displaySize={false}
-                    collapseStringsAfterLength={100}
-                    style={{
-                      fontSize: "12px",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                      backgroundColor: "hsl(var(--background))",
-                      padding: "16px",
-                      borderRadius: "8px",
-                      border: "1px solid hsl(var(--border))",
-                    }}
-                  />
+                  <JsonEditor value={rawResult} readOnly showToolbar={false} />
                 </div>
               </ScrollArea>
             );

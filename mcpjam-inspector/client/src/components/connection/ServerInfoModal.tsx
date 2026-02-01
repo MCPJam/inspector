@@ -17,9 +17,7 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 interface ServerInfoModalProps {
@@ -153,23 +151,7 @@ export function ServerInfoModal({
             </button>
             {expandedTokens.has(`${tokenKey}Decoded`) && (
               <div className="mt-1">
-                <JsonView
-                  src={decoded}
-                  theme="atom"
-                  dark={true}
-                  enableClipboard={true}
-                  displaySize={false}
-                  collapseStringsAfterLength={100}
-                  style={{
-                    fontSize: "11px",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                    backgroundColor: "hsl(var(--background))",
-                    padding: "8px",
-                    borderRadius: "6px",
-                    border: "1px solid hsl(var(--border))",
-                  }}
-                />
+                <JsonEditor value={decoded} readOnly showToolbar={false} />
               </div>
             )}
           </div>
