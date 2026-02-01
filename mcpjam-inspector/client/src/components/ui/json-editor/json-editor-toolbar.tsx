@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import type { JsonEditorMode } from "./types";
+import { SegmentedControl } from "./segmented-control";
 
 interface JsonEditorToolbarProps {
   mode: JsonEditorMode;
@@ -36,6 +37,15 @@ interface JsonEditorToolbarProps {
   isValid?: boolean;
   className?: string;
 }
+
+const modeOptions = [
+  { value: "view" as const, label: "View", icon: <Eye className="h-3 w-3" /> },
+  {
+    value: "edit" as const,
+    label: "Edit",
+    icon: <Pencil className="h-3 w-3" />,
+  },
+];
 
 export function JsonEditorToolbar({
   mode,
@@ -71,27 +81,12 @@ export function JsonEditorToolbar({
     >
       {/* Mode toggle */}
       <div className="flex items-center gap-1">
-        {showModeToggle && !readOnly && (
-          <>
-            <Button
-              size="sm"
-              variant={mode === "view" ? "default" : "outline"}
-              onClick={() => onModeChange?.("view")}
-              className="h-7 px-2 text-xs gap-1"
-            >
-              <Eye className="h-3 w-3" />
-              View
-            </Button>
-            <Button
-              size="sm"
-              variant={mode === "edit" ? "default" : "outline"}
-              onClick={() => onModeChange?.("edit")}
-              className="h-7 px-2 text-xs gap-1"
-            >
-              <Pencil className="h-3 w-3" />
-              Edit
-            </Button>
-          </>
+        {showModeToggle && !readOnly && onModeChange && (
+          <SegmentedControl
+            options={modeOptions}
+            value={mode}
+            onChange={onModeChange}
+          />
         )}
       </div>
 
@@ -106,7 +101,7 @@ export function JsonEditorToolbar({
                   variant="ghost"
                   onClick={onUndo}
                   disabled={!canUndo}
-                  className="h-7 w-7 p-0"
+                  className="h-7 w-7 p-0 transition-all duration-200 hover:scale-105"
                 >
                   <Undo2 className="h-3.5 w-3.5" />
                 </Button>
@@ -123,7 +118,7 @@ export function JsonEditorToolbar({
                   variant="ghost"
                   onClick={onRedo}
                   disabled={!canRedo}
-                  className="h-7 w-7 p-0"
+                  className="h-7 w-7 p-0 transition-all duration-200 hover:scale-105"
                 >
                   <Redo2 className="h-3.5 w-3.5" />
                 </Button>
@@ -142,7 +137,7 @@ export function JsonEditorToolbar({
                   variant="ghost"
                   onClick={onFormat}
                   disabled={!isValid}
-                  className="h-7 w-7 p-0"
+                  className="h-7 w-7 p-0 transition-all duration-200 hover:scale-105"
                 >
                   <AlignLeft className="h-3.5 w-3.5" />
                 </Button>
@@ -160,10 +155,13 @@ export function JsonEditorToolbar({
               size="sm"
               variant="ghost"
               onClick={handleCopy}
-              className="h-7 w-7 p-0"
+              className={cn(
+                "h-7 w-7 p-0 transition-all duration-200 hover:scale-105",
+                copied && "bg-success/10",
+              )}
             >
               {copied ? (
-                <Check className="h-3.5 w-3.5 text-green-500" />
+                <Check className="h-3.5 w-3.5 text-success" />
               ) : (
                 <Copy className="h-3.5 w-3.5" />
               )}
@@ -184,7 +182,7 @@ export function JsonEditorToolbar({
                   size="sm"
                   variant="ghost"
                   onClick={onToggleMaximize}
-                  className="h-7 w-7 p-0"
+                  className="h-7 w-7 p-0 transition-all duration-200 hover:scale-105"
                 >
                   {isMaximized ? (
                     <Minimize2 className="h-3.5 w-3.5" />

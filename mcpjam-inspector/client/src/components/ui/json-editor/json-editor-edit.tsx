@@ -1,6 +1,7 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import type { CursorPosition } from "./types";
+import { highlightJson } from "./json-syntax-highlighter";
 
 interface JsonEditorEditProps {
   content: string;
@@ -20,9 +21,7 @@ function getLineNumbers(content: string): number[] {
   return Array.from({ length: lines.length }, (_, i) => i + 1);
 }
 
-function getCursorPosition(
-  textarea: HTMLTextAreaElement,
-): CursorPosition {
+function getCursorPosition(textarea: HTMLTextAreaElement): CursorPosition {
   const text = textarea.value;
   const selectionStart = textarea.selectionStart;
   const textBeforeCursor = text.substring(0, selectionStart);
@@ -46,12 +45,30 @@ export function JsonEditorEdit({
 }: JsonEditorEditProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLPreElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const [isFocused, setIsFocused] = useState(false);
+  const [activeLine, setActiveLine] = useState(1);
+
   const lineNumbers = getLineNumbers(content);
 
-  // Sync scroll between textarea and line numbers
+  // Memoize highlighted content
+  const highlightedContent = useMemo(() => highlightJson(content), [content]);
+
+  // Sync scroll between textarea, line numbers, and highlight overlay
   const handleScroll = useCallback(() => {
-    if (textareaRef.current && lineNumbersRef.current) {
-      lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
+    if (textareaRef.current) {
+      const scrollTop = textareaRef.current.scrollTop;
+      const scrollLeft = textareaRef.current.scrollLeft;
+
+      if (lineNumbersRef.current) {
+        lineNumbersRef.current.scrollTop = scrollTop;
+      }
+      if (highlightRef.current) {
+        highlightRef.current.scrollTop = scrollTop;
+        highlightRef.current.scrollLeft = scrollLeft;
+      }
     }
   }, []);
 
@@ -60,6 +77,7 @@ export function JsonEditorEdit({
     if (textareaRef.current) {
       const position = getCursorPosition(textareaRef.current);
       onCursorChange(position);
+      setActiveLine(position.line);
     }
   }, [onCursorChange]);
 
@@ -182,11 +200,19 @@ export function JsonEditorEdit({
     maxHeight: maxHeight ?? "none",
   };
 
+  const fontStyle: React.CSSProperties = {
+    fontFamily: "var(--font-code)",
+  };
+
   return (
     <div
+      ref={containerRef}
       className={cn(
         "relative flex overflow-hidden rounded-md border bg-muted/30",
+        "transition-all duration-200",
+        isFocused && "ring-2 ring-ring/50",
         !isValid && "border-destructive",
+        !isValid && isFocused && "ring-destructive/30",
         className,
       )}
       style={containerStyle}
@@ -194,40 +220,75 @@ export function JsonEditorEdit({
       {/* Line numbers */}
       <div
         ref={lineNumbersRef}
-        className="flex-shrink-0 overflow-hidden bg-muted/50 text-right select-none"
+        className="flex-shrink-0 overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
         style={{ width: "3rem" }}
       >
-        <div className="py-3 pr-2 text-xs text-muted-foreground font-mono">
+        <div
+          className="py-3 pr-2 text-xs text-muted-foreground leading-5"
+          style={fontStyle}
+        >
           {lineNumbers.map((num) => (
-            <div key={num} className="leading-5 h-5">
+            <div
+              key={num}
+              className={cn(
+                "leading-5 h-5 transition-colors duration-150",
+                num === activeLine &&
+                  isFocused &&
+                  "text-foreground font-medium",
+              )}
+            >
               {num}
             </div>
           ))}
         </div>
       </div>
 
-      {/* Textarea */}
-      <textarea
-        ref={textareaRef}
-        value={content}
-        onChange={(e) => onChange(e.target.value)}
-        onScroll={handleScroll}
-        onSelect={handleSelectionChange}
-        onClick={handleSelectionChange}
-        onKeyDown={handleKeyDown}
-        onKeyUp={handleSelectionChange}
-        spellCheck={false}
-        className={cn(
-          "flex-1 resize-none bg-transparent p-3 text-xs font-mono",
-          "focus:outline-none",
-          "leading-5",
-          "text-foreground placeholder:text-muted-foreground",
+      {/* Editor area with overlay */}
+      <div className="relative flex-1 overflow-hidden">
+        {/* Syntax highlighted overlay (behind textarea) */}
+        <pre
+          ref={highlightRef}
+          className={cn(
+            "absolute inset-0 p-3 text-xs leading-5 whitespace-pre overflow-hidden",
+            "pointer-events-none m-0",
+          )}
+          style={fontStyle}
+          aria-hidden="true"
+          dangerouslySetInnerHTML={{ __html: highlightedContent + "\n" }}
+        />
+
+        {/* Active line highlight */}
+        {isFocused && (
+          <div
+            className="absolute left-0 right-0 h-5 bg-foreground/[0.03] pointer-events-none transition-transform duration-75"
+            style={{
+              transform: `translateY(${(activeLine - 1) * 20 + 12}px)`,
+            }}
+          />
         )}
-        style={{
-          fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-          tabSize: 2,
-        }}
-      />
+
+        {/* Transparent textarea (on top for editing) */}
+        <textarea
+          ref={textareaRef}
+          value={content}
+          onChange={(e) => onChange(e.target.value)}
+          onScroll={handleScroll}
+          onSelect={handleSelectionChange}
+          onClick={handleSelectionChange}
+          onKeyDown={handleKeyDown}
+          onKeyUp={handleSelectionChange}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          spellCheck={false}
+          className={cn(
+            "relative z-10 w-full h-full resize-none bg-transparent p-3 text-xs leading-5",
+            "focus:outline-none",
+            "text-transparent caret-foreground",
+            "selection:bg-primary/20",
+          )}
+          style={{ ...fontStyle, tabSize: 2 }}
+        />
+      </div>
     </div>
   );
 }
