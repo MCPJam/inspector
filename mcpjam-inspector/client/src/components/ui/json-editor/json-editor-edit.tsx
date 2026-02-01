@@ -227,7 +227,7 @@ export function JsonEditorEdit({
     <div
       ref={containerRef}
       className={cn(
-        "group relative flex w-full overflow-hidden rounded-md border bg-muted/30",
+        "group relative flex w-full overflow-hidden bg-muted/30",
         "transition-all duration-200",
         !readOnly && isFocused && "ring-2 ring-ring/50",
         !isValid && "border-destructive",
@@ -270,7 +270,7 @@ export function JsonEditorEdit({
           <pre
             ref={highlightRef}
             className={cn(
-              "p-3 text-xs leading-5 whitespace-pre overflow-auto m-0",
+              "p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto m-0",
               "select-text cursor-text",
             )}
             style={fontStyle}
@@ -284,7 +284,7 @@ export function JsonEditorEdit({
             <pre
               ref={highlightRef}
               className={cn(
-                "absolute inset-0 p-3 text-xs leading-5 whitespace-pre overflow-auto",
+                "absolute inset-0 p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto",
                 "pointer-events-none m-0",
               )}
               style={fontStyle}
@@ -320,7 +320,7 @@ export function JsonEditorEdit({
                 "focus:outline-none",
                 "text-transparent caret-foreground",
                 "selection:bg-primary/20",
-                "overflow-auto",
+                "overflow-auto whitespace-pre-wrap break-all",
               )}
               style={{ ...fontStyle, tabSize: 2 }}
             />
