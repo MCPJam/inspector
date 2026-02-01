@@ -16,7 +16,11 @@ import {
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
-import { useWorkspaceQueries, useWorkspaceMutations } from "./useWorkspaces";
+import {
+  useWorkspaceQueries,
+  useWorkspaceMutations,
+  useWorkspaceServers,
+} from "./useWorkspaces";
 import {
   serializeServersForSharing,
   deserializeServersFromConvex,
@@ -113,10 +117,9 @@ export function useAppState() {
     deleteWorkspace: convexDeleteWorkspace,
   } = useWorkspaceMutations();
 
-  // Track if we've done the initial migration from local to Convex
-  const hasMigratedRef = useRef(false);
   // Track active workspace ID separately for authenticated mode (Convex IDs)
   // Initialize from localStorage synchronously to avoid race conditions with OAuth callback
+  // NOTE: This is defined early so we can use it in useWorkspaceServers
   const [convexActiveWorkspaceId, setConvexActiveWorkspaceId] = useState<
     string | null
   >(() => {
@@ -125,6 +128,16 @@ export function useAppState() {
     }
     return null;
   });
+
+  // Fetch servers from the flat servers table for the active workspace
+  const { servers: activeWorkspaceServersFlat, isLoading: isLoadingServers } =
+    useWorkspaceServers({
+      workspaceId: convexActiveWorkspaceId,
+      isAuthenticated,
+    });
+
+  // Track if we've done the initial migration from local to Convex
+  const hasMigratedRef = useRef(false);
   // Debounce timer for Convex updates
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Fallback to local storage if Convex takes too long or fails
@@ -195,20 +208,37 @@ export function useAppState() {
     };
   }, [isAuthenticated, remoteWorkspaces, useLocalFallback, logger]);
 
-  // Flag indicating we're waiting for Convex workspaces to load
+  // Flag indicating we're waiting for Convex workspaces or servers to load
   // Also true when auth is loading and user was previously authenticated
   const isLoadingRemoteWorkspaces =
-    (isAuthenticated && !useLocalFallback && remoteWorkspaces === undefined) ||
+    (isAuthenticated &&
+      !useLocalFallback &&
+      (remoteWorkspaces === undefined || isLoadingServers)) ||
     (isAuthLoading && !!convexActiveWorkspaceId);
 
   // Convert remote workspaces to local format
+  // Note: Servers are fetched separately from the flat servers table
   const convexWorkspaces = useMemo((): Record<string, Workspace> => {
     if (!remoteWorkspaces) return {};
     return Object.fromEntries(
       remoteWorkspaces.map((rw) => {
-        const deserializedServers = deserializeServersFromConvex(
-          rw.servers || {},
-        );
+        // For the active workspace, use servers from the flat servers table
+        // For other workspaces, use empty servers (they'll be populated when switched to)
+        let deserializedServers: Record<string, ServerWithName> = {};
+
+        if (
+          rw._id === convexActiveWorkspaceId &&
+          activeWorkspaceServersFlat !== undefined
+        ) {
+          // Use flat servers from the servers table
+          deserializedServers = deserializeServersFromConvex(
+            activeWorkspaceServersFlat,
+          );
+        } else if (rw.servers) {
+          // Fallback to legacy nested servers if available (for non-active workspaces)
+          deserializedServers = deserializeServersFromConvex(rw.servers);
+        }
+
         return [
           rw._id,
           {
@@ -223,7 +253,7 @@ export function useAppState() {
         ];
       }),
     );
-  }, [remoteWorkspaces]);
+  }, [remoteWorkspaces, convexActiveWorkspaceId, activeWorkspaceServersFlat]);
 
   // Derive effective workspaces based on auth state
   // When authenticated: use Convex as source of truth (unless fallback is active)
