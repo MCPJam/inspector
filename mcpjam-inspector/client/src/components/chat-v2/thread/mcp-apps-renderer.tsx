@@ -239,7 +239,6 @@ export function MCPAppsRenderer({
   const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
 
-
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
   const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>(
