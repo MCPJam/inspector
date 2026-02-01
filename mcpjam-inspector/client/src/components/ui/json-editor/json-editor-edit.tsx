@@ -2,15 +2,17 @@ import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import type { CursorPosition } from "./types";
 import { highlightJson } from "./json-syntax-highlighter";
+import { JsonHighlighter } from "./json-highlighter";
 
 interface JsonEditorEditProps {
   content: string;
-  onChange: (content: string) => void;
-  onCursorChange: (position: CursorPosition) => void;
-  onUndo: () => void;
-  onRedo: () => void;
+  onChange?: (content: string) => void;
+  onCursorChange?: (position: CursorPosition) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
   onEscape?: () => void;
-  isValid: boolean;
+  isValid?: boolean;
+  readOnly?: boolean;
   className?: string;
   height?: string | number;
   maxHeight?: string | number;
@@ -38,7 +40,8 @@ export function JsonEditorEdit({
   onUndo,
   onRedo,
   onEscape,
-  isValid,
+  isValid = true,
+  readOnly = false,
   className,
   height,
   maxHeight,
@@ -53,8 +56,11 @@ export function JsonEditorEdit({
 
   const lineNumbers = getLineNumbers(content);
 
-  // Memoize highlighted content
-  const highlightedContent = useMemo(() => highlightJson(content), [content]);
+  // Memoize highlighted content (only for edit mode)
+  const highlightedContent = useMemo(
+    () => (readOnly ? "" : highlightJson(content)),
+    [content, readOnly]
+  );
 
   // Sync scroll between textarea, line numbers, and highlight overlay
   const handleScroll = useCallback(() => {
@@ -74,7 +80,7 @@ export function JsonEditorEdit({
 
   // Update cursor position on selection change
   const handleSelectionChange = useCallback(() => {
-    if (textareaRef.current) {
+    if (textareaRef.current && onCursorChange) {
       const position = getCursorPosition(textareaRef.current);
       onCursorChange(position);
       setActiveLine(position.line);
@@ -90,7 +96,7 @@ export function JsonEditorEdit({
       // Undo: Ctrl/Cmd + Z
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
-        onUndo();
+        onUndo?.();
         return;
       }
 
@@ -100,7 +106,7 @@ export function JsonEditorEdit({
         (e.ctrlKey && e.key === "y")
       ) {
         e.preventDefault();
-        onRedo();
+        onRedo?.();
         return;
       }
 
@@ -125,7 +131,7 @@ export function JsonEditorEdit({
             const newValue =
               value.substring(0, lineStart) +
               value.substring(lineStart + indent.length);
-            onChange(newValue);
+            onChange?.(newValue);
 
             // Restore cursor position
             requestAnimationFrame(() => {
@@ -139,7 +145,7 @@ export function JsonEditorEdit({
             value.substring(0, selectionStart) +
             indent +
             value.substring(selectionEnd);
-          onChange(newValue);
+          onChange?.(newValue);
 
           // Move cursor after indent
           requestAnimationFrame(() => {
@@ -179,7 +185,7 @@ export function JsonEditorEdit({
           value.substring(0, selectionStart) +
           insertion +
           value.substring(selectionEnd);
-        onChange(newValue);
+        onChange?.(newValue);
 
         requestAnimationFrame(() => {
           textarea.selectionStart = textarea.selectionEnd =
@@ -190,10 +196,12 @@ export function JsonEditorEdit({
     [onChange, onUndo, onRedo, onEscape],
   );
 
-  // Focus textarea on mount
+  // Focus textarea on mount (only in edit mode)
   useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
+    if (!readOnly) {
+      textareaRef.current?.focus();
+    }
+  }, [readOnly]);
 
   const containerStyle: React.CSSProperties = {
     height: height ?? "auto",
@@ -204,15 +212,26 @@ export function JsonEditorEdit({
     fontFamily: "var(--font-code)",
   };
 
+  // Sync scroll for read-only mode (sync line numbers with content)
+  const handleReadOnlyScroll = useCallback(
+    (e: React.UIEvent<HTMLPreElement>) => {
+      const scrollTop = e.currentTarget.scrollTop;
+      if (lineNumbersRef.current) {
+        lineNumbersRef.current.scrollTop = scrollTop;
+      }
+    },
+    [],
+  );
+
   return (
     <div
       ref={containerRef}
       className={cn(
-        "relative flex overflow-hidden rounded-md border bg-muted/30",
+        "group relative flex w-full overflow-hidden rounded-md border bg-muted/30",
         "transition-all duration-200",
-        isFocused && "ring-2 ring-ring/50",
+        !readOnly && isFocused && "ring-2 ring-ring/50",
         !isValid && "border-destructive",
-        !isValid && isFocused && "ring-destructive/30",
+        !isValid && !readOnly && isFocused && "ring-destructive/30",
         className,
       )}
       style={containerStyle}
@@ -232,7 +251,8 @@ export function JsonEditorEdit({
               key={num}
               className={cn(
                 "leading-5 h-5 transition-colors duration-150",
-                num === activeLine &&
+                !readOnly &&
+                  num === activeLine &&
                   isFocused &&
                   "text-foreground font-medium",
               )}
@@ -244,51 +264,68 @@ export function JsonEditorEdit({
       </div>
 
       {/* Editor area with overlay */}
-      <div className="relative flex-1 overflow-hidden">
-        {/* Syntax highlighted overlay (behind textarea) */}
-        <pre
-          ref={highlightRef}
-          className={cn(
-            "absolute inset-0 p-3 text-xs leading-5 whitespace-pre overflow-hidden",
-            "pointer-events-none m-0",
-          )}
-          style={fontStyle}
-          aria-hidden="true"
-          dangerouslySetInnerHTML={{ __html: highlightedContent + "\n" }}
-        />
+      <div className="relative flex-1 min-w-0 overflow-auto">
+        {readOnly ? (
+          /* Read-only mode: Use JsonHighlighter with per-value copy */
+          <pre
+            ref={highlightRef}
+            className={cn(
+              "p-3 text-xs leading-5 whitespace-pre overflow-auto m-0",
+              "select-text cursor-text",
+            )}
+            style={fontStyle}
+            onScroll={handleReadOnlyScroll}
+          >
+            <JsonHighlighter content={content} />
+          </pre>
+        ) : (
+          <>
+            {/* Syntax highlighted overlay (behind textarea) */}
+            <pre
+              ref={highlightRef}
+              className={cn(
+                "absolute inset-0 p-3 text-xs leading-5 whitespace-pre overflow-auto",
+                "pointer-events-none m-0",
+              )}
+              style={fontStyle}
+              aria-hidden="true"
+              dangerouslySetInnerHTML={{ __html: highlightedContent + "\n" }}
+            />
 
-        {/* Active line highlight */}
-        {isFocused && (
-          <div
-            className="absolute left-0 right-0 h-5 bg-foreground/[0.03] pointer-events-none transition-transform duration-75"
-            style={{
-              transform: `translateY(${(activeLine - 1) * 20 + 12}px)`,
-            }}
-          />
+            {/* Active line highlight (only in edit mode) */}
+            {isFocused && (
+              <div
+                className="absolute left-0 right-0 h-5 bg-foreground/[0.03] pointer-events-none transition-transform duration-75"
+                style={{
+                  transform: `translateY(${(activeLine - 1) * 20 + 12}px)`,
+                }}
+              />
+            )}
+
+            {/* Transparent textarea (on top for editing) */}
+            <textarea
+              ref={textareaRef}
+              value={content}
+              onChange={(e) => onChange?.(e.target.value)}
+              onScroll={handleScroll}
+              onSelect={handleSelectionChange}
+              onClick={handleSelectionChange}
+              onKeyDown={handleKeyDown}
+              onKeyUp={handleSelectionChange}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
+              spellCheck={false}
+              className={cn(
+                "absolute inset-0 z-10 w-full h-full resize-none bg-transparent p-3 text-xs leading-5",
+                "focus:outline-none",
+                "text-transparent caret-foreground",
+                "selection:bg-primary/20",
+                "overflow-auto",
+              )}
+              style={{ ...fontStyle, tabSize: 2 }}
+            />
+          </>
         )}
-
-        {/* Transparent textarea (on top for editing) */}
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={(e) => onChange(e.target.value)}
-          onScroll={handleScroll}
-          onSelect={handleSelectionChange}
-          onClick={handleSelectionChange}
-          onKeyDown={handleKeyDown}
-          onKeyUp={handleSelectionChange}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          spellCheck={false}
-          className={cn(
-            "absolute inset-0 z-10 w-full h-full resize-none bg-transparent p-3 text-xs leading-5",
-            "focus:outline-none",
-            "text-transparent caret-foreground",
-            "selection:bg-primary/20",
-            "overflow-auto",
-          )}
-          style={{ ...fontStyle, tabSize: 2 }}
-        />
       </div>
     </div>
   );

@@ -1,39 +1,38 @@
-import { useTheme } from "next-themes";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import { cn } from "@/lib/utils";
+import { useMemo } from "react";
+import { JsonEditorEdit } from "./json-editor-edit";
 
 interface JsonEditorViewProps {
   value: unknown;
   className?: string;
+  height?: string | number;
+  maxHeight?: string | number;
 }
 
-export function JsonEditorView({ value, className }: JsonEditorViewProps) {
-  const { resolvedTheme } = useTheme();
-  const isDark = resolvedTheme === "dark";
-
-  // Handle primitive and null values
-  const displayValue =
-    value === null || value === undefined
-      ? {}
-      : typeof value === "object"
-        ? value
-        : { value };
+export function JsonEditorView({
+  value,
+  className,
+  height,
+  maxHeight,
+}: JsonEditorViewProps) {
+  // Convert value to formatted JSON string
+  const content = useMemo(() => {
+    if (value === null || value === undefined) {
+      return "null";
+    }
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }, [value]);
 
   return (
-    <div className={cn("p-4 text-xs", className)} style={{ fontFamily: "var(--font-code)" }}>
-      <JsonView
-        src={displayValue as object}
-        dark={isDark}
-        theme="atom"
-        enableClipboard={true}
-        displaySize={false}
-        collapseStringsAfterLength={100}
-        style={{
-          backgroundColor: "transparent",
-          padding: "0",
-        }}
-      />
-    </div>
+    <JsonEditorEdit
+      content={content}
+      readOnly
+      className={className}
+      height={height}
+      maxHeight={maxHeight}
+    />
   );
 }
