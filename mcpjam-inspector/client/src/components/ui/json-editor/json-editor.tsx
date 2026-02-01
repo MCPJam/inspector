@@ -11,6 +11,8 @@ import type { JsonEditorProps, JsonEditorMode } from "./types";
 export function JsonEditor({
   value,
   onChange,
+  rawContent,
+  onRawChange,
   mode: controlledMode,
   onModeChange,
   readOnly = false,
@@ -22,6 +24,8 @@ export function JsonEditor({
   className,
   onValidationError,
 }: JsonEditorProps) {
+  // Determine if we're in raw mode (string content) vs parsed mode
+  const isRawMode = rawContent !== undefined;
   // Mode state (controlled or uncontrolled)
   const [internalMode, setInternalMode] = useState<JsonEditorMode>("view");
   const mode = controlledMode ?? internalMode;
@@ -32,11 +36,18 @@ export function JsonEditor({
 
   // Editor hook for edit mode
   const editor = useJsonEditor({
-    initialValue: value,
+    initialValue: isRawMode ? undefined : value,
+    initialContent: isRawMode ? rawContent : undefined,
     onChange: (newValue) => {
       setHasUnsavedChanges(true);
       onChange?.(newValue);
     },
+    onRawChange: isRawMode
+      ? (content) => {
+          setHasUnsavedChanges(true);
+          onRawChange?.(content);
+        }
+      : undefined,
     onValidationError,
   });
 
@@ -68,10 +79,16 @@ export function JsonEditor({
   );
 
   const handleCopy = useCallback(() => {
-    const textToCopy =
-      mode === "edit" ? editor.content : JSON.stringify(value, null, 2);
+    let textToCopy: string;
+    if (mode === "edit") {
+      textToCopy = editor.content;
+    } else if (isRawMode) {
+      textToCopy = rawContent ?? "";
+    } else {
+      textToCopy = JSON.stringify(value, null, 2);
+    }
     navigator.clipboard.writeText(textToCopy);
-  }, [mode, editor.content, value]);
+  }, [mode, editor.content, value, isRawMode, rawContent]);
 
   const handleEscape = useCallback(() => {
     if (hasUnsavedChanges) {
@@ -133,10 +150,10 @@ export function JsonEditor({
       )}
 
       {/* Content area */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0">
         {mode === "view" ? (
           <ScrollArea className="h-full">
-            <JsonEditorView value={value} />
+            <JsonEditorView value={isRawMode ? editor.getParsedValue() : value} />
           </ScrollArea>
         ) : (
           <JsonEditorEdit
@@ -147,7 +164,7 @@ export function JsonEditor({
             onRedo={editor.redo}
             onEscape={handleEscape}
             isValid={editor.isValid}
-            height={isMaximized ? "100%" : height}
+            height="100%"
             maxHeight={isMaximized ? undefined : maxHeight}
           />
         )}

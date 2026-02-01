@@ -1,8 +1,14 @@
 export type JsonEditorMode = "view" | "edit";
 
 export interface JsonEditorProps {
-  value: unknown;
+  // Parsed value mode (default)
+  value?: unknown;
   onChange?: (value: unknown) => void;
+
+  // Raw string mode (for edit-only use cases like import)
+  rawContent?: string;
+  onRawChange?: (content: string) => void;
+
   mode?: JsonEditorMode;
   onModeChange?: (mode: JsonEditorMode) => void;
   readOnly?: boolean;
@@ -21,8 +27,10 @@ export interface CursorPosition {
 }
 
 export interface UseJsonEditorOptions {
-  initialValue: unknown;
+  initialValue?: unknown;
+  initialContent?: string;
   onChange?: (value: unknown) => void;
+  onRawChange?: (content: string) => void;
   onValidationError?: (error: string | null) => void;
 }
 

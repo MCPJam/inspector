@@ -32,10 +32,16 @@ function parseJson(content: string): { value: unknown; error: string | null } {
 
 export function useJsonEditor({
   initialValue,
+  initialContent: initialContentProp,
   onChange,
+  onRawChange,
   onValidationError,
 }: UseJsonEditorOptions): UseJsonEditorReturn {
-  const initialContent = stringifyValue(initialValue);
+  // Use raw content if provided, otherwise stringify the value
+  const initialContent =
+    initialContentProp !== undefined
+      ? initialContentProp
+      : stringifyValue(initialValue);
   const [content, setContentInternal] = useState(initialContent);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [cursorPosition, setCursorPosition] = useState<CursorPosition>({
@@ -50,18 +56,24 @@ export function useJsonEditor({
   const historyIndexRef = useRef(0);
   const isUndoRedoRef = useRef(false);
 
-  // Sync initial value when it changes externally
+  // Sync initial value/content when it changes externally
   useEffect(() => {
-    const newContent = stringifyValue(initialValue);
+    const newContent =
+      initialContentProp !== undefined
+        ? initialContentProp
+        : stringifyValue(initialValue);
     if (newContent !== content && !isUndoRedoRef.current) {
       setContentInternal(newContent);
       historyRef.current = [
         { content: newContent, cursorPosition: { line: 1, column: 1 } },
       ];
       historyIndexRef.current = 0;
-      setValidationError(null);
+      // Validate the new content
+      const { error } = parseJson(newContent);
+      setValidationError(error);
+      onValidationError?.(error);
     }
-  }, [initialValue]);
+  }, [initialValue, initialContentProp]);
 
   const validate = useCallback(
     (text: string): boolean => {
@@ -79,6 +91,7 @@ export function useJsonEditor({
         isUndoRedoRef.current = false;
         setContentInternal(newContent);
         validate(newContent);
+        onRawChange?.(newContent);
         return;
       }
 
@@ -104,13 +117,16 @@ export function useJsonEditor({
 
       historyIndexRef.current = historyRef.current.length - 1;
 
-      // Notify parent of valid changes
+      // Notify parent of raw content changes
+      onRawChange?.(newContent);
+
+      // Notify parent of valid parsed value changes
       const { value, error } = parseJson(newContent);
       if (error === null && onChange) {
         onChange(value);
       }
     },
-    [cursorPosition, validate, onChange],
+    [cursorPosition, validate, onChange, onRawChange],
   );
 
   const undo = useCallback(() => {

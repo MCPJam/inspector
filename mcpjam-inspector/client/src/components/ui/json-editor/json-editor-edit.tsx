@@ -281,10 +281,11 @@ export function JsonEditorEdit({
           onBlur={() => setIsFocused(false)}
           spellCheck={false}
           className={cn(
-            "relative z-10 w-full h-full resize-none bg-transparent p-3 text-xs leading-5",
+            "absolute inset-0 z-10 w-full h-full resize-none bg-transparent p-3 text-xs leading-5",
             "focus:outline-none",
             "text-transparent caret-foreground",
             "selection:bg-primary/20",
+            "overflow-auto",
           )}
           style={{ ...fontStyle, tabSize: 2 }}
         />
