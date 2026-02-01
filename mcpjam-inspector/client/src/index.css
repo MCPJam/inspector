@@ -76,12 +76,13 @@
   --font-code: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
     Consolas, "Liberation Mono", "Courier New", monospace;
   /* JSON syntax highlighting colors (light mode) */
-  --json-string: oklch(0.45 0.15 145);
-  --json-number: oklch(0.55 0.18 250);
-  --json-boolean: oklch(0.65 0.18 50);
-  --json-null: oklch(0.55 0.02 270);
-  --json-key: var(--foreground);
-  --json-punctuation: oklch(0.5 0.02 270);
+  --json-key: oklch(0.5 0.18 250);           /* Blue for keys */
+  --json-string: oklch(0.45 0.12 160);       /* Muted teal */
+  --json-number: oklch(0.5 0.12 290);        /* Muted purple */
+  --json-boolean: oklch(0.5 0.16 145);       /* Green (for true) */
+  --json-boolean-false: oklch(0.55 0.18 25); /* Red/coral (for false) */
+  --json-null: oklch(0.55 0.02 270);         /* Gray */
+  --json-punctuation: oklch(0.65 0.01 270);  /* Light gray */
   --radius: 0.5rem;
   --shadow-x: 0;
   --shadow-y: 1px;
@@ -109,12 +110,13 @@
   --background: oklch(0.2679 0.0036 106.6427);
   --foreground: oklch(0.8074 0.0142 93.0137);
   /* JSON syntax highlighting colors (dark mode) */
-  --json-string: oklch(0.72 0.15 145);
-  --json-number: oklch(0.75 0.18 250);
-  --json-boolean: oklch(0.78 0.15 50);
-  --json-null: oklch(0.65 0.02 270);
-  --json-key: var(--foreground);
-  --json-punctuation: oklch(0.6 0.02 270);
+  --json-key: oklch(0.7 0.16 250);           /* Blue for keys */
+  --json-string: oklch(0.65 0.12 160);       /* Muted teal */
+  --json-number: oklch(0.7 0.12 290);        /* Muted purple */
+  --json-boolean: oklch(0.65 0.14 145);      /* Green (for true) */
+  --json-boolean-false: oklch(0.7 0.16 25);  /* Red/coral (for false) */
+  --json-null: oklch(0.6 0.02 270);          /* Gray */
+  --json-punctuation: oklch(0.55 0.01 270);  /* Light gray */
   --card: oklch(0.2679 0.0036 106.6427);
   --card-foreground: oklch(0.9818 0.0054 95.0986);
   --popover: oklch(0.3085 0.0035 106.6039);
@@ -368,6 +370,10 @@
 
 .json-boolean {
   color: var(--json-boolean);
+}
+
+.json-boolean-false {
+  color: var(--json-boolean-false);
 }
 
 .json-null {

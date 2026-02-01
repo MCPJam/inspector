@@ -2,6 +2,7 @@ type TokenType =
   | "string"
   | "number"
   | "boolean"
+  | "boolean-false"
   | "null"
   | "key"
   | "punctuation";
@@ -155,8 +156,10 @@ export function tokenizeJson(json: string): Token[] {
       case "t":
       case "f": {
         const value = readWord();
-        if (value === "true" || value === "false") {
+        if (value === "true") {
           tokens.push({ type: "boolean", value, start, end: i });
+        } else if (value === "false") {
+          tokens.push({ type: "boolean-false", value, start, end: i });
         }
         expectingKey = false;
         break;
