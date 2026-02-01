@@ -1,0 +1,167 @@
+import { useState, useCallback, useEffect } from "react";
+import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useJsonEditor } from "./use-json-editor";
+import { JsonEditorView } from "./json-editor-view";
+import { JsonEditorEdit } from "./json-editor-edit";
+import { JsonEditorToolbar } from "./json-editor-toolbar";
+import { JsonEditorStatusBar } from "./json-editor-status-bar";
+import type { JsonEditorProps, JsonEditorMode } from "./types";
+
+export function JsonEditor({
+  value,
+  onChange,
+  mode: controlledMode,
+  onModeChange,
+  readOnly = false,
+  showModeToggle = true,
+  showToolbar = true,
+  allowMaximize = false,
+  height,
+  maxHeight,
+  className,
+  onValidationError,
+}: JsonEditorProps) {
+  // Mode state (controlled or uncontrolled)
+  const [internalMode, setInternalMode] = useState<JsonEditorMode>("view");
+  const mode = controlledMode ?? internalMode;
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  // Track if there are unsaved changes
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+
+  // Editor hook for edit mode
+  const editor = useJsonEditor({
+    initialValue: value,
+    onChange: (newValue) => {
+      setHasUnsavedChanges(true);
+      onChange?.(newValue);
+    },
+    onValidationError,
+  });
+
+  // Sync editor content when value changes externally
+  useEffect(() => {
+    if (mode === "view") {
+      setHasUnsavedChanges(false);
+    }
+  }, [value, mode]);
+
+  const handleModeChange = useCallback(
+    (newMode: JsonEditorMode) => {
+      // Warn before switching from edit to view if there are unsaved changes
+      if (mode === "edit" && newMode === "view" && hasUnsavedChanges) {
+        if (!editor.isValid) {
+          const confirmed = window.confirm(
+            "The JSON is invalid. Switching to view mode will lose your changes. Continue?",
+          );
+          if (!confirmed) return;
+          editor.reset();
+        }
+      }
+
+      setHasUnsavedChanges(false);
+      setInternalMode(newMode);
+      onModeChange?.(newMode);
+    },
+    [mode, hasUnsavedChanges, editor, onModeChange],
+  );
+
+  const handleCopy = useCallback(() => {
+    const textToCopy =
+      mode === "edit" ? editor.content : JSON.stringify(value, null, 2);
+    navigator.clipboard.writeText(textToCopy);
+  }, [mode, editor.content, value]);
+
+  const handleEscape = useCallback(() => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm(
+        "You have unsaved changes. Discard them?",
+      );
+      if (!confirmed) return;
+    }
+    editor.reset();
+    handleModeChange("view");
+  }, [hasUnsavedChanges, editor, handleModeChange]);
+
+  const toggleMaximize = useCallback(() => {
+    setIsMaximized((prev) => !prev);
+  }, []);
+
+  // Calculate container styles
+  const containerStyle: React.CSSProperties = isMaximized
+    ? {
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 50,
+      }
+    : {
+        height: height ?? "auto",
+        maxHeight: maxHeight ?? "none",
+      };
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col rounded-lg border border-border bg-background overflow-hidden",
+        isMaximized && "rounded-none",
+        className,
+      )}
+      style={containerStyle}
+    >
+      {/* Toolbar */}
+      {showToolbar && (
+        <JsonEditorToolbar
+          mode={mode}
+          onModeChange={handleModeChange}
+          showModeToggle={showModeToggle && !readOnly}
+          readOnly={readOnly}
+          onFormat={editor.format}
+          onCopy={handleCopy}
+          onUndo={editor.undo}
+          onRedo={editor.redo}
+          canUndo={editor.canUndo}
+          canRedo={editor.canRedo}
+          isMaximized={isMaximized}
+          onToggleMaximize={toggleMaximize}
+          allowMaximize={allowMaximize}
+          isValid={editor.isValid}
+        />
+      )}
+
+      {/* Content area */}
+      <div className="flex-1 overflow-hidden">
+        {mode === "view" ? (
+          <ScrollArea className="h-full">
+            <JsonEditorView value={value} />
+          </ScrollArea>
+        ) : (
+          <JsonEditorEdit
+            content={editor.content}
+            onChange={editor.setContent}
+            onCursorChange={editor.setCursorPosition}
+            onUndo={editor.undo}
+            onRedo={editor.redo}
+            onEscape={handleEscape}
+            isValid={editor.isValid}
+            height={isMaximized ? "100%" : height}
+            maxHeight={isMaximized ? undefined : maxHeight}
+          />
+        )}
+      </div>
+
+      {/* Status bar (only in edit mode) */}
+      {mode === "edit" && (
+        <JsonEditorStatusBar
+          cursorPosition={editor.cursorPosition}
+          isValid={editor.isValid}
+          validationError={editor.validationError}
+          characterCount={editor.content.length}
+        />
+      )}
+    </div>
+  );
+}
