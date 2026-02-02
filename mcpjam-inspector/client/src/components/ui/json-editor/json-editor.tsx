@@ -30,26 +30,11 @@ export function JsonEditor({
   collapseStringsAfterLength,
   viewOnly = false,
 }: JsonEditorProps) {
-  // Lightweight render path for view-only mode
-  if (viewOnly) {
-    return (
-      <JsonEditorView
-        value={value}
-        className={className}
-        height={height}
-        maxHeight={maxHeight}
-        collapsible={collapsible}
-        defaultExpandDepth={defaultExpandDepth}
-        collapsedPaths={collapsedPaths}
-        onCollapseChange={onCollapseChange}
-        collapseStringsAfterLength={collapseStringsAfterLength}
-      />
-    );
-  }
-
   // Determine if we're in raw mode (string content) vs parsed mode
   const isRawMode = rawContent !== undefined;
+
   // Mode state (controlled or uncontrolled)
+  // Always call hooks to preserve hook order even in viewOnly mode
   const [internalMode, setInternalMode] = useState<JsonEditorMode>("view");
   const mode = controlledMode ?? internalMode;
   const [isMaximized, setIsMaximized] = useState(false);
@@ -74,12 +59,12 @@ export function JsonEditor({
     onValidationError,
   });
 
-  // Sync editor content when value changes externally
+  // Sync editor content when value/rawContent changes externally
   useEffect(() => {
     if (mode === "view") {
       setHasUnsavedChanges(false);
     }
-  }, [value, mode]);
+  }, [value, rawContent, mode]);
 
   const handleModeChange = useCallback(
     (newMode: JsonEditorMode) => {
@@ -127,6 +112,23 @@ export function JsonEditor({
   const toggleMaximize = useCallback(() => {
     setIsMaximized((prev) => !prev);
   }, []);
+
+  // Lightweight render path for view-only mode (after all hooks to preserve hook order)
+  if (viewOnly) {
+    return (
+      <JsonEditorView
+        value={value}
+        className={className}
+        height={height}
+        maxHeight={maxHeight}
+        collapsible={collapsible}
+        defaultExpandDepth={defaultExpandDepth}
+        collapsedPaths={collapsedPaths}
+        onCollapseChange={onCollapseChange}
+        collapseStringsAfterLength={collapseStringsAfterLength}
+      />
+    );
+  }
 
   // Calculate container styles
   const containerStyle: React.CSSProperties = isMaximized
