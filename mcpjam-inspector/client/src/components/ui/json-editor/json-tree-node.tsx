@@ -175,7 +175,9 @@ export function JsonTreeNode({
       return (
         <div className="leading-5" style={{ paddingLeft: indent }}>
           {renderKeyPrefix()}
-          <span className="json-punctuation">[]</span>
+          <CopyableValue value="[]" onCopy={onCopy}>
+            <span className="json-punctuation">[]</span>
+          </CopyableValue>
           {renderComma()}
         </div>
       );
@@ -197,11 +199,13 @@ export function JsonTreeNode({
             <ChevronRight className="h-3 w-3" />
           </button>
           {renderKeyPrefix()}
-          <span className="json-punctuation">[</span>
-          <span className="text-muted-foreground text-xs px-1">
-            {value.length} {value.length === 1 ? "item" : "items"}
-          </span>
-          <span className="json-punctuation">]</span>
+          <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+            <span className="json-punctuation">[</span>
+            <span className="text-muted-foreground text-xs px-1">
+              {value.length} {value.length === 1 ? "item" : "items"}
+            </span>
+            <span className="json-punctuation">]</span>
+          </CopyableValue>
           {renderComma()}
         </div>
       );
@@ -218,7 +222,9 @@ export function JsonTreeNode({
             <ChevronRight className="h-3 w-3" />
           </button>
           {renderKeyPrefix()}
-          <span className="json-punctuation">[</span>
+          <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+            <span className="json-punctuation">[</span>
+          </CopyableValue>
         </div>
         {value.map((item, index) => (
           <JsonTreeNode
@@ -249,7 +255,9 @@ export function JsonTreeNode({
       return (
         <div className="leading-5" style={{ paddingLeft: indent }}>
           {renderKeyPrefix()}
-          <span className="json-punctuation">{"{}"}</span>
+          <CopyableValue value="{}" onCopy={onCopy}>
+            <span className="json-punctuation">{"{}"}</span>
+          </CopyableValue>
           {renderComma()}
         </div>
       );
@@ -271,11 +279,13 @@ export function JsonTreeNode({
             <ChevronRight className="h-3 w-3" />
           </button>
           {renderKeyPrefix()}
-          <span className="json-punctuation">{"{"}</span>
-          <span className="text-muted-foreground text-xs px-1">
-            {entries.length} {entries.length === 1 ? "key" : "keys"}
-          </span>
-          <span className="json-punctuation">{"}"}</span>
+          <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+            <span className="json-punctuation">{"{"}</span>
+            <span className="text-muted-foreground text-xs px-1">
+              {entries.length} {entries.length === 1 ? "key" : "keys"}
+            </span>
+            <span className="json-punctuation">{"}"}</span>
+          </CopyableValue>
           {renderComma()}
         </div>
       );
@@ -292,7 +302,9 @@ export function JsonTreeNode({
             <ChevronRight className="h-3 w-3" />
           </button>
           {renderKeyPrefix()}
-          <span className="json-punctuation">{"{"}</span>
+          <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+            <span className="json-punctuation">{"{"}</span>
+          </CopyableValue>
         </div>
         {entries.map(([key, val], index) => (
           <JsonTreeNode

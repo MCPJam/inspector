@@ -12,6 +12,20 @@ interface Token {
   value: string;
   start: number;
   end: number;
+  path?: (string | number)[]; // e.g., ["user", "profile", 0]
+  keyName?: string; // The key this value belongs to
+}
+
+/**
+ * Formats a path array into a string with dot notation and bracket notation for arrays.
+ * e.g., ["user", "profile", 0, "name"] -> "user.profile[0].name"
+ */
+export function formatPath(path: (string | number)[]): string {
+  return path
+    .map((p, i) =>
+      typeof p === "number" ? `[${p}]` : i === 0 ? p : `.${p}`
+    )
+    .join("");
 }
 
 /**
@@ -70,6 +84,10 @@ export function tokenizeJson(json: string): Token[] {
   const contextStack: ("object" | "array")[] = [];
   let expectingKey = false;
 
+  // Path tracking
+  const pathStack: (string | number)[] = [];
+  let currentKey: string | null = null;
+
   while (i < json.length) {
     skipWhitespace();
     if (i >= json.length) break;
@@ -82,12 +100,21 @@ export function tokenizeJson(json: string): Token[] {
         tokens.push({ type: "punctuation", value: "{", start, end: i + 1 });
         contextStack.push("object");
         expectingKey = true;
+        // If we have a current key, it's now part of the path
+        if (currentKey !== null) {
+          pathStack.push(currentKey);
+          currentKey = null;
+        }
         i++;
         break;
 
       case "}":
         tokens.push({ type: "punctuation", value: "}", start, end: i + 1 });
         contextStack.pop();
+        // Pop the object key from path if we're closing an object
+        if (pathStack.length > 0 && typeof pathStack[pathStack.length - 1] === "string") {
+          pathStack.pop();
+        }
         expectingKey = false;
         i++;
         break;
@@ -95,6 +122,13 @@ export function tokenizeJson(json: string): Token[] {
       case "[":
         tokens.push({ type: "punctuation", value: "[", start, end: i + 1 });
         contextStack.push("array");
+        // If we have a current key, it's now part of the path
+        if (currentKey !== null) {
+          pathStack.push(currentKey);
+          currentKey = null;
+        }
+        // Push array index 0
+        pathStack.push(0);
         expectingKey = false;
         i++;
         break;
@@ -102,6 +136,14 @@ export function tokenizeJson(json: string): Token[] {
       case "]":
         tokens.push({ type: "punctuation", value: "]", start, end: i + 1 });
         contextStack.pop();
+        // Pop the array index
+        if (pathStack.length > 0 && typeof pathStack[pathStack.length - 1] === "number") {
+          pathStack.pop();
+        }
+        // Pop the key that held the array if any
+        if (pathStack.length > 0 && typeof pathStack[pathStack.length - 1] === "string") {
+          pathStack.pop();
+        }
         expectingKey = false;
         i++;
         break;
@@ -118,6 +160,16 @@ export function tokenizeJson(json: string): Token[] {
         expectingKey =
           contextStack.length > 0 &&
           contextStack[contextStack.length - 1] === "object";
+        // In array context, increment the index
+        if (
+          contextStack.length > 0 &&
+          contextStack[contextStack.length - 1] === "array" &&
+          pathStack.length > 0 &&
+          typeof pathStack[pathStack.length - 1] === "number"
+        ) {
+          pathStack[pathStack.length - 1] =
+            (pathStack[pathStack.length - 1] as number) + 1;
+        }
         i++;
         break;
 
@@ -127,12 +179,41 @@ export function tokenizeJson(json: string): Token[] {
           expectingKey &&
           contextStack.length > 0 &&
           contextStack[contextStack.length - 1] === "object";
-        tokens.push({
-          type: isKey ? "key" : "string",
-          value,
-          start,
-          end: i,
-        });
+
+        if (isKey) {
+          // Parse the key name (remove quotes)
+          let keyName: string;
+          try {
+            keyName = JSON.parse(value);
+          } catch {
+            keyName = value.slice(1, -1);
+          }
+          // Store the key for the upcoming value
+          currentKey = keyName;
+          // For key tokens, the path is the current path + this key
+          tokens.push({
+            type: "key",
+            value,
+            start,
+            end: i,
+            path: [...pathStack, keyName],
+            keyName,
+          });
+        } else {
+          // String value - store current path and key info
+          const valuePath = currentKey !== null
+            ? [...pathStack, currentKey]
+            : [...pathStack];
+          tokens.push({
+            type: "string",
+            value,
+            start,
+            end: i,
+            path: valuePath,
+            keyName: currentKey ?? undefined,
+          });
+          currentKey = null;
+        }
         break;
       }
 
@@ -148,7 +229,18 @@ export function tokenizeJson(json: string): Token[] {
       case "8":
       case "9": {
         const value = readNumber();
-        tokens.push({ type: "number", value, start, end: i });
+        const valuePath = currentKey !== null
+          ? [...pathStack, currentKey]
+          : [...pathStack];
+        tokens.push({
+          type: "number",
+          value,
+          start,
+          end: i,
+          path: valuePath,
+          keyName: currentKey ?? undefined,
+        });
+        currentKey = null;
         expectingKey = false;
         break;
       }
@@ -156,11 +248,29 @@ export function tokenizeJson(json: string): Token[] {
       case "t":
       case "f": {
         const value = readWord();
+        const valuePath = currentKey !== null
+          ? [...pathStack, currentKey]
+          : [...pathStack];
         if (value === "true") {
-          tokens.push({ type: "boolean", value, start, end: i });
+          tokens.push({
+            type: "boolean",
+            value,
+            start,
+            end: i,
+            path: valuePath,
+            keyName: currentKey ?? undefined,
+          });
         } else if (value === "false") {
-          tokens.push({ type: "boolean-false", value, start, end: i });
+          tokens.push({
+            type: "boolean-false",
+            value,
+            start,
+            end: i,
+            path: valuePath,
+            keyName: currentKey ?? undefined,
+          });
         }
+        currentKey = null;
         expectingKey = false;
         break;
       }
@@ -168,7 +278,18 @@ export function tokenizeJson(json: string): Token[] {
       case "n": {
         const value = readWord();
         if (value === "null") {
-          tokens.push({ type: "null", value, start, end: i });
+          const valuePath = currentKey !== null
+            ? [...pathStack, currentKey]
+            : [...pathStack];
+          tokens.push({
+            type: "null",
+            value,
+            start,
+            end: i,
+            path: valuePath,
+            keyName: currentKey ?? undefined,
+          });
+          currentKey = null;
         }
         expectingKey = false;
         break;
