@@ -337,7 +337,11 @@ describe("POST /api/mcp/chat-v2", () => {
           {
             type: "finish",
             finishReason: "stop",
-            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            messageMetadata: {
+              inputTokens: 1,
+              outputTokens: 1,
+              totalTokens: 2,
+            },
           },
         ]),
       );
@@ -417,7 +421,11 @@ describe("POST /api/mcp/chat-v2", () => {
           {
             type: "finish",
             finishReason: "stop",
-            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            messageMetadata: {
+              inputTokens: 1,
+              outputTokens: 1,
+              totalTokens: 2,
+            },
           },
         ]),
       );
@@ -502,7 +510,11 @@ describe("POST /api/mcp/chat-v2", () => {
           {
             type: "finish",
             finishReason: "stop",
-            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            messageMetadata: {
+              inputTokens: 1,
+              outputTokens: 1,
+              totalTokens: 2,
+            },
           },
         ]),
       );
@@ -613,7 +625,11 @@ describe("POST /api/mcp/chat-v2", () => {
           {
             type: "finish",
             finishReason: "stop",
-            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            messageMetadata: {
+              inputTokens: 1,
+              outputTokens: 1,
+              totalTokens: 2,
+            },
           },
         ]);
       });

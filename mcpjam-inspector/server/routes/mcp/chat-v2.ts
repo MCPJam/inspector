@@ -228,7 +228,10 @@ chatV2.post("/", async (c) => {
                   continue;
                 }
 
-                if (chunk?.type === "text-delta" && typeof chunk.delta === "string") {
+                if (
+                  chunk?.type === "text-delta" &&
+                  typeof chunk.delta === "string"
+                ) {
                   pendingText += chunk.delta;
                   continue;
                 }
@@ -240,7 +243,9 @@ chatV2.post("/", async (c) => {
 
                 if (chunk?.type === "tool-input-available") {
                   flushPendingText();
-                  const toolCallId = chunk.toolCallId ?? `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                  const toolCallId =
+                    chunk.toolCallId ??
+                    `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                   const toolName = chunk.toolName;
                   const input = chunk.input ?? {};
                   stepContentParts.push({
@@ -265,7 +270,8 @@ chatV2.post("/", async (c) => {
                 logger.error("[mcp/chat-v2] stream parse error", error);
                 writer.write({
                   type: "error",
-                  errorText: error instanceof Error ? error.message : String(error),
+                  errorText:
+                    error instanceof Error ? error.message : String(error),
                 } as any);
                 break;
               }
@@ -331,7 +337,10 @@ chatV2.post("/", async (c) => {
 
               const newMessages = messageHistory.slice(beforeLen);
               for (const msg of newMessages) {
-                if (msg?.role === "tool" && Array.isArray((msg as any).content)) {
+                if (
+                  msg?.role === "tool" &&
+                  Array.isArray((msg as any).content)
+                ) {
                   for (const item of (msg as any).content) {
                     if (item?.type === "tool-result") {
                       writer.write({
