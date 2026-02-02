@@ -539,14 +539,8 @@ function arePropsEqual(
   )
     return false;
 
-  // Key optimization: compare the RESULT of isCollapsed for this node's path
-  // This way, changing a sibling's collapse state won't trigger re-render
-  const prevCollapsed = prevProps.isCollapsed(prevProps.path);
-  const nextCollapsed = nextProps.isCollapsed(nextProps.path);
-  if (prevCollapsed !== nextCollapsed) return false;
-
-  // Function references can change - we don't care as long as collapse state is same
-  // toggleCollapse and onCopy don't affect render output
+  // Re-render when isCollapsed function changes (happens when collapsedPaths changes)
+  if (prevProps.isCollapsed !== nextProps.isCollapsed) return false;
 
   return true;
 }
