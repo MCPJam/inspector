@@ -364,9 +364,7 @@ export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
                 ))}
               </div>
             ) : (
-              <span className="text-muted-foreground italic">
-                Not declared
-              </span>
+              <span className="text-muted-foreground italic">Not declared</span>
             )}
           </div>
         </div>
