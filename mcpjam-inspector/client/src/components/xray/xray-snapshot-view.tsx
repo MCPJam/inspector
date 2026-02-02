@@ -221,15 +221,14 @@ export function XRaySnapshotView({
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <Header showCopy showLoading={loading} />
 
-      {/* Content - no overflow-auto here, parent StickToBottom.Content handles scrolling */}
-      <div className="flex-1 min-h-0">
+      {/* Content */}
+      <div className="flex-1 min-h-0 overflow-auto">
         <div className="p-4">
           <div className="rounded-lg border border-border bg-muted/20">
             <JsonEditor
               value={payload as object}
               viewOnly
               collapsible
-              defaultExpandDepth={2}
               collapseStringsAfterLength={100}
             />
           </div>

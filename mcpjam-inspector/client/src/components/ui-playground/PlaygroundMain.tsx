@@ -1417,14 +1417,21 @@ export function PlaygroundMain({
           }}
         >
           {xrayMode ? (
-            <div className="flex flex-col flex-1 min-h-0">
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <XRaySnapshotView
-                  systemPrompt={systemPrompt}
-                  messages={messages}
-                  selectedServers={selectedServers}
-                  onClose={() => setXrayMode(false)}
-                />
+            <StickToBottom
+              className="relative flex flex-1 flex-col min-h-0"
+              resize="smooth"
+              initial="smooth"
+            >
+              <div className="relative flex-1 min-h-0">
+                <StickToBottom.Content className="flex flex-col min-h-0">
+                  <XRaySnapshotView
+                    systemPrompt={systemPrompt}
+                    messages={messages}
+                    selectedServers={selectedServers}
+                    onClose={() => setXrayMode(false)}
+                  />
+                </StickToBottom.Content>
+                <ScrollToBottomButton />
               </div>
               <div className="flex-shrink-0 bg-background/80 backdrop-blur-sm border-t border-border">
                 <div className="max-w-xl mx-auto w-full p-3">
@@ -1434,7 +1441,7 @@ export function PlaygroundMain({
                   />
                 </div>
               </div>
-            </div>
+            </StickToBottom>
           ) : (
             threadContent
           )}
