@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
-import { ResourceTemplatesTab } from "./components/ResourceTemplatesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
@@ -236,7 +235,6 @@ export default function App() {
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
-    activeTab === "resource-templates" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
@@ -312,13 +310,6 @@ export default function App() {
           )}
           {activeTab === "resources" && (
             <ResourcesTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
-          )}
-
-          {activeTab === "resource-templates" && (
-            <ResourceTemplatesTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
             />

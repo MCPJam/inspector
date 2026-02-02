@@ -19,6 +19,7 @@ import {
 import { LoggerView } from "./logger-view";
 import { listResources } from "@/lib/apis/mcp-resources-api";
 import { authFetch } from "@/lib/session-token";
+import { ResourceTemplatesTab } from "./ResourceTemplatesTab";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -26,6 +27,9 @@ interface ResourcesTabProps {
 }
 
 export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
+  const [activeTab, setActiveTab] = useState<"resources" | "templates">(
+    "resources",
+  );
   const [resources, setResources] = useState<MCPResource[]>([]);
   const [selectedResource, setSelectedResource] = useState<string>("");
   const [resourceContent, setResourceContent] =
@@ -185,286 +189,319 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
   return (
     <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="vertical" className="flex-1">
-        {/* Top Section - Resources and Preview */}
-        <ResizablePanel defaultSize={70} minSize={30}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Resources List */}
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-              <div className="h-full flex flex-col border-r border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
-                  <div className="flex items-center gap-3">
-                    <FolderOpen className="h-3 w-3 text-muted-foreground" />
-                    <h2 className="text-xs font-semibold text-foreground">
-                      Resources
-                    </h2>
-                    <Badge variant="secondary" className="text-xs font-mono">
-                      {resources.length}
-                    </Badge>
-                  </div>
-                  <Button
-                    onClick={() => fetchResources()}
-                    variant="ghost"
-                    size="sm"
-                    disabled={fetchingResources}
-                  >
-                    <RefreshCw
-                      className={`h-3 w-3 ${fetchingResources ? "animate-spin" : ""} cursor-pointer`}
-                    />
-                  </Button>
-                </div>
+      {/* Tab bar */}
+      <div className="border-b border-border flex-shrink-0">
+        <div className="flex">
+          <button
+            onClick={() => setActiveTab("resources")}
+            className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
+              activeTab === "resources"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Resources
+          </button>
+          <button
+            onClick={() => setActiveTab("templates")}
+            className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
+              activeTab === "templates"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Resource Templates
+          </button>
+        </div>
+      </div>
 
-                {/* Resources List */}
-                <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="p-2">
-                      {fetchingResources ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
-                          <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                            <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
-                          </div>
-                          <p className="text-xs text-muted-foreground font-semibold mb-1">
-                            Loading resources...
-                          </p>
-                          <p className="text-xs text-muted-foreground/70">
-                            Fetching available resources from server
-                          </p>
-                        </div>
-                      ) : resources.length === 0 ? (
-                        <div className="text-center py-8">
-                          <p className="text-sm text-muted-foreground">
-                            No resources available
-                          </p>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="space-y-1">
-                            {resources.map((resource) => (
-                              <div
-                                key={resource.uri}
-                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                  selectedResource === resource.uri
-                                    ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                    : "hover:shadow-sm"
-                                }`}
-                                onClick={() =>
-                                  setSelectedResource(resource.uri)
-                                }
-                              >
-                                <div className="flex items-start gap-3">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                                      <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                        {resource.name}
-                                      </code>
-                                    </div>
-                                    {resource.description && (
-                                      <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                        {resource.description}
-                                      </p>
-                                    )}
-                                  </div>
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-
-                          {/* Sentinel observed by IntersectionObserver */}
-                          <div ref={sentinelRef} className="h-4" />
-
-                          {loadingMore && (
-                            <div className="flex items-center justify-center py-3 text-xs text-muted-foreground gap-2">
-                              <RefreshCw className="h-3 w-3 animate-spin" />
-                              <span>Loading more resources…</span>
-                            </div>
-                          )}
-
-                          {!nextCursor &&
-                            resources.length > 0 &&
-                            !loadingMore && (
-                              <div className="text-center py-3 text-xs text-muted-foreground">
-                                No more resources
-                              </div>
-                            )}
-                        </>
-                      )}
+      {activeTab === "templates" ? (
+        <ResourceTemplatesTab
+          serverConfig={serverConfig}
+          serverName={serverName}
+        />
+      ) : (
+        <ResizablePanelGroup direction="vertical" className="flex-1">
+          {/* Top Section - Resources and Preview */}
+          <ResizablePanel defaultSize={70} minSize={30}>
+            <ResizablePanelGroup direction="horizontal" className="h-full">
+              {/* Left Panel - Resources List */}
+              <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+                <div className="h-full flex flex-col border-r border-border bg-background">
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
+                    <div className="flex items-center gap-3">
+                      <FolderOpen className="h-3 w-3 text-muted-foreground" />
+                      <h2 className="text-xs font-semibold text-foreground">
+                        Resources
+                      </h2>
+                      <Badge variant="secondary" className="text-xs font-mono">
+                        {resources.length}
+                      </Badge>
                     </div>
-                  </ScrollArea>
-                </div>
-              </div>
-            </ResizablePanel>
+                    <Button
+                      onClick={() => fetchResources()}
+                      variant="ghost"
+                      size="sm"
+                      disabled={fetchingResources}
+                    >
+                      <RefreshCw
+                        className={`h-3 w-3 ${fetchingResources ? "animate-spin" : ""} cursor-pointer`}
+                      />
+                    </Button>
+                  </div>
 
-            <ResizableHandle withHandle />
-
-            {/* Right Panel - Resource Preview */}
-            <ResizablePanel defaultSize={70} minSize={50}>
-              <div className="h-full flex flex-col bg-background">
-                {selectedResource ? (
-                  <>
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-1">
-                          <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                            {selectedResourceData?.name || selectedResource}
-                          </code>
-                          &bull;
-                          <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
-                            {selectedResource}
-                          </p>
-                        </div>
-
-                        {selectedResourceData?.mimeType && (
-                          <Badge
-                            variant="outline"
-                            className="text-xs font-mono"
-                          >
-                            {selectedResourceData.mimeType}
-                          </Badge>
-                        )}
-                      </div>
-                      <Button
-                        onClick={() => readResource(selectedResource)}
-                        disabled={loading}
-                        className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
-                        size="sm"
-                      >
-                        {loading ? (
-                          <>
-                            <RefreshCw className="h-3 w-3 animate-spin" />
-                            Reading
-                          </>
+                  {/* Resources List */}
+                  <div className="flex-1 overflow-hidden">
+                    <ScrollArea className="h-full">
+                      <div className="p-2">
+                        {fetchingResources ? (
+                          <div className="flex flex-col items-center justify-center py-16 text-center">
+                            <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                              <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
+                            </div>
+                            <p className="text-xs text-muted-foreground font-semibold mb-1">
+                              Loading resources...
+                            </p>
+                            <p className="text-xs text-muted-foreground/70">
+                              Fetching available resources from server
+                            </p>
+                          </div>
+                        ) : resources.length === 0 ? (
+                          <div className="text-center py-8">
+                            <p className="text-sm text-muted-foreground">
+                              No resources available
+                            </p>
+                          </div>
                         ) : (
                           <>
-                            <Eye className="h-3 w-3" />
-                            Read
-                          </>
-                        )}
-                      </Button>
-                    </div>
-
-                    {/* Description */}
-                    {selectedResourceData?.description && (
-                      <div className="px-6 py-4 bg-muted/50 border-b border-border">
-                        <p className="text-xs text-muted-foreground leading-relaxed font-medium">
-                          {selectedResourceData.description}
-                        </p>
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                        <FolderOpen className="h-5 w-5 text-muted-foreground" />
-                      </div>
-                      <p className="text-xs font-semibold text-foreground mb-1">
-                        Select a resource
-                      </p>
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Choose a resource from the left to preview its content
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Bottom Panel - JSON-RPC Logger and Status */}
-        <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={60} minSize={30}>
-              <div className="h-full flex flex-col border-t border-border bg-background break-all">
-                {/* Header */}
-                <div className="flex items-center justify-between p-4 border-b border-border">
-                  <h2 className="text-xs font-semibold text-foreground">
-                    Response
-                  </h2>
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 overflow-hidden">
-                  {error ? (
-                    <div className="p-4">
-                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                        {error}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="p-4">
-                          {!resourceContent ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <Eye className="h-4 w-4 text-muted-foreground" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                Ready to read resource
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                Click the Read button to view resource content
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              {resourceContent?.contents?.map(
-                                (content: any, index: number) => (
-                                  <div key={index} className="group">
-                                    <div className="overflow-hidden">
-                                      {content.type === "text" ? (
-                                        <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
-                                          {content.text}
-                                        </pre>
-                                      ) : (
-                                        <div className="p-4">
-                                          <JsonView
-                                            src={content}
-                                            dark={true}
-                                            theme="atom"
-                                            enableClipboard={true}
-                                            displaySize={false}
-                                            collapseStringsAfterLength={100}
-                                            style={{
-                                              fontSize: "12px",
-                                              fontFamily:
-                                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                              backgroundColor:
-                                                "hsl(var(--background))",
-                                              padding: "0",
-                                              borderRadius: "0",
-                                              border: "none",
-                                            }}
-                                          />
-                                        </div>
+                            <div className="space-y-1">
+                              {resources.map((resource) => (
+                                <div
+                                  key={resource.uri}
+                                  className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                                    selectedResource === resource.uri
+                                      ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                      : "hover:shadow-sm"
+                                  }`}
+                                  onClick={() =>
+                                    setSelectedResource(resource.uri)
+                                  }
+                                >
+                                  <div className="flex items-start gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                                          {resource.name}
+                                        </code>
+                                      </div>
+                                      {resource.description && (
+                                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                                          {resource.description}
+                                        </p>
                                       )}
                                     </div>
+                                    <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                                   </div>
-                                ),
-                              )}
+                                </div>
+                              ))}
                             </div>
+
+                            {/* Sentinel observed by IntersectionObserver */}
+                            <div ref={sentinelRef} className="h-4" />
+
+                            {loadingMore && (
+                              <div className="flex items-center justify-center py-3 text-xs text-muted-foreground gap-2">
+                                <RefreshCw className="h-3 w-3 animate-spin" />
+                                <span>Loading more resources…</span>
+                              </div>
+                            )}
+
+                            {!nextCursor &&
+                              resources.length > 0 &&
+                              !loadingMore && (
+                                <div className="text-center py-3 text-xs text-muted-foreground">
+                                  No more resources
+                                </div>
+                              )}
+                          </>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                </div>
+              </ResizablePanel>
+
+              <ResizableHandle withHandle />
+
+              {/* Right Panel - Resource Preview */}
+              <ResizablePanel defaultSize={70} minSize={50}>
+                <div className="h-full flex flex-col bg-background">
+                  {selectedResource ? (
+                    <>
+                      {/* Header */}
+                      <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-1">
+                            <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
+                              {selectedResourceData?.name || selectedResource}
+                            </code>
+                            &bull;
+                            <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
+                              {selectedResource}
+                            </p>
+                          </div>
+
+                          {selectedResourceData?.mimeType && (
+                            <Badge
+                              variant="outline"
+                              className="text-xs font-mono"
+                            >
+                              {selectedResourceData.mimeType}
+                            </Badge>
                           )}
                         </div>
-                      </ScrollArea>
+                        <Button
+                          onClick={() => readResource(selectedResource)}
+                          disabled={loading}
+                          className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
+                          size="sm"
+                        >
+                          {loading ? (
+                            <>
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                              Reading
+                            </>
+                          ) : (
+                            <>
+                              <Eye className="h-3 w-3" />
+                              Read
+                            </>
+                          )}
+                        </Button>
+                      </div>
+
+                      {/* Description */}
+                      {selectedResourceData?.description && (
+                        <div className="px-6 py-4 bg-muted/50 border-b border-border">
+                          <p className="text-xs text-muted-foreground leading-relaxed font-medium">
+                            {selectedResourceData.description}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="h-full flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+                          <FolderOpen className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <p className="text-xs font-semibold text-foreground mb-1">
+                          Select a resource
+                        </p>
+                        <p className="text-xs text-muted-foreground font-medium">
+                          Choose a resource from the left to preview its content
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          {/* Bottom Panel - JSON-RPC Logger and Status */}
+          <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
+            <ResizablePanelGroup direction="horizontal" className="h-full">
+              <ResizablePanel defaultSize={40} minSize={10}>
+                <LoggerView serverIds={serverName ? [serverName] : undefined} />
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+              <ResizablePanel defaultSize={60} minSize={30}>
+                <div className="h-full flex flex-col border-t border-border bg-background break-all">
+                  {/* Header */}
+                  <div className="flex items-center justify-between p-4 border-b border-border">
+                    <h2 className="text-xs font-semibold text-foreground">
+                      Response
+                    </h2>
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 overflow-hidden">
+                    {error ? (
+                      <div className="p-4">
+                        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                          {error}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex-1 overflow-hidden">
+                        <ScrollArea className="h-full">
+                          <div className="p-4">
+                            {!resourceContent ? (
+                              <div className="flex flex-col items-center justify-center py-16 text-center">
+                                <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
+                                  <Eye className="h-4 w-4 text-muted-foreground" />
+                                </div>
+                                <p className="text-xs text-muted-foreground font-semibold mb-1">
+                                  Ready to read resource
+                                </p>
+                                <p className="text-xs text-muted-foreground/70">
+                                  Click the Read button to view resource content
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="space-y-4">
+                                {resourceContent?.contents?.map(
+                                  (content: any, index: number) => (
+                                    <div key={index} className="group">
+                                      <div className="overflow-hidden">
+                                        {content.type === "text" ? (
+                                          <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
+                                            {content.text}
+                                          </pre>
+                                        ) : (
+                                          <div className="p-4">
+                                            <JsonView
+                                              src={content}
+                                              dark={true}
+                                              theme="atom"
+                                              enableClipboard={true}
+                                              displaySize={false}
+                                              collapseStringsAfterLength={100}
+                                              style={{
+                                                fontSize: "12px",
+                                                fontFamily:
+                                                  "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
+                                                backgroundColor:
+                                                  "hsl(var(--background))",
+                                                padding: "0",
+                                                borderRadius: "0",
+                                                border: "none",
+                                              }}
+                                            />
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ),
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      )}
     </div>
   );
 }
