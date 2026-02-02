@@ -11,35 +11,62 @@ import type { Hono } from "hono";
 // Track stream events for testing
 let capturedStreamEvents: any[] = [];
 let mockWriter: { write: ReturnType<typeof vi.fn> };
+let lastStreamExecution: Promise<void> | null = null;
+
+const buildSsePayload = (events: any[]) =>
+  `${events
+    .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+    .join("")}data: [DONE]\n\n`;
+
+const createSseResponse = (events: any[]) => {
+  const encoder = new TextEncoder();
+  const payload = buildSsePayload(events);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(payload));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+};
 
 // Mock the AI SDK
-vi.mock("ai", () => ({
-  convertToModelMessages: vi.fn((messages) => messages),
-  streamText: vi.fn().mockReturnValue({
-    toUIMessageStreamResponse: vi.fn().mockReturnValue(
-      new Response(JSON.stringify({ type: "text", content: "Hello" }), {
+vi.mock("ai", async () => {
+  const actual = await vi.importActual<typeof import("ai")>("ai");
+  return {
+    ...actual,
+    convertToModelMessages: vi.fn((messages) => messages),
+    streamText: vi.fn().mockReturnValue({
+      toUIMessageStreamResponse: vi.fn().mockReturnValue(
+        new Response(JSON.stringify({ type: "text", content: "Hello" }), {
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      ),
+    }),
+    stepCountIs: vi.fn().mockReturnValue(() => false),
+    createUIMessageStream: vi.fn(({ execute }) => {
+      // Create a mock writer that captures events
+      mockWriter = {
+        write: vi.fn((event) => {
+          capturedStreamEvents.push(event);
+        }),
+      };
+      // Execute the stream function to capture events
+      const execResult = execute({ writer: mockWriter });
+      lastStreamExecution =
+        execResult instanceof Promise ? execResult : Promise.resolve();
+      return { getReader: vi.fn() };
+    }),
+    createUIMessageStreamResponse: vi.fn().mockReturnValue(
+      new Response(JSON.stringify({ type: "stream" }), {
         headers: { "Content-Type": "text/event-stream" },
       }),
     ),
-  }),
-  stepCountIs: vi.fn().mockReturnValue(() => false),
-  createUIMessageStream: vi.fn(({ execute }) => {
-    // Create a mock writer that captures events
-    mockWriter = {
-      write: vi.fn((event) => {
-        capturedStreamEvents.push(event);
-      }),
-    };
-    // Execute the stream function to capture events
-    execute({ writer: mockWriter });
-    return { getReader: vi.fn() };
-  }),
-  createUIMessageStreamResponse: vi.fn().mockReturnValue(
-    new Response(JSON.stringify({ type: "stream" }), {
-      headers: { "Content-Type": "text/event-stream" },
-    }),
-  ),
-}));
+  };
+});
 
 // Mock chat helpers
 vi.mock("../../../utils/chat-helpers", () => ({
@@ -75,6 +102,7 @@ describe("POST /api/mcp/chat-v2", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedStreamEvents = [];
+    lastStreamExecution = null;
     manager = createMockMcpClientManager({
       getToolsForAiSdk: vi.fn().mockResolvedValue({}),
     });
@@ -304,14 +332,15 @@ describe("POST /api/mcp/chat-v2", () => {
 
       // Mock fetch for CONVEX_HTTP_URL
       const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          messages: [],
-          finishReason: "stop",
-        }),
-      });
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "finish",
+            finishReason: "stop",
+            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]),
+      );
 
       try {
         await postJson(app, "/api/mcp/chat-v2", {
@@ -331,6 +360,7 @@ describe("POST /api/mcp/chat-v2", () => {
           ],
           model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
         });
+        await lastStreamExecution;
 
         // Find tool-input-available and tool-output-available events
         const toolInputEvents = capturedStreamEvents.filter(
@@ -382,14 +412,15 @@ describe("POST /api/mcp/chat-v2", () => {
 
       // Mock fetch for CONVEX_HTTP_URL
       const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          messages: [],
-          finishReason: "stop",
-        }),
-      });
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "finish",
+            finishReason: "stop",
+            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]),
+      );
 
       try {
         await postJson(app, "/api/mcp/chat-v2", {
@@ -419,6 +450,7 @@ describe("POST /api/mcp/chat-v2", () => {
           ],
           model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
         });
+        await lastStreamExecution;
 
         // Should NOT emit tool-input-available for already-resolved tool calls
         const toolInputEvents = capturedStreamEvents.filter(
@@ -465,14 +497,15 @@ describe("POST /api/mcp/chat-v2", () => {
       );
 
       const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          ok: true,
-          messages: [],
-          finishReason: "stop",
-        }),
-      });
+      global.fetch = vi.fn().mockResolvedValue(
+        createSseResponse([
+          {
+            type: "finish",
+            finishReason: "stop",
+            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]),
+      );
 
       try {
         await postJson(app, "/api/mcp/chat-v2", {
@@ -498,6 +531,7 @@ describe("POST /api/mcp/chat-v2", () => {
           ],
           model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
         });
+        await lastStreamExecution;
 
         // Verify both tool calls get tool-input-available emitted
         const toolInputEvents = capturedStreamEvents.filter(
@@ -562,41 +596,26 @@ describe("POST /api/mcp/chat-v2", () => {
         fetchCallCount++;
         if (fetchCallCount === 1) {
           // First call: return a new tool call
-          return {
-            ok: true,
-            json: async () => ({
-              ok: true,
-              messages: [
-                {
-                  role: "assistant",
-                  content: [
-                    {
-                      type: "tool-call",
-                      toolCallId: "new-call-from-step",
-                      toolName: "new_tool",
-                      input: { foo: "bar" },
-                    },
-                  ],
-                },
-              ],
-              finishReason: "tool-calls",
-            }),
-          };
+          return createSseResponse([
+            {
+              type: "tool-input-available",
+              toolCallId: "new-call-from-step",
+              toolName: "new_tool",
+              input: { foo: "bar" },
+            },
+          ]);
         }
         // Second call: return final response
-        return {
-          ok: true,
-          json: async () => ({
-            ok: true,
-            messages: [
-              {
-                role: "assistant",
-                content: [{ type: "text", text: "Done!" }],
-              },
-            ],
+        return createSseResponse([
+          { type: "text-start", id: "msg-1" },
+          { type: "text-delta", id: "msg-1", delta: "Done!" },
+          { type: "text-end", id: "msg-1" },
+          {
+            type: "finish",
             finishReason: "stop",
-          }),
-        };
+            messageMetadata: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          },
+        ]);
       });
 
       try {
@@ -605,6 +624,7 @@ describe("POST /api/mcp/chat-v2", () => {
           messages: [{ role: "user", content: "Do something" }],
           model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
         });
+        await lastStreamExecution;
 
         // Count how many times tool-input-available was emitted for this tool call
         const toolInputEventsForNewCall = capturedStreamEvents.filter(
