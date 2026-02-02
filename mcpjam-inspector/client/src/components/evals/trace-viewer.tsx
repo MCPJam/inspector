@@ -13,7 +13,7 @@ import { getProviderLogo } from "@/lib/provider-logos";
 import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
 import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
 import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps-renderer";
-import { JsonEditorView } from "@/components/ui/json-editor";
+import { JsonEditor } from "@/components/ui/json-editor";
 
 interface ContentPart {
   type: string;
@@ -153,7 +153,7 @@ export function TraceViewer({
       </div>
 
       {viewMode === "raw" ? (
-        <JsonEditorView value={trace} />
+        <JsonEditor viewOnly value={trace} />
       ) : (
         <div className="space-y-6">
           {groupedMessages.map((group, idx) => {
@@ -359,7 +359,7 @@ function TracePart({ part }: { part: ContentPart }) {
       <div className="text-xs font-semibold text-muted-foreground mb-1">
         Unknown part type: {part.type}
       </div>
-      <JsonEditorView value={part} />
+      <JsonEditor viewOnly value={part} />
     </div>
   );
 }
@@ -469,7 +469,7 @@ function CombinedToolPart({
               <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
                 Input
               </div>
-              <JsonEditorView value={toolCall!.input} />
+              <JsonEditor viewOnly value={toolCall!.input} />
             </div>
           )}
 
@@ -490,7 +490,7 @@ function CombinedToolPart({
                 </pre>
               ) : (
                 <div className={isError ? "[&_.rounded-lg]:border-destructive/40 [&_.rounded-lg]:bg-destructive/10 [&_.rounded-lg]:text-destructive" : ""}>
-                  <JsonEditorView value={displayOutput} />
+                  <JsonEditor viewOnly value={displayOutput} />
                 </div>
               )}
             </div>

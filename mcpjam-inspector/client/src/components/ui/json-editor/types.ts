@@ -28,6 +28,9 @@ export interface JsonEditorProps {
 
   // String truncation (view mode only)
   collapseStringsAfterLength?: number;
+
+  // View-only mode: renders just the view without toolbar or edit capabilities
+  viewOnly?: boolean;
 }
 
 export interface CursorPosition {

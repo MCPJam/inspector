@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { CspDebugPanel } from "../csp-debug-panel";
-import { JsonEditorView } from "@/components/ui/json-editor";
+import { JsonEditor } from "@/components/ui/json-editor";
 
 export function ToolPart({
   part,
@@ -287,7 +287,7 @@ export function ToolPart({
                     Input
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditorView
+                    <JsonEditor viewOnly
                       value={inputData}
                       className="p-2 text-[11px]"
                       collapsible
@@ -302,7 +302,7 @@ export function ToolPart({
                     Result
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditorView
+                    <JsonEditor viewOnly
                       value={outputData}
                       className="p-2 text-[11px]"
                       collapsible
@@ -341,7 +341,7 @@ export function ToolPart({
               </div>
               <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                 {widgetDebugInfo.widgetState ? (
-                  <JsonEditorView
+                  <JsonEditor viewOnly
                     value={widgetDebugInfo.widgetState}
                     className="p-2 text-[11px]"
                     collapsible
@@ -387,7 +387,7 @@ export function ToolPart({
                         Content (for model)
                       </div>
                       <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
-                        <JsonEditorView
+                        <JsonEditor viewOnly
                           value={widgetDebugInfo.modelContext.content}
                           className="p-2 text-[11px]"
                           collapsible
@@ -403,7 +403,7 @@ export function ToolPart({
                         Structured Content
                       </div>
                       <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
-                        <JsonEditorView
+                        <JsonEditor viewOnly
                           value={widgetDebugInfo.modelContext.structuredContent}
                           className="p-2 text-[11px]"
                           collapsible
@@ -434,7 +434,7 @@ export function ToolPart({
                     Input
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditorView
+                    <JsonEditor viewOnly
                       value={inputData}
                       className="p-2 text-[11px]"
                       collapsible
@@ -450,7 +450,7 @@ export function ToolPart({
                     Result
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditorView
+                    <JsonEditor viewOnly
                       value={outputData}
                       className="p-2 text-[11px]"
                       collapsible

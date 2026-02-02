@@ -1,5 +1,5 @@
 import { AnyPart } from "../thread-helpers";
-import { JsonEditorView } from "@/components/ui/json-editor";
+import { JsonEditor } from "@/components/ui/json-editor";
 
 export function SourceDocumentPart({
   part,
@@ -9,7 +9,8 @@ export function SourceDocumentPart({
   return (
     <div className="space-y-1 text-xs">
       <div className="font-medium">📄 {part.title}</div>
-      <JsonEditorView
+      <JsonEditor
+        viewOnly
         value={{
           sourceId: part.sourceId,
           mediaType: part.mediaType,

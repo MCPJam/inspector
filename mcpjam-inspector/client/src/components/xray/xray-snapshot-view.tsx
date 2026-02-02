@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { Copy, X, RefreshCw, AlertCircle, ScanSearch } from "lucide-react";
 import { toast } from "sonner";
 import type { UIMessage } from "ai";
-import { JsonEditorView } from "@/components/ui/json-editor";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -225,8 +225,9 @@ export function XRaySnapshotView({
       <div className="flex-1 min-h-0">
         <div className="p-4">
           <div className="rounded-lg border border-border bg-muted/20">
-            <JsonEditorView
+            <JsonEditor
               value={payload as object}
+              viewOnly
               collapsible
               defaultExpandDepth={2}
               collapseStringsAfterLength={100}

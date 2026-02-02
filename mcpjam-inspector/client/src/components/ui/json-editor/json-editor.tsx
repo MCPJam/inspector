@@ -28,7 +28,25 @@ export function JsonEditor({
   collapsedPaths,
   onCollapseChange,
   collapseStringsAfterLength,
+  viewOnly = false,
 }: JsonEditorProps) {
+  // Lightweight render path for view-only mode
+  if (viewOnly) {
+    return (
+      <JsonEditorView
+        value={value}
+        className={className}
+        height={height}
+        maxHeight={maxHeight}
+        collapsible={collapsible}
+        defaultExpandDepth={defaultExpandDepth}
+        collapsedPaths={collapsedPaths}
+        onCollapseChange={onCollapseChange}
+        collapseStringsAfterLength={collapseStringsAfterLength}
+      />
+    );
+  }
+
   // Determine if we're in raw mode (string content) vs parsed mode
   const isRawMode = rawContent !== undefined;
   // Mode state (controlled or uncontrolled)

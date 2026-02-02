@@ -17,7 +17,7 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { JsonEditor, JsonEditorView } from "@/components/ui/json-editor";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 interface ServerInfoModalProps {
@@ -424,7 +424,7 @@ export function ServerInfoModal({
                               <div className="text-xs text-muted-foreground font-medium mb-3">
                                 ANNOTATIONS
                               </div>
-                              <JsonEditorView value={annotations} />
+                              <JsonEditor value={annotations} viewOnly />
                             </div>
                           )}
                         </div>
