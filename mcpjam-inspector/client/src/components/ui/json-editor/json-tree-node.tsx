@@ -1,7 +1,63 @@
-import { useState, useCallback, Fragment, memo } from "react";
+import { useState, useCallback, useEffect, Fragment, memo } from "react";
 import { ChevronRight, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TruncatableString } from "./truncatable-string";
+
+// Progressive rendering constants
+const INITIAL_CHUNK_SIZE = 50;
+const CHUNK_SIZE = 100;
+
+// Fallback for Safari (no requestIdleCallback)
+const scheduleChunk =
+  typeof requestIdleCallback !== "undefined"
+    ? requestIdleCallback
+    : (cb: IdleRequestCallback) => setTimeout(() => cb({} as IdleDeadline), 16);
+
+const cancelChunk =
+  typeof cancelIdleCallback !== "undefined" ? cancelIdleCallback : clearTimeout;
+
+/**
+ * Hook for progressive/chunked rendering of large collections.
+ * Renders items in chunks across frames for instant perceived performance.
+ */
+function useProgressiveChildren<T>(items: T[], isExpanded: boolean): T[] {
+  const [renderedCount, setRenderedCount] = useState(
+    items.length <= INITIAL_CHUNK_SIZE ? items.length : INITIAL_CHUNK_SIZE
+  );
+
+  useEffect(() => {
+    // Reset when items change or collapse
+    if (!isExpanded) {
+      setRenderedCount(Math.min(items.length, INITIAL_CHUNK_SIZE));
+      return;
+    }
+
+    // If items array changed, reset to initial chunk
+    setRenderedCount((prev) => {
+      if (prev > items.length) {
+        return Math.min(items.length, INITIAL_CHUNK_SIZE);
+      }
+      return prev;
+    });
+  }, [items.length, isExpanded]);
+
+  useEffect(() => {
+    // Don't schedule if collapsed or already showing all
+    if (!isExpanded || renderedCount >= items.length) return;
+
+    // Schedule next chunk
+    const id = scheduleChunk(
+      () => {
+        setRenderedCount((prev) => Math.min(prev + CHUNK_SIZE, items.length));
+      },
+      { timeout: 100 } // Fallback: render within 100ms even if not idle
+    );
+
+    return () => cancelChunk(id as number);
+  }, [items.length, renderedCount, isExpanded]);
+
+  return items.slice(0, renderedCount);
+}
 
 interface CopyableValueProps {
   children: React.ReactNode;
@@ -79,6 +135,255 @@ interface JsonTreeNodeProps {
   onCopy?: (value: string) => void;
 }
 
+interface JsonArrayNodeProps extends Omit<JsonTreeNodeProps, "value"> {
+  value: unknown[];
+}
+
+interface JsonObjectNodeProps extends Omit<JsonTreeNodeProps, "value"> {
+  value: Record<string, unknown>;
+}
+
+
+/**
+ * Array node component with progressive rendering
+ */
+function JsonArrayNode({
+  value,
+  path,
+  keyName,
+  isLast = true,
+  depth = 0,
+  isCollapsed: isCollapsedFn,
+  toggleCollapse,
+  collapseStringsAfterLength,
+  onCopy,
+}: JsonArrayNodeProps) {
+  const indent = depth * 16;
+  const collapsed = isCollapsedFn(path);
+
+  // Use progressive rendering for large arrays
+  const visibleItems = useProgressiveChildren(value, !collapsed);
+
+  const renderKeyPrefix = () => {
+    if (keyName === undefined) return null;
+    return (
+      <>
+        <span className="json-key">"{keyName}"</span>
+        <span className="json-punctuation">: </span>
+      </>
+    );
+  };
+
+  const renderComma = () => {
+    if (isLast) return null;
+    return <span className="json-punctuation">,</span>;
+  };
+
+  if (value.length === 0) {
+    return (
+      <div className="leading-5" style={{ paddingLeft: indent }}>
+        {renderKeyPrefix()}
+        <CopyableValue value="[]" onCopy={onCopy}>
+          <span className="json-punctuation">[]</span>
+        </CopyableValue>
+        {renderComma()}
+      </div>
+    );
+  }
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    toggleCollapse(path);
+  };
+
+  if (collapsed) {
+    return (
+      <div className="leading-5" style={{ paddingLeft: indent }}>
+        <button
+          onClick={handleToggle}
+          className="json-collapse-toggle inline-flex items-center justify-center w-4 h-4 -ml-4 hover:bg-muted rounded"
+          data-state="closed"
+        >
+          <ChevronRight className="h-3 w-3" />
+        </button>
+        {renderKeyPrefix()}
+        <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+          <span className="json-punctuation">[</span>
+          <span className="text-muted-foreground text-xs px-1">
+            {value.length} {value.length === 1 ? "item" : "items"}
+          </span>
+          <span className="json-punctuation">]</span>
+        </CopyableValue>
+        {renderComma()}
+      </div>
+    );
+  }
+
+  return (
+    <Fragment>
+      <div className="leading-5" style={{ paddingLeft: indent }}>
+        <button
+          onClick={handleToggle}
+          className="json-collapse-toggle inline-flex items-center justify-center w-4 h-4 -ml-4 hover:bg-muted rounded"
+          data-state="open"
+        >
+          <ChevronRight className="h-3 w-3" />
+        </button>
+        {renderKeyPrefix()}
+        <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+          <span className="json-punctuation">[</span>
+        </CopyableValue>
+      </div>
+      {visibleItems.map((item, index) => (
+        <JsonTreeNode
+          key={`${path}.${index}`}
+          value={item}
+          path={`${path}.${index}`}
+          isLast={index === value.length - 1 && visibleItems.length === value.length}
+          depth={depth + 1}
+          isCollapsed={isCollapsedFn}
+          toggleCollapse={toggleCollapse}
+          collapseStringsAfterLength={collapseStringsAfterLength}
+          onCopy={onCopy}
+        />
+      ))}
+      {visibleItems.length < value.length && (
+        <div
+          className="leading-5 text-muted-foreground text-xs"
+          style={{ paddingLeft: (depth + 1) * 16 }}
+        >
+          Loading {value.length - visibleItems.length} more items...
+        </div>
+      )}
+      <div className="leading-5" style={{ paddingLeft: indent }}>
+        <span className="json-punctuation">]</span>
+        {renderComma()}
+      </div>
+    </Fragment>
+  );
+}
+
+/**
+ * Object node component with progressive rendering
+ */
+function JsonObjectNode({
+  value,
+  path,
+  keyName,
+  isLast = true,
+  depth = 0,
+  isCollapsed: isCollapsedFn,
+  toggleCollapse,
+  collapseStringsAfterLength,
+  onCopy,
+}: JsonObjectNodeProps) {
+  const indent = depth * 16;
+  const collapsed = isCollapsedFn(path);
+  const entries = Object.entries(value);
+
+  // Use progressive rendering for large objects
+  const visibleEntries = useProgressiveChildren(entries, !collapsed);
+
+  const renderKeyPrefix = () => {
+    if (keyName === undefined) return null;
+    return (
+      <>
+        <span className="json-key">"{keyName}"</span>
+        <span className="json-punctuation">: </span>
+      </>
+    );
+  };
+
+  const renderComma = () => {
+    if (isLast) return null;
+    return <span className="json-punctuation">,</span>;
+  };
+
+  if (entries.length === 0) {
+    return (
+      <div className="leading-5" style={{ paddingLeft: indent }}>
+        {renderKeyPrefix()}
+        <CopyableValue value="{}" onCopy={onCopy}>
+          <span className="json-punctuation">{"{}"}</span>
+        </CopyableValue>
+        {renderComma()}
+      </div>
+    );
+  }
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    toggleCollapse(path);
+  };
+
+  if (collapsed) {
+    return (
+      <div className="leading-5" style={{ paddingLeft: indent }}>
+        <button
+          onClick={handleToggle}
+          className="json-collapse-toggle inline-flex items-center justify-center w-4 h-4 -ml-4 hover:bg-muted rounded"
+          data-state="closed"
+        >
+          <ChevronRight className="h-3 w-3" />
+        </button>
+        {renderKeyPrefix()}
+        <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+          <span className="json-punctuation">{"{"}</span>
+          <span className="text-muted-foreground text-xs px-1">
+            {entries.length} {entries.length === 1 ? "key" : "keys"}
+          </span>
+          <span className="json-punctuation">{"}"}</span>
+        </CopyableValue>
+        {renderComma()}
+      </div>
+    );
+  }
+
+  return (
+    <Fragment>
+      <div className="leading-5" style={{ paddingLeft: indent }}>
+        <button
+          onClick={handleToggle}
+          className="json-collapse-toggle inline-flex items-center justify-center w-4 h-4 -ml-4 hover:bg-muted rounded"
+          data-state="open"
+        >
+          <ChevronRight className="h-3 w-3" />
+        </button>
+        {renderKeyPrefix()}
+        <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+          <span className="json-punctuation">{"{"}</span>
+        </CopyableValue>
+      </div>
+      {visibleEntries.map(([key, val], index) => (
+        <JsonTreeNode
+          key={`${path}.${key}`}
+          value={val}
+          path={`${path}.${key}`}
+          keyName={key}
+          isLast={index === entries.length - 1 && visibleEntries.length === entries.length}
+          depth={depth + 1}
+          isCollapsed={isCollapsedFn}
+          toggleCollapse={toggleCollapse}
+          collapseStringsAfterLength={collapseStringsAfterLength}
+          onCopy={onCopy}
+        />
+      ))}
+      {visibleEntries.length < entries.length && (
+        <div
+          className="leading-5 text-muted-foreground text-xs"
+          style={{ paddingLeft: (depth + 1) * 16 }}
+        >
+          Loading {entries.length - visibleEntries.length} more keys...
+        </div>
+      )}
+      <div className="leading-5" style={{ paddingLeft: indent }}>
+        <span className="json-punctuation">{"}"}</span>
+        {renderComma()}
+      </div>
+    </Fragment>
+  );
+}
+
 function JsonTreeNodeInner({
   value,
   path,
@@ -91,7 +396,6 @@ function JsonTreeNodeInner({
   onCopy,
 }: JsonTreeNodeProps) {
   const indent = depth * 16;
-  const collapsed = isCollapsed(path);
 
   const renderValue = () => {
     if (value === null) {
@@ -175,160 +479,35 @@ function JsonTreeNodeInner({
 
   // Arrays
   if (Array.isArray(value)) {
-    if (value.length === 0) {
-      return (
-        <div className="leading-5" style={{ paddingLeft: indent }}>
-          {renderKeyPrefix()}
-          <CopyableValue value="[]" onCopy={onCopy}>
-            <span className="json-punctuation">[]</span>
-          </CopyableValue>
-          {renderComma()}
-        </div>
-      );
-    }
-
-    const handleToggle = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      toggleCollapse(path);
-    };
-
-    if (collapsed) {
-      return (
-        <div className="leading-5" style={{ paddingLeft: indent }}>
-          <button
-            onClick={handleToggle}
-            className="json-collapse-toggle inline-flex items-center justify-center w-4 h-4 -ml-4 hover:bg-muted rounded"
-            data-state="closed"
-          >
-            <ChevronRight className="h-3 w-3" />
-          </button>
-          {renderKeyPrefix()}
-          <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
-            <span className="json-punctuation">[</span>
-            <span className="text-muted-foreground text-xs px-1">
-              {value.length} {value.length === 1 ? "item" : "items"}
-            </span>
-            <span className="json-punctuation">]</span>
-          </CopyableValue>
-          {renderComma()}
-        </div>
-      );
-    }
-
     return (
-      <Fragment>
-        <div className="leading-5" style={{ paddingLeft: indent }}>
-          <button
-            onClick={handleToggle}
-            className="json-collapse-toggle inline-flex items-center justify-center w-4 h-4 -ml-4 hover:bg-muted rounded"
-            data-state="open"
-          >
-            <ChevronRight className="h-3 w-3" />
-          </button>
-          {renderKeyPrefix()}
-          <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
-            <span className="json-punctuation">[</span>
-          </CopyableValue>
-        </div>
-        {value.map((item, index) => (
-          <JsonTreeNode
-            key={`${path}.${index}`}
-            value={item}
-            path={`${path}.${index}`}
-            isLast={index === value.length - 1}
-            depth={depth + 1}
-            isCollapsed={isCollapsed}
-            toggleCollapse={toggleCollapse}
-            collapseStringsAfterLength={collapseStringsAfterLength}
-            onCopy={onCopy}
-          />
-        ))}
-        <div className="leading-5" style={{ paddingLeft: indent }}>
-          <span className="json-punctuation">]</span>
-          {renderComma()}
-        </div>
-      </Fragment>
+      <JsonArrayNode
+        value={value}
+        path={path}
+        keyName={keyName}
+        isLast={isLast}
+        depth={depth}
+        isCollapsed={isCollapsed}
+        toggleCollapse={toggleCollapse}
+        collapseStringsAfterLength={collapseStringsAfterLength}
+        onCopy={onCopy}
+      />
     );
   }
 
   // Objects
   if (typeof value === "object") {
-    const entries = Object.entries(value);
-
-    if (entries.length === 0) {
-      return (
-        <div className="leading-5" style={{ paddingLeft: indent }}>
-          {renderKeyPrefix()}
-          <CopyableValue value="{}" onCopy={onCopy}>
-            <span className="json-punctuation">{"{}"}</span>
-          </CopyableValue>
-          {renderComma()}
-        </div>
-      );
-    }
-
-    const handleToggle = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      toggleCollapse(path);
-    };
-
-    if (collapsed) {
-      return (
-        <div className="leading-5" style={{ paddingLeft: indent }}>
-          <button
-            onClick={handleToggle}
-            className="json-collapse-toggle inline-flex items-center justify-center w-4 h-4 -ml-4 hover:bg-muted rounded"
-            data-state="closed"
-          >
-            <ChevronRight className="h-3 w-3" />
-          </button>
-          {renderKeyPrefix()}
-          <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
-            <span className="json-punctuation">{"{"}</span>
-            <span className="text-muted-foreground text-xs px-1">
-              {entries.length} {entries.length === 1 ? "key" : "keys"}
-            </span>
-            <span className="json-punctuation">{"}"}</span>
-          </CopyableValue>
-          {renderComma()}
-        </div>
-      );
-    }
-
     return (
-      <Fragment>
-        <div className="leading-5" style={{ paddingLeft: indent }}>
-          <button
-            onClick={handleToggle}
-            className="json-collapse-toggle inline-flex items-center justify-center w-4 h-4 -ml-4 hover:bg-muted rounded"
-            data-state="open"
-          >
-            <ChevronRight className="h-3 w-3" />
-          </button>
-          {renderKeyPrefix()}
-          <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
-            <span className="json-punctuation">{"{"}</span>
-          </CopyableValue>
-        </div>
-        {entries.map(([key, val], index) => (
-          <JsonTreeNode
-            key={`${path}.${key}`}
-            value={val}
-            path={`${path}.${key}`}
-            keyName={key}
-            isLast={index === entries.length - 1}
-            depth={depth + 1}
-            isCollapsed={isCollapsed}
-            toggleCollapse={toggleCollapse}
-            collapseStringsAfterLength={collapseStringsAfterLength}
-            onCopy={onCopy}
-          />
-        ))}
-        <div className="leading-5" style={{ paddingLeft: indent }}>
-          <span className="json-punctuation">{"}"}</span>
-          {renderComma()}
-        </div>
-      </Fragment>
+      <JsonObjectNode
+        value={value as Record<string, unknown>}
+        path={path}
+        keyName={keyName}
+        isLast={isLast}
+        depth={depth}
+        isCollapsed={isCollapsed}
+        toggleCollapse={toggleCollapse}
+        collapseStringsAfterLength={collapseStringsAfterLength}
+        onCopy={onCopy}
+      />
     );
   }
 
@@ -372,4 +551,7 @@ function arePropsEqual(
   return true;
 }
 
+// Create memoized component and export
+// Note: JsonArrayNode and JsonObjectNode reference this, creating a circular dependency
+// which is fine because they're only called at runtime after this is defined
 export const JsonTreeNode = memo(JsonTreeNodeInner, arePropsEqual);
