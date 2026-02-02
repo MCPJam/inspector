@@ -40,6 +40,7 @@ export function ToolPart({
   onExitFullscreen,
   onRequestPip,
   onExitPip,
+  appSupportedDisplayModes,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   uiType?: UIType | null;
@@ -51,6 +52,8 @@ export function ToolPart({
   onExitFullscreen?: (toolCallId: string) => void;
   onRequestPip?: (toolCallId: string) => void;
   onExitPip?: (toolCallId: string) => void;
+  /** Display modes the app declared support for. If undefined, all modes are available. */
+  appSupportedDisplayModes?: DisplayMode[];
 }) {
   const label = isDynamicTool(part)
     ? part.toolName
@@ -192,25 +195,36 @@ export function ToolPart({
               <div className="inline-flex items-center gap-0.5">
                 {displayModeOptions.map(({ mode, icon: Icon, label }) => {
                   const isActive = displayMode === mode;
+                  const isDisabled =
+                    appSupportedDisplayModes !== undefined &&
+                    !appSupportedDisplayModes.includes(mode);
                   return (
                     <Tooltip key={mode}>
                       <TooltipTrigger asChild>
                         <button
                           type="button"
+                          disabled={isDisabled}
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (isDisabled) return;
                             handleDisplayModeChange(mode);
                           }}
-                          className={`p-1 rounded transition-colors cursor-pointer ${
-                            isActive
-                              ? "bg-background text-foreground shadow-sm"
-                              : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                          className={`p-1 rounded transition-colors ${
+                            isDisabled
+                              ? "text-muted-foreground/30 cursor-not-allowed"
+                              : isActive
+                                ? "bg-background text-foreground shadow-sm cursor-pointer"
+                                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
                           }`}
                         >
                           <Icon className="h-3.5 w-3.5" />
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent>{label}</TooltipContent>
+                      <TooltipContent>
+                        {isDisabled
+                          ? `${label} (not supported by this app)`
+                          : label}
+                      </TooltipContent>
                     </Tooltip>
                   );
                 })}
