@@ -340,7 +340,9 @@ export function MCPAppsRenderer({
   const pipWidgetIdRef = useRef(pipWidgetId);
   const toolsMetadataRef = useRef(toolsMetadata);
   const onModelContextUpdateRef = useRef(onModelContextUpdate);
-  const onAppSupportedDisplayModesChangeRef = useRef(onAppSupportedDisplayModesChange);
+  const onAppSupportedDisplayModesChangeRef = useRef(
+    onAppSupportedDisplayModesChange,
+  );
 
   // Fetch widget HTML when tool output is available or CSP mode changes
   useEffect(() => {
@@ -620,7 +622,8 @@ export function MCPAppsRenderer({
     pipWidgetIdRef.current = pipWidgetId;
     toolsMetadataRef.current = toolsMetadata;
     onModelContextUpdateRef.current = onModelContextUpdate;
-    onAppSupportedDisplayModesChangeRef.current = onAppSupportedDisplayModesChange;
+    onAppSupportedDisplayModesChangeRef.current =
+      onAppSupportedDisplayModesChange;
   }, [
     onSendFollowUp,
     onCallTool,
