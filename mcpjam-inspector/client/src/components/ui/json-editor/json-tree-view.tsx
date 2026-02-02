@@ -38,8 +38,10 @@ export function JsonTreeView({
   return (
     <div
       className={cn(
-        "p-3 pl-7 text-xs overflow-auto select-text cursor-text",
-        className
+        "p-3 text-xs overflow-auto select-text cursor-text",
+        className,
+        // pl-7 must come after className to ensure space for collapse toggles
+        "pl-7"
       )}
       style={{ fontFamily: "var(--font-code)" }}
     >
