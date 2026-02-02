@@ -517,7 +517,11 @@ export function ResourceTemplatesTab({
                                         </pre>
                                       ) : (
                                         <div className="p-4">
-                                          <JsonEditor value={content} readOnly showToolbar={false} />
+                                          <JsonEditor
+                                            value={content}
+                                            readOnly
+                                            showToolbar={false}
+                                          />
                                         </div>
                                       )}
                                     </div>

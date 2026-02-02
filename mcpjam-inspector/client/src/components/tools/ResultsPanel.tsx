@@ -48,7 +48,11 @@ function WidgetDebugView({
             Globals
           </h4>
           <div className="bg-muted/30 rounded-lg border border-border p-3">
-            <JsonEditor value={widgetDebugInfo.globals} readOnly showToolbar={false} />
+            <JsonEditor
+              value={widgetDebugInfo.globals}
+              readOnly
+              showToolbar={false}
+            />
           </div>
         </div>
 
@@ -60,7 +64,11 @@ function WidgetDebugView({
                 Widget State
               </h4>
               <div className="bg-muted/30 rounded-lg border border-border p-3">
-                <JsonEditor value={widgetDebugInfo.widgetState as object} readOnly showToolbar={false} />
+                <JsonEditor
+                  value={widgetDebugInfo.widgetState as object}
+                  readOnly
+                  showToolbar={false}
+                />
               </div>
             </div>
           )}
@@ -247,7 +255,11 @@ export function ResultsPanel({
               Validation Errors
             </h3>
             <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-              <JsonEditor value={validationErrors} readOnly showToolbar={false} />
+              <JsonEditor
+                value={validationErrors}
+                readOnly
+                showToolbar={false}
+              />
               {Array.isArray(validationErrors) &&
                 validationErrors.length > 0 && (
                   <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath?.slice(1) ?? ""} ${validationErrors[0].message ?? ""}`}</span>
@@ -265,7 +277,11 @@ export function ResultsPanel({
           (validationErrors === null || validationErrors === undefined) ? (
           <ScrollArea className="h-full">
             <div className="p-4">
-              <JsonEditor value={structuredResult} readOnly showToolbar={false} />
+              <JsonEditor
+                value={structuredResult}
+                readOnly
+                showToolbar={false}
+              />
             </div>
           </ScrollArea>
         ) : rawResult ? (

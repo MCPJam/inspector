@@ -19,13 +19,15 @@ function getPathsAtDepth(
   value: unknown,
   maxDepth: number,
   currentPath = "root",
-  currentDepth = 0
+  currentDepth = 0,
 ): string[] {
   const paths: string[] = [];
 
   if (currentDepth >= maxDepth) {
     if (
-      (typeof value === "object" && value !== null && Object.keys(value).length > 0) ||
+      (typeof value === "object" &&
+        value !== null &&
+        Object.keys(value).length > 0) ||
       (Array.isArray(value) && value.length > 0)
     ) {
       paths.push(currentPath);
@@ -36,13 +38,23 @@ function getPathsAtDepth(
     if (Array.isArray(value)) {
       value.forEach((item, index) => {
         paths.push(
-          ...getPathsAtDepth(item, maxDepth, `${currentPath}.${index}`, currentDepth + 1)
+          ...getPathsAtDepth(
+            item,
+            maxDepth,
+            `${currentPath}.${index}`,
+            currentDepth + 1,
+          ),
         );
       });
     } else {
       Object.entries(value).forEach(([key, val]) => {
         paths.push(
-          ...getPathsAtDepth(val, maxDepth, `${currentPath}.${key}`, currentDepth + 1)
+          ...getPathsAtDepth(
+            val,
+            maxDepth,
+            `${currentPath}.${key}`,
+            currentDepth + 1,
+          ),
         );
       });
     }
@@ -82,13 +94,13 @@ export function useJsonTreeState({
   onCollapseChange,
 }: UseJsonTreeStateOptions = {}): UseJsonTreeStateReturn {
   const [collapsedPaths, setCollapsedPaths] = useState<Set<string>>(
-    () => initialCollapsedPaths ?? new Set()
+    () => initialCollapsedPaths ?? new Set(),
   );
   const [initialized, setInitialized] = useState(false);
 
   const isCollapsed = useCallback(
     (path: string): boolean => collapsedPaths.has(path),
-    [collapsedPaths]
+    [collapsedPaths],
   );
 
   const toggleCollapse = useCallback(
@@ -104,7 +116,7 @@ export function useJsonTreeState({
         return next;
       });
     },
-    [onCollapseChange]
+    [onCollapseChange],
   );
 
   const expandAll = useCallback(() => {
@@ -119,7 +131,7 @@ export function useJsonTreeState({
       setCollapsedPaths(newCollapsed);
       onCollapseChange?.(newCollapsed);
     },
-    [onCollapseChange]
+    [onCollapseChange],
   );
 
   const initializeFromValue = useCallback(
@@ -134,7 +146,7 @@ export function useJsonTreeState({
       }
       setInitialized(true);
     },
-    [initialized, defaultExpandDepth, initialCollapsedPaths, onCollapseChange]
+    [initialized, defaultExpandDepth, initialCollapsedPaths, onCollapseChange],
   );
 
   // Sync with external collapsed paths if controlled
@@ -160,6 +172,6 @@ export function useJsonTreeState({
       expandAll,
       collapseAll,
       initializeFromValue,
-    ]
+    ],
   );
 }

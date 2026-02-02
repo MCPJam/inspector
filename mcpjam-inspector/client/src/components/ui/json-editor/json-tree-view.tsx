@@ -27,7 +27,7 @@ export function JsonTreeView({
       defaultExpandDepth,
       initialCollapsedPaths: controlledCollapsedPaths,
       onCollapseChange,
-    }
+    },
   );
 
   // Initialize collapse state based on defaultExpandDepth
@@ -41,7 +41,7 @@ export function JsonTreeView({
         "p-3 text-xs overflow-auto select-text cursor-text",
         className,
         // pl-7 must come after className to ensure space for collapse toggles
-        "pl-7"
+        "pl-7",
       )}
       style={{ fontFamily: "var(--font-code)" }}
     >

@@ -557,7 +557,11 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                             {promptContent}
                           </pre>
                         ) : (
-                          <JsonEditor value={promptContent} readOnly showToolbar={false} />
+                          <JsonEditor
+                            value={promptContent}
+                            readOnly
+                            showToolbar={false}
+                          />
                         )}
                       </div>
                     </ScrollArea>

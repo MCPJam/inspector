@@ -225,7 +225,11 @@ export function IterationDetails({
               <CollapsibleContent className="mt-2">
                 <div className="rounded border border-destructive/30 bg-background/50 p-2">
                   {errorDetailsJson ? (
-                    <JsonEditor value={errorDetailsJson} readOnly showToolbar={false} />
+                    <JsonEditor
+                      value={errorDetailsJson}
+                      readOnly
+                      showToolbar={false}
+                    />
                   ) : (
                     <pre className="text-xs font-mono text-destructive whitespace-pre-wrap overflow-x-auto">
                       {iteration.errorDetails}

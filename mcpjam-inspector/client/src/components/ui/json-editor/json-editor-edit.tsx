@@ -61,7 +61,7 @@ export function JsonEditorEdit({
   // Memoize highlighted content (only for edit mode)
   const highlightedContent = useMemo(
     () => (readOnly ? "" : highlightJson(content)),
-    [content, readOnly]
+    [content, readOnly],
   );
 
   // Sync scroll between textarea, line numbers, and highlight overlay

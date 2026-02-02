@@ -287,7 +287,8 @@ export function ToolPart({
                     Input
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditor viewOnly
+                    <JsonEditor
+                      viewOnly
                       value={inputData}
                       className="p-2 text-[11px]"
                       collapsible
@@ -302,7 +303,8 @@ export function ToolPart({
                     Result
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditor viewOnly
+                    <JsonEditor
+                      viewOnly
                       value={outputData}
                       className="p-2 text-[11px]"
                       collapsible
@@ -341,14 +343,17 @@ export function ToolPart({
               </div>
               <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                 {widgetDebugInfo.widgetState ? (
-                  <JsonEditor viewOnly
+                  <JsonEditor
+                    viewOnly
                     value={widgetDebugInfo.widgetState}
                     className="p-2 text-[11px]"
                     collapsible
                     defaultExpandDepth={2}
                   />
                 ) : (
-                  <div className="p-2 text-[11px] text-muted-foreground">null (no state set)</div>
+                  <div className="p-2 text-[11px] text-muted-foreground">
+                    null (no state set)
+                  </div>
                 )}
               </div>
               <div className="text-[9px] text-muted-foreground/50 mt-2">
@@ -387,7 +392,8 @@ export function ToolPart({
                         Content (for model)
                       </div>
                       <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
-                        <JsonEditor viewOnly
+                        <JsonEditor
+                          viewOnly
                           value={widgetDebugInfo.modelContext.content}
                           className="p-2 text-[11px]"
                           collapsible
@@ -403,7 +409,8 @@ export function ToolPart({
                         Structured Content
                       </div>
                       <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
-                        <JsonEditor viewOnly
+                        <JsonEditor
+                          viewOnly
                           value={widgetDebugInfo.modelContext.structuredContent}
                           className="p-2 text-[11px]"
                           collapsible
@@ -434,7 +441,8 @@ export function ToolPart({
                     Input
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditor viewOnly
+                    <JsonEditor
+                      viewOnly
                       value={inputData}
                       className="p-2 text-[11px]"
                       collapsible
@@ -450,7 +458,8 @@ export function ToolPart({
                     Result
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditor viewOnly
+                    <JsonEditor
+                      viewOnly
                       value={outputData}
                       className="p-2 text-[11px]"
                       collapsible

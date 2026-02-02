@@ -22,7 +22,7 @@ const cancelChunk =
  */
 function useProgressiveChildren<T>(items: T[], isExpanded: boolean): T[] {
   const [renderedCount, setRenderedCount] = useState(
-    items.length <= INITIAL_CHUNK_SIZE ? items.length : INITIAL_CHUNK_SIZE
+    items.length <= INITIAL_CHUNK_SIZE ? items.length : INITIAL_CHUNK_SIZE,
   );
 
   useEffect(() => {
@@ -50,7 +50,7 @@ function useProgressiveChildren<T>(items: T[], isExpanded: boolean): T[] {
       () => {
         setRenderedCount((prev) => Math.min(prev + CHUNK_SIZE, items.length));
       },
-      { timeout: 100 } // Fallback: render within 100ms even if not idle
+      { timeout: 100 }, // Fallback: render within 100ms even if not idle
     );
 
     return () => cancelChunk(id as number);
@@ -93,7 +93,7 @@ const CopyableValue = memo(function CopyableValue({
         setTimeout(() => setCopied(false), 1500);
       }
     },
-    [value, onCopy]
+    [value, onCopy],
   );
 
   return (
@@ -109,7 +109,7 @@ const CopyableValue = memo(function CopyableValue({
           "inline-flex items-center justify-center ml-1 p-0.5 rounded",
           "transition-all duration-150",
           "hover:bg-muted",
-          isHovered || copied ? "opacity-100" : "opacity-0"
+          isHovered || copied ? "opacity-100" : "opacity-0",
         )}
         style={{ verticalAlign: "middle" }}
       >
@@ -142,7 +142,6 @@ interface JsonArrayNodeProps extends Omit<JsonTreeNodeProps, "value"> {
 interface JsonObjectNodeProps extends Omit<JsonTreeNodeProps, "value"> {
   value: Record<string, unknown>;
 }
-
 
 /**
  * Array node component with progressive rendering
@@ -239,7 +238,9 @@ function JsonArrayNode({
           key={`${path}.${index}`}
           value={item}
           path={`${path}.${index}`}
-          isLast={index === value.length - 1 && visibleItems.length === value.length}
+          isLast={
+            index === value.length - 1 && visibleItems.length === value.length
+          }
           depth={depth + 1}
           isCollapsed={isCollapsedFn}
           toggleCollapse={toggleCollapse}
@@ -360,7 +361,10 @@ function JsonObjectNode({
           value={val}
           path={`${path}.${key}`}
           keyName={key}
-          isLast={index === entries.length - 1 && visibleEntries.length === entries.length}
+          isLast={
+            index === entries.length - 1 &&
+            visibleEntries.length === entries.length
+          }
           depth={depth + 1}
           isCollapsed={isCollapsedFn}
           toggleCollapse={toggleCollapse}
@@ -524,7 +528,7 @@ function JsonTreeNodeInner({
 // Custom comparator - only re-render if relevant props change
 function arePropsEqual(
   prevProps: JsonTreeNodeProps,
-  nextProps: JsonTreeNodeProps
+  nextProps: JsonTreeNodeProps,
 ): boolean {
   // Always re-render if value changes
   if (prevProps.value !== nextProps.value) return false;
@@ -535,7 +539,8 @@ function arePropsEqual(
   if (prevProps.isLast !== nextProps.isLast) return false;
   if (prevProps.depth !== nextProps.depth) return false;
   if (
-    prevProps.collapseStringsAfterLength !== nextProps.collapseStringsAfterLength
+    prevProps.collapseStringsAfterLength !==
+    nextProps.collapseStringsAfterLength
   )
     return false;
 

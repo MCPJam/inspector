@@ -22,9 +22,7 @@ interface Token {
  */
 export function formatPath(path: (string | number)[]): string {
   return path
-    .map((p, i) =>
-      typeof p === "number" ? `[${p}]` : i === 0 ? p : `.${p}`
-    )
+    .map((p, i) => (typeof p === "number" ? `[${p}]` : i === 0 ? p : `.${p}`))
     .join("");
 }
 
@@ -112,7 +110,10 @@ export function tokenizeJson(json: string): Token[] {
         tokens.push({ type: "punctuation", value: "}", start, end: i + 1 });
         contextStack.pop();
         // Pop the object key from path if we're closing an object
-        if (pathStack.length > 0 && typeof pathStack[pathStack.length - 1] === "string") {
+        if (
+          pathStack.length > 0 &&
+          typeof pathStack[pathStack.length - 1] === "string"
+        ) {
           pathStack.pop();
         }
         expectingKey = false;
@@ -137,11 +138,17 @@ export function tokenizeJson(json: string): Token[] {
         tokens.push({ type: "punctuation", value: "]", start, end: i + 1 });
         contextStack.pop();
         // Pop the array index
-        if (pathStack.length > 0 && typeof pathStack[pathStack.length - 1] === "number") {
+        if (
+          pathStack.length > 0 &&
+          typeof pathStack[pathStack.length - 1] === "number"
+        ) {
           pathStack.pop();
         }
         // Pop the key that held the array if any
-        if (pathStack.length > 0 && typeof pathStack[pathStack.length - 1] === "string") {
+        if (
+          pathStack.length > 0 &&
+          typeof pathStack[pathStack.length - 1] === "string"
+        ) {
           pathStack.pop();
         }
         expectingKey = false;
@@ -201,9 +208,8 @@ export function tokenizeJson(json: string): Token[] {
           });
         } else {
           // String value - store current path and key info
-          const valuePath = currentKey !== null
-            ? [...pathStack, currentKey]
-            : [...pathStack];
+          const valuePath =
+            currentKey !== null ? [...pathStack, currentKey] : [...pathStack];
           tokens.push({
             type: "string",
             value,
@@ -229,9 +235,8 @@ export function tokenizeJson(json: string): Token[] {
       case "8":
       case "9": {
         const value = readNumber();
-        const valuePath = currentKey !== null
-          ? [...pathStack, currentKey]
-          : [...pathStack];
+        const valuePath =
+          currentKey !== null ? [...pathStack, currentKey] : [...pathStack];
         tokens.push({
           type: "number",
           value,
@@ -248,9 +253,8 @@ export function tokenizeJson(json: string): Token[] {
       case "t":
       case "f": {
         const value = readWord();
-        const valuePath = currentKey !== null
-          ? [...pathStack, currentKey]
-          : [...pathStack];
+        const valuePath =
+          currentKey !== null ? [...pathStack, currentKey] : [...pathStack];
         if (value === "true") {
           tokens.push({
             type: "boolean",
@@ -278,9 +282,8 @@ export function tokenizeJson(json: string): Token[] {
       case "n": {
         const value = readWord();
         if (value === "null") {
-          const valuePath = currentKey !== null
-            ? [...pathStack, currentKey]
-            : [...pathStack];
+          const valuePath =
+            currentKey !== null ? [...pathStack, currentKey] : [...pathStack];
           tokens.push({
             type: "null",
             value,

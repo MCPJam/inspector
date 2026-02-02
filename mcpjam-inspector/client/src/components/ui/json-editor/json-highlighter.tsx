@@ -16,11 +16,7 @@ interface CopyableValueProps {
   onCopy?: (value: string) => void;
 }
 
-function CopyableValue({
-  children,
-  value,
-  onCopy,
-}: CopyableValueProps) {
+function CopyableValue({ children, value, onCopy }: CopyableValueProps) {
   const [copied, setCopied] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
@@ -44,7 +40,7 @@ function CopyableValue({
         setTimeout(() => setCopied(false), 1500);
       }
     },
-    [onCopy]
+    [onCopy],
   );
 
   return (
@@ -63,7 +59,7 @@ function CopyableValue({
           "inline-flex items-center justify-center ml-1 p-0.5 rounded",
           "transition-all duration-150",
           "hover:bg-muted",
-          isHovered || copied ? "opacity-100" : "opacity-0"
+          isHovered || copied ? "opacity-100" : "opacity-0",
         )}
         style={{ verticalAlign: "middle" }}
       >
@@ -124,7 +120,8 @@ export function JsonHighlighter({
     const findNextValueToken = (startIndex: number) => {
       for (let j = startIndex + 1; j < tokens.length; j++) {
         const nextToken = tokens[j];
-        if (nextToken.type === "punctuation" && nextToken.value === ":") continue;
+        if (nextToken.type === "punctuation" && nextToken.value === ":")
+          continue;
         return nextToken;
       }
       return null;
@@ -138,7 +135,7 @@ export function JsonHighlighter({
         result.push(
           <Fragment key={`ws-${lastIndex}`}>
             {content.slice(lastIndex, token.start)}
-          </Fragment>
+          </Fragment>,
         );
       }
 
@@ -159,7 +156,7 @@ export function JsonHighlighter({
         result.push(
           <span key={`token-${i}`} className={className}>
             {token.value}
-          </span>
+          </span>,
         );
         lastIndex = token.end;
         continue;
@@ -181,7 +178,7 @@ export function JsonHighlighter({
             onCopy={onCopy}
           >
             <span className={className}>{token.value}</span>
-          </CopyableValue>
+          </CopyableValue>,
         );
         lastIndex = token.end;
         continue;
@@ -221,7 +218,7 @@ export function JsonHighlighter({
             onCopy={onCopy}
             keyName={token.keyName}
             path={token.path}
-          />
+          />,
         );
       } else if (isCopyable) {
         result.push(
@@ -231,13 +228,13 @@ export function JsonHighlighter({
             onCopy={onCopy}
           >
             <span className={className}>{token.value}</span>
-          </CopyableValue>
+          </CopyableValue>,
         );
       } else {
         result.push(
           <span key={`token-${i}`} className={className}>
             {token.value}
-          </span>
+          </span>,
         );
       }
 
@@ -247,7 +244,7 @@ export function JsonHighlighter({
     // Add any remaining content
     if (lastIndex < content.length) {
       result.push(
-        <Fragment key={`ws-end`}>{content.slice(lastIndex)}</Fragment>
+        <Fragment key={`ws-end`}>{content.slice(lastIndex)}</Fragment>,
       );
     }
 

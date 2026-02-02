@@ -489,7 +489,13 @@ function CombinedToolPart({
                   {displayOutput}
                 </pre>
               ) : (
-                <div className={isError ? "[&_.rounded-lg]:border-destructive/40 [&_.rounded-lg]:bg-destructive/10 [&_.rounded-lg]:text-destructive" : ""}>
+                <div
+                  className={
+                    isError
+                      ? "[&_.rounded-lg]:border-destructive/40 [&_.rounded-lg]:bg-destructive/10 [&_.rounded-lg]:text-destructive"
+                      : ""
+                  }
+                >
                   <JsonEditor viewOnly value={displayOutput} />
                 </div>
               )}

@@ -171,7 +171,11 @@ export function HTTPHistoryEntry({
                   Request Headers
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                  <JsonEditor value={requestHeaders} readOnly showToolbar={false} />
+                  <JsonEditor
+                    value={requestHeaders}
+                    readOnly
+                    showToolbar={false}
+                  />
                 </div>
               </div>
             )}
@@ -183,7 +187,11 @@ export function HTTPHistoryEntry({
                   Request Body
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[300px] overflow-auto">
-                  <JsonEditor value={requestBody} readOnly showToolbar={false} />
+                  <JsonEditor
+                    value={requestBody}
+                    readOnly
+                    showToolbar={false}
+                  />
                 </div>
               </div>
             )}
@@ -195,7 +203,11 @@ export function HTTPHistoryEntry({
                   Response Headers
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                  <JsonEditor value={responseHeaders} readOnly showToolbar={false} />
+                  <JsonEditor
+                    value={responseHeaders}
+                    readOnly
+                    showToolbar={false}
+                  />
                 </div>
               </div>
             )}
@@ -207,7 +219,11 @@ export function HTTPHistoryEntry({
                   Response Body
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[300px] overflow-auto">
-                  <JsonEditor value={responseBody} readOnly showToolbar={false} />
+                  <JsonEditor
+                    value={responseBody}
+                    readOnly
+                    showToolbar={false}
+                  />
                 </div>
               </div>
             )}

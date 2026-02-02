@@ -180,7 +180,6 @@ export function JsonImportModal({
               </pre>
             </div>
           </Card>
-
         </div>
 
         {/* Action Buttons */}

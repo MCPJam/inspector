@@ -55,7 +55,7 @@ export function TruncatableString({
         setTimeout(() => setCopied(null), 1500);
       }
     },
-    [onCopy]
+    [onCopy],
   );
 
   const handleToggleExpand = useCallback(
@@ -65,7 +65,7 @@ export function TruncatableString({
         setIsExpanded((prev) => !prev);
       }
     },
-    [shouldTruncate]
+    [shouldTruncate],
   );
 
   const formattedPath = path && path.length > 0 ? formatPath(path) : null;
@@ -92,7 +92,7 @@ export function TruncatableString({
           onClick={handleToggleExpand}
           className={cn(
             "json-string",
-            shouldTruncate && !isExpanded && "json-string-truncated"
+            shouldTruncate && !isExpanded && "json-string-truncated",
           )}
         >
           {truncatedDisplay}
@@ -106,7 +106,7 @@ export function TruncatableString({
             "inline-flex items-center justify-center ml-1 p-0.5 rounded",
             "transition-all duration-150",
             "hover:bg-muted",
-            isHovered || copied ? "opacity-100" : "opacity-0"
+            isHovered || copied ? "opacity-100" : "opacity-0",
           )}
           style={{ verticalAlign: "middle" }}
         >
@@ -131,7 +131,7 @@ export function TruncatableString({
         onClick={handleToggleExpand}
         className={cn(
           "json-string",
-          shouldTruncate && !isExpanded && "json-string-truncated"
+          shouldTruncate && !isExpanded && "json-string-truncated",
         )}
       >
         {truncatedDisplay}
@@ -143,7 +143,7 @@ export function TruncatableString({
               "inline-flex items-center justify-center ml-1 p-0.5 rounded",
               "transition-all duration-150",
               "hover:bg-muted",
-              isHovered || copied ? "opacity-100" : "opacity-0"
+              isHovered || copied ? "opacity-100" : "opacity-0",
             )}
             style={{ verticalAlign: "middle" }}
             onClick={(e) => e.stopPropagation()}

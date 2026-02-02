@@ -134,7 +134,11 @@ export function ErrorBox({
               )}
             >
               {errorDetailsJson ? (
-                <JsonEditor value={errorDetailsJson} readOnly showToolbar={false} />
+                <JsonEditor
+                  value={errorDetailsJson}
+                  readOnly
+                  showToolbar={false}
+                />
               ) : (
                 <pre
                   className={cn(
