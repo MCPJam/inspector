@@ -158,8 +158,6 @@ chatV2.post("/", async (c) => {
               pendingText = "";
             };
 
-            const abortController = new AbortController();
-
             const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
               method: "POST",
               headers: {
@@ -185,7 +183,6 @@ chatV2.post("/", async (c) => {
                   : { temperature: resolvedTemperature }),
                 tools: toolDefs,
               }),
-              signal: abortController.signal,
             });
 
             if (!res.ok || !res.body) {
@@ -194,13 +191,13 @@ chatV2.post("/", async (c) => {
               break;
             }
 
-            try {
-              const parsedStream = parseJsonEventStream({
-                stream: res.body,
-                schema: uiMessageChunkSchema,
-              });
-              const reader = parsedStream.getReader();
+            const parsedStream = parseJsonEventStream({
+              stream: res.body,
+              schema: uiMessageChunkSchema,
+            });
+            const reader = parsedStream.getReader();
 
+            try {
               while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
@@ -217,7 +214,7 @@ chatV2.post("/", async (c) => {
                 if (chunk?.type === "finish") {
                   // Buffer finish until we know we won't execute tools in this step
                   pendingFinishChunk = chunk;
-                  continue;
+                  break;
                 }
 
                 // Forward chunk to client
@@ -255,26 +252,19 @@ chatV2.post("/", async (c) => {
                     input,
                   });
                   sawToolCall = true;
-
-                  // Stop immediately on tool calls
-                  abortController.abort();
-                  break;
+                  continue;
                 }
               }
-
-              reader.releaseLock();
             } catch (error) {
-              const isAbort =
-                error instanceof Error && error.name === "AbortError";
-              if (!isAbort) {
-                logger.error("[mcp/chat-v2] stream parse error", error);
-                writer.write({
-                  type: "error",
-                  errorText:
-                    error instanceof Error ? error.message : String(error),
-                } as any);
-                break;
-              }
+              logger.error("[mcp/chat-v2] stream parse error", error);
+              writer.write({
+                type: "error",
+                errorText:
+                  error instanceof Error ? error.message : String(error),
+              } as any);
+              break;
+            } finally {
+              reader.releaseLock();
             }
 
             flushPendingText();

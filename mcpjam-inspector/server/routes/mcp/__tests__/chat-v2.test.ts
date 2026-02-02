@@ -313,7 +313,12 @@ describe("POST /api/mcp/chat-v2", () => {
         await import("@/shared/http-tool-calls");
 
       // Setup: message history has an unresolved tool call (simulating abort scenario)
-      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      // First check: unresolved (inherited tool call), second check: resolved after execution
+      let hasUnresolvedCallCount = 0;
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(() => {
+        hasUnresolvedCallCount++;
+        return hasUnresolvedCallCount === 1;
+      });
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
           // Simulate adding tool result to messages
@@ -330,20 +335,21 @@ describe("POST /api/mcp/chat-v2", () => {
         },
       );
 
-      // Mock fetch for CONVEX_HTTP_URL
+      // Mock fetch for CONVEX_HTTP_URL - return fresh response each time
       const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue(
-        createSseResponse([
-          {
-            type: "finish",
-            finishReason: "stop",
-            messageMetadata: {
-              inputTokens: 1,
-              outputTokens: 1,
-              totalTokens: 2,
-            },
+      const finishEvents = [
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
           },
-        ]),
+        },
+      ];
+      global.fetch = vi.fn().mockImplementation(async () =>
+        createSseResponse(finishEvents),
       );
 
       try {
@@ -477,7 +483,12 @@ describe("POST /api/mcp/chat-v2", () => {
       const { hasUnresolvedToolCalls, executeToolCallsFromMessages } =
         await import("@/shared/http-tool-calls");
 
-      vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+      // First check: unresolved (inherited tool calls), second check: resolved after execution
+      let hasUnresolvedCallCount = 0;
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(() => {
+        hasUnresolvedCallCount++;
+        return hasUnresolvedCallCount === 1;
+      });
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
           // Simulate adding tool results for both calls
@@ -504,19 +515,21 @@ describe("POST /api/mcp/chat-v2", () => {
         },
       );
 
+      // Mock fetch for CONVEX_HTTP_URL - return fresh response each time
       const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockResolvedValue(
-        createSseResponse([
-          {
-            type: "finish",
-            finishReason: "stop",
-            messageMetadata: {
-              inputTokens: 1,
-              outputTokens: 1,
-              totalTokens: 2,
-            },
+      const finishEvents = [
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: {
+            inputTokens: 1,
+            outputTokens: 1,
+            totalTokens: 2,
           },
-        ]),
+        },
+      ];
+      global.fetch = vi.fn().mockImplementation(async () =>
+        createSseResponse(finishEvents),
       );
 
       try {
@@ -569,6 +582,128 @@ describe("POST /api/mcp/chat-v2", () => {
         expect(call1Event?.input).toEqual({ arg: "a" });
         expect(call2Event?.toolName).toBe("tool_b");
         expect(call2Event?.input).toEqual({ arg: "b" });
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("batches multiple tool calls from one stream response", async () => {
+      const { hasUnresolvedToolCalls, executeToolCallsFromMessages } =
+        await import("@/shared/http-tool-calls");
+
+      // First call: has unresolved (the two new tool calls), second call: resolved after execution
+      let hasUnresolvedCallCount = 0;
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(() => {
+        hasUnresolvedCallCount++;
+        return hasUnresolvedCallCount === 1;
+      });
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          messages.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "batch-call-1",
+                output: { type: "json", value: { stops: ["Berryessa"] } },
+              },
+            ],
+          });
+          messages.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "batch-call-2",
+                output: { type: "json", value: { stops: ["Montgomery"] } },
+              },
+            ],
+          });
+        },
+      );
+
+      const originalFetch = global.fetch;
+      let fetchCallCount = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        fetchCallCount++;
+        if (fetchCallCount === 1) {
+          // Backend sends TWO tool calls + finish in a single SSE response
+          return createSseResponse([
+            {
+              type: "tool-input-available",
+              toolCallId: "batch-call-1",
+              toolName: "search_stops",
+              input: { query: "Berryessa" },
+            },
+            {
+              type: "tool-input-available",
+              toolCallId: "batch-call-2",
+              toolName: "search_stops",
+              input: { query: "Montgomery" },
+            },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              messageMetadata: {
+                inputTokens: 10,
+                outputTokens: 20,
+                totalTokens: 30,
+              },
+            },
+          ]);
+        }
+        // Second fetch: final text response after tool results
+        return createSseResponse([
+          { type: "text-start", id: "msg-1" },
+          {
+            type: "text-delta",
+            id: "msg-1",
+            delta: "Found Berryessa and Montgomery.",
+          },
+          { type: "text-end", id: "msg-1" },
+          {
+            type: "finish",
+            finishReason: "stop",
+            messageMetadata: {
+              inputTokens: 30,
+              outputTokens: 10,
+              totalTokens: 40,
+            },
+          },
+        ]);
+      });
+
+      try {
+        await postJson(app, "/api/mcp/chat-v2", {
+          messages: [{ role: "user", content: "Search stops Berryessa and Montgomery" }],
+          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+        });
+        await lastStreamExecution;
+
+        // Both tool calls should be collected from a single fetch
+        const toolInputEvents = capturedStreamEvents.filter(
+          (e) => e.type === "tool-input-available",
+        );
+        expect(
+          toolInputEvents.some((e) => e.toolCallId === "batch-call-1"),
+        ).toBe(true);
+        expect(
+          toolInputEvents.some((e) => e.toolCallId === "batch-call-2"),
+        ).toBe(true);
+
+        // Both tool results should be emitted
+        const toolOutputEvents = capturedStreamEvents.filter(
+          (e) => e.type === "tool-output-available",
+        );
+        expect(
+          toolOutputEvents.some((e) => e.toolCallId === "batch-call-1"),
+        ).toBe(true);
+        expect(
+          toolOutputEvents.some((e) => e.toolCallId === "batch-call-2"),
+        ).toBe(true);
+
+        // Only 2 fetch calls total (one for tool calls batch, one for final response)
+        expect(fetchCallCount).toBe(2);
       } finally {
         global.fetch = originalFetch;
       }
