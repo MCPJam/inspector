@@ -1,14 +1,8 @@
 import { useState, useCallback, useMemo, Fragment } from "react";
-import { Copy, Check, ChevronDown } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { tokenizeJson, formatPath } from "./json-syntax-highlighter";
+import { tokenizeJson } from "./json-syntax-highlighter";
 import { TruncatableString } from "./truncatable-string";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 interface JsonHighlighterProps {
   content: string;
@@ -19,30 +13,24 @@ interface JsonHighlighterProps {
 interface CopyableValueProps {
   children: React.ReactNode;
   value: string;
-  keyName?: string;
-  path?: (string | number)[];
-  isKey?: boolean;
   onCopy?: (value: string) => void;
 }
 
 function CopyableValue({
   children,
   value,
-  keyName,
-  path,
-  isKey,
   onCopy,
 }: CopyableValueProps) {
-  const [copied, setCopied] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
   const copyToClipboard = useCallback(
-    async (text: string, label: string) => {
+    async (text: string) => {
       try {
         await navigator.clipboard.writeText(text);
-        setCopied(label);
+        setCopied(true);
         onCopy?.(text);
-        setTimeout(() => setCopied(null), 1500);
+        setTimeout(() => setCopied(false), 1500);
       } catch {
         // Fallback for older browsers
         const textarea = document.createElement("textarea");
@@ -51,69 +39,14 @@ function CopyableValue({
         textarea.select();
         document.execCommand("copy");
         document.body.removeChild(textarea);
-        setCopied(label);
+        setCopied(true);
         onCopy?.(text);
-        setTimeout(() => setCopied(null), 1500);
+        setTimeout(() => setCopied(false), 1500);
       }
     },
     [onCopy]
   );
 
-  const formattedPath = path && path.length > 0 ? formatPath(path) : null;
-
-  // Build menu items based on what's available
-  const menuItems: { label: string; value: string; key: string }[] = [];
-
-  if (isKey) {
-    // For keys: Copy key, Copy path
-    menuItems.push({ label: "Copy key", value: value, key: "key" });
-    if (formattedPath) {
-      menuItems.push({ label: "Copy path", value: formattedPath, key: "path" });
-    }
-  } else {
-    // For values: Copy value, Copy key (if available), Copy path (if available)
-    menuItems.push({ label: "Copy value", value: value, key: "value" });
-    if (keyName) {
-      menuItems.push({ label: "Copy key", value: keyName, key: "key" });
-    }
-    if (formattedPath) {
-      menuItems.push({ label: "Copy path", value: formattedPath, key: "path" });
-    }
-  }
-
-  // If only one option, show simple button
-  if (menuItems.length === 1) {
-    return (
-      <span
-        className="relative inline-flex items-center group/copy"
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-      >
-        {children}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            copyToClipboard(menuItems[0].value, menuItems[0].key);
-          }}
-          className={cn(
-            "inline-flex items-center justify-center ml-1 p-0.5 rounded",
-            "transition-all duration-150",
-            "hover:bg-muted",
-            isHovered || copied ? "opacity-100" : "opacity-0"
-          )}
-          style={{ verticalAlign: "middle" }}
-        >
-          {copied ? (
-            <Check className="h-3 w-3 text-green-500" />
-          ) : (
-            <Copy className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
-          )}
-        </button>
-      </span>
-    );
-  }
-
-  // Multiple options: show dropdown
   return (
     <span
       className="relative inline-flex items-center group/copy"
@@ -121,43 +54,58 @@ function CopyableValue({
       onMouseLeave={() => setIsHovered(false)}
     >
       {children}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            className={cn(
-              "inline-flex items-center justify-center ml-1 p-0.5 rounded",
-              "transition-all duration-150",
-              "hover:bg-muted",
-              isHovered || copied ? "opacity-100" : "opacity-0"
-            )}
-            style={{ verticalAlign: "middle" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {copied ? (
-              <Check className="h-3 w-3 text-green-500" />
-            ) : (
-              <>
-                <Copy className="h-3 w-3 text-muted-foreground/60" />
-                <ChevronDown className="h-2 w-2 text-muted-foreground/60 -ml-0.5" />
-              </>
-            )}
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-[140px]">
-          {menuItems.map((item) => (
-            <DropdownMenuItem
-              key={item.key}
-              onClick={() => copyToClipboard(item.value, item.key)}
-              className="text-xs"
-            >
-              <Copy className="h-3 w-3 mr-2" />
-              {item.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          copyToClipboard(value);
+        }}
+        className={cn(
+          "inline-flex items-center justify-center ml-1 p-0.5 rounded",
+          "transition-all duration-150",
+          "hover:bg-muted",
+          isHovered || copied ? "opacity-100" : "opacity-0"
+        )}
+        style={{ verticalAlign: "middle" }}
+      >
+        {copied ? (
+          <Check className="h-3 w-3 text-green-500" />
+        ) : (
+          <Copy className="h-3 w-3 text-muted-foreground/60 hover:text-muted-foreground" />
+        )}
+      </button>
     </span>
   );
+}
+
+// Helper to extract the full object/array content from a position
+function extractObjectOrArray(content: string, startPos: number): string {
+  const openChar = content[startPos];
+  const closeChar = openChar === "{" ? "}" : "]";
+  let depth = 1;
+  let i = startPos + 1;
+  let inString = false;
+  let escape = false;
+
+  while (i < content.length && depth > 0) {
+    const char = content[i];
+
+    if (escape) {
+      escape = false;
+    } else if (char === "\\") {
+      escape = true;
+    } else if (char === '"') {
+      inString = !inString;
+    } else if (!inString) {
+      if (char === openChar) {
+        depth++;
+      } else if (char === closeChar) {
+        depth--;
+      }
+    }
+    i++;
+  }
+
+  return content.slice(startPos, i);
 }
 
 export function JsonHighlighter({
@@ -169,6 +117,18 @@ export function JsonHighlighter({
     const tokens = tokenizeJson(content);
     const result: React.ReactNode[] = [];
     let lastIndex = 0;
+    // Track when a key's value is an object/array
+    let pendingObjectCopy: { start: number } | null = null;
+
+    // Helper to find the next value token (skip colon punctuation)
+    const findNextValueToken = (startIndex: number) => {
+      for (let j = startIndex + 1; j < tokens.length; j++) {
+        const nextToken = tokens[j];
+        if (nextToken.type === "punctuation" && nextToken.value === ":") continue;
+        return nextToken;
+      }
+      return null;
+    };
 
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i];
@@ -184,18 +144,60 @@ export function JsonHighlighter({
 
       const className = `json-${token.type}`;
 
-      // Determine if this token should be copyable
+      // Check if this key's value is an object or array
+      if (token.type === "key") {
+        const nextValueToken = findNextValueToken(i);
+        if (
+          nextValueToken &&
+          nextValueToken.type === "punctuation" &&
+          (nextValueToken.value === "{" || nextValueToken.value === "[")
+        ) {
+          // Mark that we need to add copy to the opening brace
+          pendingObjectCopy = { start: nextValueToken.start };
+        }
+        // Render key without copy button
+        result.push(
+          <span key={`token-${i}`} className={className}>
+            {token.value}
+          </span>
+        );
+        lastIndex = token.end;
+        continue;
+      }
+
+      // Handle opening brace/bracket with pending object copy
+      if (
+        pendingObjectCopy &&
+        token.type === "punctuation" &&
+        (token.value === "{" || token.value === "[") &&
+        token.start === pendingObjectCopy.start
+      ) {
+        const objectContent = extractObjectOrArray(content, token.start);
+        pendingObjectCopy = null;
+        result.push(
+          <CopyableValue
+            key={`token-${i}`}
+            value={objectContent}
+            onCopy={onCopy}
+          >
+            <span className={className}>{token.value}</span>
+          </CopyableValue>
+        );
+        lastIndex = token.end;
+        continue;
+      }
+
+      // Determine if this token should be copyable (values only, not keys)
       const isCopyable =
-        token.type === "key" ||
         token.type === "string" ||
         token.type === "number" ||
         token.type === "boolean" ||
         token.type === "boolean-false" ||
         token.type === "null";
 
-      // Get the raw value to copy (without quotes for strings/keys)
+      // Get the raw value to copy (without quotes for strings)
       const getCopyValue = () => {
-        if (token.type === "string" || token.type === "key") {
+        if (token.type === "string") {
           // Remove surrounding quotes and unescape
           try {
             return JSON.parse(token.value);
@@ -226,9 +228,6 @@ export function JsonHighlighter({
           <CopyableValue
             key={`token-${i}`}
             value={getCopyValue()}
-            keyName={token.keyName}
-            path={token.path}
-            isKey={token.type === "key"}
             onCopy={onCopy}
           >
             <span className={className}>{token.value}</span>
