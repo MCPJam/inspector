@@ -1,4 +1,4 @@
-import { useState, useCallback, Fragment } from "react";
+import { useState, useCallback, Fragment, memo } from "react";
 import { ChevronRight, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TruncatableString } from "./truncatable-string";
@@ -9,7 +9,11 @@ interface CopyableValueProps {
   onCopy?: (value: string) => void;
 }
 
-function CopyableValue({ children, value, onCopy }: CopyableValueProps) {
+const CopyableValue = memo(function CopyableValue({
+  children,
+  value,
+  onCopy,
+}: CopyableValueProps) {
   const [copied, setCopied] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
@@ -61,7 +65,7 @@ function CopyableValue({ children, value, onCopy }: CopyableValueProps) {
       </button>
     </span>
   );
-}
+});
 
 interface JsonTreeNodeProps {
   value: unknown;
@@ -75,7 +79,7 @@ interface JsonTreeNodeProps {
   onCopy?: (value: string) => void;
 }
 
-export function JsonTreeNode({
+function JsonTreeNodeInner({
   value,
   path,
   keyName,
@@ -337,3 +341,35 @@ export function JsonTreeNode({
     </div>
   );
 }
+
+// Custom comparator - only re-render if relevant props change
+function arePropsEqual(
+  prevProps: JsonTreeNodeProps,
+  nextProps: JsonTreeNodeProps
+): boolean {
+  // Always re-render if value changes
+  if (prevProps.value !== nextProps.value) return false;
+
+  // Re-render if structural props change
+  if (prevProps.path !== nextProps.path) return false;
+  if (prevProps.keyName !== nextProps.keyName) return false;
+  if (prevProps.isLast !== nextProps.isLast) return false;
+  if (prevProps.depth !== nextProps.depth) return false;
+  if (
+    prevProps.collapseStringsAfterLength !== nextProps.collapseStringsAfterLength
+  )
+    return false;
+
+  // Key optimization: compare the RESULT of isCollapsed for this node's path
+  // This way, changing a sibling's collapse state won't trigger re-render
+  const prevCollapsed = prevProps.isCollapsed(prevProps.path);
+  const nextCollapsed = nextProps.isCollapsed(nextProps.path);
+  if (prevCollapsed !== nextCollapsed) return false;
+
+  // Function references can change - we don't care as long as collapse state is same
+  // toggleCollapse and onCopy don't affect render output
+
+  return true;
+}
+
+export const JsonTreeNode = memo(JsonTreeNodeInner, arePropsEqual);

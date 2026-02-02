@@ -287,7 +287,12 @@ export function ToolPart({
                     Input
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditorView value={inputData} className="p-2 text-[11px]" />
+                    <JsonEditorView
+                      value={inputData}
+                      className="p-2 text-[11px]"
+                      collapsible
+                      defaultExpandDepth={2}
+                    />
                   </div>
                 </div>
               )}
@@ -297,7 +302,12 @@ export function ToolPart({
                     Result
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditorView value={outputData} className="p-2 text-[11px]" />
+                    <JsonEditorView
+                      value={outputData}
+                      className="p-2 text-[11px]"
+                      collapsible
+                      defaultExpandDepth={2}
+                    />
                   </div>
                 </div>
               )}
@@ -331,7 +341,12 @@ export function ToolPart({
               </div>
               <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                 {widgetDebugInfo.widgetState ? (
-                  <JsonEditorView value={widgetDebugInfo.widgetState} className="p-2 text-[11px]" />
+                  <JsonEditorView
+                    value={widgetDebugInfo.widgetState}
+                    className="p-2 text-[11px]"
+                    collapsible
+                    defaultExpandDepth={2}
+                  />
                 ) : (
                   <div className="p-2 text-[11px] text-muted-foreground">null (no state set)</div>
                 )}
@@ -372,7 +387,12 @@ export function ToolPart({
                         Content (for model)
                       </div>
                       <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
-                        <JsonEditorView value={widgetDebugInfo.modelContext.content} className="p-2 text-[11px]" />
+                        <JsonEditorView
+                          value={widgetDebugInfo.modelContext.content}
+                          className="p-2 text-[11px]"
+                          collapsible
+                          defaultExpandDepth={2}
+                        />
                       </div>
                     </div>
                   )}
@@ -383,7 +403,12 @@ export function ToolPart({
                         Structured Content
                       </div>
                       <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
-                        <JsonEditorView value={widgetDebugInfo.modelContext.structuredContent} className="p-2 text-[11px]" />
+                        <JsonEditorView
+                          value={widgetDebugInfo.modelContext.structuredContent}
+                          className="p-2 text-[11px]"
+                          collapsible
+                          defaultExpandDepth={2}
+                        />
                       </div>
                     </div>
                   )}
@@ -409,7 +434,12 @@ export function ToolPart({
                     Input
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditorView value={inputData} className="p-2 text-[11px]" />
+                    <JsonEditorView
+                      value={inputData}
+                      className="p-2 text-[11px]"
+                      collapsible
+                      defaultExpandDepth={2}
+                    />
                   </div>
                 </div>
               )}
@@ -420,7 +450,12 @@ export function ToolPart({
                     Result
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditorView value={outputData} className="p-2 text-[11px]" />
+                    <JsonEditorView
+                      value={outputData}
+                      className="p-2 text-[11px]"
+                      collapsible
+                      defaultExpandDepth={2}
+                    />
                   </div>
                 </div>
               )}
