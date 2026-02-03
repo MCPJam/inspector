@@ -5,7 +5,7 @@
  * and optional protocol selector for tools supporting both OpenAI SDK and MCP Apps
  */
 
-import { X } from "lucide-react";
+import { X, Save } from "lucide-react";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -16,6 +16,8 @@ interface SelectedToolHeaderProps {
   toolName: string;
   onExpand: () => void;
   onClear: () => void;
+  // Optional save action
+  onSave?: () => void;
   // Protocol selector (optional)
   showProtocolSelector?: boolean;
 }
@@ -24,6 +26,7 @@ export function SelectedToolHeader({
   toolName,
   onExpand,
   onClear,
+  onSave,
   showProtocolSelector = false,
 }: SelectedToolHeaderProps) {
   const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
@@ -43,6 +46,21 @@ export function SelectedToolHeader({
             {toolName}
           </code>
         </button>
+        {onSave && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground flex-shrink-0"
+                onClick={onSave}
+              >
+                <Save className="h-3 w-3" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Save request</TooltipContent>
+          </Tooltip>
+        )}
         <Button
           variant="ghost"
           size="sm"

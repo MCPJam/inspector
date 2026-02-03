@@ -889,16 +889,15 @@ export function TasksTab({
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-        </div>
 
-        {/* Elicitation Dialog for tasks in input_required status */}
-        {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
-        {/* elicitation requests with relatedTaskId in the metadata */}
-        <ElicitationDialog
-          elicitationRequest={dialogElicitation}
-          onResponse={handleElicitationResponse}
-          loading={elicitationResponding}
-        />
-      </div>
-    );
+          {/* Elicitation Dialog for tasks in input_required status */}
+          {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
+          {/* elicitation requests with relatedTaskId in the metadata */}
+          <ElicitationDialog
+            elicitationRequest={dialogElicitation}
+            onResponse={handleElicitationResponse}
+            loading={elicitationResponding}
+          />
+        </div>
+      );
 }

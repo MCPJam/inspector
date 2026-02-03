@@ -15,6 +15,9 @@ import {
 } from "./ui/resizable";
 import { ResultsPanel } from "./tools/ResultsPanel";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
+import { LoggerView } from "./logger-view";
+import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
+import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
   applyParametersToFields as applyParamsToFields,
@@ -97,6 +100,8 @@ interface ToolsTabProps {
 export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const posthog = usePostHog();
+  const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
+    useJsonRpcPanelVisibility();
   const [tools, setTools] = useState<ToolMap>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -128,6 +133,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     description?: string;
   }>({ title: "" });
   const [executeAsTask, setExecuteAsTask] = useState(false);
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
   const [taskCapabilities, setTaskCapabilities] =
     useState<TaskCapabilities | null>(null);
@@ -618,59 +624,85 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   return (
     <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="horizontal" className="flex-1">
-        <ToolsSidebar
-          activeTab={activeTab}
-          onChangeTab={setActiveTab}
-          tools={tools}
-          toolNames={toolNames}
-          filteredToolNames={filteredToolNames}
-          selectedToolName={selectedTool}
-          fetchingTools={fetchingTools}
-          searchQuery={searchQuery}
-          onSearchQueryChange={setSearchQuery}
-          onRefresh={handleToolRefresh}
-          onSelectTool={setSelectedTool}
-          savedRequests={filteredSavedRequests}
-          highlightedRequestId={highlightedRequestId}
-          onLoadRequest={handleLoadRequest}
-          onRenameRequest={handleRenameRequest}
-          onDuplicateRequest={handleDuplicateRequest}
-          onDeleteRequest={handleDeleteRequest}
-          displayedToolCount={toolNames.length}
-          sentinelRef={sentinelRef}
-          loadingMore={fetchingTools}
-          cursor={cursor ?? ""}
-          serverName={serverName}
-          // Parameters form props for full-page replacement
-          formFields={formFields}
-          onFieldChange={updateFieldValue}
-          onToggleField={updateFieldIsSet}
-          loading={loadingExecuteTool}
-          waitingOnElicitation={!!activeElicitation}
-          onExecute={executeTool}
-          onSave={handleSaveCurrent}
-          executeAsTask={
-            serverSupportsTaskToolCalls &&
-            selectedToolTaskSupport !== "forbidden"
-              ? executeAsTask
-              : undefined
-          }
-          onExecuteAsTaskChange={
-            serverSupportsTaskToolCalls &&
-            selectedToolTaskSupport !== "forbidden"
-              ? setExecuteAsTask
-              : undefined
-          }
-          taskRequired={
-            serverSupportsTaskToolCalls &&
-            selectedToolTaskSupport === "required"
-          }
-          taskTtl={taskTtl}
-          onTaskTtlChange={setTaskTtl}
-          serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
-        />
-        <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={70} minSize={50}>
+        {isSidebarVisible ? (
+          <>
+            <ResizablePanel
+              id="tools-left"
+              order={1}
+              defaultSize={35}
+              minSize={1}
+              maxSize={55}
+              collapsible={true}
+              collapsedSize={0}
+              onCollapse={() => setIsSidebarVisible(false)}
+            >
+              <ToolsSidebar
+                activeTab={activeTab}
+                onChangeTab={setActiveTab}
+                tools={tools}
+                toolNames={toolNames}
+                filteredToolNames={filteredToolNames}
+                selectedToolName={selectedTool}
+                fetchingTools={fetchingTools}
+                searchQuery={searchQuery}
+                onSearchQueryChange={setSearchQuery}
+                onRefresh={handleToolRefresh}
+                onSelectTool={setSelectedTool}
+                savedRequests={filteredSavedRequests}
+                highlightedRequestId={highlightedRequestId}
+                onLoadRequest={handleLoadRequest}
+                onRenameRequest={handleRenameRequest}
+                onDuplicateRequest={handleDuplicateRequest}
+                onDeleteRequest={handleDeleteRequest}
+                displayedToolCount={toolNames.length}
+                sentinelRef={sentinelRef}
+                loadingMore={fetchingTools}
+                cursor={cursor ?? ""}
+                // Parameters form props for full-page replacement
+                formFields={formFields}
+                onFieldChange={updateFieldValue}
+                onToggleField={updateFieldIsSet}
+                loading={loadingExecuteTool}
+                waitingOnElicitation={!!activeElicitation}
+                onExecute={executeTool}
+                onSave={handleSaveCurrent}
+                executeAsTask={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport !== "forbidden"
+                    ? executeAsTask
+                    : undefined
+                }
+                onExecuteAsTaskChange={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport !== "forbidden"
+                    ? setExecuteAsTask
+                    : undefined
+                }
+                taskRequired={
+                  serverSupportsTaskToolCalls &&
+                  selectedToolTaskSupport === "required"
+                }
+                taskTtl={taskTtl}
+                onTaskTtlChange={setTaskTtl}
+                serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
+                onClose={() => setIsSidebarVisible(false)}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
+        ) : (
+          <CollapsedPanelStrip
+            side="left"
+            onOpen={() => setIsSidebarVisible(true)}
+            tooltipText="Show tools sidebar"
+          />
+        )}
+        <ResizablePanel
+          id="tools-center"
+          order={2}
+          defaultSize={isJsonRpcPanelVisible ? 40 : 65}
+          minSize={30}
+        >
           {selectedTool ? (
             <ResultsPanel
               error={error}
@@ -695,6 +727,32 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
             </div>
           )}
         </ResizablePanel>
+
+        {isJsonRpcPanelVisible ? (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              id="tools-right"
+              order={3}
+              defaultSize={30}
+              minSize={2}
+              maxSize={50}
+              collapsible={true}
+              collapsedSize={0}
+              onCollapse={toggleJsonRpcPanel}
+              className="min-h-0 overflow-hidden"
+            >
+              <div className="h-full min-h-0 overflow-hidden">
+                <LoggerView
+                  serverIds={serverName ? [serverName] : undefined}
+                  onClose={toggleJsonRpcPanel}
+                />
+              </div>
+            </ResizablePanel>
+          </>
+        ) : (
+          <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        )}
       </ResizablePanelGroup>
 
       <ElicitationDialog
