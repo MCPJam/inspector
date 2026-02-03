@@ -356,7 +356,7 @@ async function processOneStep(
  * Main handler for MCPJam-provided models.
  * Orchestrates the agentic loop between Convex (LLM) and local tool execution.
  */
-export async function handleMCPJamModel(
+export async function handleMCPJamFreeChatModel(
   options: MCPJamHandlerOptions,
 ): Promise<Response> {
   const {

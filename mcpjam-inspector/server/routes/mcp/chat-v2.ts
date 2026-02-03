@@ -14,7 +14,7 @@ import {
 import { isGPT5Model, isMCPJamProvidedModel } from "@/shared/types";
 import { logger } from "../../utils/logger";
 import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
-import { handleMCPJamModel } from "../../utils/mcpjam-stream-handler";
+import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const DEFAULT_TEMPERATURE = 0.7;
@@ -83,7 +83,7 @@ chatV2.post("/", async (c) => {
 
       const modelMessages = await convertToModelMessages(messages);
 
-      return handleMCPJamModel({
+      return handleMCPJamFreeChatModel({
         messages: scrubMessages(modelMessages as ModelMessage[]),
         modelId: String(modelDefinition.id),
         systemPrompt: enhancedSystemPrompt,
