@@ -11,7 +11,7 @@ import {
   Workflow,
   FileCode,
   Activity,
-  Fish,
+  Anvil,
   ListTodo,
   SquareSlash,
 } from "lucide-react";
@@ -65,7 +65,7 @@ const navigationSections = [
       {
         title: "App Builder",
         url: "#app-builder",
-        icon: Fish,
+        icon: Anvil,
       },
       {
         title: "Test Cases",

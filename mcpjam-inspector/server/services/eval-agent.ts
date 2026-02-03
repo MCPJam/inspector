@@ -196,13 +196,14 @@ ${toolsContext}
   ];
 
   // Call the backend LLM API
-  const response = await fetch(`${convexHttpUrl}/streaming`, {
+  const response = await fetch(`${convexHttpUrl}/stream`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${convexAuthToken}`,
     },
     body: JSON.stringify({
+      mode: "step",
       model: "anthropic/claude-haiku-4.5",
       tools: [],
       messages: JSON.stringify(messageHistory),

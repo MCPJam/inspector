@@ -344,6 +344,16 @@ export function MCPAppsRenderer({
     onAppSupportedDisplayModesChange,
   );
 
+  // Refs for values consumed inside the async fetchWidgetHtml function.
+  // These change reference on every streaming chunk (AI SDK recreates part objects),
+  // but we don't want to re-trigger the fetch effect for reference-only changes.
+  const toolInputRef = useRef(toolInput);
+  toolInputRef.current = toolInput;
+  const toolOutputRef = useRef(toolOutput);
+  toolOutputRef.current = toolOutput;
+  const themeModeRef = useRef(themeMode);
+  themeModeRef.current = themeMode;
+
   // Fetch widget HTML when tool output is available or CSP mode changes
   useEffect(() => {
     if (toolState !== "output-available") return;
@@ -359,11 +369,11 @@ export function MCPAppsRenderer({
           body: JSON.stringify({
             serverId,
             resourceUri,
-            toolInput,
-            toolOutput,
+            toolInput: toolInputRef.current,
+            toolOutput: toolOutputRef.current,
             toolId: toolCallId,
             toolName,
-            theme: themeMode,
+            theme: themeModeRef.current,
             protocol: "mcp-apps",
             cspMode, // Pass CSP mode preference
           }),
@@ -445,10 +455,7 @@ export function MCPAppsRenderer({
     loadedCspMode,
     serverId,
     resourceUri,
-    toolInput,
-    toolOutput,
     toolName,
-    themeMode,
     cspMode,
   ]);
 
