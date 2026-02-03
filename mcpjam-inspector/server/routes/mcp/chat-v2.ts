@@ -224,7 +224,10 @@ chatV2.post("/", async (c) => {
                 }
 
                 // Forward chunk to client — BUT skip tool-output events from backend stubs
-                if (chunk?.type === "tool-output-available" || chunk?.type === "tool-output-error") {
+                if (
+                  chunk?.type === "tool-output-available" ||
+                  chunk?.type === "tool-output-error"
+                ) {
                   // Don't forward: backend uses stub tools (execute: () => ({})).
                   // The proxy executes real tools and emits correct tool-output below.
                   continue;
