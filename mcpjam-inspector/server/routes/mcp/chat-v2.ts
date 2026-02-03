@@ -1,11 +1,21 @@
 import { Hono } from "hono";
 import {
   convertToModelMessages,
+  parseJsonEventStream,
   streamText,
   stepCountIs,
   createUIMessageStream,
   createUIMessageStreamResponse,
   ToolSet,
+  uiMessageChunkSchema,
+} from "ai";
+import type {
+  UIMessageChunk,
+  TextPart,
+  ToolCallPart,
+  AssistantModelMessage,
+  ToolModelMessage,
+  ToolResultPart,
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
@@ -108,20 +118,18 @@ chatV2.post("/", async (c) => {
                 type: "object",
                 properties: {},
                 additionalProperties: false,
-              } as any;
+              };
             }
           }
         }
         toolDefs.push({
           name,
           description: (tool as any).description,
-          inputSchema:
-            serializedSchema ??
-            ({
-              type: "object",
-              properties: {},
-              additionalProperties: false,
-            } as any),
+          inputSchema: serializedSchema ?? {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
         });
       }
 
@@ -142,9 +150,20 @@ chatV2.post("/", async (c) => {
 
       const stream = createUIMessageStream({
         execute: async ({ writer }) => {
-          const msgId = `asst_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
           while (steps < MAX_STEPS) {
+            // Track length before streaming to identify inherited tool calls
+            const messageHistoryLenBeforeStep = messageHistory.length;
+            let pendingText = "";
+            const stepContentParts: Array<TextPart | ToolCallPart> = [];
+            let pendingFinishChunk: UIMessageChunk | null = null;
+            let sawToolCall = false;
+
+            const flushPendingText = () => {
+              if (!pendingText) return;
+              stepContentParts.push({ type: "text", text: pendingText });
+              pendingText = "";
+            };
+
             const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
               method: "POST",
               headers: {
@@ -152,7 +171,6 @@ chatV2.post("/", async (c) => {
                 ...(authHeader ? { authorization: authHeader } : {}),
               },
               body: JSON.stringify({
-                mode: "step",
                 messages: JSON.stringify(
                   scrubChatGPTAppsToolResultsForBackend(
                     scrubMcpAppsToolResultsForBackend(
@@ -173,69 +191,105 @@ chatV2.post("/", async (c) => {
               }),
             });
 
-            if (!res.ok) {
-              const errorText = await res.text().catch(() => "step failed");
-              writer.write({ type: "error", errorText } as any);
+            if (!res.ok || !res.body) {
+              const errorText = await res.text().catch(() => "stream failed");
+              writer.write({ type: "error", errorText });
               break;
             }
 
-            const json: any = await res.json();
-            if (!json?.ok || !Array.isArray(json.messages)) {
-              break;
-            }
+            const parsedStream = parseJsonEventStream({
+              stream: res.body,
+              schema: uiMessageChunkSchema,
+            });
+            const reader = parsedStream.getReader();
 
-            // Track length before processing new messages to identify inherited tool calls
-            const messageHistoryLenBeforeStep = messageHistory.length;
-
-            for (const m of json.messages as any[]) {
-              if (m?.role === "assistant" && Array.isArray(m.content)) {
-                // Attach token usage metadata to assistant messages
-                if (json.usage) {
-                  m.metadata = {
-                    inputTokens:
-                      json.usage.inputTokens ?? json.usage.promptTokens,
-                    outputTokens:
-                      json.usage.outputTokens ?? json.usage.completionTokens,
-                    totalTokens: json.usage.totalTokens,
-                  };
+            try {
+              while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (!value?.success) {
+                  writer.write({
+                    type: "error",
+                    errorText: value?.error?.message ?? "stream parse failed",
+                  });
+                  break;
                 }
-                for (const item of m.content) {
-                  if (item?.type === "text" && typeof item.text === "string") {
-                    writer.write({ type: "text-start", id: msgId } as any);
-                    writer.write({
-                      type: "text-delta",
-                      id: msgId,
-                      delta: item.text,
-                    } as any);
-                    writer.write({ type: "text-end", id: msgId } as any);
-                  } else if (item?.type === "tool-call") {
-                    // Normalize tool-call
-                    if (item.input == null)
-                      item.input = item.parameters ?? item.args ?? {};
-                    if (!item.toolCallId)
-                      item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                    writer.write({
-                      type: "tool-input-available",
-                      toolCallId: item.toolCallId,
-                      toolName: item.toolName ?? item.name,
-                      input: item.input,
-                    } as any);
-                  }
+
+                const chunk = value.value;
+
+                if (chunk?.type === "finish") {
+                  // Buffer finish until we know we won't execute tools in this step
+                  pendingFinishChunk = chunk;
+                  break;
+                }
+
+                // Forward chunk to client
+                writer.write(chunk);
+
+                if (chunk?.type === "text-start") {
+                  flushPendingText();
+                  continue;
+                }
+
+                if (
+                  chunk?.type === "text-delta" &&
+                  typeof chunk.delta === "string"
+                ) {
+                  pendingText += chunk.delta;
+                  continue;
+                }
+
+                if (chunk?.type === "text-end") {
+                  flushPendingText();
+                  continue;
+                }
+
+                if (chunk?.type === "tool-input-available") {
+                  flushPendingText();
+                  const toolCallId =
+                    chunk.toolCallId ??
+                    `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                  const toolName = chunk.toolName;
+                  const input = chunk.input ?? {};
+                  stepContentParts.push({
+                    type: "tool-call",
+                    toolCallId,
+                    toolName,
+                    input,
+                  });
+                  sawToolCall = true;
+                  continue;
                 }
               }
-              messageHistory.push(m);
+            } catch (error) {
+              logger.error("[mcp/chat-v2] stream parse error", error);
+              writer.write({
+                type: "error",
+                errorText:
+                  error instanceof Error ? error.message : String(error),
+              });
+              break;
+            } finally {
+              reader.releaseLock();
+            }
+
+            flushPendingText();
+
+            if (stepContentParts.length > 0) {
+              messageHistory.push({
+                role: "assistant",
+                content: stepContentParts,
+              } as ModelMessage);
             }
 
             const beforeLen = messageHistory.length;
-            if (hasUnresolvedToolCalls(messageHistory as any)) {
+            if (hasUnresolvedToolCalls(messageHistory)) {
               // Collect existing tool result IDs from message history
               const existingToolResultIds = new Set<string>();
               for (const msg of messageHistory) {
-                if (
-                  msg?.role === "tool" &&
-                  Array.isArray((msg as any).content)
-                ) {
-                  for (const c of (msg as any).content) {
+                if (msg?.role === "tool") {
+                  const toolMsg = msg as ToolModelMessage;
+                  for (const c of toolMsg.content) {
                     if (c?.type === "tool-result") {
                       existingToolResultIds.add(c.toolCallId);
                     }
@@ -245,24 +299,22 @@ chatV2.post("/", async (c) => {
 
               // Emit tool-input-available ONLY for inherited unresolved tool calls
               // (i.e., tool calls that existed before this step, not new ones from this step)
-              // New tool calls already had tool-input-available emitted above (lines 164-169)
               for (let i = 0; i < messageHistoryLenBeforeStep; i++) {
                 const msg = messageHistory[i];
-                if (
-                  msg?.role === "assistant" &&
-                  Array.isArray((msg as any).content)
-                ) {
-                  for (const item of (msg as any).content) {
+                if (msg?.role === "assistant") {
+                  const assistantMsg = msg as AssistantModelMessage;
+                  for (const item of assistantMsg.content) {
                     if (
+                      typeof item !== "string" &&
                       item?.type === "tool-call" &&
                       !existingToolResultIds.has(item.toolCallId)
                     ) {
                       writer.write({
                         type: "tool-input-available",
                         toolCallId: item.toolCallId,
-                        toolName: item.toolName ?? item.name,
-                        input: item.input ?? item.parameters ?? item.args ?? {},
-                      } as any);
+                        toolName: item.toolName,
+                        input: item.input ?? {},
+                      });
                     }
                   }
                 }
@@ -275,35 +327,36 @@ chatV2.post("/", async (c) => {
                   tools: allTools as Record<string, any>,
                 },
               );
-            }
-            const newMessages = messageHistory.slice(beforeLen);
-            for (const msg of newMessages) {
-              if (msg?.role === "tool" && Array.isArray((msg as any).content)) {
-                for (const item of (msg as any).content) {
-                  if (item?.type === "tool-result") {
-                    writer.write({
-                      type: "tool-output-available",
-                      toolCallId: item.toolCallId,
-                      // Prefer full result (with _meta/structuredContent) for the UI;
-                      // the scrubbed output stays in messageHistory for the LLM.
-                      output: item.result ?? item.output ?? item.value,
-                    } as any);
+
+              const newMessages = messageHistory.slice(beforeLen);
+              for (const msg of newMessages) {
+                if (msg?.role === "tool") {
+                  const toolMsg = msg as ToolModelMessage;
+                  for (const item of toolMsg.content) {
+                    if (item?.type === "tool-result") {
+                      const resultItem = item as ToolResultPart;
+                      writer.write({
+                        type: "tool-output-available",
+                        toolCallId: resultItem.toolCallId,
+                        // Prefer full result (with _meta/structuredContent) for the UI;
+                        // the scrubbed output stays in messageHistory for the LLM.
+                        output: resultItem.output,
+                      });
+                    }
                   }
                 }
               }
-            }
-            steps++;
 
-            const finishReason: string | undefined = json.finishReason;
-            if (finishReason && finishReason !== "tool-calls") {
-              writer.write({
-                type: "finish",
-                messageMetadata: {
-                  inputTokens: json.usage?.inputTokens ?? 0,
-                  outputTokens: json.usage?.outputTokens ?? 0,
-                  totalTokens: json.usage?.totalTokens ?? 0,
-                },
-              });
+              steps++;
+              continue;
+            }
+
+            if (pendingFinishChunk) {
+              writer.write(pendingFinishChunk);
+            }
+
+            steps++;
+            if (!sawToolCall) {
               break;
             }
           }

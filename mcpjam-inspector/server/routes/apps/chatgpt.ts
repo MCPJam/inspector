@@ -208,6 +208,7 @@ type CspMode = "permissive" | "widget-declared";
 interface WidgetCspMeta {
   connect_domains?: string[];
   resource_domains?: string[];
+  frame_domains?: string[];
 }
 
 /**
@@ -217,6 +218,7 @@ interface CspConfig {
   mode: CspMode;
   connectDomains: string[];
   resourceDomains: string[];
+  frameDomains: string[];
   headerString: string;
 }
 
@@ -248,6 +250,7 @@ function buildCspHeader(
 
   let connectDomains: string[];
   let resourceDomains: string[];
+  let frameDomains: string[];
 
   switch (mode) {
     case "permissive":
@@ -267,6 +270,7 @@ function buildCspHeader(
         "https:",
         ...localhostSources,
       ];
+      frameDomains = ["*", "data:", "blob:", "https:", "http:", "about:"];
       break;
 
     case "widget-declared":
@@ -284,6 +288,10 @@ function buildCspHeader(
         ...(widgetCsp?.resource_domains || []),
         ...localhostSources,
       ];
+      frameDomains =
+        widgetCsp?.frame_domains && widgetCsp.frame_domains.length > 0
+          ? widgetCsp.frame_domains
+          : [];
       break;
 
     default:
@@ -296,6 +304,7 @@ function buildCspHeader(
         "https:",
         ...localhostSources,
       ];
+      frameDomains = ["*", "data:", "blob:", "https:", "http:", "about:"];
   }
 
   const connectSrc = connectDomains.join(" ");
@@ -320,6 +329,12 @@ function buildCspHeader(
   const frameAncestors =
     "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*";
 
+  // frame-src directive: controls which origins can be loaded in iframes
+  const frameSrc =
+    frameDomains.length > 0
+      ? `frame-src ${frameDomains.join(" ")}`
+      : "frame-src 'none'";
+
   const headerString = [
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceSrc}`,
@@ -330,6 +345,7 @@ function buildCspHeader(
     `media-src ${mediaSrc}`,
     `font-src 'self' data: ${resourceSrc}`,
     `connect-src ${connectSrc}`,
+    frameSrc,
     frameAncestors,
   ].join("; ");
 
@@ -337,6 +353,7 @@ function buildCspHeader(
     mode,
     connectDomains,
     resourceDomains,
+    frameDomains,
     headerString,
   };
 }
@@ -500,6 +517,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
         mode: cspConfig.mode,
         connectDomains: cspConfig.connectDomains,
         resourceDomains: cspConfig.resourceDomains,
+        frameDomains: cspConfig.frameDomains,
         headerString: cspConfig.headerString,
         // Also return the widget's declared CSP for reference
         widgetDeclared: widgetCspRaw ?? null,

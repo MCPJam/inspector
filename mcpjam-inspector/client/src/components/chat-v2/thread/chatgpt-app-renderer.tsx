@@ -268,11 +268,13 @@ interface WidgetCspData {
   mode: CspMode;
   connectDomains: string[];
   resourceDomains: string[];
+  frameDomains?: string[];
   headerString?: string;
   /** Widget's actual openai/widgetCSP declaration (null if not declared) */
   widgetDeclared?: {
     connect_domains?: string[];
     resource_domains?: string[];
+    frame_domains?: string[];
   } | null;
 }
 
@@ -381,6 +383,7 @@ function useWidgetFetch(
               mode: data.csp.mode,
               connectDomains: data.csp.connectDomains,
               resourceDomains: data.csp.resourceDomains,
+              frameDomains: data.csp.frameDomains,
               headerString: data.csp.headerString,
               widgetDeclared: data.csp.widgetDeclared,
             });

@@ -11,6 +11,30 @@ export interface RemoteWorkspace {
   updatedAt: number;
 }
 
+// Flat server structure from the servers table
+export interface RemoteServer {
+  _id: string;
+  workspaceId: string;
+  name: string;
+  enabled: boolean;
+  transportType: "stdio" | "http";
+  // STDIO fields
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  // HTTP fields
+  url?: string;
+  headers?: Record<string, string>;
+  // Shared fields
+  timeout?: number;
+  // OAuth fields
+  useOAuth?: boolean;
+  oauthScopes?: string[];
+  clientId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface WorkspaceMember {
   _id: string;
   workspaceId: string;
@@ -99,5 +123,46 @@ export function useWorkspaceMutations() {
     deleteWorkspace,
     addMember,
     removeMember,
+  };
+}
+
+// Server mutations for the flat servers table
+export function useServerMutations() {
+  const createServer = useMutation("servers:createServer" as any);
+  const updateServer = useMutation("servers:updateServer" as any);
+  const deleteServer = useMutation("servers:deleteServer" as any);
+
+  return {
+    createServer,
+    updateServer,
+    deleteServer,
+  };
+}
+
+export function useWorkspaceServers({
+  workspaceId,
+  isAuthenticated,
+}: {
+  workspaceId: string | null;
+  isAuthenticated: boolean;
+}) {
+  const servers = useQuery(
+    "servers:getWorkspaceServers" as any,
+    isAuthenticated && workspaceId ? ({ workspaceId } as any) : "skip",
+  ) as RemoteServer[] | undefined;
+
+  const isLoading = isAuthenticated && workspaceId && servers === undefined;
+
+  // Convert array to record keyed by server name
+  const serversRecord = useMemo(() => {
+    if (!servers) return {};
+    return Object.fromEntries(servers.map((s) => [s.name, s]));
+  }, [servers]);
+
+  return {
+    servers,
+    serversRecord,
+    isLoading,
+    hasServers: (servers?.length ?? 0) > 0,
   };
 }

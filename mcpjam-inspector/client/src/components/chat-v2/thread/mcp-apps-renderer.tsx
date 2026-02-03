@@ -102,6 +102,8 @@ interface MCPAppsRendererProps {
       structuredContent?: Record<string, unknown>;
     },
   ) => void;
+  /** Callback when app declares its supported display modes during ui/initialize */
+  onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
 }
 
 class LoggingTransport implements Transport {
@@ -185,6 +187,7 @@ export function MCPAppsRenderer({
   onRequestFullscreen,
   onExitFullscreen,
   onModelContextUpdate,
+  onAppSupportedDisplayModesChange,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -337,6 +340,9 @@ export function MCPAppsRenderer({
   const pipWidgetIdRef = useRef(pipWidgetId);
   const toolsMetadataRef = useRef(toolsMetadata);
   const onModelContextUpdateRef = useRef(onModelContextUpdate);
+  const onAppSupportedDisplayModesChangeRef = useRef(
+    onAppSupportedDisplayModesChange,
+  );
 
   // Fetch widget HTML when tool output is available or CSP mode changes
   useEffect(() => {
@@ -616,6 +622,8 @@ export function MCPAppsRenderer({
     pipWidgetIdRef.current = pipWidgetId;
     toolsMetadataRef.current = toolsMetadata;
     onModelContextUpdateRef.current = onModelContextUpdate;
+    onAppSupportedDisplayModesChangeRef.current =
+      onAppSupportedDisplayModesChange;
   }, [
     onSendFollowUp,
     onCallTool,
@@ -630,6 +638,7 @@ export function MCPAppsRenderer({
     pipWidgetId,
     toolsMetadata,
     onModelContextUpdate,
+    onAppSupportedDisplayModesChange,
   ]);
 
   const registerBridgeHandlers = useCallback(
@@ -637,6 +646,10 @@ export function MCPAppsRenderer({
       bridge.oninitialized = () => {
         setIsReady(true);
         isReadyRef.current = true;
+        const appCaps = bridge.getAppCapabilities();
+        onAppSupportedDisplayModesChangeRef.current?.(
+          appCaps?.availableDisplayModes as DisplayMode[] | undefined,
+        );
       };
 
       bridge.onmessage = async ({ content }) => {

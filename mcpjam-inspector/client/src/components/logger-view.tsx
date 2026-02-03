@@ -9,9 +9,7 @@ import {
   PanelRightClose,
   Copy,
 } from "lucide-react";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -497,22 +495,13 @@ export function LoggerView({
                     <div className="border-t bg-muted/20">
                       <div className="p-3">
                         <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
-                          <JsonView
-                            src={normalizePayload(it.payload) as object}
-                            dark={true}
-                            theme="atom"
-                            enableClipboard={true}
-                            displaySize={false}
+                          <JsonEditor
+                            value={normalizePayload(it.payload) as object}
+                            readOnly
+                            showToolbar={false}
+                            collapsible
+                            defaultExpandDepth={2}
                             collapseStringsAfterLength={100}
-                            style={{
-                              fontSize: "11px",
-                              fontFamily:
-                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                              backgroundColor: "transparent",
-                              padding: "0",
-                              borderRadius: "0",
-                              border: "none",
-                            }}
                           />
                         </div>
                       </div>

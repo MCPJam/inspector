@@ -9,9 +9,7 @@ import { useEffect, useState } from "react";
 import { Copy, X, RefreshCw, AlertCircle, ScanSearch } from "lucide-react";
 import { toast } from "sonner";
 import type { UIMessage } from "ai";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -223,26 +221,15 @@ export function XRaySnapshotView({
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <Header showCopy showLoading={loading} />
 
-      {/* Content - no overflow-auto here, parent StickToBottom.Content handles scrolling */}
-      <div className="flex-1 min-h-0">
+      {/* Content */}
+      <div className="flex-1 min-h-0 overflow-auto">
         <div className="p-4">
-          <div className="rounded-lg border border-border bg-muted/20 p-3">
-            <JsonView
-              src={payload as object}
-              dark={true}
-              theme="atom"
-              enableClipboard={true}
-              displaySize={false}
+          <div className="rounded-lg border border-border bg-muted/20">
+            <JsonEditor
+              value={payload as object}
+              viewOnly
+              collapsible
               collapseStringsAfterLength={100}
-              style={{
-                fontSize: "11px",
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                backgroundColor: "transparent",
-                padding: "0",
-                borderRadius: "0",
-                border: "none",
-              }}
             />
           </div>
         </div>

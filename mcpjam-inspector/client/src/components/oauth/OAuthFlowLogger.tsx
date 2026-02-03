@@ -27,7 +27,6 @@ import {
   Settings,
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
-import "react18-json-view/src/style.css";
 
 interface OAuthFlowLoggerProps {
   oauthFlowState: OAuthFlowState;

@@ -18,8 +18,7 @@ import {
 } from "./ui/resizable";
 import { MessageSquare, Play, RefreshCw, ChevronRight } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { MCPServerConfig, type MCPPrompt } from "@mcpjam/sdk";
 import {
   getPrompt as getPromptApi,
@@ -558,22 +557,10 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                             {promptContent}
                           </pre>
                         ) : (
-                          <JsonView
-                            src={promptContent}
-                            dark={true}
-                            theme="atom"
-                            enableClipboard={true}
-                            displaySize={false}
-                            collapseStringsAfterLength={100}
-                            style={{
-                              fontSize: "12px",
-                              fontFamily:
-                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                              backgroundColor: "hsl(var(--background))",
-                              padding: "16px",
-                              borderRadius: "8px",
-                              border: "1px solid hsl(var(--border))",
-                            }}
+                          <JsonEditor
+                            value={promptContent}
+                            readOnly
+                            showToolbar={false}
                           />
                         )}
                       </div>

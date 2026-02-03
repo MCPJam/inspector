@@ -64,14 +64,37 @@ export function serializeServersForSharing(
 }
 
 export function deserializeServersFromConvex(
-  servers: Record<string, any>,
+  servers: Record<string, any> | any[],
 ): Record<string, ServerWithName> {
   const result: Record<string, ServerWithName> = {};
 
-  for (const [serverId, serverData] of Object.entries(servers)) {
+  // Handle array (from servers table) or object (legacy workspace.servers)
+  const entries = Array.isArray(servers)
+    ? servers.map((s) => [s.name, s] as [string, any])
+    : Object.entries(servers);
+
+  for (const [serverId, serverData] of entries) {
     if (!serverData) continue;
 
     const config: any = {};
+
+    // NEW: Read from flat fields (servers table)
+    if (serverData.url) {
+      try {
+        config.url = new URL(serverData.url);
+      } catch {
+        config.url = serverData.url;
+      }
+    }
+    if (serverData.command) config.command = serverData.command;
+    if (serverData.args) config.args = serverData.args;
+    if (serverData.env) config.env = serverData.env;
+    if (serverData.timeout) config.timeout = serverData.timeout;
+    if (serverData.headers) {
+      config.requestInit = { headers: serverData.headers };
+    }
+
+    // LEGACY: Also check nested config (backward compat with workspace.servers)
     if (serverData.config) {
       if (serverData.config.url) {
         try {
@@ -98,8 +121,22 @@ export function deserializeServersFromConvex(
       useOAuth: serverData.useOAuth ?? false,
     };
 
+    // Handle oauthFlowProfile from legacy nested structure
     if (serverData.oauthFlowProfile) {
       server.oauthFlowProfile = serverData.oauthFlowProfile;
+    }
+
+    // NEW: Handle flat oauthScopes/clientId from servers table
+    // Convert oauthScopes array to comma-separated string for OAuthTestProfile.scopes
+    if (serverData.oauthScopes || serverData.clientId) {
+      const existingProfile = (server.oauthFlowProfile as any) || {};
+      server.oauthFlowProfile = {
+        ...existingProfile,
+        scopes: Array.isArray(serverData.oauthScopes)
+          ? serverData.oauthScopes.join(",")
+          : existingProfile.scopes || "",
+        clientId: serverData.clientId || existingProfile.clientId || "",
+      } as typeof server.oauthFlowProfile;
     }
 
     result[serverId] = server;
@@ -110,10 +147,15 @@ export function deserializeServersFromConvex(
 
 export function serversHaveChanged(
   local: Record<string, ServerWithName>,
-  remote: Record<string, any>,
+  remote: Record<string, any> | any[],
 ): boolean {
+  // Handle array (from servers table) or object (legacy)
+  const remoteRecord = Array.isArray(remote)
+    ? Object.fromEntries(remote.map((s) => [s.name, s]))
+    : remote;
+
   const localKeys = Object.keys(local);
-  const remoteKeys = Object.keys(remote);
+  const remoteKeys = Object.keys(remoteRecord);
 
   if (localKeys.length !== remoteKeys.length) return true;
 
@@ -121,40 +163,69 @@ export function serversHaveChanged(
     if (!remoteKeys.includes(key)) return true;
 
     const localServer = local[key];
-    const remoteServer = remote[key];
+    const remoteServer = remoteRecord[key];
 
     if (localServer.name !== remoteServer.name) return true;
     if (localServer.enabled !== remoteServer.enabled) return true;
     if (localServer.useOAuth !== remoteServer.useOAuth) return true;
 
+    // Get local URL
     const localUrl =
       (localServer.config as any)?.url?.toString?.() ||
       (localServer.config as any)?.url;
-    const remoteUrl = remoteServer.config?.url;
+
+    // Get remote URL (flat field or nested config)
+    const remoteUrl = remoteServer.url || remoteServer.config?.url;
     if (localUrl !== remoteUrl) return true;
 
-    if ((localServer.config as any)?.command !== remoteServer.config?.command)
-      return true;
+    // Get remote command (flat field or nested config)
+    const remoteCommand = remoteServer.command || remoteServer.config?.command;
+    if ((localServer.config as any)?.command !== remoteCommand) return true;
+
+    // Get remote args (flat field or nested config)
+    const remoteArgs = remoteServer.args || remoteServer.config?.args;
     if (
       JSON.stringify((localServer.config as any)?.args) !==
-      JSON.stringify(remoteServer.config?.args)
+      JSON.stringify(remoteArgs)
     )
       return true;
-    if ((localServer.config as any)?.timeout !== remoteServer.config?.timeout)
-      return true;
+
+    // Get remote timeout (flat field or nested config)
+    const remoteTimeout = remoteServer.timeout || remoteServer.config?.timeout;
+    if ((localServer.config as any)?.timeout !== remoteTimeout) return true;
+
+    // Get remote requestInit/headers (flat headers or nested config.requestInit)
+    const remoteRequestInit = remoteServer.headers
+      ? { headers: remoteServer.headers }
+      : remoteServer.config?.requestInit;
     if (
       JSON.stringify((localServer.config as any)?.requestInit) !==
-      JSON.stringify(remoteServer.config?.requestInit)
+      JSON.stringify(remoteRequestInit)
     )
       return true;
+
+    // Get remote env (flat field or nested config)
+    const remoteEnv = remoteServer.env || remoteServer.config?.env;
     if (
       JSON.stringify((localServer.config as any)?.env) !==
-      JSON.stringify(remoteServer.config?.env)
+      JSON.stringify(remoteEnv)
     )
       return true;
+
+    // Check OAuth profile (handle both flat and nested structures)
+    // For flat structure, convert oauthScopes array to comma-separated string for comparison
+    const remoteOAuthProfile =
+      remoteServer.oauthScopes || remoteServer.clientId
+        ? {
+            scopes: Array.isArray(remoteServer.oauthScopes)
+              ? remoteServer.oauthScopes.join(",")
+              : remoteServer.oauthScopes,
+            clientId: remoteServer.clientId,
+          }
+        : remoteServer.oauthFlowProfile;
     if (
       JSON.stringify(localServer.oauthFlowProfile) !==
-      JSON.stringify(remoteServer.oauthFlowProfile)
+      JSON.stringify(remoteOAuthProfile)
     )
       return true;
   }

@@ -16,8 +16,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { MCPServerConfig } from "@mcpjam/sdk";
 import { LoggerView } from "./logger-view";
 import {
@@ -816,22 +815,13 @@ export function TasksTab({
                             </div>
                           ) : selectedTask.status === "input_required" ? (
                             pendingRequest ? (
-                              <JsonView
-                                src={pendingRequest as object}
-                                dark={true}
-                                theme="atom"
-                                enableClipboard={true}
-                                displaySize={false}
+                              <JsonEditor
+                                value={pendingRequest as object}
+                                readOnly
+                                showToolbar={false}
+                                collapsible
+                                defaultExpandDepth={2}
                                 collapseStringsAfterLength={100}
-                                style={{
-                                  fontSize: "12px",
-                                  fontFamily:
-                                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                  backgroundColor: "hsl(var(--background))",
-                                  padding: "0",
-                                  borderRadius: "0",
-                                  border: "none",
-                                }}
                               />
                             ) : (
                               <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -844,22 +834,13 @@ export function TasksTab({
                           ) : selectedTask.status === "completed" ||
                             selectedTask.status === "failed" ? (
                             taskResult !== null ? (
-                              <JsonView
-                                src={taskResult as object}
-                                dark={true}
-                                theme="atom"
-                                enableClipboard={true}
-                                displaySize={false}
+                              <JsonEditor
+                                value={taskResult as object}
+                                readOnly
+                                showToolbar={false}
+                                collapsible
+                                defaultExpandDepth={2}
                                 collapseStringsAfterLength={100}
-                                style={{
-                                  fontSize: "12px",
-                                  fontFamily:
-                                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                  backgroundColor: "hsl(var(--background))",
-                                  padding: "0",
-                                  borderRadius: "0",
-                                  border: "none",
-                                }}
                               />
                             ) : (
                               <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -933,22 +914,13 @@ export function TasksTab({
                           </p>
                         </div>
                       ) : (
-                        <JsonView
-                          src={selectedTask as object}
-                          dark={true}
-                          theme="atom"
-                          enableClipboard={true}
-                          displaySize={false}
+                        <JsonEditor
+                          value={selectedTask as object}
+                          readOnly
+                          showToolbar={false}
+                          collapsible
+                          defaultExpandDepth={2}
                           collapseStringsAfterLength={100}
-                          style={{
-                            fontSize: "12px",
-                            fontFamily:
-                              "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                            backgroundColor: "hsl(var(--background))",
-                            padding: "0",
-                            borderRadius: "0",
-                            border: "none",
-                          }}
                         />
                       )}
                     </div>
