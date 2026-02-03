@@ -4,7 +4,7 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square, Paperclip, Scan } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Glasses } from "lucide-react";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -432,18 +432,31 @@ export function ChatInput({
                   <Button
                     type="button"
                     variant={xrayMode ? "secondary" : "ghost"}
-                    size="icon"
+                    size={compact ? "icon" : "sm"}
                     onClick={() => onXrayModeChange(!xrayMode)}
-                    className="h-8 w-8"
+                    className={
+                      compact
+                        ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
+                        : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer"
+                    }
                   >
-                    <Scan className="h-4 w-4" />
+                    <Glasses
+                      className={
+                        compact ? "h-4 w-4" : "h-2 w-2 mr-1 flex-shrink-0"
+                      }
+                    />
+                    {!compact && (
+                      <span className="text-[10px] font-medium">X-Ray</span>
+                    )}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>
-                  {xrayMode
-                    ? "Hide X-Ray view"
-                    : "See what is sent to the model"}
-                </TooltipContent>
+                {compact && (
+                  <TooltipContent>
+                    {xrayMode
+                      ? "Hide X-Ray view"
+                      : "See what is sent to the model"}
+                  </TooltipContent>
+                )}
               </Tooltip>
             )}
           </div>
