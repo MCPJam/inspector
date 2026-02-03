@@ -129,12 +129,12 @@ export function deserializeServersFromConvex(
     // NEW: Handle flat oauthScopes/clientId from servers table
     // Convert oauthScopes array to comma-separated string for OAuthTestProfile.scopes
     if (serverData.oauthScopes || serverData.clientId) {
-      const existingProfile = server.oauthFlowProfile as any || {};
+      const existingProfile = (server.oauthFlowProfile as any) || {};
       server.oauthFlowProfile = {
         ...existingProfile,
         scopes: Array.isArray(serverData.oauthScopes)
           ? serverData.oauthScopes.join(",")
-          : (existingProfile.scopes || ""),
+          : existingProfile.scopes || "",
         clientId: serverData.clientId || existingProfile.clientId || "",
       } as typeof server.oauthFlowProfile;
     }
