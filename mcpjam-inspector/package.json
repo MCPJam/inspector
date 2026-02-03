@@ -141,7 +141,7 @@
     "remark-gfm": "^4.0.1",
     "simple-icons": "^15.6.0",
     "sonner": "^2.0.6",
-    "streamdown": "^1.4.0",
+    "streamdown": "^2.1.0",
     "tailwind-merge": "^3.3.1",
     "tokenlens": "^1.3.1",
     "update-electron-app": "^3.1.1",
@@ -151,16 +151,16 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
-    "@electron-forge/cli": "^7.8.2",
-    "@electron-forge/maker-deb": "^7.8.2",
-    "@electron-forge/maker-dmg": "^7.8.2",
-    "@electron-forge/maker-rpm": "^7.8.2",
-    "@electron-forge/maker-squirrel": "^7.8.2",
-    "@electron-forge/maker-zip": "^7.8.2",
-    "@electron-forge/plugin-fuses": "^7.8.2",
-    "@electron-forge/plugin-vite": "^7.8.2",
-    "@electron-forge/publisher-github": "^7.8.2",
-    "@electron/fuses": "^1.8.0",
+    "@electron-forge/cli": "^7.11.1",
+    "@electron-forge/maker-deb": "^7.11.1",
+    "@electron-forge/maker-dmg": "^7.11.1",
+    "@electron-forge/maker-rpm": "^7.11.1",
+    "@electron-forge/maker-squirrel": "^7.11.1",
+    "@electron-forge/maker-zip": "^7.11.1",
+    "@electron-forge/plugin-fuses": "^7.11.1",
+    "@electron-forge/plugin-vite": "^7.11.1",
+    "@electron-forge/publisher-github": "^7.11.1",
+    "@electron/fuses": "^2.0.0",
     "@eslint/eslintrc": "^3",
     "@playwright/test": "^1.54.2",
     "@tailwindcss/postcss": "^4.1.11",
@@ -196,6 +196,7 @@
     "tmp": "0.2.5",
     "jsondiffpatch": "0.7.2",
     "zod": "^4.1.12",
-    "qs": "6.14.1"
+    "qs": "6.14.1",
+    "tar": ">=7.5.7"
   }
 }
