@@ -348,9 +348,9 @@ describe("POST /api/mcp/chat-v2", () => {
           },
         },
       ];
-      global.fetch = vi.fn().mockImplementation(async () =>
-        createSseResponse(finishEvents),
-      );
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async () => createSseResponse(finishEvents));
 
       try {
         await postJson(app, "/api/mcp/chat-v2", {
@@ -528,9 +528,9 @@ describe("POST /api/mcp/chat-v2", () => {
           },
         },
       ];
-      global.fetch = vi.fn().mockImplementation(async () =>
-        createSseResponse(finishEvents),
-      );
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async () => createSseResponse(finishEvents));
 
       try {
         await postJson(app, "/api/mcp/chat-v2", {
@@ -675,7 +675,9 @@ describe("POST /api/mcp/chat-v2", () => {
 
       try {
         await postJson(app, "/api/mcp/chat-v2", {
-          messages: [{ role: "user", content: "Search stops Berryessa and Montgomery" }],
+          messages: [
+            { role: "user", content: "Search stops Berryessa and Montgomery" },
+          ],
           model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
         });
         await lastStreamExecution;

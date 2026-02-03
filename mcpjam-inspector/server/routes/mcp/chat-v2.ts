@@ -9,6 +9,14 @@ import {
   ToolSet,
   uiMessageChunkSchema,
 } from "ai";
+import type {
+  UIMessageChunk,
+  TextPart,
+  ToolCallPart,
+  AssistantModelMessage,
+  ToolModelMessage,
+  ToolResultPart,
+} from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { isGPT5Model, isMCPJamProvidedModel } from "@/shared/types";
@@ -110,20 +118,18 @@ chatV2.post("/", async (c) => {
                 type: "object",
                 properties: {},
                 additionalProperties: false,
-              } as any;
+              };
             }
           }
         }
         toolDefs.push({
           name,
           description: (tool as any).description,
-          inputSchema:
-            serializedSchema ??
-            ({
-              type: "object",
-              properties: {},
-              additionalProperties: false,
-            } as any),
+          inputSchema: serializedSchema ?? {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
         });
       }
 
@@ -148,8 +154,8 @@ chatV2.post("/", async (c) => {
             // Track length before streaming to identify inherited tool calls
             const messageHistoryLenBeforeStep = messageHistory.length;
             let pendingText = "";
-            const stepContentParts: Array<any> = [];
-            let pendingFinishChunk: any | null = null;
+            const stepContentParts: Array<TextPart | ToolCallPart> = [];
+            let pendingFinishChunk: UIMessageChunk | null = null;
             let sawToolCall = false;
 
             const flushPendingText = () => {
@@ -187,7 +193,7 @@ chatV2.post("/", async (c) => {
 
             if (!res.ok || !res.body) {
               const errorText = await res.text().catch(() => "stream failed");
-              writer.write({ type: "error", errorText } as any);
+              writer.write({ type: "error", errorText });
               break;
             }
 
@@ -205,11 +211,11 @@ chatV2.post("/", async (c) => {
                   writer.write({
                     type: "error",
                     errorText: value?.error?.message ?? "stream parse failed",
-                  } as any);
+                  });
                   break;
                 }
 
-                const chunk = value.value as any;
+                const chunk = value.value;
 
                 if (chunk?.type === "finish") {
                   // Buffer finish until we know we won't execute tools in this step
@@ -218,7 +224,7 @@ chatV2.post("/", async (c) => {
                 }
 
                 // Forward chunk to client
-                writer.write(chunk as any);
+                writer.write(chunk);
 
                 if (chunk?.type === "text-start") {
                   flushPendingText();
@@ -261,7 +267,7 @@ chatV2.post("/", async (c) => {
                 type: "error",
                 errorText:
                   error instanceof Error ? error.message : String(error),
-              } as any);
+              });
               break;
             } finally {
               reader.releaseLock();
@@ -277,15 +283,13 @@ chatV2.post("/", async (c) => {
             }
 
             const beforeLen = messageHistory.length;
-            if (hasUnresolvedToolCalls(messageHistory as any)) {
+            if (hasUnresolvedToolCalls(messageHistory)) {
               // Collect existing tool result IDs from message history
               const existingToolResultIds = new Set<string>();
               for (const msg of messageHistory) {
-                if (
-                  msg?.role === "tool" &&
-                  Array.isArray((msg as any).content)
-                ) {
-                  for (const c of (msg as any).content) {
+                if (msg?.role === "tool") {
+                  const toolMsg = msg as ToolModelMessage;
+                  for (const c of toolMsg.content) {
                     if (c?.type === "tool-result") {
                       existingToolResultIds.add(c.toolCallId);
                     }
@@ -297,21 +301,20 @@ chatV2.post("/", async (c) => {
               // (i.e., tool calls that existed before this step, not new ones from this step)
               for (let i = 0; i < messageHistoryLenBeforeStep; i++) {
                 const msg = messageHistory[i];
-                if (
-                  msg?.role === "assistant" &&
-                  Array.isArray((msg as any).content)
-                ) {
-                  for (const item of (msg as any).content) {
+                if (msg?.role === "assistant") {
+                  const assistantMsg = msg as AssistantModelMessage;
+                  for (const item of assistantMsg.content) {
                     if (
+                      typeof item !== "string" &&
                       item?.type === "tool-call" &&
                       !existingToolResultIds.has(item.toolCallId)
                     ) {
                       writer.write({
                         type: "tool-input-available",
                         toolCallId: item.toolCallId,
-                        toolName: item.toolName ?? item.name,
-                        input: item.input ?? item.parameters ?? item.args ?? {},
-                      } as any);
+                        toolName: item.toolName,
+                        input: item.input ?? {},
+                      });
                     }
                   }
                 }
@@ -327,19 +330,18 @@ chatV2.post("/", async (c) => {
 
               const newMessages = messageHistory.slice(beforeLen);
               for (const msg of newMessages) {
-                if (
-                  msg?.role === "tool" &&
-                  Array.isArray((msg as any).content)
-                ) {
-                  for (const item of (msg as any).content) {
+                if (msg?.role === "tool") {
+                  const toolMsg = msg as ToolModelMessage;
+                  for (const item of toolMsg.content) {
                     if (item?.type === "tool-result") {
+                      const resultItem = item as ToolResultPart;
                       writer.write({
                         type: "tool-output-available",
-                        toolCallId: item.toolCallId,
+                        toolCallId: resultItem.toolCallId,
                         // Prefer full result (with _meta/structuredContent) for the UI;
                         // the scrubbed output stays in messageHistory for the LLM.
-                        output: item.result ?? item.output ?? item.value,
-                      } as any);
+                        output: resultItem.output,
+                      });
                     }
                   }
                 }
@@ -350,7 +352,7 @@ chatV2.post("/", async (c) => {
             }
 
             if (pendingFinishChunk) {
-              writer.write(pendingFinishChunk as any);
+              writer.write(pendingFinishChunk);
             }
 
             steps++;
