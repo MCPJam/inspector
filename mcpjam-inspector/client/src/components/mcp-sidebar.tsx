@@ -7,12 +7,12 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
-  HandMetal,
   Workflow,
   FileCode,
   Anvil,
   ListTodo,
   SquareSlash,
+  MessageCircleQuestionIcon,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -124,7 +124,7 @@ const navigationSections = [
       {
         title: "Feedback",
         url: "https://github.com/MCPJam/inspector/issues/new",
-        icon: HandMetal,
+        icon: MessageCircleQuestionIcon,
       },
       {
         title: "Settings",
