@@ -201,8 +201,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setTaskCapabilities(null);
       return;
     }
-    void fetchTools();
-    // Fetch task capabilities for this server (MCP Tasks spec 2025-11-25)
+    void fetchTools(true);
     void fetchTaskCapabilities();
   }, [serverConfig, serverName]);
 
