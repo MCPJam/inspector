@@ -7,19 +7,25 @@ import { ToolPart } from "../tool-part";
 vi.mock("lucide-react", () => {
   const s = (props: any) => <div {...props} />;
   return {
+    AlignLeft: s,
+    AlertCircle: s,
     Box: s,
+    Check: s,
     ChevronDown: s,
+    ChevronRight: s,
+    Copy: s,
     Database: s,
+    ExternalLink: s,
+    Eye: s,
+    Lightbulb: s,
     Maximize2: s,
     MessageCircle: s,
+    Minimize2: s,
+    Pencil: s,
     PictureInPicture2: s,
+    Redo2: s,
     Shield: s,
-    ExternalLink: s,
-    Copy: s,
-    Check: s,
-    Lightbulb: s,
-    ChevronRight: s,
-    AlertCircle: s,
+    Undo2: s,
   };
 });
 
