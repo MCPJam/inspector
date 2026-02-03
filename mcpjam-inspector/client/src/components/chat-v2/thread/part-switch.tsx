@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { ToolUIPart, DynamicToolUIPart, UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -14,7 +14,8 @@ import { SourceDocumentPart } from "./parts/source-document-part";
 import { JsonPart } from "./parts/json-part";
 import { TextPart } from "./parts/text-part";
 import { MCPUIResourcePart } from "./parts/mcp-ui-resource-part";
-import { SaveViewDialog } from "@/components/views/SaveViewDialog";
+import { useViewQueries } from "@/hooks/useViews";
+import { useSaveView, type ToolDataForSave } from "@/hooks/useSaveView";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import {
   callTool,
@@ -36,7 +37,6 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
-import { type ToolDataForSave } from "@/hooks/useSaveView";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 export function PartSwitch({
@@ -83,8 +83,6 @@ export function PartSwitch({
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
   >();
-  const [saveViewDialogOpen, setSaveViewDialogOpen] = useState(false);
-  const [toolDataForSave, setToolDataForSave] = useState<ToolDataForSave | null>(null);
 
   // Get auth and app state for saving views
   const { isAuthenticated } = useConvexAuth();
@@ -97,6 +95,18 @@ export function PartSwitch({
   // Get the current selected server name
   const currentServerName = appState.selectedServer ?? "unknown";
 
+  // Get existing view names for duplicate handling
+  const { sortedViews } = useViewQueries({ isAuthenticated, workspaceId: convexWorkspaceId });
+  const existingViewNames = useMemo(() => new Set(sortedViews.map(v => v.name)), [sortedViews]);
+
+  // Instant save hook
+  const { saveViewInstant, isSaving } = useSaveView({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+    serverName: currentServerName,
+    existingViewNames,
+  });
+
   // Get widget debug info for the current tool
   const toolCallId = isToolPart(part) || isDynamicTool(part)
     ? ((part as any).toolCallId as string | undefined)
@@ -105,16 +115,7 @@ export function PartSwitch({
     toolCallId ? s.widgets.get(toolCallId) : undefined
   );
 
-  // Callback to open save view dialog
-  const handleOpenSaveViewDialog = useCallback(
-    (data: ToolDataForSave) => {
-      setToolDataForSave(data);
-      setSaveViewDialogOpen(true);
-    },
-    []
-  );
-
-  // Create save view handler for a specific tool
+  // Create save view handler for a specific tool (instant save)
   const createSaveViewHandler = useCallback(
     (
       toolName: string,
@@ -126,7 +127,7 @@ export function PartSwitch({
       resourceUri?: string,
       outputTemplate?: string
     ) => {
-      return () => {
+      return async () => {
         const data: ToolDataForSave = {
           uiType,
           toolName,
@@ -148,10 +149,10 @@ export function PartSwitch({
           widgetHtml: widgetDebugInfo?.widgetHtml,
         };
 
-        handleOpenSaveViewDialog(data);
+        await saveViewInstant(data);
       };
     },
-    [toolCallId, widgetDebugInfo, handleOpenSaveViewDialog]
+    [toolCallId, widgetDebugInfo, saveViewInstant]
   );
 
   if (isToolPart(part) || isDynamicTool(part)) {
@@ -207,18 +208,11 @@ export function PartSwitch({
             onSaveView={handleSaveView}
             canSaveView={canSaveView}
             saveDisabledReason={saveDisabledReason}
+            isSaving={isSaving}
           />
           <MCPUIResourcePart
             resource={uiResource.resource}
             onSendFollowUp={onSendFollowUp}
-          />
-          <SaveViewDialog
-            open={saveViewDialogOpen}
-            onOpenChange={setSaveViewDialogOpen}
-            toolData={toolDataForSave}
-            isAuthenticated={isAuthenticated}
-            workspaceId={convexWorkspaceId}
-            serverName={currentServerName}
           />
         </>
       );
@@ -236,6 +230,7 @@ export function PartSwitch({
               uiType={uiType}
               onSaveView={handleSaveView}
               canSaveView={false}
+              isSaving={isSaving}
             />
             <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
               Waiting for tool to finish executing...
@@ -252,19 +247,12 @@ export function PartSwitch({
               uiType={uiType}
               onSaveView={handleSaveView}
               canSaveView={canSaveView}
-            saveDisabledReason={saveDisabledReason}
+              saveDisabledReason={saveDisabledReason}
+              isSaving={isSaving}
             />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
               Failed to load tool server id.
             </div>
-            <SaveViewDialog
-              open={saveViewDialogOpen}
-              onOpenChange={setSaveViewDialogOpen}
-              toolData={toolDataForSave}
-              isAuthenticated={isAuthenticated}
-              workspaceId={convexWorkspaceId}
-              serverName={currentServerName}
-            />
           </>
         );
       }
@@ -285,6 +273,7 @@ export function PartSwitch({
             onSaveView={handleSaveView}
             canSaveView={canSaveView}
             saveDisabledReason={saveDisabledReason}
+            isSaving={isSaving}
           />
           <ChatGPTAppRenderer
             serverId={serverId}
@@ -308,14 +297,6 @@ export function PartSwitch({
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
           />
-          <SaveViewDialog
-            open={saveViewDialogOpen}
-            onOpenChange={setSaveViewDialogOpen}
-            toolData={toolDataForSave}
-            isAuthenticated={isAuthenticated}
-            workspaceId={convexWorkspaceId}
-            serverName={currentServerName}
-          />
         </>
       );
     }
@@ -333,19 +314,12 @@ export function PartSwitch({
               uiType={uiType}
               onSaveView={handleSaveView}
               canSaveView={canSaveView}
-            saveDisabledReason={saveDisabledReason}
+              saveDisabledReason={saveDisabledReason}
+              isSaving={isSaving}
             />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
               Failed to load server id or resource uri for MCP App.
             </div>
-            <SaveViewDialog
-              open={saveViewDialogOpen}
-              onOpenChange={setSaveViewDialogOpen}
-              toolData={toolDataForSave}
-              isAuthenticated={isAuthenticated}
-              workspaceId={convexWorkspaceId}
-              serverName={currentServerName}
-            />
           </>
         );
       }
@@ -367,6 +341,7 @@ export function PartSwitch({
             onSaveView={handleSaveView}
             canSaveView={canSaveView}
             saveDisabledReason={saveDisabledReason}
+            isSaving={isSaving}
           />
           <MCPAppsRenderer
             serverId={serverId}
@@ -395,35 +370,18 @@ export function PartSwitch({
             onExitFullscreen={onExitFullscreen}
             onAppSupportedDisplayModesChange={setAppSupportedDisplayModes}
           />
-          <SaveViewDialog
-            open={saveViewDialogOpen}
-            onOpenChange={setSaveViewDialogOpen}
-            toolData={toolDataForSave}
-            isAuthenticated={isAuthenticated}
-            workspaceId={convexWorkspaceId}
-            serverName={currentServerName}
-          />
         </>
       );
     }
     return (
-      <>
-        <ToolPart
-          part={toolPart}
-          uiType={uiType}
-          onSaveView={handleSaveView}
-          canSaveView={canSaveView}
-            saveDisabledReason={saveDisabledReason}
-        />
-        <SaveViewDialog
-          open={saveViewDialogOpen}
-          onOpenChange={setSaveViewDialogOpen}
-          toolData={toolDataForSave}
-          isAuthenticated={isAuthenticated}
-          workspaceId={convexWorkspaceId}
-          serverName={currentServerName}
-        />
-      </>
+      <ToolPart
+        part={toolPart}
+        uiType={uiType}
+        onSaveView={handleSaveView}
+        canSaveView={canSaveView}
+        saveDisabledReason={saveDisabledReason}
+        isSaving={isSaving}
+      />
     );
   }
 

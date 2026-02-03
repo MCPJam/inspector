@@ -50,12 +50,22 @@ interface UseSaveViewOptions {
   isAuthenticated: boolean;
   workspaceId: string | null;
   serverName: string;
+  existingViewNames?: Set<string>;
+}
+
+// Generate a unique view name by appending (2), (3), etc. if needed
+function generateUniqueViewName(baseName: string, existingNames: Set<string>): string {
+  if (!existingNames.has(baseName)) return baseName;
+  let suffix = 2;
+  while (existingNames.has(`${baseName} (${suffix})`)) suffix++;
+  return `${baseName} (${suffix})`;
 }
 
 export function useSaveView({
   isAuthenticated,
   workspaceId,
   serverName,
+  existingViewNames = new Set(),
 }: UseSaveViewOptions) {
   const [isSaving, setIsSaving] = useState(false);
 
@@ -265,8 +275,18 @@ export function useSaveView({
     ]
   );
 
+  // Instant save: uses tool name as view name with automatic duplicate handling
+  const saveViewInstant = useCallback(
+    async (toolData: ToolDataForSave) => {
+      const uniqueName = generateUniqueViewName(toolData.toolName, existingViewNames);
+      return saveView(toolData, { name: uniqueName });
+    },
+    [saveView, existingViewNames]
+  );
+
   return {
     saveView,
+    saveViewInstant,
     isSaving,
   };
 }

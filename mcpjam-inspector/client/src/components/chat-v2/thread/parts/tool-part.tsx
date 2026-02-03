@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Database,
   Layers,
+  Loader2,
   Maximize2,
   MessageCircle,
   PictureInPicture2,
@@ -45,6 +46,7 @@ export function ToolPart({
   onSaveView,
   canSaveView,
   saveDisabledReason,
+  isSaving,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   uiType?: UIType | null;
@@ -64,6 +66,8 @@ export function ToolPart({
   canSaveView?: boolean;
   /** Reason why save is disabled (for tooltip) */
   saveDisabledReason?: string;
+  /** Whether the view is currently being saved */
+  isSaving?: boolean;
 }) {
   const label = isDynamicTool(part)
     ? part.toolName
@@ -291,22 +295,26 @@ export function ToolPart({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    disabled={!canSaveView}
+                    disabled={!canSaveView || isSaving}
                     onClick={(e) => {
                       e.stopPropagation();
                       onSaveView();
                     }}
                     className={`p-1 rounded transition-colors ${
-                      canSaveView
+                      canSaveView && !isSaving
                         ? "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
                         : "text-muted-foreground/30 cursor-not-allowed"
                     }`}
                   >
-                    <Layers className="h-3.5 w-3.5" />
+                    {isSaving ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Layers className="h-3.5 w-3.5" />
+                    )}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {canSaveView ? "Save as View" : (saveDisabledReason || "No output to save")}
+                  {isSaving ? "Saving..." : canSaveView ? "Save as View" : (saveDisabledReason || "No output to save")}
                 </TooltipContent>
               </Tooltip>
             </>
