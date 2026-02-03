@@ -10,7 +10,6 @@ import {
   HandMetal,
   Workflow,
   FileCode,
-  Activity,
   Anvil,
   ListTodo,
   SquareSlash,
@@ -52,11 +51,6 @@ const navigationSections = [
         url: "#chat-v2",
         icon: MessageCircle,
       },
-      {
-        title: "Skills",
-        url: "#skills",
-        icon: SquareSlash,
-      },
     ],
   },
   {
@@ -72,6 +66,26 @@ const navigationSections = [
         url: "#evals",
         icon: FlaskConical,
       },
+    ],
+  },
+  {
+    id: "others",
+    items: [
+      {
+        title: "Skills",
+        url: "#skills",
+        icon: SquareSlash,
+      },
+      {
+        title: "OAuth Debugger",
+        url: "#oauth-flow",
+        icon: Workflow,
+      },
+      // {
+      //   title: "Tracing",
+      //   url: "#tracing",
+      //   icon: Activity,
+      // },
     ],
   },
   {
@@ -101,21 +115,6 @@ const navigationSections = [
         title: "Tasks",
         url: "#tasks",
         icon: ListTodo,
-      },
-    ],
-  },
-  {
-    id: "others",
-    items: [
-      {
-        title: "OAuth Debugger",
-        url: "#oauth-flow",
-        icon: Workflow,
-      },
-      {
-        title: "Tracing",
-        url: "#tracing",
-        icon: Activity,
       },
     ],
   },
