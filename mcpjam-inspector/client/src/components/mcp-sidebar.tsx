@@ -12,6 +12,7 @@ import {
   FileCode,
   Activity,
   Fish,
+  Layers,
   ListTodo,
   SquareSlash,
 } from "lucide-react";
@@ -66,6 +67,11 @@ const navigationSections = [
         title: "App Builder",
         url: "#app-builder",
         icon: Fish,
+      },
+      {
+        title: "Views",
+        url: "#views",
+        icon: Layers,
       },
       {
         title: "Test Cases",

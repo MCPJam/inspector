@@ -6,6 +6,7 @@ import {
   Maximize2,
   MessageCircle,
   PictureInPicture2,
+  Save,
   Shield,
 } from "lucide-react";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
@@ -41,6 +42,9 @@ export function ToolPart({
   onRequestPip,
   onExitPip,
   appSupportedDisplayModes,
+  onSaveView,
+  canSaveView,
+  saveDisabledReason,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   uiType?: UIType | null;
@@ -54,6 +58,12 @@ export function ToolPart({
   onExitPip?: (toolCallId: string) => void;
   /** Display modes the app declared support for. If undefined, all modes are available. */
   appSupportedDisplayModes?: DisplayMode[];
+  /** Callback to save this tool execution as a view */
+  onSaveView?: () => void;
+  /** Whether the save view button should be enabled */
+  canSaveView?: boolean;
+  /** Reason why save is disabled (for tooltip) */
+  saveDisabledReason?: string;
 }) {
   const label = isDynamicTool(part)
     ? part.toolName
@@ -272,6 +282,33 @@ export function ToolPart({
                   </Tooltip>
                 ))}
               </span>
+            </>
+          )}
+          {onSaveView && (
+            <>
+              {hasWidgetDebug && <div className="h-4 w-px bg-border/40" />}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={!canSaveView}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSaveView();
+                    }}
+                    className={`p-1 rounded transition-colors ${
+                      canSaveView
+                        ? "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                        : "text-muted-foreground/30 cursor-not-allowed"
+                    }`}
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {canSaveView ? "Save as View" : (saveDisabledReason || "No output to save")}
+                </TooltipContent>
+              </Tooltip>
             </>
           )}
           {toolState && StatusIcon && (

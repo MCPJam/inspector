@@ -93,6 +93,8 @@ export interface WidgetDebugInfo {
     structuredContent?: Record<string, unknown>;
     updatedAt: number;
   } | null;
+  /** Cached widget HTML for offline rendering */
+  widgetHtml?: string;
 }
 
 interface WidgetDebugStore {
@@ -142,6 +144,9 @@ interface WidgetDebugStore {
       structuredContent?: Record<string, unknown>;
     } | null,
   ) => void;
+
+  // Set widget HTML for offline rendering cache
+  setWidgetHtml: (toolCallId: string, html: string) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -293,6 +298,21 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
               updatedAt: Date.now(),
             }
           : null,
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  setWidgetHtml: (toolCallId, html) => {
+    set((state) => {
+      const existing = state.widgets.get(toolCallId);
+      if (!existing) return state;
+
+      const widgets = new Map(state.widgets);
+      widgets.set(toolCallId, {
+        ...existing,
+        widgetHtml: html,
         updatedAt: Date.now(),
       });
       return { widgets };

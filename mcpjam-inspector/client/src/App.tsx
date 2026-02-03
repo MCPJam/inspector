@@ -9,6 +9,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
+import { ViewsTab } from "./components/ViewsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
@@ -123,6 +124,17 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
+
+  // Create effective app state that uses the correct workspaces (Convex when authenticated)
+  const effectiveAppState = useMemo(
+    () => ({
+      ...appState,
+      workspaces,
+      activeWorkspaceId,
+    }),
+    [appState, workspaces, activeWorkspaceId]
+  );
+
   // Create a stable key that only tracks fully "connected" servers (not "connecting")
   // so the effect re-fires when servers finish connecting (e.g., after reconnect)
   const connectedServerNamesKey = useMemo(
@@ -250,7 +262,8 @@ export default function App() {
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
     activeTab === "app-builder" ||
-    activeTab === "evals";
+    activeTab === "evals" ||
+    activeTab === "views";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -316,6 +329,9 @@ export default function App() {
           )}
           {activeTab === "evals" && (
             <EvalsTab selectedServer={appState.selectedServer} />
+          )}
+          {activeTab === "views" && (
+            <ViewsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "resources" && (
             <ResourcesTab
@@ -397,7 +413,7 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
-      <AppStateProvider appState={appState}>
+      <AppStateProvider appState={effectiveAppState}>
         <Toaster />
         {appContent}
       </AppStateProvider>
