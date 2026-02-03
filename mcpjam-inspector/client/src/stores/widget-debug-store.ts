@@ -170,6 +170,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
             displayMode: "inline",
           },
         csp: existing?.csp, // Preserve CSP violations across updates
+        widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
+        modelContext: existing?.modelContext, // Preserve model context across updates
         updatedAt: Date.now(),
       });
       return { widgets };
@@ -306,12 +308,18 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
 
   setWidgetHtml: (toolCallId, html) => {
     set((state) => {
-      const existing = state.widgets.get(toolCallId);
-      if (!existing) return state;
-
       const widgets = new Map(state.widgets);
+      const existing = widgets.get(toolCallId);
+      // Create a default entry if one doesn't exist (fixes race condition where
+      // setWidgetHtml is called before setWidgetDebugInfo initializes the entry)
       widgets.set(toolCallId, {
-        ...existing,
+        toolCallId,
+        toolName: existing?.toolName ?? "unknown",
+        protocol: existing?.protocol ?? "mcp-apps",
+        widgetState: existing?.widgetState ?? null,
+        globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
+        csp: existing?.csp,
+        modelContext: existing?.modelContext,
         widgetHtml: html,
         updatedAt: Date.now(),
       });

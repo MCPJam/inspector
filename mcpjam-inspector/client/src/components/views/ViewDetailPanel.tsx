@@ -241,6 +241,16 @@ export function ViewDetailPanel({
               <span className="text-xs text-muted-foreground">
                 {view.toolName}
               </span>
+              {/* Show server name or deleted indicator */}
+              {serverName ? (
+                <span className="text-xs text-muted-foreground">
+                  • {serverName}
+                </span>
+              ) : (
+                <Badge variant="secondary" className="text-xs text-amber-600 bg-amber-100 dark:bg-amber-900/30">
+                  Server deleted
+                </Badge>
+              )}
               <span className="text-xs text-muted-foreground">
                 Updated {formatDate(view.updatedAt)}
               </span>

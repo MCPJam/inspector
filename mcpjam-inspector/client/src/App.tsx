@@ -49,6 +49,7 @@ import {
   isOpenAIAppAndMCPApp,
 } from "./lib/mcp-ui/mcp-apps-utils";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
+import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -134,6 +135,34 @@ export default function App() {
     }),
     [appState, workspaces, activeWorkspaceId]
   );
+
+  // Get the Convex workspace ID from the active workspace
+  const activeWorkspace = workspaces[activeWorkspaceId];
+  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+
+  // Fetch views for the workspace to determine which servers have saved views
+  const { viewsByServer } = useViewQueries({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+
+  // Fetch workspace servers to map server IDs to names
+  const { serversById } = useWorkspaceServers({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+
+  // Compute the set of server names that have saved views
+  const serversWithViews = useMemo(() => {
+    const serverNames = new Set<string>();
+    for (const serverId of viewsByServer.keys()) {
+      const serverName = serversById.get(serverId);
+      if (serverName) {
+        serverNames.add(serverName);
+      }
+    }
+    return serverNames;
+  }, [viewsByServer, serversById]);
 
   // Create a stable key that only tracks fully "connected" servers (not "connecting")
   // so the effect re-fires when servers finish connecting (e.g., after reconnect)
@@ -269,7 +298,7 @@ export default function App() {
     shouldShowActiveServerSelector
       ? {
           serverConfigs:
-            activeTab === "oauth-flow"
+            activeTab === "oauth-flow" || activeTab === "views"
               ? appState.servers
               : connectedOrConnectingServerConfigs,
           selectedServer: appState.selectedServer,
@@ -282,6 +311,8 @@ export default function App() {
           showOnlyOAuthServers: activeTab === "oauth-flow",
           showOnlyOpenAIAppsServers: activeTab === "app-builder",
           openAiAppOrMcpAppsServers: openAiAppOrMcpAppsServers,
+          showOnlyServersWithViews: activeTab === "views",
+          serversWithViews: serversWithViews,
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
         }
       : undefined;

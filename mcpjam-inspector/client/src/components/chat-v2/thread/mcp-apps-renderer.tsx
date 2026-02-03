@@ -358,8 +358,8 @@ export function MCPAppsRenderer({
 
     const fetchWidgetHtml = async () => {
       try {
-        // If offline and we have a cached widget HTML URL, use that instead
-        if (isOffline && cachedWidgetHtmlUrl) {
+        // Use cached widget HTML whenever available (faster and works offline)
+        if (cachedWidgetHtmlUrl) {
           const cachedResponse = await fetch(cachedWidgetHtmlUrl);
           if (!cachedResponse.ok) {
             throw new Error(
@@ -372,6 +372,15 @@ export function MCPAppsRenderer({
           setWidgetPermissive(true);
           setPrefersBorder(true);
           setLoadedCspMode(cspMode);
+          return;
+        }
+
+        // If server is offline and no cached HTML, show helpful error
+        if (isOffline) {
+          setLoadError(
+            "Server is offline and this view was saved without cached HTML. " +
+              "Connect the server and re-save the view to enable offline rendering.",
+          );
           return;
         }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Loader2, AlertCircle, WifiOff } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps-renderer";
 import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -35,7 +35,6 @@ export function ViewPreview({
 
   // Check if we have cached widget HTML for offline rendering (MCP Apps only)
   const mcpView = view.protocol === "mcp-apps" ? (view as McpAppView) : null;
-  const hasCachedHtml = !!(mcpView?.widgetHtmlUrl);
 
   // Load output blob when view changes
   useEffect(() => {
@@ -126,19 +125,8 @@ export function ViewPreview({
   if (view.protocol === "mcp-apps") {
     const mcpViewData = view as McpAppView;
 
-    // Show offline warning if server is offline and we have cached content
-    const showOfflineIndicator = isServerOffline && hasCachedHtml;
-
     return (
       <div className="relative">
-        {showOfflineIndicator && (
-          <div className="flex items-center gap-2 px-3 py-2 mb-2 text-xs bg-amber-500/10 border border-amber-500/30 rounded-md text-amber-600 dark:text-amber-400">
-            <WifiOff className="h-4 w-4 flex-shrink-0" />
-            <span>
-              Server is offline. Showing cached content from when view was saved.
-            </span>
-          </div>
-        )}
         <MCPAppsRenderer
           serverId={serverName}
           toolCallId={previewToolCallId}

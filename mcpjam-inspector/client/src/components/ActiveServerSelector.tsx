@@ -20,6 +20,8 @@ export interface ActiveServerSelectorProps {
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyOpenAIAppsServers?: boolean; // Only show servers that have OpenAI apps tools
   openAiAppOrMcpAppsServers?: Set<string>; // Set of server names that have OpenAI apps or MCP apps
+  showOnlyServersWithViews?: boolean; // Only show servers that have saved views
+  serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean;
   className?: string;
 }
@@ -66,6 +68,8 @@ export function ActiveServerSelector({
   showOnlyOAuthServers = false,
   showOnlyOpenAIAppsServers = false,
   openAiAppOrMcpAppsServers,
+  showOnlyServersWithViews = false,
+  serversWithViews,
   hasMessages = false,
   className,
 }: ActiveServerSelectorProps) {
@@ -96,6 +100,12 @@ export function ActiveServerSelector({
       showOnlyOpenAIAppsServers &&
       openAiAppOrMcpAppsServers &&
       !openAiAppOrMcpAppsServers.has(name)
+    )
+      return false;
+    if (
+      showOnlyServersWithViews &&
+      serversWithViews &&
+      !serversWithViews.has(name)
     )
       return false;
     return true;

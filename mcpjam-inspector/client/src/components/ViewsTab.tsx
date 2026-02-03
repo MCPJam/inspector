@@ -25,11 +25,6 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const workspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
 
-  // Get the connection status for the selected server
-  const selectedServerConnectionStatus = selectedServer
-    ? activeWorkspace?.servers[selectedServer]?.connectionStatus
-    : undefined;
-
   // View state
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
   const [draftView, setDraftView] = useState<ViewDraft | null>(null);
@@ -39,10 +34,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Fetch views
   const {
     sortedViews,
-    viewsByServer,
-    viewsByCategory,
     isLoading: isViewsLoading,
-    hasViews,
   } = useViewQueries({
     isAuthenticated,
     workspaceId,
@@ -54,11 +46,10 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     workspaceId,
   });
 
-  // Get the serverId for the selected server
+  // Get the server ID from the selected server name
   const selectedServerId = selectedServer ? serversByName.get(selectedServer) : undefined;
 
-  // Filter views by selected server
-  // If selectedServerId is undefined (server not tracked in Convex), show empty - no views can match
+  // Filter views by selected server (via header tabs)
   const filteredViews = useMemo(() => {
     if (!selectedServerId) return [];
     return sortedViews.filter((view) => view.serverId === selectedServerId);
@@ -67,7 +58,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Check if filtered list has views
   const hasFilteredViews = filteredViews.length > 0;
 
-  // Clear selection when server changes and selected view doesn't belong to new server
+  // Clear selection when selected server changes and selected view doesn't belong to filtered set
   useEffect(() => {
     if (selectedViewId && selectedServerId) {
       const viewStillExists = filteredViews.some((v) => v._id === selectedViewId);
@@ -78,6 +69,12 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       }
     }
   }, [selectedServerId, selectedViewId, filteredViews]);
+
+  // Get connection status for a specific server by server ID
+  const getServerConnectionStatus = useCallback((serverName: string | undefined) => {
+    if (!serverName) return undefined;
+    return activeWorkspace?.servers[serverName]?.connectionStatus;
+  }, [activeWorkspace]);
 
   // Mutations
   const {
@@ -281,14 +278,11 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         >
           <ViewsListSidebar
             views={filteredViews}
-            viewsByServer={viewsByServer}
-            viewsByCategory={viewsByCategory}
             selectedViewId={selectedViewId}
             onSelectView={handleSelectView}
             onDeleteView={handleDeleteView}
             deletingViewId={deletingViewId}
             isLoading={isViewsLoading}
-            serversById={serversById}
           />
         </ResizablePanel>
 
@@ -306,14 +300,14 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
                   <Layers className="h-10 w-10 text-muted-foreground" />
                 </div>
                 <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  {hasFilteredViews ? "Select a view" : hasViews ? "No views for this server" : "No views yet"}
+                  {hasFilteredViews ? "Select a view" : !selectedServer ? "Select a server" : "No views for this server"}
                 </h2>
                 <p className="text-sm text-muted-foreground mb-6">
                   {hasFilteredViews
                     ? "Choose a view from the sidebar to see its details and preview."
-                    : hasViews
-                    ? `No views saved for server "${selectedServer}". Save tool executions from the Chat tab.`
-                    : "Save tool executions from the Chat tab to create reusable views."}
+                    : !selectedServer
+                    ? "Select a server from the tabs above to view its saved views."
+                    : "This server has no saved views yet. Save tool executions from the Chat tab to create reusable views."}
                 </p>
               </div>
             </div>
@@ -328,7 +322,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               onDiscardChanges={handleDiscardChanges}
               onDraftChange={handleDraftChange}
               serverName={serversById.get(selectedView.serverId)}
-              serverConnectionStatus={selectedServerConnectionStatus}
+              serverConnectionStatus={getServerConnectionStatus(serversById.get(selectedView.serverId))}
             />
           )}
         </ResizablePanel>
