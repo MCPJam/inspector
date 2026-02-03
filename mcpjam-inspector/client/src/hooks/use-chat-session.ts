@@ -221,7 +221,7 @@ export function useChatSession({
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
-    const mergedHeaders = { ...sessionHeaders, ...authHeaders };
+    const mergedHeaders = { ...sessionHeaders, ...authHeaders } as Record<string, string>;
 
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",

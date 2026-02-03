@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "1.5.9",
+  "version": "1.5.11",
   "type": "module",
   "description": "MCPJam Inspector",
   "license": "Apache-2.0",
@@ -85,8 +85,7 @@
     "@ai-sdk/google": "^2.0.11",
     "@ai-sdk/mistral": "^2.0.19",
     "@ai-sdk/openai": "^2.0.32",
-    "@ai-sdk/provider": "^2.0.0",
-    "@ai-sdk/react": "^2.0.79",
+    "@ai-sdk/react": "^3.0.71",
     "@ai-sdk/xai": "^2.0.29",
     "@convex-dev/auth": "^0.0.88",
     "@convex-dev/workos": "^0.0.1",
