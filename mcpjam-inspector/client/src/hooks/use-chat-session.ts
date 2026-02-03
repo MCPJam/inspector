@@ -21,11 +21,7 @@ import {
   useLayoutEffect,
 } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
-import {
-  DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithToolCalls,
-  generateId,
-} from "ai";
+import { DefaultChatTransport, generateId } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { ModelDefinition, isGPT5Model } from "@/shared/types";
@@ -258,9 +254,6 @@ export function useChatSession({
   } = useChat({
     id: chatSessionId,
     transport: transport!,
-    sendAutomaticallyWhen: isMcpJamModel
-      ? undefined
-      : lastAssistantMessageIsCompleteWithToolCalls,
   });
 
   // Wrapped sendMessage that accepts FileUIPart[]
