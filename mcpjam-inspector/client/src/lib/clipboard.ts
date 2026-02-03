@@ -22,7 +22,9 @@ export async function copyToClipboard(text: string): Promise<boolean> {
       );
       return true;
     } catch {
-      console.warn("Clipboard copy failed: both modern and fallback methods failed");
+      console.warn(
+        "Clipboard copy failed: both modern and fallback methods failed",
+      );
       return false;
     }
   }
