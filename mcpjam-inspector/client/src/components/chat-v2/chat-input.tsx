@@ -457,6 +457,15 @@ export function ChatInput({
                       inputTokens: tokenUsage.inputTokens,
                       outputTokens: tokenUsage.outputTokens,
                       totalTokens: tokenUsage.totalTokens,
+                      inputTokenDetails: {
+                        noCacheTokens: undefined,
+                        cacheReadTokens: undefined,
+                        cacheWriteTokens: undefined,
+                      },
+                      outputTokenDetails: {
+                        textTokens: undefined,
+                        reasoningTokens: undefined,
+                      },
                     }
                   : undefined
               }
