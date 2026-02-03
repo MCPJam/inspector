@@ -103,20 +103,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
-  const [structuredResult, setStructuredResult] = useState<Record<
-    string,
-    unknown
-  > | null>(null);
-  const [showStructured, setShowStructured] = useState(() => {
-    const stored = localStorage.getItem("mcp-tools-output-view");
-    return stored === "structured";
-  });
-
-  const handleToggleStructured = (show: boolean) => {
-    setShowStructured(show);
-    localStorage.setItem("mcp-tools-output-view", show ? "structured" : "raw");
-  };
-
   const [validationErrors, setValidationErrors] = useState<
     any[] | null | undefined
   >(undefined);
@@ -462,7 +448,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setLoadingExecuteTool(true);
     setError("");
     setResult(null);
-    setStructuredResult(null);
     setValidationErrors(undefined);
     setUnstructuredValidationResult("not_applicable");
 
@@ -726,9 +711,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
             <ResizablePanel defaultSize={60} minSize={30}>
               <ResultsPanel
                 error={error}
-                showStructured={showStructured}
-                onToggleStructured={handleToggleStructured}
-                structuredResult={structuredResult}
                 result={result}
                 validationErrors={validationErrors}
                 unstructuredValidationResult={unstructuredValidationResult}
