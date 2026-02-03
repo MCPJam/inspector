@@ -103,11 +103,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
-  const [structuredResult, setStructuredResult] = useState<Record<
-    string,
-    unknown
-  > | null>(null);
-  const [showStructured, setShowStructured] = useState(false);
   const [validationErrors, setValidationErrors] = useState<
     any[] | null | undefined
   >(undefined);
@@ -126,12 +121,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [highlightedRequestId, setHighlightedRequestId] = useState<
     string | null
   >(null);
-  const [lastToolCallId, setLastToolCallId] = useState<string | null>(null);
   const [lastToolName, setLastToolName] = useState<string | null>(null);
-  const [lastToolParameters, setLastToolParameters] = useState<Record<
-    string,
-    unknown
-  > | null>(null);
   const [savedRequests, setSavedRequests] = useState<SavedRequest[]>([]);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
@@ -140,7 +130,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     description?: string;
   }>({ title: "" });
   const [executeAsTask, setExecuteAsTask] = useState(false);
-  const [createdTaskId, setCreatedTaskId] = useState<string | null>(null);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
   const [taskCapabilities, setTaskCapabilities] =
     useState<TaskCapabilities | null>(null);
@@ -205,8 +194,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setSelectedTool("");
       setFormFields([]);
       setResult(null);
-      setStructuredResult(null);
-      setShowStructured(false);
       setValidationErrors(undefined);
       setUnstructuredValidationResult("not_applicable");
       setError("");
@@ -304,8 +291,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setSelectedTool("");
       setFormFields([]);
       setResult(null);
-      setStructuredResult(null);
-      setShowStructured(false);
       setValidationErrors(undefined);
       setUnstructuredValidationResult("not_applicable");
       setTools({});
@@ -379,14 +364,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setResult(callResult);
 
       const rawResult = callResult as unknown as Record<string, unknown>;
-      if (rawResult?.structuredContent) {
-        setStructuredResult(
-          rawResult.structuredContent as Record<string, unknown>,
-        );
-      } else {
-        setStructuredResult(null);
-      }
-
       const currentTool = tools[toolName];
       if (currentTool?.outputSchema) {
         const validationReport = validateToolOutput(
@@ -425,7 +402,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     // Handle task creation response (MCP Tasks spec 2025-11-25)
     if ("status" in response && response.status === "task_created") {
       const { task, modelImmediateResponse } = response;
-      setCreatedTaskId(task.taskId);
 
       // Track the task locally so it appears in the Tasks tab
       if (serverName) {
@@ -473,20 +449,14 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setLoadingExecuteTool(true);
     setError("");
     setResult(null);
-    setStructuredResult(null);
-    setShowStructured(false);
     setValidationErrors(undefined);
     setUnstructuredValidationResult("not_applicable");
-    setCreatedTaskId(null);
 
     const executionStartTime = Date.now();
-    const toolCallId = `tool-${executionStartTime}`;
 
     try {
       const params = buildParameters();
-      setLastToolCallId(toolCallId);
       setLastToolName(selectedTool);
-      setLastToolParameters(params);
 
       // Pass task options if executing as background task (MCP Tasks spec 2025-11-25)
       // Use task execution only if: server supports tasks AND (user checked option OR tool requires it)
@@ -742,33 +712,10 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
             <ResizablePanel defaultSize={60} minSize={30}>
               <ResultsPanel
                 error={error}
-                showStructured={showStructured}
-                onToggleStructured={setShowStructured}
-                structuredResult={structuredResult}
                 result={result}
                 validationErrors={validationErrors}
                 unstructuredValidationResult={unstructuredValidationResult}
-                serverId={serverName}
-                toolCallId={lastToolCallId ?? undefined}
-                toolName={lastToolName ?? undefined}
-                toolParameters={lastToolParameters ?? undefined}
                 toolMeta={getToolMeta(lastToolName)}
-                onExecuteFromUI={async (name, params) => {
-                  if (!serverName) return { error: "No server selected" };
-                  return await executeToolApi(serverName, name, params || {});
-                }}
-                onHandleIntent={async (intent, params) => {
-                  if (!serverName) return;
-                  await executeToolApi(serverName, "handleIntent", {
-                    intent,
-                    params: params || {},
-                  });
-                }}
-                onSendFollowup={(message) => {
-                  logger.info("OpenAI component requested follow-up", {
-                    message,
-                  });
-                }}
               />
             </ResizablePanel>
           </ResizablePanelGroup>
