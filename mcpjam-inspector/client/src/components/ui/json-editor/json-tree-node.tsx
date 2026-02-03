@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, Fragment, memo } from "react";
 import { ChevronRight, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { TruncatableString } from "./truncatable-string";
 
 // Progressive rendering constants
@@ -11,7 +12,17 @@ const CHUNK_SIZE = 100;
 const scheduleChunk =
   typeof requestIdleCallback !== "undefined"
     ? requestIdleCallback
-    : (cb: IdleRequestCallback) => setTimeout(() => cb({} as IdleDeadline), 16);
+    : (cb: IdleRequestCallback, options?: IdleRequestOptions) => {
+        const start = Date.now();
+        return setTimeout(() => {
+          cb({
+            didTimeout: options?.timeout
+              ? Date.now() - start >= options.timeout
+              : false,
+            timeRemaining: () => Math.max(0, 50 - (Date.now() - start)),
+          });
+        }, 1) as unknown as number;
+      };
 
 const cancelChunk =
   typeof cancelIdleCallback !== "undefined" ? cancelIdleCallback : clearTimeout;
@@ -76,18 +87,8 @@ const CopyableValue = memo(function CopyableValue({
   const handleCopy = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(value);
-        setCopied(true);
-        onCopy?.(value);
-        setTimeout(() => setCopied(false), 1500);
-      } catch {
-        const textarea = document.createElement("textarea");
-        textarea.value = value;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
+      const success = await copyToClipboard(value);
+      if (success) {
         setCopied(true);
         onCopy?.(value);
         setTimeout(() => setCopied(false), 1500);

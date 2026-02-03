@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, Fragment } from "react";
 import { Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { tokenizeJson } from "./json-syntax-highlighter";
 import { TruncatableString } from "./truncatable-string";
 
@@ -20,21 +21,10 @@ function CopyableValue({ children, value, onCopy }: CopyableValueProps) {
   const [copied, setCopied] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
-  const copyToClipboard = useCallback(
+  const handleCopy = useCallback(
     async (text: string) => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        onCopy?.(text);
-        setTimeout(() => setCopied(false), 1500);
-      } catch {
-        // Fallback for older browsers
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
+      const success = await copyToClipboard(text);
+      if (success) {
         setCopied(true);
         onCopy?.(text);
         setTimeout(() => setCopied(false), 1500);
@@ -53,7 +43,7 @@ function CopyableValue({ children, value, onCopy }: CopyableValueProps) {
       <button
         onClick={(e) => {
           e.stopPropagation();
-          copyToClipboard(value);
+          handleCopy(value);
         }}
         className={cn(
           "inline-flex items-center justify-center ml-1 p-0.5 rounded",

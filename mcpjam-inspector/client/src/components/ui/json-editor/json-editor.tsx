@@ -1,12 +1,23 @@
 import { useState, useCallback, useEffect } from "react";
+import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ErrorBoundary } from "@/components/evals/ErrorBoundary";
 import { useJsonEditor } from "./use-json-editor";
 import { JsonEditorView } from "./json-editor-view";
 import { JsonEditorEdit } from "./json-editor-edit";
 import { JsonEditorToolbar } from "./json-editor-toolbar";
 import { JsonEditorStatusBar } from "./json-editor-status-bar";
 import type { JsonEditorProps, JsonEditorMode } from "./types";
+
+function JsonEditorErrorFallback() {
+  return (
+    <div className="flex items-center justify-center p-4 text-sm text-muted-foreground">
+      <AlertTriangle className="h-4 w-4 mr-2 text-destructive" />
+      Failed to render JSON content
+    </div>
+  );
+}
 
 export function JsonEditor({
   value,
@@ -116,17 +127,19 @@ export function JsonEditor({
   // Lightweight render path for view-only mode (after all hooks to preserve hook order)
   if (viewOnly) {
     return (
-      <JsonEditorView
-        value={value}
-        className={className}
-        height={height}
-        maxHeight={maxHeight}
-        collapsible={collapsible}
-        defaultExpandDepth={defaultExpandDepth}
-        collapsedPaths={collapsedPaths}
-        onCollapseChange={onCollapseChange}
-        collapseStringsAfterLength={collapseStringsAfterLength}
-      />
+      <ErrorBoundary fallback={<JsonEditorErrorFallback />}>
+        <JsonEditorView
+          value={value}
+          className={className}
+          height={height}
+          maxHeight={maxHeight}
+          collapsible={collapsible}
+          defaultExpandDepth={defaultExpandDepth}
+          collapsedPaths={collapsedPaths}
+          onCollapseChange={onCollapseChange}
+          collapseStringsAfterLength={collapseStringsAfterLength}
+        />
+      </ErrorBoundary>
     );
   }
 
@@ -146,71 +159,73 @@ export function JsonEditor({
       };
 
   return (
-    <div
-      className={cn(
-        "flex flex-col rounded-lg border border-border bg-background overflow-hidden",
-        isMaximized && "rounded-none",
-        className,
-      )}
-      style={containerStyle}
-    >
-      {/* Toolbar */}
-      {showToolbar && (
-        <JsonEditorToolbar
-          mode={mode}
-          onModeChange={handleModeChange}
-          showModeToggle={showModeToggle && !readOnly}
-          readOnly={readOnly}
-          onFormat={editor.format}
-          onCopy={handleCopy}
-          onUndo={editor.undo}
-          onRedo={editor.redo}
-          canUndo={editor.canUndo}
-          canRedo={editor.canRedo}
-          isMaximized={isMaximized}
-          onToggleMaximize={toggleMaximize}
-          allowMaximize={allowMaximize}
-          isValid={editor.isValid}
-        />
-      )}
-
-      {/* Content area */}
-      <div className="flex-1 min-h-0">
-        {mode === "view" ? (
-          <ScrollArea className="h-full">
-            <JsonEditorView
-              value={isRawMode ? editor.getParsedValue() : value}
-              collapsible={collapsible}
-              defaultExpandDepth={defaultExpandDepth}
-              collapsedPaths={collapsedPaths}
-              onCollapseChange={onCollapseChange}
-              collapseStringsAfterLength={collapseStringsAfterLength}
-            />
-          </ScrollArea>
-        ) : (
-          <JsonEditorEdit
-            content={editor.content}
-            onChange={editor.setContent}
-            onCursorChange={editor.setCursorPosition}
+    <ErrorBoundary fallback={<JsonEditorErrorFallback />}>
+      <div
+        className={cn(
+          "flex flex-col rounded-lg border border-border bg-background overflow-hidden",
+          isMaximized && "rounded-none",
+          className,
+        )}
+        style={containerStyle}
+      >
+        {/* Toolbar */}
+        {showToolbar && (
+          <JsonEditorToolbar
+            mode={mode}
+            onModeChange={handleModeChange}
+            showModeToggle={showModeToggle && !readOnly}
+            readOnly={readOnly}
+            onFormat={editor.format}
+            onCopy={handleCopy}
             onUndo={editor.undo}
             onRedo={editor.redo}
-            onEscape={handleEscape}
+            canUndo={editor.canUndo}
+            canRedo={editor.canRedo}
+            isMaximized={isMaximized}
+            onToggleMaximize={toggleMaximize}
+            allowMaximize={allowMaximize}
             isValid={editor.isValid}
-            height="100%"
-            maxHeight={isMaximized ? undefined : maxHeight}
+          />
+        )}
+
+        {/* Content area */}
+        <div className="flex-1 min-h-0">
+          {mode === "view" ? (
+            <ScrollArea className="h-full">
+              <JsonEditorView
+                value={isRawMode ? editor.getParsedValue() : value}
+                collapsible={collapsible}
+                defaultExpandDepth={defaultExpandDepth}
+                collapsedPaths={collapsedPaths}
+                onCollapseChange={onCollapseChange}
+                collapseStringsAfterLength={collapseStringsAfterLength}
+              />
+            </ScrollArea>
+          ) : (
+            <JsonEditorEdit
+              content={editor.content}
+              onChange={editor.setContent}
+              onCursorChange={editor.setCursorPosition}
+              onUndo={editor.undo}
+              onRedo={editor.redo}
+              onEscape={handleEscape}
+              isValid={editor.isValid}
+              height="100%"
+              maxHeight={isMaximized ? undefined : maxHeight}
+            />
+          )}
+        </div>
+
+        {/* Status bar (only in edit mode) */}
+        {mode === "edit" && (
+          <JsonEditorStatusBar
+            cursorPosition={editor.cursorPosition}
+            isValid={editor.isValid}
+            validationError={editor.validationError}
+            characterCount={editor.content.length}
           />
         )}
       </div>
-
-      {/* Status bar (only in edit mode) */}
-      {mode === "edit" && (
-        <JsonEditorStatusBar
-          cursorPosition={editor.cursorPosition}
-          isValid={editor.isValid}
-          validationError={editor.validationError}
-          characterCount={editor.content.length}
-        />
-      )}
-    </div>
+    </ErrorBoundary>
   );
 }

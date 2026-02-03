@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { Copy, Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { formatPath } from "./json-syntax-highlighter";
 import {
   DropdownMenu,
@@ -36,20 +37,10 @@ export function TruncatableString({
       ? `"${value.slice(0, maxLength)}..."`
       : displayValue;
 
-  const copyToClipboard = useCallback(
+  const handleCopy = useCallback(
     async (text: string, label: string) => {
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopied(label);
-        onCopy?.(text);
-        setTimeout(() => setCopied(null), 1500);
-      } catch {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
+      const success = await copyToClipboard(text);
+      if (success) {
         setCopied(label);
         onCopy?.(text);
         setTimeout(() => setCopied(null), 1500);
@@ -100,7 +91,7 @@ export function TruncatableString({
         <button
           onClick={(e) => {
             e.stopPropagation();
-            copyToClipboard(menuItems[0].value, menuItems[0].key);
+            handleCopy(menuItems[0].value, menuItems[0].key);
           }}
           className={cn(
             "inline-flex items-center justify-center ml-1 p-0.5 rounded",
@@ -162,7 +153,7 @@ export function TruncatableString({
           {menuItems.map((item) => (
             <DropdownMenuItem
               key={item.key}
-              onClick={() => copyToClipboard(item.value, item.key)}
+              onClick={() => handleCopy(item.value, item.key)}
               className="text-xs"
             >
               <Copy className="h-3 w-3 mr-2" />
