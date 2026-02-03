@@ -299,7 +299,7 @@ export const OAuthFlowTab = ({
     : oauthFlowState.currentStep === "complete"
       ? "Flow Complete"
       : oauthFlowState.isInitiatingAuth
-        ? "Processing..."
+        ? "Continue"
         : oauthFlowState.currentStep === "authorization_request" ||
             oauthFlowState.currentStep === "generate_pkce_parameters"
           ? "Authorize"
@@ -502,8 +502,14 @@ export const OAuthFlowTab = ({
                   : undefined,
                 step: oauthFlowState.currentStep,
                 serverUrl: hasProfile ? profile.serverUrl : undefined,
-                scopes: hasProfile && profile.scopes.trim() ? profile.scopes.trim() : undefined,
-                clientId: hasProfile && profile.clientId.trim() ? profile.clientId.trim() : undefined,
+                scopes:
+                  hasProfile && profile.scopes.trim()
+                    ? profile.scopes.trim()
+                    : undefined,
+                clientId:
+                  hasProfile && profile.clientId.trim()
+                    ? profile.clientId.trim()
+                    : undefined,
                 customHeadersCount: hasProfile
                   ? profile.customHeaders.filter((h) => h.key.trim()).length
                   : undefined,

@@ -22,12 +22,8 @@ import {
   CheckCircle2,
   Circle,
   AlertTriangle,
-  Copy,
+  Pencil,
   RotateCcw,
-  Settings,
-  Globe,
-  Key,
-  FileText,
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
 
@@ -282,48 +278,77 @@ export function OAuthFlowLogger({
       <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
         {summary && hasProfile && (
           <>
-            {/* Testing Configuration Header */}
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Testing Configuration
-              </p>
-              <div className="flex items-center gap-1">
+            {/* Top row: Server URL with Edit, and Reset/Continue on right */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={actions?.onConfigure}
+                disabled={!actions?.onConfigure}
+                className="min-w-0 flex-1 flex items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
+              >
+                <p className="text-sm font-medium text-foreground break-all flex-1">
+                  {summary.serverUrl || summary.description}
+                </p>
+                <span className="flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground shrink-0">
+                  <Pencil className="h-3 w-3" />
+                  Edit
+                </span>
+              </button>
+              <div className="flex items-center gap-1 shrink-0">
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={actions?.onConfigure}
-                  disabled={!actions?.onConfigure}
-                  className="h-7 px-2 text-xs"
-                >
-                  <Settings className="h-3 w-3 mr-1" />
-                  Edit
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
                   onClick={actions?.onReset}
                   disabled={actions?.resetDisabled || !actions?.onReset}
-                  aria-label="Reset flow"
-                  className="h-7 w-7"
+                  className="h-7"
                 >
-                  <RotateCcw className="h-3 w-3" />
+                  <RotateCcw className="h-3 w-3 mr-1" />
+                  Reset
                 </Button>
-              </div>
-            </div>
-
-            {/* Server URL - Most prominent */}
-            <div className="flex items-start gap-2">
-              <Globe className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <p className="text-xs text-muted-foreground">Server URL</p>
-                <p className="text-sm font-medium text-foreground break-all">
-                  {summary.serverUrl || summary.description}
-                </p>
+                {actions?.onConnectServer && (
+                  <Button
+                    size="sm"
+                    onClick={actions.onConnectServer}
+                    disabled={actions.isApplyingTokens}
+                    className="h-7"
+                  >
+                    {actions.isApplyingTokens
+                      ? "Connecting..."
+                      : "Connect Server"}
+                  </Button>
+                )}
+                {actions?.onRefreshTokens && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={actions.onRefreshTokens}
+                    disabled={actions.isApplyingTokens}
+                    className="h-7"
+                  >
+                    {actions.isApplyingTokens
+                      ? "Refreshing..."
+                      : "Refresh Tokens"}
+                  </Button>
+                )}
+                {actions?.onContinue && (
+                  <Button
+                    size="sm"
+                    onClick={actions.onContinue}
+                    disabled={actions.continueDisabled}
+                    className="h-7"
+                  >
+                    {actions.continueLabel || "Continue"}
+                  </Button>
+                )}
+                {!actions?.onContinue && actions?.continueLabel && (
+                  <Button size="sm" disabled={true} className="h-7">
+                    {actions.continueLabel}
+                  </Button>
+                )}
               </div>
             </div>
 
             {/* Configuration badges */}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               {summary.protocol && (
                 <Badge variant="secondary" className="text-xs">
                   {summary.protocol}
@@ -336,57 +361,13 @@ export function OAuthFlowLogger({
               )}
               {summary.scopes && (
                 <Badge variant="outline" className="text-xs">
-                  <FileText className="h-3 w-3 mr-1" />
-                  Scopes: {summary.scopes}
+                  {summary.scopes}
                 </Badge>
               )}
               {summary.clientId && (
                 <Badge variant="outline" className="text-xs">
-                  <Key className="h-3 w-3 mr-1" />
                   Client ID set
                 </Badge>
-              )}
-              {summary.customHeadersCount && summary.customHeadersCount > 0 && (
-                <Badge variant="outline" className="text-xs">
-                  {summary.customHeadersCount} custom header
-                  {summary.customHeadersCount > 1 ? "s" : ""}
-                </Badge>
-              )}
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex items-center gap-2 pt-1">
-              {actions?.onConnectServer && (
-                <Button
-                  size="sm"
-                  onClick={actions.onConnectServer}
-                  disabled={actions.isApplyingTokens}
-                >
-                  {actions.isApplyingTokens
-                    ? "Connecting..."
-                    : "Connect Server"}
-                </Button>
-              )}
-              {actions?.onRefreshTokens && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={actions.onRefreshTokens}
-                  disabled={actions.isApplyingTokens}
-                >
-                  {actions.isApplyingTokens
-                    ? "Refreshing..."
-                    : "Refresh Tokens"}
-                </Button>
-              )}
-              {actions?.onContinue && (
-                <Button
-                  size="sm"
-                  onClick={actions.onContinue}
-                  disabled={actions.continueDisabled}
-                >
-                  {actions.continueLabel || "Continue"}
-                </Button>
               )}
             </div>
           </>
@@ -424,8 +405,7 @@ export function OAuthFlowLogger({
             onClick={handleCopyLogs}
             className="h-8"
           >
-            <Copy className="h-3.5 w-3.5 mr-2" />
-            {copySuccess ? "Copied!" : "Copy logs"}
+            {copySuccess ? "Copied!" : "Copy"}
           </Button>
         </div>
 
