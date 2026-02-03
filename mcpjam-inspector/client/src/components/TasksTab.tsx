@@ -14,7 +14,10 @@ import {
   Square,
   Trash2,
   AlertCircle,
+  PanelLeftClose,
 } from "lucide-react";
+import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
+import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { MCPServerConfig } from "@mcpjam/sdk";
@@ -117,6 +120,12 @@ export function TasksTab({
   >(undefined);
   // Track the task ID for pending input_required requests to avoid race conditions
   const pendingInputRequestTaskIdRef = useRef<string | null>(null);
+
+  // Collapsible sidebar state
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  // Logger panel visibility (right side)
+  const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
+    useJsonRpcPanelVisibility();
 
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
@@ -470,27 +479,37 @@ export function TasksTab({
   return (
     <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Left Panel - Tasks List with Logger */}
-        <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
-          <ResizablePanelGroup direction="vertical" className="h-full">
-            <ResizablePanel defaultSize={70} minSize={30}>
+        {/* Left Panel - Tasks List */}
+        {isSidebarVisible ? (
+          <>
+            <ResizablePanel
+              id="tasks-left"
+              order={1}
+              defaultSize={35}
+              minSize={1}
+              maxSize={55}
+              collapsible={true}
+              collapsedSize={0}
+              onCollapse={() => setIsSidebarVisible(false)}
+            >
               <div className="h-full flex flex-col border-r border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
-                  <div className="flex items-center gap-2">
-                    <ListTodo className="h-3.5 w-3.5 text-muted-foreground" />
-                    <h2 className="text-xs font-semibold text-foreground">
-                      Tasks
-                    </h2>
-                    <Badge variant="secondary" className="text-xs font-mono">
-                      {tasks.length}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-3 ml-4">
-                    {/* Polling controls - always show input, prefilled with effective interval */}
+                {/* App Builder-style Header */}
+                <div className="border-b border-border flex-shrink-0">
+                  <div className="px-2 py-1.5 flex items-center gap-2">
+                    {/* Tabs area - just Tasks for now */}
+                    <div className="flex items-center gap-1.5">
+                      <button className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary/10 text-primary cursor-default">
+                        Tasks
+                        <span className="ml-1 text-[10px] font-mono opacity-70">
+                          {tasks.length}
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Polling controls */}
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1">
                           <Input
                             type="number"
                             min={500}
@@ -500,7 +519,7 @@ export function TasksTab({
                             onBlur={(e) =>
                               handlePollIntervalChange(e.target.value)
                             }
-                            className="h-6 w-16 text-[10px] px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            className="h-6 w-14 text-[10px] px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                           <span className="text-[10px] text-muted-foreground">
                             ms
@@ -508,7 +527,7 @@ export function TasksTab({
                           {usingServerInterval && (
                             <Badge
                               variant="secondary"
-                              className="text-[9px] px-1 py-0 h-4 ml-0.5"
+                              className="text-[9px] px-1 py-0 h-4"
                             >
                               server
                             </Badge>
@@ -530,13 +549,12 @@ export function TasksTab({
 
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1">
                           <Switch
                             id="auto-refresh"
                             checked={autoRefresh}
                             onCheckedChange={(checked) => {
                               setAutoRefresh(checked);
-                              // Track if user explicitly disabled to avoid re-enabling
                               if (!checked) {
                                 userDisabledAutoRefresh.current = true;
                               }
@@ -556,52 +574,47 @@ export function TasksTab({
                       </TooltipContent>
                     </Tooltip>
 
-                    {/* Divider */}
-                    <div className="h-4 w-px bg-border" />
-
-                    {/* Action buttons */}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          onClick={fetchTasks}
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          disabled={fetchingTasks}
-                        >
-                          <RefreshCw
-                            className={`h-3.5 w-3.5 ${fetchingTasks ? "animate-spin-pulse text-primary" : ""}`}
-                          />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        Refresh tasks
-                      </TooltipContent>
-                    </Tooltip>
-
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          onClick={handleClearTasks}
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          disabled={tasks.length === 0}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        Clear all tasks
-                      </TooltipContent>
-                    </Tooltip>
+                    {/* Secondary actions */}
+                    <div className="flex items-center gap-0.5 text-muted-foreground/80">
+                      <Button
+                        onClick={fetchTasks}
+                        variant="ghost"
+                        size="sm"
+                        disabled={fetchingTasks}
+                        className="h-7 w-7 p-0"
+                        title="Refresh tasks"
+                      >
+                        <RefreshCw
+                          className={`h-3.5 w-3.5 ${fetchingTasks ? "animate-spin" : ""}`}
+                        />
+                      </Button>
+                      <Button
+                        onClick={handleClearTasks}
+                        variant="ghost"
+                        size="sm"
+                        disabled={tasks.length === 0}
+                        className="h-7 w-7 p-0"
+                        title="Clear all tasks"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        onClick={() => setIsSidebarVisible(false)}
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        title="Hide sidebar"
+                      >
+                        <PanelLeftClose className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
                 {/* Tasks List */}
                 <div className="flex-1 overflow-hidden">
                   <ScrollArea className="h-full">
-                    <div className="p-2">
+                    <div className="p-2 pb-16">
                       {fetchingTasks && tasks.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-16 text-center">
                           <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
@@ -675,19 +688,18 @@ export function TasksTab({
                 </div>
               </div>
             </ResizablePanel>
-
             <ResizableHandle withHandle />
+          </>
+        ) : (
+          <CollapsedPanelStrip
+            side="left"
+            onOpen={() => setIsSidebarVisible(true)}
+            tooltipText="Show tasks sidebar"
+          />
+        )}
 
-            <ResizablePanel defaultSize={30} minSize={10} maxSize={70}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Right Panel - Task Details */}
-        <ResizablePanel defaultSize={65} minSize={40}>
+        {/* Center Panel - Task Details */}
+        <ResizablePanel id="tasks-center" order={2} defaultSize={40} minSize={30}>
               <div className="h-full flex flex-col bg-background">
                 {selectedTask ? (
                   <>
@@ -888,6 +900,30 @@ export function TasksTab({
                 )}
               </div>
             </ResizablePanel>
+
+          {/* Right Panel - Logger */}
+          {isJsonRpcPanelVisible ? (
+            <>
+              <ResizableHandle withHandle />
+              <ResizablePanel
+                id="tasks-right"
+                order={3}
+                defaultSize={30}
+                minSize={2}
+                maxSize={50}
+                collapsible={true}
+                collapsedSize={0}
+                onCollapse={toggleJsonRpcPanel}
+              >
+                <LoggerView
+                  serverIds={serverName ? [serverName] : undefined}
+                  onClose={toggleJsonRpcPanel}
+                />
+              </ResizablePanel>
+            </>
+          ) : (
+            <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+          )}
           </ResizablePanelGroup>
 
           {/* Elicitation Dialog for tasks in input_required status */}

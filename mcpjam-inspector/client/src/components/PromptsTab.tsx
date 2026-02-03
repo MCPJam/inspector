@@ -16,7 +16,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { MessageSquare, Play, RefreshCw, ChevronRight } from "lucide-react";
+import { MessageSquare, Play, RefreshCw, ChevronRight, PanelLeftClose } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { MCPServerConfig, type MCPPrompt } from "@mcpjam/sdk";
@@ -25,6 +25,8 @@ import {
   listPrompts as listPromptsApi,
 } from "@/lib/apis/mcp-prompts-api";
 import { LoggerView } from "./logger-view";
+import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
+import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
 import { TruncatedText } from "./ui/truncated-text";
 
@@ -54,6 +56,9 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
   const [loading, setLoading] = useState(false);
   const [fetchingPrompts, setFetchingPrompts] = useState(false);
   const [error, setError] = useState<string>("");
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
+    useJsonRpcPanelVisibility();
 
   const selectedPromptData = useMemo(() => {
     return prompts.find((prompt) => prompt.name === selectedPrompt) ?? null;
@@ -109,7 +114,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
     const fields: FormField[] = args.map((arg) => ({
       name: arg.name,
-      type: "string", // Default to string for now, could be enhanced based on arg type
+      type: "string",
       description: arg.description,
       required: Boolean(arg.required),
       value: "",
@@ -188,7 +193,6 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey && selectedPrompt && !loading) {
-        // Don't trigger if user is typing in an input, textarea, or contenteditable
         const target = e.target as HTMLElement;
         const tagName = target.tagName;
         const isEditable = target.isContentEditable;
@@ -219,14 +223,79 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
   return (
     <div className="h-full flex flex-col">
       <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Left Panel - Prompts List or Parameters with Logger */}
-        <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
-          <ResizablePanelGroup direction="vertical" className="h-full">
-            <ResizablePanel defaultSize={70} minSize={30}>
+        {/* Left Panel - Prompts Sidebar */}
+        {isSidebarVisible ? (
+          <>
+            <ResizablePanel
+              id="prompts-left"
+              order={1}
+              defaultSize={35}
+              minSize={1}
+              maxSize={55}
+              collapsible={true}
+              collapsedSize={0}
+              onCollapse={() => setIsSidebarVisible(false)}
+            >
               <div className="h-full flex flex-col border-r border-border bg-background">
+                {/* App Builder-style Header */}
+                <div className="border-b border-border flex-shrink-0">
+                  <div className="px-2 py-1.5 flex items-center gap-2">
+                    {/* Title */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary/10 text-primary">
+                        Prompts
+                        <span className="ml-1 text-[10px] font-mono opacity-70">
+                          {promptNames.length}
+                        </span>
+                      </span>
+                    </div>
+
+                    {/* Secondary actions */}
+                    <div className="flex items-center gap-0.5 text-muted-foreground/80">
+                      <Button
+                        onClick={fetchPrompts}
+                        variant="ghost"
+                        size="sm"
+                        disabled={fetchingPrompts}
+                        className="h-7 w-7 p-0"
+                        title="Refresh prompts"
+                      >
+                        <RefreshCw
+                          className={`h-3.5 w-3.5 ${fetchingPrompts ? "animate-spin" : ""}`}
+                        />
+                      </Button>
+                      <Button
+                        onClick={() => setIsSidebarVisible(false)}
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        title="Hide sidebar"
+                      >
+                        <PanelLeftClose className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+
+                    {/* Run button */}
+                    <Button
+                      onClick={getPrompt}
+                      disabled={loading || !selectedPrompt}
+                      size="sm"
+                      className="h-8 px-3 text-xs ml-auto"
+                    >
+                      {loading ? (
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Play className="h-3 w-3" />
+                      )}
+                      <span className="ml-1">{loading ? "Loading" : "Run"}</span>
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Content */}
                 {selectedPrompt ? (
                   /* Parameters View when prompt is selected */
-                  <>
+                  <div className="flex-1 flex flex-col min-h-0">
                     <SelectedToolHeader
                       toolName={selectedPrompt}
                       onExpand={() => setSelectedPrompt("")}
@@ -340,130 +409,88 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                         )}
                       </div>
                     </ScrollArea>
-
-                    {/* Action button */}
-                    <div className="px-3 py-3 border-t border-border">
-                      <Button
-                        onClick={getPrompt}
-                        disabled={loading}
-                        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-                        size="sm"
-                      >
-                        {loading ? (
-                          <>
-                            <RefreshCw className="h-3 w-3 animate-spin" />
-                            Loading
-                          </>
-                        ) : (
-                          <>
-                            <Play className="h-3 w-3" />
-                            Get Prompt
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </>
+                  </div>
                 ) : (
                   /* Prompts List when no prompt is selected */
-                  <>
-                    <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
-                      <div className="flex items-center gap-3">
-                        <MessageSquare className="h-3 w-3 text-muted-foreground" />
-                        <h2 className="text-xs font-semibold text-foreground">
-                          Prompts
-                        </h2>
-                        <Badge variant="secondary" className="text-xs font-mono">
-                          {promptNames.length}
-                        </Badge>
-                      </div>
-                      <Button
-                        onClick={fetchPrompts}
-                        variant="ghost"
-                        size="sm"
-                        disabled={fetchingPrompts}
-                      >
-                        <RefreshCw
-                          className={`h-3 w-3 ${fetchingPrompts ? "animate-spin" : ""} cursor-pointer`}
-                        />
-                      </Button>
-                    </div>
-
-                    <div className="flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="p-2">
-                          {fetchingPrompts ? (
-                            <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
-                              </div>
-                              <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                Loading prompts...
-                              </p>
-                              <p className="text-xs text-muted-foreground/70">
-                                Fetching available prompts from server
-                              </p>
+                  <div className="flex-1 overflow-hidden">
+                    <ScrollArea className="h-full">
+                      <div className="p-2">
+                        {fetchingPrompts ? (
+                          <div className="flex flex-col items-center justify-center py-16 text-center">
+                            <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                              <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
                             </div>
-                          ) : promptNames.length === 0 ? (
-                            <div className="text-center py-8">
-                              <p className="text-sm text-muted-foreground">
-                                No prompts available
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-1">
-                              {prompts.map((prompt) => {
-                                const displayTitle = prompt.title ?? prompt.name;
-                                return (
-                                  <div
-                                    key={prompt.name}
-                                    className="cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 hover:shadow-sm"
-                                    onClick={() => setSelectedPrompt(prompt.name)}
-                                  >
-                                    <div className="flex items-start gap-3">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                          <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                            {prompt.name}
-                                          </code>
-                                          {prompt.title && (
-                                            <span className="text-xs font-semibold text-foreground">
-                                              {displayTitle}
-                                            </span>
-                                          )}
-                                        </div>
-                                        {prompt.description && (
-                                          <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                            {prompt.description}
-                                          </p>
+                            <p className="text-xs text-muted-foreground font-semibold mb-1">
+                              Loading prompts...
+                            </p>
+                            <p className="text-xs text-muted-foreground/70">
+                              Fetching available prompts from server
+                            </p>
+                          </div>
+                        ) : promptNames.length === 0 ? (
+                          <div className="text-center py-8">
+                            <p className="text-sm text-muted-foreground">
+                              No prompts available
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            {prompts.map((prompt) => {
+                              const displayTitle = prompt.title ?? prompt.name;
+                              return (
+                                <div
+                                  key={prompt.name}
+                                  className="cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 hover:shadow-sm"
+                                  onClick={() => setSelectedPrompt(prompt.name)}
+                                >
+                                  <div className="flex items-start gap-3">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                                          {prompt.name}
+                                        </code>
+                                        {prompt.title && (
+                                          <span className="text-xs font-semibold text-foreground">
+                                            {displayTitle}
+                                          </span>
                                         )}
                                       </div>
-                                      <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
+                                      {prompt.description && (
+                                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                                          {prompt.description}
+                                        </p>
+                                      )}
                                     </div>
+                                    <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                                   </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </div>
                 )}
               </div>
             </ResizablePanel>
-
             <ResizableHandle withHandle />
+          </>
+        ) : (
+          <CollapsedPanelStrip
+            side="left"
+            onOpen={() => setIsSidebarVisible(true)}
+            tooltipText="Show prompts sidebar"
+          />
+        )}
 
-            <ResizablePanel defaultSize={30} minSize={10} maxSize={70}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Right Panel - Prompt Content Results */}
-        <ResizablePanel defaultSize={65} minSize={40}>
+        {/* Center Panel - Prompt Content Results */}
+        <ResizablePanel
+          id="prompts-center"
+          order={2}
+          defaultSize={isJsonRpcPanelVisible ? 40 : 65}
+          minSize={30}
+        >
           <div className="h-full flex flex-col bg-background">
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h2 className="text-xs font-semibold text-foreground">
@@ -505,7 +532,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                     </p>
                     <p className="text-xs text-muted-foreground font-medium">
                       {selectedPrompt
-                        ? "Click Get Prompt to see content"
+                        ? "Click Run to see content"
                         : "Choose a prompt from the left to view details"}
                     </p>
                   </div>
@@ -514,6 +541,33 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
             </div>
           </div>
         </ResizablePanel>
+
+        {/* Right Panel - Logger */}
+        {isJsonRpcPanelVisible ? (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel
+              id="prompts-right"
+              order={3}
+              defaultSize={30}
+              minSize={2}
+              maxSize={50}
+              collapsible={true}
+              collapsedSize={0}
+              onCollapse={toggleJsonRpcPanel}
+              className="min-h-0 overflow-hidden"
+            >
+              <div className="h-full min-h-0 overflow-hidden">
+                <LoggerView
+                  serverIds={serverName ? [serverName] : undefined}
+                  onClose={toggleJsonRpcPanel}
+                />
+              </div>
+            </ResizablePanel>
+          </>
+        ) : (
+          <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        )}
       </ResizablePanelGroup>
     </div>
   );
