@@ -186,31 +186,32 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     );
   }
 
+  const tabs = [
+    { id: "resources" as const, label: "Resources" },
+    { id: "templates" as const, label: "Resource Templates" },
+  ];
+
+  const tabClassName = (isActive: boolean) =>
+    `px-4 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
+      isActive
+        ? "border-primary text-primary"
+        : "border-transparent text-muted-foreground hover:text-foreground"
+    }`;
+
   return (
     <div className="h-full flex flex-col">
       {/* Tab bar */}
       <div className="border-b border-border flex-shrink-0">
         <div className="flex">
-          <button
-            onClick={() => setActiveTab("resources")}
-            className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
-              activeTab === "resources"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Resources
-          </button>
-          <button
-            onClick={() => setActiveTab("templates")}
-            className={`px-4 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
-              activeTab === "templates"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Resource Templates
-          </button>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={tabClassName(activeTab === tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
