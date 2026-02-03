@@ -47,6 +47,7 @@ import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers"
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
+import { useToolApprovalStatusStore } from "@/stores/tool-approval-status-store";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -57,6 +58,8 @@ export interface UseChatSessionOptions {
   initialTemperature?: number;
   /** Callback when chat is reset */
   onReset?: () => void;
+  /** Whether to require user approval before executing tools */
+  requireToolApproval?: boolean;
 }
 
 export interface TokenUsage {
@@ -127,6 +130,7 @@ export function useChatSession({
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
   onReset,
+  requireToolApproval = false,
 }: UseChatSessionOptions): UseChatSessionReturn {
   const { getAccessToken } = useAuth();
 
@@ -214,35 +218,58 @@ export function useChatSession({
       : false;
   }, [selectedModel]);
 
-  // Create transport
-  const transport = useMemo(() => {
+  // Create a mutable body object that the transport will reference
+  // This allows us to update requireToolApproval without recreating the transport
+  const transportBodyRef = useRef<Record<string, unknown>>({});
+
+  // Track session-approved tools count to trigger effect when tools are added
+  // We use the Set size for efficient change detection, then get the full list in the effect
+  const sessionApprovedToolsCount = useToolApprovalStatusStore(
+    (s) => s.sessionApprovedTools.size,
+  );
+
+  // Update the body ref whenever dependencies change
+  useEffect(() => {
     const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     const isGpt5 = isGPT5Model(selectedModel.id);
 
+    // Update properties in place so the transport sees the latest values
+    transportBodyRef.current.model = selectedModel;
+    transportBodyRef.current.apiKey = apiKey;
+    if (!isGpt5) {
+      transportBodyRef.current.temperature = temperature;
+    }
+    transportBodyRef.current.systemPrompt = systemPrompt;
+    transportBodyRef.current.selectedServers = selectedServers;
+    transportBodyRef.current.requireToolApproval = requireToolApproval;
+    // Include session-approved tools so server can skip approval prompts
+    // We use getState() to get the actual tool names when the count changes
+    transportBodyRef.current.sessionApprovedTools = useToolApprovalStatusStore
+      .getState()
+      .getSessionApprovedTools();
+  }, [
+    selectedModel,
+    getToken,
+    temperature,
+    systemPrompt,
+    selectedServers,
+    requireToolApproval,
+    sessionApprovedToolsCount, // Triggers effect when tools are added
+  ]);
+
+  // Create transport once - body is a factory function that returns fresh object each send
+  const transport = useMemo(() => {
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
     const mergedHeaders = { ...sessionHeaders, ...authHeaders };
 
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
-      body: {
-        model: selectedModel,
-        apiKey: apiKey,
-        ...(isGpt5 ? {} : { temperature }),
-        systemPrompt,
-        selectedServers,
-      },
+      body: () => ({ ...transportBodyRef.current }),
       headers:
         Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
     });
-  }, [
-    selectedModel,
-    getToken,
-    authHeaders,
-    temperature,
-    systemPrompt,
-    selectedServers,
-  ]);
+  }, [authHeaders]);
 
   // useChat hook
   const {
@@ -282,10 +309,12 @@ export function useChatSession({
     [baseSendMessage],
   );
 
-  // Reset chat
+  // Reset chat - clears messages and session-approved tools
   const resetChat = useCallback(() => {
     setChatSessionId(generateId());
     setMessages([]);
+    // Clear session-approved tools when starting a new chat
+    useToolApprovalStatusStore.getState().clearSessionApprovedTools();
     onResetRef.current?.();
   }, [setMessages]);
 

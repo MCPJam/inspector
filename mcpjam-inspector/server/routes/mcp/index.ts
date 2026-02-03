@@ -14,6 +14,7 @@ import exporter from "./export";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
+import toolApproval from "./tool-approval";
 import apps from "./apps";
 import models from "./models";
 import listTools from "./list-tools";
@@ -47,6 +48,9 @@ mcp.route("/chat-v2", chatV2);
 
 // Elicitation endpoints
 mcp.route("/elicitation", elicitation);
+
+// Tool approval endpoints
+mcp.route("/tool-approval", toolApproval);
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route("/connect", connect);

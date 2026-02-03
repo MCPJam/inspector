@@ -4,7 +4,7 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square, Paperclip, Scan } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Scan, ShieldCheck } from "lucide-react";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -87,6 +87,9 @@ interface ChatInputProps {
   /** X-Ray mode toggle */
   xrayMode?: boolean;
   onXrayModeChange?: (enabled: boolean) => void;
+  /** Tool approval toggle */
+  requireToolApproval?: boolean;
+  onRequireToolApprovalChange?: (enabled: boolean) => void;
 }
 
 export function ChatInput({
@@ -124,6 +127,8 @@ export function ChatInput({
   onChangeFileAttachments,
   xrayMode = false,
   onXrayModeChange,
+  requireToolApproval = false,
+  onRequireToolApprovalChange,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -443,6 +448,32 @@ export function ChatInput({
                   {xrayMode
                     ? "Hide X-Ray view"
                     : "See what is sent to the model"}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {onRequireToolApprovalChange && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={requireToolApproval ? "default" : "ghost"}
+                    size="icon"
+                    onClick={() =>
+                      onRequireToolApprovalChange(!requireToolApproval)
+                    }
+                    className={cn(
+                      "h-8 w-8 transition-colors",
+                      requireToolApproval &&
+                        "bg-amber-500 hover:bg-amber-600 text-white",
+                    )}
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {requireToolApproval
+                    ? "Tool approval enabled - click to disable"
+                    : "Require approval before tool execution"}
                 </TooltipContent>
               </Tooltip>
             )}
