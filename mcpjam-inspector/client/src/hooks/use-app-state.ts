@@ -509,6 +509,7 @@ export function useAppState() {
       try {
         if (existingServer) {
           // Update existing server
+          // Note: env is intentionally omitted to avoid leaking secrets to the cloud
           await convexUpdateServer({
             serverId: existingServer._id,
             name: serverName,
@@ -516,7 +517,6 @@ export function useAppState() {
             transportType,
             command: config?.command,
             args: config?.args,
-            env: config?.env,
             url,
             headers,
             timeout: config?.timeout,
@@ -528,6 +528,7 @@ export function useAppState() {
           });
         } else {
           // Create new server
+          // Note: env is intentionally omitted to avoid leaking secrets to the cloud
           await convexCreateServer({
             workspaceId: effectiveActiveWorkspaceId,
             name: serverName,
@@ -535,7 +536,6 @@ export function useAppState() {
             transportType,
             command: config?.command,
             args: config?.args,
-            env: config?.env,
             url,
             headers,
             timeout: config?.timeout,
