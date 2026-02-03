@@ -73,6 +73,17 @@
   --font-mono:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
+  --font-code:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  /* JSON syntax highlighting colors (light mode) - Asana-inspired */
+  --json-key: oklch(0.55 0.2 255); /* Blue for keys */
+  --json-string: oklch(0.5 0.1 55); /* Warm brown/tan */
+  --json-number: oklch(0.5 0.1 55); /* Same as strings */
+  --json-boolean: oklch(0.5 0.15 145); /* Green (for true) */
+  --json-boolean-false: oklch(0.55 0.18 25); /* Red/coral (for false) */
+  --json-null: oklch(0.55 0.02 270); /* Gray */
+  --json-punctuation: oklch(0.55 0.01 270); /* Muted gray */
   --radius: 0.5rem;
   --shadow-x: 0;
   --shadow-y: 1px;
@@ -99,6 +110,14 @@
 .dark {
   --background: oklch(0.2679 0.0036 106.6427);
   --foreground: oklch(0.8074 0.0142 93.0137);
+  /* JSON syntax highlighting colors (dark mode) - Asana-inspired */
+  --json-key: oklch(0.7 0.18 255); /* Blue for keys */
+  --json-string: oklch(0.7 0.1 55); /* Warm brown/tan */
+  --json-number: oklch(0.7 0.1 55); /* Same as strings */
+  --json-boolean: oklch(0.65 0.15 145); /* Green (for true) */
+  --json-boolean-false: oklch(0.68 0.16 25); /* Red/coral (for false) */
+  --json-null: oklch(0.6 0.02 270); /* Gray */
+  --json-punctuation: oklch(0.5 0.01 270); /* Muted gray */
   --card: oklch(0.2679 0.0036 106.6427);
   --card-foreground: oklch(0.9818 0.0054 95.0986);
   --popover: oklch(0.3085 0.0035 106.6039);
@@ -339,4 +358,67 @@
 
 .animate-spin-pulse {
   animation: spin-pulse 1s ease-in-out infinite;
+}
+
+/* JSON syntax highlighting classes */
+.json-string {
+  color: var(--json-string);
+}
+
+.json-number {
+  color: var(--json-number);
+}
+
+.json-boolean {
+  color: var(--json-boolean);
+}
+
+.json-boolean-false {
+  color: var(--json-boolean-false);
+}
+
+.json-null {
+  color: var(--json-null);
+}
+
+.json-key {
+  color: var(--json-key);
+}
+
+.json-punctuation {
+  color: var(--json-punctuation);
+}
+
+/* JSON string truncation */
+.json-string-truncated {
+  cursor: pointer;
+}
+
+/* JSON collapse toggle */
+.json-collapse-toggle {
+  transition: transform 150ms ease-out;
+}
+
+.json-collapse-toggle[data-state="open"] {
+  transform: rotate(90deg);
+}
+
+/* JSON editor validation pulse animation */
+@keyframes validation-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.json-status-error {
+  animation: validation-pulse 0.5s ease-in-out 2;
+}
+
+/* Font code variable for theme */
+@theme inline {
+  --font-code: var(--font-code);
 }

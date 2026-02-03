@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ToolUIPart, DynamicToolUIPart, UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -74,6 +75,10 @@ export function PartSwitch({
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
 }) {
+  const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
+    DisplayMode[] | undefined
+  >();
+
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
     const toolInfo = getToolInfo(toolPart);
@@ -191,6 +196,7 @@ export function PartSwitch({
             onExitFullscreen={onExitFullscreen}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            appSupportedDisplayModes={appSupportedDisplayModes}
           />
           <MCPAppsRenderer
             serverId={serverId}
@@ -217,6 +223,7 @@ export function PartSwitch({
             onDisplayModeChange={onDisplayModeChange}
             onRequestFullscreen={onRequestFullscreen}
             onExitFullscreen={onExitFullscreen}
+            onAppSupportedDisplayModesChange={setAppSupportedDisplayModes}
           />
         </>
       );

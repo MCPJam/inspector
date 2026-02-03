@@ -11,9 +11,7 @@ import {
   Info,
   Octagon,
 } from "lucide-react";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import {
   Collapsible,
   CollapsibleContent,
@@ -114,23 +112,7 @@ export function InfoLogEntry({
               </div>
             )}
             <div className="rounded-sm bg-background/60 p-2 max-h-[36vh] overflow-auto">
-              <JsonView
-                src={data}
-                dark={true}
-                theme="atom"
-                enableClipboard={true}
-                displaySize={false}
-                collapsed={false}
-                style={{
-                  fontSize: "11px",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                  backgroundColor: "transparent",
-                  padding: "0",
-                  borderRadius: "0",
-                  border: "none",
-                }}
-              />
+              <JsonEditor value={data} readOnly showToolbar={false} />
             </div>
           </div>
         </div>

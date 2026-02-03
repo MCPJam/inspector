@@ -16,7 +16,13 @@ import {
 } from "@/state/app-types";
 import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
-import { useWorkspaceQueries, useWorkspaceMutations } from "./useWorkspaces";
+import {
+  useWorkspaceQueries,
+  useWorkspaceMutations,
+  useWorkspaceServers,
+  useServerMutations,
+  type RemoteServer,
+} from "./useWorkspaces";
 import {
   serializeServersForSharing,
   deserializeServersFromConvex,
@@ -113,10 +119,16 @@ export function useAppState() {
     deleteWorkspace: convexDeleteWorkspace,
   } = useWorkspaceMutations();
 
-  // Track if we've done the initial migration from local to Convex
-  const hasMigratedRef = useRef(false);
+  // Server mutations for the flat servers table
+  const {
+    createServer: convexCreateServer,
+    updateServer: convexUpdateServer,
+    deleteServer: convexDeleteServer,
+  } = useServerMutations();
+
   // Track active workspace ID separately for authenticated mode (Convex IDs)
   // Initialize from localStorage synchronously to avoid race conditions with OAuth callback
+  // NOTE: This is defined early so we can use it in useWorkspaceServers
   const [convexActiveWorkspaceId, setConvexActiveWorkspaceId] = useState<
     string | null
   >(() => {
@@ -125,6 +137,16 @@ export function useAppState() {
     }
     return null;
   });
+
+  // Fetch servers from the flat servers table for the active workspace
+  const { servers: activeWorkspaceServersFlat, isLoading: isLoadingServers } =
+    useWorkspaceServers({
+      workspaceId: convexActiveWorkspaceId,
+      isAuthenticated,
+    });
+
+  // Track if we've done the initial migration from local to Convex
+  const hasMigratedRef = useRef(false);
   // Debounce timer for Convex updates
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Fallback to local storage if Convex takes too long or fails
@@ -195,20 +217,37 @@ export function useAppState() {
     };
   }, [isAuthenticated, remoteWorkspaces, useLocalFallback, logger]);
 
-  // Flag indicating we're waiting for Convex workspaces to load
+  // Flag indicating we're waiting for Convex workspaces or servers to load
   // Also true when auth is loading and user was previously authenticated
   const isLoadingRemoteWorkspaces =
-    (isAuthenticated && !useLocalFallback && remoteWorkspaces === undefined) ||
+    (isAuthenticated &&
+      !useLocalFallback &&
+      (remoteWorkspaces === undefined || isLoadingServers)) ||
     (isAuthLoading && !!convexActiveWorkspaceId);
 
   // Convert remote workspaces to local format
+  // Note: Servers are fetched separately from the flat servers table
   const convexWorkspaces = useMemo((): Record<string, Workspace> => {
     if (!remoteWorkspaces) return {};
     return Object.fromEntries(
       remoteWorkspaces.map((rw) => {
-        const deserializedServers = deserializeServersFromConvex(
-          rw.servers || {},
-        );
+        // For the active workspace, use servers from the flat servers table
+        // For other workspaces, use empty servers (they'll be populated when switched to)
+        let deserializedServers: Record<string, ServerWithName> = {};
+
+        if (
+          rw._id === convexActiveWorkspaceId &&
+          activeWorkspaceServersFlat !== undefined
+        ) {
+          // Use flat servers from the servers table
+          deserializedServers = deserializeServersFromConvex(
+            activeWorkspaceServersFlat,
+          );
+        } else if (rw.servers) {
+          // Fallback to legacy nested servers if available (for non-active workspaces)
+          deserializedServers = deserializeServersFromConvex(rw.servers);
+        }
+
         return [
           rw._id,
           {
@@ -223,7 +262,7 @@ export function useAppState() {
         ];
       }),
     );
-  }, [remoteWorkspaces]);
+  }, [remoteWorkspaces, convexActiveWorkspaceId, activeWorkspaceServersFlat]);
 
   // Derive effective workspaces based on auth state
   // When authenticated: use Convex as source of truth (unless fallback is active)
@@ -448,26 +487,65 @@ export function useAppState() {
     dispatch({ type: "SET_MULTI_SELECTED", names: connectedNames });
   }, [appState.servers]);
 
-  // Helper to sync server config to Convex workspace
+  // Helper to sync server config to Convex servers table
   const syncServerToConvex = useCallback(
     async (serverName: string, serverEntry: ServerWithName) => {
       // Skip Convex sync if using local fallback or not authenticated
       if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId)
         return;
 
-      const currentWorkspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
-      if (!currentWorkspace) return;
+      // Check if server already exists in the flat servers table
+      const existingServer = activeWorkspaceServersFlat?.find(
+        (s) => s.name === serverName,
+      );
 
-      const updatedServers = {
-        ...currentWorkspace.servers,
-        [serverName]: serverEntry,
-      };
+      // Extract flat fields from server config
+      const config = serverEntry.config as any;
+      const transportType = config?.command ? "stdio" : "http";
+      const url =
+        config?.url instanceof URL ? config.url.href : config?.url || undefined;
+      const headers = config?.requestInit?.headers || undefined;
 
       try {
-        await convexUpdateWorkspace({
-          workspaceId: effectiveActiveWorkspaceId,
-          servers: serializeServersForSharing(updatedServers),
-        });
+        if (existingServer) {
+          // Update existing server
+          // Note: env is intentionally omitted to avoid leaking secrets to the cloud
+          await convexUpdateServer({
+            serverId: existingServer._id,
+            name: serverName,
+            enabled: serverEntry.enabled ?? false,
+            transportType,
+            command: config?.command,
+            args: config?.args,
+            url,
+            headers,
+            timeout: config?.timeout,
+            useOAuth: serverEntry.useOAuth,
+            oauthScopes: serverEntry.oauthFlowProfile?.scopes
+              ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
+              : undefined,
+            clientId: serverEntry.oauthFlowProfile?.clientId,
+          });
+        } else {
+          // Create new server
+          // Note: env is intentionally omitted to avoid leaking secrets to the cloud
+          await convexCreateServer({
+            workspaceId: effectiveActiveWorkspaceId,
+            name: serverName,
+            enabled: serverEntry.enabled ?? false,
+            transportType,
+            command: config?.command,
+            args: config?.args,
+            url,
+            headers,
+            timeout: config?.timeout,
+            useOAuth: serverEntry.useOAuth,
+            oauthScopes: serverEntry.oauthFlowProfile?.scopes
+              ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
+              : undefined,
+            clientId: serverEntry.oauthFlowProfile?.clientId,
+          });
+        }
       } catch (error) {
         logger.error("Failed to sync server to Convex", {
           serverName,
@@ -479,28 +557,33 @@ export function useAppState() {
       useLocalFallback,
       isAuthenticated,
       effectiveActiveWorkspaceId,
-      effectiveWorkspaces,
-      convexUpdateWorkspace,
+      activeWorkspaceServersFlat,
+      convexCreateServer,
+      convexUpdateServer,
       logger,
     ],
   );
 
-  // Helper to remove server from Convex workspace
+  // Helper to remove server from Convex servers table
   const removeServerFromConvex = useCallback(
     async (serverName: string) => {
       // Skip Convex sync if using local fallback or not authenticated
       if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId)
         return;
 
-      const currentWorkspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
-      if (!currentWorkspace) return;
+      // Find the server in the flat servers table
+      const existingServer = activeWorkspaceServersFlat?.find(
+        (s) => s.name === serverName,
+      );
 
-      const { [serverName]: _, ...remainingServers } = currentWorkspace.servers;
+      if (!existingServer) {
+        logger.warn("Server not found in Convex for deletion", { serverName });
+        return;
+      }
 
       try {
-        await convexUpdateWorkspace({
-          workspaceId: effectiveActiveWorkspaceId,
-          servers: serializeServersForSharing(remainingServers),
+        await convexDeleteServer({
+          serverId: existingServer._id,
         });
       } catch (error) {
         logger.error("Failed to remove server from Convex", {
@@ -513,8 +596,8 @@ export function useAppState() {
       useLocalFallback,
       isAuthenticated,
       effectiveActiveWorkspaceId,
-      effectiveWorkspaces,
-      convexUpdateWorkspace,
+      activeWorkspaceServersFlat,
+      convexDeleteServer,
       logger,
     ],
   );
@@ -997,24 +1080,13 @@ export function useAppState() {
 
       // Sync to Convex or local workspace
       if (isAuthenticated && effectiveActiveWorkspaceId) {
-        // When authenticated, sync server to Convex
-        const currentWorkspace =
-          effectiveWorkspaces[effectiveActiveWorkspaceId];
-        if (currentWorkspace) {
-          const updatedServers = {
-            ...currentWorkspace.servers,
-            [serverName]: serverEntry,
-          };
-          try {
-            await convexUpdateWorkspace({
-              workspaceId: effectiveActiveWorkspaceId,
-              servers: serializeServersForSharing(updatedServers),
-            });
-          } catch (error) {
-            logger.error("Failed to sync server to Convex", {
-              error: error instanceof Error ? error.message : "Unknown error",
-            });
-          }
+        // When authenticated, sync server to Convex servers table
+        try {
+          await syncServerToConvex(serverName, serverEntry);
+        } catch (error) {
+          logger.error("Failed to sync server to Convex", {
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
         }
       } else {
         const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
@@ -1044,8 +1116,7 @@ export function useAppState() {
       logger,
       isAuthenticated,
       effectiveActiveWorkspaceId,
-      effectiveWorkspaces,
-      convexUpdateWorkspace,
+      syncServerToConvex,
     ],
   );
 
@@ -1716,14 +1787,19 @@ export function useAppState() {
   const handleUpdateWorkspace = useCallback(
     async (workspaceId: string, updates: Partial<Workspace>) => {
       if (isAuthenticated) {
-        // Update in Convex
+        // Update in Convex - only workspace metadata, not servers
+        // Servers should be updated via syncServerToConvex (individual server operations)
         try {
           const updateData: any = { workspaceId };
           if (updates.name !== undefined) updateData.name = updates.name;
           if (updates.description !== undefined)
             updateData.description = updates.description;
+          // Note: servers are NOT synced here for authenticated users
+          // Use syncServerToConvex for individual server updates
           if (updates.servers !== undefined) {
-            updateData.servers = serializeServersForSharing(updates.servers);
+            logger.warn(
+              "Ignoring servers in handleUpdateWorkspace for authenticated user - use individual server operations",
+            );
           }
           await convexUpdateWorkspace(updateData);
         } catch (error) {

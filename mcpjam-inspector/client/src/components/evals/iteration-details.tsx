@@ -4,9 +4,7 @@ import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import { MessageSquare, Code2, ChevronDown, ChevronRight } from "lucide-react";
 import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import {
   Collapsible,
   CollapsibleContent,
@@ -227,12 +225,10 @@ export function IterationDetails({
               <CollapsibleContent className="mt-2">
                 <div className="rounded border border-destructive/30 bg-background/50 p-2">
                   {errorDetailsJson ? (
-                    <JsonView
-                      src={errorDetailsJson}
-                      style={{
-                        backgroundColor: "transparent",
-                        fontSize: "11px",
-                      }}
+                    <JsonEditor
+                      value={errorDetailsJson}
+                      readOnly
+                      showToolbar={false}
                     />
                   ) : (
                     <pre className="text-xs font-mono text-destructive whitespace-pre-wrap overflow-x-auto">

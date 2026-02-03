@@ -17,9 +17,7 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 interface ServerInfoModalProps {
@@ -153,23 +151,7 @@ export function ServerInfoModal({
             </button>
             {expandedTokens.has(`${tokenKey}Decoded`) && (
               <div className="mt-1">
-                <JsonView
-                  src={decoded}
-                  theme="atom"
-                  dark={true}
-                  enableClipboard={true}
-                  displaySize={false}
-                  collapseStringsAfterLength={100}
-                  style={{
-                    fontSize: "11px",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                    backgroundColor: "hsl(var(--background))",
-                    padding: "8px",
-                    borderRadius: "6px",
-                    border: "1px solid hsl(var(--border))",
-                  }}
-                />
+                <JsonEditor value={decoded} readOnly showToolbar={false} />
               </div>
             )}
           </div>
@@ -325,27 +307,12 @@ export function ServerInfoModal({
                   <div className="text-sm font-medium text-muted-foreground mb-2">
                     Server Capabilities
                   </div>
-                  <div className="relative">
-                    <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
-                      {JSON.stringify(serverCapabilities, null, 2)}
-                    </pre>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyToClipboard(
-                          JSON.stringify(serverCapabilities, null, 2),
-                          "serverCapabilities",
-                        );
-                      }}
-                      className="absolute top-2 right-2 p-2 text-muted-foreground hover:text-foreground transition-colors bg-muted/50 rounded"
-                    >
-                      {copiedField === "serverCapabilities" ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
+                  <JsonEditor
+                    value={serverCapabilities}
+                    readOnly
+                    showToolbar={false}
+                    maxHeight="384px"
+                  />
                 </div>
               )}
 
@@ -354,27 +321,12 @@ export function ServerInfoModal({
                   <div className="text-sm font-medium text-muted-foreground mb-2">
                     Client Capabilities
                   </div>
-                  <div className="relative">
-                    <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
-                      {JSON.stringify(clientCapabilities, null, 2)}
-                    </pre>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyToClipboard(
-                          JSON.stringify(clientCapabilities, null, 2),
-                          "clientCapabilities",
-                        );
-                      }}
-                      className="absolute top-2 right-2 p-2 text-muted-foreground hover:text-foreground transition-colors bg-muted/50 rounded"
-                    >
-                      {copiedField === "clientCapabilities" ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <Copy className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
+                  <JsonEditor
+                    value={clientCapabilities}
+                    readOnly
+                    showToolbar={false}
+                    maxHeight="384px"
+                  />
                 </div>
               )}
 
@@ -472,9 +424,7 @@ export function ServerInfoModal({
                               <div className="text-xs text-muted-foreground font-medium mb-3">
                                 ANNOTATIONS
                               </div>
-                              <pre className="text-[11px] font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto">
-                                {JSON.stringify(annotations, null, 2)}
-                              </pre>
+                              <JsonEditor value={annotations} viewOnly />
                             </div>
                           )}
                         </div>
@@ -554,27 +504,12 @@ export function ServerInfoModal({
                 <div className="text-sm font-medium text-muted-foreground mb-2">
                   Server Capabilities
                 </div>
-                <div className="relative">
-                  <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
-                    {JSON.stringify(serverCapabilities, null, 2)}
-                  </pre>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      copyToClipboard(
-                        JSON.stringify(serverCapabilities, null, 2),
-                        "serverCapabilities",
-                      );
-                    }}
-                    className="absolute top-2 right-2 p-2 text-muted-foreground hover:text-foreground transition-colors bg-muted/50 rounded"
-                  >
-                    {copiedField === "serverCapabilities" ? (
-                      <Check className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
+                <JsonEditor
+                  value={serverCapabilities}
+                  readOnly
+                  showToolbar={false}
+                  maxHeight="384px"
+                />
               </div>
             )}
 
@@ -583,27 +518,12 @@ export function ServerInfoModal({
                 <div className="text-sm font-medium text-muted-foreground mb-2">
                   Client Capabilities
                 </div>
-                <div className="relative">
-                  <pre className="text-xs font-mono bg-muted/30 p-3 rounded border border-border/20 overflow-x-auto max-h-96 overflow-y-auto">
-                    {JSON.stringify(clientCapabilities, null, 2)}
-                  </pre>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      copyToClipboard(
-                        JSON.stringify(clientCapabilities, null, 2),
-                        "clientCapabilities",
-                      );
-                    }}
-                    className="absolute top-2 right-2 p-2 text-muted-foreground hover:text-foreground transition-colors bg-muted/50 rounded"
-                  >
-                    {copiedField === "clientCapabilities" ? (
-                      <Check className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
+                <JsonEditor
+                  value={clientCapabilities}
+                  readOnly
+                  showToolbar={false}
+                  maxHeight="384px"
+                />
               </div>
             )}
 

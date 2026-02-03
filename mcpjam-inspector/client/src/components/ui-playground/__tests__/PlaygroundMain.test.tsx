@@ -19,6 +19,17 @@ vi.mock("lucide-react", () => ({
   MousePointer2: () => <span data-testid="icon-mouse" />,
   Hand: () => <span data-testid="icon-hand" />,
   Settings2: () => <span data-testid="icon-settings" />,
+  // Icons used by JsonEditor component
+  Eye: () => <span data-testid="icon-eye" />,
+  Pencil: () => <span data-testid="icon-pencil" />,
+  AlignLeft: () => <span data-testid="icon-align-left" />,
+  Copy: () => <span data-testid="icon-copy" />,
+  Check: () => <span data-testid="icon-check" />,
+  Undo2: () => <span data-testid="icon-undo" />,
+  Redo2: () => <span data-testid="icon-redo" />,
+  Maximize2: () => <span data-testid="icon-maximize" />,
+  Minimize2: () => <span data-testid="icon-minimize" />,
+  ChevronRight: () => <span data-testid="icon-chevron-right" />,
 }));
 
 // Mock UI components

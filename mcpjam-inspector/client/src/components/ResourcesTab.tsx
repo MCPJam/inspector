@@ -9,8 +9,7 @@ import {
 } from "./ui/resizable";
 import { FolderOpen, File, RefreshCw, ChevronRight, Eye } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import {
   MCPServerConfig,
   type MCPReadResourceResult,
@@ -429,23 +428,10 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                                         </pre>
                                       ) : (
                                         <div className="p-4">
-                                          <JsonView
-                                            src={content}
-                                            dark={true}
-                                            theme="atom"
-                                            enableClipboard={true}
-                                            displaySize={false}
-                                            collapseStringsAfterLength={100}
-                                            style={{
-                                              fontSize: "12px",
-                                              fontFamily:
-                                                "ui-monospace, SFMono-Regular, 'SF Mono', monospace",
-                                              backgroundColor:
-                                                "hsl(var(--background))",
-                                              padding: "0",
-                                              borderRadius: "0",
-                                              border: "none",
-                                            }}
+                                          <JsonEditor
+                                            value={content}
+                                            readOnly
+                                            showToolbar={false}
                                           />
                                         </div>
                                       )}

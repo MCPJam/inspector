@@ -123,19 +123,26 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
-  // Create a stable key for connected servers to avoid infinite loops
-  // (connectedOrConnectingServerConfigs is a new object reference on every render)
+  // Create a stable key that only tracks fully "connected" servers (not "connecting")
+  // so the effect re-fires when servers finish connecting (e.g., after reconnect)
   const connectedServerNamesKey = useMemo(
-    () => Object.keys(connectedOrConnectingServerConfigs).sort().join(","),
+    () =>
+      Object.entries(connectedOrConnectingServerConfigs)
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([name]) => name)
+        .sort()
+        .join(","),
     [connectedOrConnectingServerConfigs],
   );
 
   // Check which connected servers have OpenAI apps tools
   useEffect(() => {
     const checkOpenAiAppOrMcpAppsServers = async () => {
-      const connectedServerNames = Object.keys(
+      const connectedServerNames = Object.entries(
         connectedOrConnectingServerConfigs,
-      );
+      )
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([name]) => name);
       const serversWithOpenAiAppOrMcpApps = new Set<string>();
 
       await Promise.all(

@@ -11,9 +11,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/utils";
 
 interface ErrorBoxProps {
@@ -136,12 +134,10 @@ export function ErrorBox({
               )}
             >
               {errorDetailsJson ? (
-                <JsonView
-                  src={errorDetailsJson}
-                  style={{
-                    backgroundColor: "transparent",
-                    fontSize: "11px",
-                  }}
+                <JsonEditor
+                  value={errorDetailsJson}
+                  readOnly
+                  showToolbar={false}
                 />
               ) : (
                 <pre
