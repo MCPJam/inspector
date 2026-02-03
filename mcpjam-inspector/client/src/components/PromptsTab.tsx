@@ -25,6 +25,8 @@ import {
   listPrompts as listPromptsApi,
 } from "@/lib/apis/mcp-prompts-api";
 import { LoggerView } from "./logger-view";
+import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
+import { TruncatedText } from "./ui/truncated-text";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
@@ -220,122 +222,132 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
         {/* Top Section - Prompts and Parameters */}
         <ResizablePanel defaultSize={70} minSize={30}>
           <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Prompts List */}
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+            {/* Left Panel - Prompts List or Parameters */}
+            <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
               <div className="h-full flex flex-col border-r border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
-                  <div className="flex items-center gap-3">
-                    <MessageSquare className="h-3 w-3 text-muted-foreground" />
-                    <h2 className="text-xs font-semibold text-foreground">
-                      Prompts
-                    </h2>
-                    <Badge variant="secondary" className="text-xs font-mono">
-                      {promptNames.length}
-                    </Badge>
-                  </div>
-                  <Button
-                    onClick={fetchPrompts}
-                    variant="ghost"
-                    size="sm"
-                    disabled={fetchingPrompts}
-                  >
-                    <RefreshCw
-                      className={`h-3 w-3 ${fetchingPrompts ? "animate-spin" : ""} cursor-pointer`}
+                {selectedPrompt ? (
+                  /* Parameters View when prompt is selected */
+                  <>
+                    <SelectedToolHeader
+                      toolName={selectedPrompt}
+                      onExpand={() => setSelectedPrompt("")}
+                      onClear={() => setSelectedPrompt("")}
                     />
-                  </Button>
-                </div>
 
-                {/* Prompts List */}
-                <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="p-2">
-                      {fetchingPrompts ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
-                          <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                            <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
-                          </div>
-                          <p className="text-xs text-muted-foreground font-semibold mb-1">
-                            Loading prompts...
+                    {selectedPromptData?.description && (
+                      <div className="px-3 py-3 bg-muted/50 border-b border-border">
+                        <TruncatedText
+                          text={selectedPromptData.description}
+                          title={selectedPrompt}
+                          maxLength={200}
+                        />
+                      </div>
+                    )}
+
+                    <ScrollArea className="flex-1">
+                      <div className="px-3 py-3">
+                        {formFields.length === 0 ? (
+                          <p className="text-xs text-muted-foreground text-center py-8">
+                            No parameters required
                           </p>
-                          <p className="text-xs text-muted-foreground/70">
-                            Fetching available prompts from server
-                          </p>
-                        </div>
-                      ) : promptNames.length === 0 ? (
-                        <div className="text-center py-8">
-                          <p className="text-sm text-muted-foreground">
-                            No prompts available
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          {prompts.map((prompt) => {
-                            const isSelected = selectedPrompt === prompt.name;
-                            const displayTitle = prompt.title ?? prompt.name;
-                            return (
-                              <div
-                                key={prompt.name}
-                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                  isSelected
-                                    ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                    : "hover:shadow-sm"
-                                }`}
-                                onClick={() => {
-                                  setSelectedPrompt(prompt.name);
-                                }}
-                              >
-                                <div className="flex items-start gap-3">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                        {prompt.name}
-                                      </code>
-                                      {prompt.title && (
-                                        <span className="text-xs font-semibold text-foreground">
-                                          {displayTitle}
-                                        </span>
-                                      )}
+                        ) : (
+                          <div className="space-y-3">
+                            {formFields.map((field) => (
+                              <div key={field.name} className="space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                  <code className="font-mono text-xs font-medium text-foreground">
+                                    {field.name}
+                                  </code>
+                                  {field.required && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] px-1 py-0 border-amber-500/50 text-amber-600 dark:text-amber-400"
+                                    >
+                                      required
+                                    </Badge>
+                                  )}
+                                </div>
+                                {field.description && (
+                                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                                    {field.description}
+                                  </p>
+                                )}
+                                <div className="pt-0.5">
+                                  {field.type === "enum" ? (
+                                    <Select
+                                      value={String(field.value)}
+                                      onValueChange={(value) =>
+                                        updateFieldValue(field.name, value)
+                                      }
+                                    >
+                                      <SelectTrigger className="w-full h-8 bg-background border-border text-xs">
+                                        <SelectValue placeholder="Select an option" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {field.enum?.map((option) => (
+                                          <SelectItem key={option} value={option}>
+                                            {option}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  ) : field.type === "boolean" ? (
+                                    <div className="flex items-center gap-2 h-8">
+                                      <input
+                                        type="checkbox"
+                                        checked={field.value === true}
+                                        onChange={(e) =>
+                                          updateFieldValue(field.name, e.target.checked)
+                                        }
+                                        className="w-4 h-4 rounded border-border accent-primary"
+                                      />
+                                      <span className="text-xs text-foreground">
+                                        {field.value === true ? "true" : "false"}
+                                      </span>
                                     </div>
-                                    {prompt.description && (
-                                      <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                        {prompt.description}
-                                      </p>
-                                    )}
-                                  </div>
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
+                                  ) : field.type === "array" || field.type === "object" ? (
+                                    <Textarea
+                                      value={
+                                        typeof field.value === "string"
+                                          ? field.value
+                                          : JSON.stringify(field.value, null, 2)
+                                      }
+                                      onChange={(e) =>
+                                        updateFieldValue(field.name, e.target.value)
+                                      }
+                                      placeholder={`Enter ${field.type} as JSON`}
+                                      className="font-mono text-xs min-h-[80px] bg-background border-border resize-y"
+                                    />
+                                  ) : (
+                                    <Input
+                                      type={
+                                        field.type === "number" || field.type === "integer"
+                                          ? "number"
+                                          : "text"
+                                      }
+                                      value={String(field.value)}
+                                      onChange={(e) =>
+                                        updateFieldValue(field.name, e.target.value)
+                                      }
+                                      onKeyDown={handleInputKeyDown}
+                                      placeholder={`Enter ${field.name}`}
+                                      className="bg-background border-border text-xs h-8"
+                                    />
+                                  )}
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </ScrollArea>
-                </div>
-              </div>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            {/* Right Panel - Parameters */}
-            <ResizablePanel defaultSize={70} minSize={50}>
-              <div className="h-full flex flex-col bg-background">
-                {selectedPrompt ? (
-                  <>
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-3">
-                          <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                            {selectedPrompt}
-                          </code>
-                        </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
+                    </ScrollArea>
+
+                    {/* Action button */}
+                    <div className="px-3 py-3 border-t border-border">
                       <Button
                         onClick={getPrompt}
-                        disabled={loading || !selectedPrompt}
-                        className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
+                        disabled={loading}
+                        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
                         size="sm"
                       >
                         {loading ? (
@@ -351,197 +363,107 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                         )}
                       </Button>
                     </div>
-
-                    {/* Description */}
-                    {selectedPromptData?.description && (
-                      <div className="px-6 py-4 bg-muted/50 border-b border-border">
-                        <p className="text-xs text-muted-foreground leading-relaxed font-medium">
-                          {selectedPromptData.description}
-                        </p>
+                  </>
+                ) : (
+                  /* Prompts List when no prompt is selected */
+                  <>
+                    <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
+                      <div className="flex items-center gap-3">
+                        <MessageSquare className="h-3 w-3 text-muted-foreground" />
+                        <h2 className="text-xs font-semibold text-foreground">
+                          Prompts
+                        </h2>
+                        <Badge variant="secondary" className="text-xs font-mono">
+                          {promptNames.length}
+                        </Badge>
                       </div>
-                    )}
+                      <Button
+                        onClick={fetchPrompts}
+                        variant="ghost"
+                        size="sm"
+                        disabled={fetchingPrompts}
+                      >
+                        <RefreshCw
+                          className={`h-3 w-3 ${fetchingPrompts ? "animate-spin" : ""} cursor-pointer`}
+                        />
+                      </Button>
+                    </div>
 
-                    {/* Parameters */}
                     <div className="flex-1 overflow-hidden">
                       <ScrollArea className="h-full">
-                        <div className="px-6 py-6">
-                          {formFields.length === 0 ? (
+                        <div className="p-2">
+                          {fetchingPrompts ? (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
-                              <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                                <Play className="h-4 w-4 text-muted-foreground" />
+                              <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin cursor-pointer" />
                               </div>
                               <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                No parameters required
+                                Loading prompts...
                               </p>
                               <p className="text-xs text-muted-foreground/70">
-                                This prompt can be retrieved directly
+                                Fetching available prompts from server
+                              </p>
+                            </div>
+                          ) : promptNames.length === 0 ? (
+                            <div className="text-center py-8">
+                              <p className="text-sm text-muted-foreground">
+                                No prompts available
                               </p>
                             </div>
                           ) : (
-                            <div className="space-y-8">
-                              {formFields.map((field) => (
-                                <div key={field.name} className="group">
-                                  <div className="flex items-start justify-between mb-3">
-                                    <div className="space-y-1">
-                                      <div className="flex items-center gap-3">
-                                        <code className="font-mono text-xs font-semibold text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                          {field.name}
-                                        </code>
-                                        {field.required && (
-                                          <div
-                                            className="w-1.5 h-1.5 bg-amber-400 dark:bg-amber-500 rounded-full"
-                                            title="Required field"
-                                          />
+                            <div className="space-y-1">
+                              {prompts.map((prompt) => {
+                                const displayTitle = prompt.title ?? prompt.name;
+                                return (
+                                  <div
+                                    key={prompt.name}
+                                    className="cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 hover:shadow-sm"
+                                    onClick={() => setSelectedPrompt(prompt.name)}
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                                            {prompt.name}
+                                          </code>
+                                          {prompt.title && (
+                                            <span className="text-xs font-semibold text-foreground">
+                                              {displayTitle}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {prompt.description && (
+                                          <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                                            {prompt.description}
+                                          </p>
                                         )}
                                       </div>
-                                      {field.description && (
-                                        <p className="text-xs text-muted-foreground leading-relaxed max-w-md font-medium">
-                                          {field.description}
-                                        </p>
-                                      )}
+                                      <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
                                     </div>
-                                    <Badge
-                                      variant="secondary"
-                                      className="text-xs font-mono font-medium"
-                                    >
-                                      {field.type}
-                                    </Badge>
                                   </div>
-
-                                  <div className="space-y-2">
-                                    {field.type === "enum" ? (
-                                      <Select
-                                        value={String(field.value)}
-                                        onValueChange={(value) =>
-                                          updateFieldValue(field.name, value)
-                                        }
-                                      >
-                                        <SelectTrigger className="w-full bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs">
-                                          <SelectValue
-                                            placeholder="Select an option"
-                                            className="font-mono text-xs"
-                                          />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          {field.enum?.map((option) => (
-                                            <SelectItem
-                                              key={option}
-                                              value={option}
-                                              className="font-mono text-xs"
-                                            >
-                                              {option}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                    ) : field.type === "boolean" ? (
-                                      <div className="flex items-center space-x-3 py-2">
-                                        <input
-                                          type="checkbox"
-                                          checked={field.value === true}
-                                          onChange={(e) =>
-                                            updateFieldValue(
-                                              field.name,
-                                              e.target.checked,
-                                            )
-                                          }
-                                          className="w-4 h-4 text-primary bg-background border-border rounded focus:ring-ring focus:ring-2"
-                                        />
-                                        <span className="text-xs text-foreground font-medium">
-                                          {field.value === true
-                                            ? "Enabled"
-                                            : "Disabled"}
-                                        </span>
-                                      </div>
-                                    ) : field.type === "array" ||
-                                      field.type === "object" ? (
-                                      <Textarea
-                                        value={
-                                          typeof field.value === "string"
-                                            ? field.value
-                                            : JSON.stringify(
-                                                field.value,
-                                                null,
-                                                2,
-                                              )
-                                        }
-                                        onChange={(e) =>
-                                          updateFieldValue(
-                                            field.name,
-                                            e.target.value,
-                                          )
-                                        }
-                                        placeholder={`Enter ${field.type} as JSON`}
-                                        className="font-mono text-xs h-20 bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 resize-none"
-                                      />
-                                    ) : (
-                                      <Input
-                                        type={
-                                          field.type === "number" ||
-                                          field.type === "integer"
-                                            ? "number"
-                                            : "text"
-                                        }
-                                        value={String(field.value)}
-                                        onChange={(e) =>
-                                          updateFieldValue(
-                                            field.name,
-                                            e.target.value,
-                                          )
-                                        }
-                                        onKeyDown={handleInputKeyDown}
-                                        placeholder={`Enter ${field.name}`}
-                                        className="bg-background border-border hover:border-border/80 focus:border-ring focus:ring-0 font-medium text-xs"
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           )}
                         </div>
                       </ScrollArea>
                     </div>
                   </>
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                        <MessageSquare className="h-5 w-5 text-muted-foreground" />
-                      </div>
-                      <p className="text-xs font-semibold text-foreground mb-1">
-                        Select a prompt
-                      </p>
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Choose a prompt from the left to view details
-                      </p>
-                    </div>
-                  </div>
                 )}
               </div>
             </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
 
-        <ResizableHandle withHandle />
-
-        {/* Bottom Panel - JSON-RPC Logger and Results */}
-        <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
-            </ResizablePanel>
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={60} minSize={30}>
-              <div className="h-full flex flex-col border-t border-border bg-background break-all">
-                {/* Header */}
+
+            {/* Right Panel - Prompt Content Results */}
+            <ResizablePanel defaultSize={70} minSize={50}>
+              <div className="h-full flex flex-col bg-background">
                 <div className="flex items-center justify-between p-4 border-b border-border">
                   <h2 className="text-xs font-semibold text-foreground">
                     Prompt Content
                   </h2>
                 </div>
 
-                {/* Content */}
                 <div className="flex-1 overflow-hidden">
                   {error ? (
                     <div className="p-4">
@@ -566,16 +488,33 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                       </div>
                     </ScrollArea>
                   ) : (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Get a prompt to see its content here
-                      </p>
+                    <div className="h-full flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+                          <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <p className="text-xs font-semibold text-foreground mb-1">
+                          {selectedPrompt ? "Ready to get prompt" : "Select a prompt"}
+                        </p>
+                        <p className="text-xs text-muted-foreground font-medium">
+                          {selectedPrompt
+                            ? "Click Get Prompt to see content"
+                            : "Choose a prompt from the left to view details"}
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        {/* Bottom Panel - JSON-RPC Logger */}
+        <ResizablePanel defaultSize={30} minSize={10} maxSize={70}>
+          <LoggerView serverIds={serverName ? [serverName] : undefined} />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>

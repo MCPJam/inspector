@@ -1,16 +1,21 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { Wrench, RefreshCw } from "lucide-react";
+import { Wrench, RefreshCw, Play, Save as SaveIcon, Clock } from "lucide-react";
 import type { RefObject } from "react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
 import { ResizablePanel } from "../ui/resizable";
+import { Input } from "../ui/input";
 import { ToolItem } from "./ToolItem";
 import { SavedRequestItem } from "./SavedRequestItem";
 import type { SavedRequest } from "@/lib/types/request-types";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
+import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
+import { ParametersForm } from "../ui-playground/ParametersForm";
+import type { FormField } from "@/lib/tool-form";
+import { TruncatedText } from "../ui/truncated-text";
 interface ToolsSidebarProps {
   activeTab: "tools" | "saved";
   onChangeTab: (tab: "tools" | "saved") => void;
@@ -33,6 +38,20 @@ interface ToolsSidebarProps {
   sentinelRef: RefObject<HTMLDivElement | null>;
   loadingMore: boolean;
   cursor: string;
+  // Parameters form props (for full-page replacement pattern)
+  formFields?: FormField[];
+  onFieldChange?: (name: string, value: unknown) => void;
+  onToggleField?: (name: string, isSet: boolean) => void;
+  loading?: boolean;
+  waitingOnElicitation?: boolean;
+  onExecute?: () => void;
+  onSave?: () => void;
+  executeAsTask?: boolean;
+  onExecuteAsTaskChange?: (value: boolean) => void;
+  taskRequired?: boolean;
+  taskTtl?: number;
+  onTaskTtlChange?: (value: number) => void;
+  serverSupportsTaskToolCalls?: boolean;
 }
 
 export function ToolsSidebar({
@@ -57,8 +76,165 @@ export function ToolsSidebar({
   sentinelRef,
   loadingMore,
   cursor,
+  // Parameters form props
+  formFields,
+  onFieldChange,
+  onToggleField,
+  loading,
+  waitingOnElicitation,
+  onExecute,
+  onSave,
+  executeAsTask,
+  onExecuteAsTaskChange,
+  taskRequired,
+  taskTtl,
+  onTaskTtlChange,
+  serverSupportsTaskToolCalls,
 }: ToolsSidebarProps) {
   const posthog = usePostHog();
+  const selectedTool = selectedToolName ? tools[selectedToolName] : null;
+
+  // When a tool is selected and we have form props, show the parameters view
+  if (selectedToolName && formFields && onFieldChange && onExecute) {
+    return (
+      <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
+        <div className="h-full flex flex-col border-r border-border bg-background">
+          <SelectedToolHeader
+            toolName={selectedToolName}
+            onExpand={() => onSelectTool("")}
+            onClear={() => onSelectTool("")}
+          />
+
+          {selectedTool?.description && (
+            <div className="px-3 py-3 bg-muted/50 border-b border-border">
+              <TruncatedText
+                text={selectedTool.description}
+                title={selectedToolName}
+                maxLength={200}
+              />
+            </div>
+          )}
+
+          <ScrollArea className="flex-1">
+            <ParametersForm
+              fields={formFields}
+              onFieldChange={onFieldChange}
+              onToggleField={onToggleField ?? (() => {})}
+            />
+
+            {/* Task execution options */}
+            {serverSupportsTaskToolCalls && (
+              <div className="px-3 py-3 border-t border-border">
+                {taskRequired ? (
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                      <Clock className="h-3 w-3" />
+                      <span>Task required</span>
+                    </span>
+                    {onTaskTtlChange && (
+                      <div className="flex items-center gap-1 ml-auto">
+                        <Input
+                          type="number"
+                          min={0}
+                          defaultValue={taskTtl ?? 0}
+                          onBlur={(e) =>
+                            onTaskTtlChange(parseInt(e.target.value) || 0)
+                          }
+                          className="w-16 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          title="TTL in milliseconds"
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          ms
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : onExecuteAsTaskChange ? (
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={executeAsTask ?? false}
+                        onChange={(e) => onExecuteAsTaskChange(e.target.checked)}
+                        className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
+                      />
+                      <Clock className="h-3 w-3" />
+                      <span>Execute as task</span>
+                    </label>
+                    {executeAsTask && onTaskTtlChange && (
+                      <div className="flex items-center gap-1 ml-auto">
+                        <Input
+                          type="number"
+                          min={0}
+                          defaultValue={taskTtl ?? 0}
+                          onBlur={(e) =>
+                            onTaskTtlChange(parseInt(e.target.value) || 0)
+                          }
+                          className="w-16 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          title="TTL in milliseconds"
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          ms
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </ScrollArea>
+
+          {/* Action buttons */}
+          <div className="px-3 py-3 border-t border-border flex items-center gap-2">
+            <Button
+              onClick={() => {
+                posthog.capture("execute_tool", {
+                  location: "tools_sidebar",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                  as_task: executeAsTask ?? false,
+                });
+                onExecute();
+              }}
+              disabled={loading}
+              className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
+              size="sm"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                  {waitingOnElicitation ? "Waiting..." : "Running"}
+                </>
+              ) : (
+                <>
+                  <Play className="h-3 w-3" />
+                  Execute
+                </>
+              )}
+            </Button>
+            {onSave && (
+              <Button
+                onClick={() => {
+                  posthog.capture("save_tool_button_clicked", {
+                    location: "tools_sidebar",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                  });
+                  onSave();
+                }}
+                variant="outline"
+                size="sm"
+              >
+                <SaveIcon className="h-3 w-3" />
+                Save
+              </Button>
+            )}
+          </div>
+        </div>
+      </ResizablePanel>
+    );
+  }
+
   return (
     <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
       <div className="h-full flex flex-col border-r border-border bg-background">

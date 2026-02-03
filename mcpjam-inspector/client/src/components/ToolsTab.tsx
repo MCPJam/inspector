@@ -13,7 +13,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable";
-import { ParametersPanel } from "./tools/ParametersPanel";
 import { ResultsPanel } from "./tools/ResultsPanel";
 import { LoggerView } from "./logger-view";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
@@ -644,44 +643,45 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
               sentinelRef={sentinelRef}
               loadingMore={fetchingTools}
               cursor={cursor ?? ""}
+              // Parameters form props for full-page replacement
+              formFields={formFields}
+              onFieldChange={updateFieldValue}
+              onToggleField={updateFieldIsSet}
+              loading={loadingExecuteTool}
+              waitingOnElicitation={!!activeElicitation}
+              onExecute={executeTool}
+              onSave={handleSaveCurrent}
+              executeAsTask={
+                serverSupportsTaskToolCalls &&
+                selectedToolTaskSupport !== "forbidden"
+                  ? executeAsTask
+                  : undefined
+              }
+              onExecuteAsTaskChange={
+                serverSupportsTaskToolCalls &&
+                selectedToolTaskSupport !== "forbidden"
+                  ? setExecuteAsTask
+                  : undefined
+              }
+              taskRequired={
+                serverSupportsTaskToolCalls &&
+                selectedToolTaskSupport === "required"
+              }
+              taskTtl={taskTtl}
+              onTaskTtlChange={setTaskTtl}
+              serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
             />
             <ResizableHandle withHandle />
-            {selectedTool ? (
-              <ParametersPanel
-                selectedTool={selectedTool}
-                toolDescription={tools[selectedTool]?.description}
-                formFields={formFields}
-                onToggleField={updateFieldIsSet}
-                loading={loadingExecuteTool}
-                waitingOnElicitation={!!activeElicitation}
-                onExecute={executeTool}
-                onSave={handleSaveCurrent}
-                onFieldChange={updateFieldValue}
-                // Only show task execution option if server supports tasks and tool allows it
-                // Per MCP spec: clients MUST NOT use task augmentation without server capability
-                executeAsTask={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport !== "forbidden"
-                    ? executeAsTask
-                    : undefined
-                }
-                onExecuteAsTaskChange={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport !== "forbidden"
-                    ? setExecuteAsTask
-                    : undefined
-                }
-                taskRequired={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport === "required"
-                }
-                // MCP Tasks spec 2025-11-25: TTL configuration
-                taskTtl={taskTtl}
-                onTaskTtlChange={setTaskTtl}
-                serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
-              />
-            ) : (
-              <ResizablePanel defaultSize={70} minSize={50}>
+            <ResizablePanel defaultSize={70} minSize={50}>
+              {selectedTool ? (
+                <ResultsPanel
+                  error={error}
+                  result={result}
+                  validationErrors={validationErrors}
+                  unstructuredValidationResult={unstructuredValidationResult}
+                  toolMeta={getToolMeta(lastToolName)}
+                />
+              ) : (
                 <div className="h-full flex items-center justify-center">
                   <div className="text-center">
                     <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
@@ -695,29 +695,15 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                     </p>
                   </div>
                 </div>
-              </ResizablePanel>
-            )}
+              )}
+            </ResizablePanel>
           </ResizablePanelGroup>
         </ResizablePanel>
 
         <ResizableHandle withHandle />
 
-        <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={60} minSize={30}>
-              <ResultsPanel
-                error={error}
-                result={result}
-                validationErrors={validationErrors}
-                unstructuredValidationResult={unstructuredValidationResult}
-                toolMeta={getToolMeta(lastToolName)}
-              />
-            </ResizablePanel>
-          </ResizablePanelGroup>
+        <ResizablePanel defaultSize={30} minSize={10} maxSize={70}>
+          <LoggerView serverIds={serverName ? [serverName] : undefined} />
         </ResizablePanel>
       </ResizablePanelGroup>
 

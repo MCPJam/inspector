@@ -97,11 +97,19 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
-      // First prompt is auto-selected, so both names appear (list + header)
-      // Check that both prompt names exist in the list
+      // First prompt is auto-selected, showing parameters view
+      // The selected prompt name should be visible in the header
       await waitFor(() => {
         const greetingElements = screen.getAllByText("greeting");
         expect(greetingElements.length).toBeGreaterThanOrEqual(1);
+      });
+
+      // To see other prompts, click the back button (the prompt name acts as back)
+      const backButton = screen.getByTitle("Click to change tool");
+      fireEvent.click(backButton);
+
+      // Now both prompts should be visible in the list
+      await waitFor(() => {
         expect(screen.getByText("farewell")).toBeInTheDocument();
       });
     });
@@ -118,6 +126,13 @@ describe("PromptsTab", () => {
       render(
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
+
+      // First prompt is auto-selected, go back to list view to see count
+      await waitFor(() => {
+        expect(screen.getByTitle("Click to change tool")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTitle("Click to change tool"));
 
       await waitFor(() => {
         expect(screen.getByText("3")).toBeInTheDocument();
@@ -172,6 +187,14 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // First prompt is auto-selected, go back to list
+      await waitFor(() => {
+        expect(screen.getByTitle("Click to change tool")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTitle("Click to change tool"));
+
+      // Now click prompt-b in the list
       await waitFor(() => {
         expect(screen.getByText("prompt-b")).toBeInTheDocument();
       });
@@ -355,6 +378,13 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // First prompt is auto-selected, go back to list to see title
+      await waitFor(() => {
+        expect(screen.getByTitle("Click to change tool")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTitle("Click to change tool"));
+
       await waitFor(() => {
         expect(screen.getByText("Code Review Assistant")).toBeInTheDocument();
       });
@@ -414,9 +444,9 @@ describe("PromptsTab", () => {
         expect(screen.getByText("optional_field")).toBeInTheDocument();
       });
 
-      // Required field should have an indicator
-      const requiredIndicator = screen.getByTitle("Required field");
-      expect(requiredIndicator).toBeInTheDocument();
+      // Required field should have a "required" badge
+      const requiredBadge = screen.getByText("required");
+      expect(requiredBadge).toBeInTheDocument();
     });
   });
 });
