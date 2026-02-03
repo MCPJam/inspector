@@ -25,6 +25,9 @@ import {
   Copy,
   RotateCcw,
   Settings,
+  Globe,
+  Key,
+  FileText,
 } from "lucide-react";
 import { generateGuideText, generateRawText } from "@/lib/oauth/log-formatters";
 
@@ -34,12 +37,17 @@ interface OAuthFlowLoggerProps {
   onClearHttpHistory: () => void;
   activeStep?: OAuthFlowStep | null;
   onFocusStep?: (step: OAuthFlowStep) => void;
+  hasProfile?: boolean;
   summary?: {
     label: string;
     description: string;
     protocol?: string;
     registration?: string;
     step?: OAuthFlowStep;
+    serverUrl?: string;
+    scopes?: string;
+    clientId?: string;
+    customHeadersCount?: number;
   };
   actions?: {
     onConfigure?: () => void;
@@ -60,6 +68,7 @@ export function OAuthFlowLogger({
   onClearHttpHistory: _onClearHttpHistory,
   activeStep,
   onFocusStep,
+  hasProfile = true,
   summary,
   actions,
 }: OAuthFlowLoggerProps) {
@@ -271,24 +280,82 @@ export function OAuthFlowLogger({
   return (
     <div className="h-full border-l border-border flex flex-col">
       <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
-        {summary && (
-          <div className="flex items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-3 min-w-0 text-muted-foreground">
-              <p className="text-sm font-medium text-foreground truncate">
-                {summary.label}
+        {summary && hasProfile && (
+          <>
+            {/* Testing Configuration Header */}
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Testing Configuration
               </p>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={actions?.onConfigure}
+                  disabled={!actions?.onConfigure}
+                  className="h-7 px-2 text-xs"
+                >
+                  <Settings className="h-3 w-3 mr-1" />
+                  Edit
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={actions?.onReset}
+                  disabled={actions?.resetDisabled || !actions?.onReset}
+                  aria-label="Reset flow"
+                  className="h-7 w-7"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Server URL - Most prominent */}
+            <div className="flex items-start gap-2">
+              <Globe className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground">Server URL</p>
+                <p className="text-sm font-medium text-foreground break-all">
+                  {summary.serverUrl || summary.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Configuration badges */}
+            <div className="flex flex-wrap gap-2">
               {summary.protocol && (
-                <span className="rounded-full bg-background px-2 py-1 whitespace-nowrap">
+                <Badge variant="secondary" className="text-xs">
                   {summary.protocol}
-                </span>
+                </Badge>
               )}
               {summary.registration && (
-                <span className="rounded-full bg-background px-2 py-1 whitespace-nowrap">
+                <Badge variant="secondary" className="text-xs">
                   {summary.registration}
-                </span>
+                </Badge>
+              )}
+              {summary.scopes && (
+                <Badge variant="outline" className="text-xs">
+                  <FileText className="h-3 w-3 mr-1" />
+                  Scopes: {summary.scopes}
+                </Badge>
+              )}
+              {summary.clientId && (
+                <Badge variant="outline" className="text-xs">
+                  <Key className="h-3 w-3 mr-1" />
+                  Client ID set
+                </Badge>
+              )}
+              {summary.customHeadersCount && summary.customHeadersCount > 0 && (
+                <Badge variant="outline" className="text-xs">
+                  {summary.customHeadersCount} custom header
+                  {summary.customHeadersCount > 1 ? "s" : ""}
+                </Badge>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2 pt-1">
               {actions?.onConnectServer && (
                 <Button
                   size="sm"
@@ -312,24 +379,6 @@ export function OAuthFlowLogger({
                     : "Refresh Tokens"}
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={actions?.onConfigure}
-                disabled={!actions?.onConfigure}
-                aria-label="Configure target"
-              >
-                <Settings className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={actions?.onReset}
-                disabled={actions?.resetDisabled || !actions?.onReset}
-                aria-label="Reset flow"
-              >
-                <RotateCcw className="h-4 w-4" />
-              </Button>
               {actions?.onContinue && (
                 <Button
                   size="sm"
@@ -340,6 +389,21 @@ export function OAuthFlowLogger({
                 </Button>
               )}
             </div>
+          </>
+        )}
+
+        {summary && !hasProfile && (
+          <div className="flex items-center justify-between gap-3 text-xs">
+            <p className="text-sm text-muted-foreground">
+              {summary.description}
+            </p>
+            <Button
+              size="sm"
+              onClick={actions?.onConfigure}
+              disabled={!actions?.onConfigure}
+            >
+              Configure Target
+            </Button>
           </div>
         )}
       </div>
@@ -381,9 +445,41 @@ export function OAuthFlowLogger({
               )}
 
               {groups.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground text-sm">
-                  No activity yet.
-                </div>
+                !hasProfile ? (
+                  <div className="bg-background border border-border rounded-lg p-6">
+                    <h3 className="text-base font-semibold mb-2">
+                      Welcome to the OAuth Debugger
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      This tool helps you debug MCP OAuth authentication flows
+                      step-by-step, showing you exactly what happens at each
+                      stage.
+                    </p>
+                    <div className="space-y-3 mb-6">
+                      <p className="text-sm font-medium">To get started:</p>
+                      <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-2">
+                        <li>Configure your target MCP server URL</li>
+                        <li>
+                          Click <span className="font-medium">"Continue"</span>{" "}
+                          to advance through each step
+                        </li>
+                        <li>
+                          Watch the sequence diagram and logs to see what's
+                          happening
+                        </li>
+                      </ol>
+                    </div>
+                    {actions?.onConfigure && (
+                      <Button onClick={actions.onConfigure}>
+                        Configure Target
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    No activity yet. Click "Continue" to start the OAuth flow.
+                  </div>
+                )
               ) : (
                 groups.map((group, groupIndex) => {
                   const info = getStepInfo(group.step);

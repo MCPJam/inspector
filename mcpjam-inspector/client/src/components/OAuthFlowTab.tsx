@@ -478,6 +478,8 @@ export const OAuthFlowTab = ({
               registrationStrategy={registrationStrategy}
               protocolVersion={protocolVersion}
               focusedStep={focusedStep}
+              hasProfile={hasProfile}
+              onConfigure={() => setIsProfileModalOpen(true)}
             />
           </ResizablePanel>
 
@@ -490,6 +492,7 @@ export const OAuthFlowTab = ({
               onClearHttpHistory={clearHttpHistory}
               activeStep={focusedStep ?? oauthFlowState.currentStep}
               onFocusStep={setFocusedStep}
+              hasProfile={hasProfile}
               summary={{
                 label: hasProfile ? serverIdentifier : "No target configured",
                 description: headerDescription,
@@ -498,6 +501,12 @@ export const OAuthFlowTab = ({
                   ? describeRegistrationStrategy(registrationStrategy)
                   : undefined,
                 step: oauthFlowState.currentStep,
+                serverUrl: hasProfile ? profile.serverUrl : undefined,
+                scopes: hasProfile && profile.scopes.trim() ? profile.scopes.trim() : undefined,
+                clientId: hasProfile && profile.clientId.trim() ? profile.clientId.trim() : undefined,
+                customHeadersCount: hasProfile
+                  ? profile.customHeaders.filter((h) => h.key.trim()).length
+                  : undefined,
               }}
               actions={{
                 onConfigure: () => setIsProfileModalOpen(true),

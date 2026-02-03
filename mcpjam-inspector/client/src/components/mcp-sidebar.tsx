@@ -182,7 +182,7 @@ export function MCPSidebar({
       await Promise.all(
         connectedServerNames.map(async (serverName) => {
           try {
-            const result = await listTools(serverName);
+            const result = await listTools({ serverId: serverName });
             newToolsDataMap[serverName] = result;
           } catch {
             newToolsDataMap[serverName] = null;
