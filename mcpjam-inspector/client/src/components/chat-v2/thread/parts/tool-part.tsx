@@ -3,10 +3,10 @@ import {
   Box,
   ChevronDown,
   Database,
+  Layers,
   Maximize2,
   MessageCircle,
   PictureInPicture2,
-  Save,
   Shield,
 } from "lucide-react";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
@@ -302,7 +302,7 @@ export function ToolPart({
                         : "text-muted-foreground/30 cursor-not-allowed"
                     }`}
                   >
-                    <Save className="h-3.5 w-3.5" />
+                    <Layers className="h-3.5 w-3.5" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>

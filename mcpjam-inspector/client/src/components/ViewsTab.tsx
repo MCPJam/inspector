@@ -12,6 +12,7 @@ import { useViewQueries, useViewMutations, useWorkspaceServers, type AnyView } f
 import { useSharedAppState } from "@/state/app-state-context";
 import { ViewsListSidebar } from "./views/ViewsListSidebar";
 import { ViewDetailPanel, type ViewDraft } from "./views/ViewDetailPanel";
+import { ViewEditorPanel } from "./views/ViewEditorPanel";
 
 interface ViewsTabProps {
   selectedServer?: string;
@@ -263,34 +264,48 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     );
   }
 
+  // Handler to go back to views list
+  const handleBackToList = useCallback(() => {
+    setSelectedViewId(null);
+    setDraftView(null);
+    setIsEditing(false);
+  }, []);
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <ResizablePanelGroup
         direction="horizontal"
         className="flex-1 overflow-hidden"
       >
-        {/* Left Sidebar */}
+        {/* Left Panel - Views List or Editor */}
         <ResizablePanel
-          defaultSize={30}
-          minSize={15}
-          maxSize={40}
+          defaultSize={50}
+          minSize={25}
+          maxSize={70}
           className="border-r bg-muted/30 flex flex-col"
         >
-          <ViewsListSidebar
-            views={filteredViews}
-            selectedViewId={selectedViewId}
-            onSelectView={handleSelectView}
-            onDeleteView={handleDeleteView}
-            deletingViewId={deletingViewId}
-            isLoading={isViewsLoading}
-          />
+          {selectedView ? (
+            <ViewEditorPanel
+              view={selectedView}
+              onBack={handleBackToList}
+            />
+          ) : (
+            <ViewsListSidebar
+              views={filteredViews}
+              selectedViewId={selectedViewId}
+              onSelectView={handleSelectView}
+              onDeleteView={handleDeleteView}
+              deletingViewId={deletingViewId}
+              isLoading={isViewsLoading}
+            />
+          )}
         </ResizablePanel>
 
         <ResizableHandle withHandle />
 
-        {/* Main Content Area */}
+        {/* Right Panel - UI Preview or Empty State */}
         <ResizablePanel
-          defaultSize={70}
+          defaultSize={50}
           className="flex flex-col overflow-hidden"
         >
           {!selectedView ? (
@@ -304,7 +319,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
                 </h2>
                 <p className="text-sm text-muted-foreground mb-6">
                   {hasFilteredViews
-                    ? "Choose a view from the sidebar to see its details and preview."
+                    ? "Choose a view from the list to see its details and preview."
                     : !selectedServer
                     ? "Select a server from the tabs above to view its saved views."
                     : "This server has no saved views yet. Save tool executions from the Chat tab to create reusable views."}
@@ -314,13 +329,6 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
           ) : (
             <ViewDetailPanel
               view={selectedView}
-              draft={draftView}
-              isEditing={isEditing}
-              hasUnsavedChanges={hasUnsavedChanges}
-              onStartEditing={handleStartEditing}
-              onSaveChanges={handleSaveChanges}
-              onDiscardChanges={handleDiscardChanges}
-              onDraftChange={handleDraftChange}
               serverName={serversById.get(selectedView.serverId)}
               serverConnectionStatus={getServerConnectionStatus(serversById.get(selectedView.serverId))}
             />
