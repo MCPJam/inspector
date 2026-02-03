@@ -223,7 +223,12 @@ chatV2.post("/", async (c) => {
                   break;
                 }
 
-                // Forward chunk to client
+                // Forward chunk to client — BUT skip tool-output events from backend stubs
+                if (chunk?.type === "tool-output-available" || chunk?.type === "tool-output-error") {
+                  // Don't forward: backend uses stub tools (execute: () => ({})).
+                  // The proxy executes real tools and emits correct tool-output below.
+                  continue;
+                }
                 writer.write(chunk);
 
                 if (chunk?.type === "text-start") {
@@ -340,7 +345,7 @@ chatV2.post("/", async (c) => {
                         toolCallId: resultItem.toolCallId,
                         // Prefer full result (with _meta/structuredContent) for the UI;
                         // the scrubbed output stays in messageHistory for the LLM.
-                        output: resultItem.output,
+                        output: (resultItem as any).result ?? resultItem.output,
                       });
                     }
                   }
