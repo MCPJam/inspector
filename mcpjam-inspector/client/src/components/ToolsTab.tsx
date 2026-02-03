@@ -108,7 +108,16 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     string,
     unknown
   > | null>(null);
-  const [showStructured, setShowStructured] = useState(false);
+  const [showStructured, setShowStructured] = useState(() => {
+    const stored = localStorage.getItem("mcp-tools-output-view");
+    return stored === "structured";
+  });
+
+  const handleToggleStructured = (show: boolean) => {
+    setShowStructured(show);
+    localStorage.setItem("mcp-tools-output-view", show ? "structured" : "raw");
+  };
+
   const [validationErrors, setValidationErrors] = useState<
     any[] | null | undefined
   >(undefined);
@@ -475,7 +484,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setError("");
     setResult(null);
     setStructuredResult(null);
-    setShowStructured(false);
     setValidationErrors(undefined);
     setUnstructuredValidationResult("not_applicable");
     setCreatedTaskId(null);
@@ -744,7 +752,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
               <ResultsPanel
                 error={error}
                 showStructured={showStructured}
-                onToggleStructured={setShowStructured}
+                onToggleStructured={handleToggleStructured}
                 structuredResult={structuredResult}
                 result={result}
                 validationErrors={validationErrors}
