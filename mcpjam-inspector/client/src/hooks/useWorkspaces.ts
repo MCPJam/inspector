@@ -126,6 +126,19 @@ export function useWorkspaceMutations() {
   };
 }
 
+// Server mutations for the flat servers table
+export function useServerMutations() {
+  const createServer = useMutation("servers:createServer" as any);
+  const updateServer = useMutation("servers:updateServer" as any);
+  const deleteServer = useMutation("servers:deleteServer" as any);
+
+  return {
+    createServer,
+    updateServer,
+    deleteServer,
+  };
+}
+
 export function useWorkspaceServers({
   workspaceId,
   isAuthenticated,

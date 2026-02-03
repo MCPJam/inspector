@@ -20,6 +20,8 @@ import {
   useWorkspaceQueries,
   useWorkspaceMutations,
   useWorkspaceServers,
+  useServerMutations,
+  type RemoteServer,
 } from "./useWorkspaces";
 import {
   serializeServersForSharing,
@@ -116,6 +118,13 @@ export function useAppState() {
     updateWorkspace: convexUpdateWorkspace,
     deleteWorkspace: convexDeleteWorkspace,
   } = useWorkspaceMutations();
+
+  // Server mutations for the flat servers table
+  const {
+    createServer: convexCreateServer,
+    updateServer: convexUpdateServer,
+    deleteServer: convexDeleteServer,
+  } = useServerMutations();
 
   // Track active workspace ID separately for authenticated mode (Convex IDs)
   // Initialize from localStorage synchronously to avoid race conditions with OAuth callback
@@ -478,26 +487,65 @@ export function useAppState() {
     dispatch({ type: "SET_MULTI_SELECTED", names: connectedNames });
   }, [appState.servers]);
 
-  // Helper to sync server config to Convex workspace
+  // Helper to sync server config to Convex servers table
   const syncServerToConvex = useCallback(
     async (serverName: string, serverEntry: ServerWithName) => {
       // Skip Convex sync if using local fallback or not authenticated
       if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId)
         return;
 
-      const currentWorkspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
-      if (!currentWorkspace) return;
+      // Check if server already exists in the flat servers table
+      const existingServer = activeWorkspaceServersFlat?.find(
+        (s) => s.name === serverName,
+      );
 
-      const updatedServers = {
-        ...currentWorkspace.servers,
-        [serverName]: serverEntry,
-      };
+      // Extract flat fields from server config
+      const config = serverEntry.config as any;
+      const transportType = config?.command ? "stdio" : "http";
+      const url =
+        config?.url instanceof URL ? config.url.href : config?.url || undefined;
+      const headers = config?.requestInit?.headers || undefined;
 
       try {
-        await convexUpdateWorkspace({
-          workspaceId: effectiveActiveWorkspaceId,
-          servers: serializeServersForSharing(updatedServers),
-        });
+        if (existingServer) {
+          // Update existing server
+          await convexUpdateServer({
+            serverId: existingServer._id,
+            name: serverName,
+            enabled: serverEntry.enabled ?? false,
+            transportType,
+            command: config?.command,
+            args: config?.args,
+            env: config?.env,
+            url,
+            headers,
+            timeout: config?.timeout,
+            useOAuth: serverEntry.useOAuth,
+            oauthScopes: serverEntry.oauthFlowProfile?.scopes
+              ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
+              : undefined,
+            clientId: serverEntry.oauthFlowProfile?.clientId,
+          });
+        } else {
+          // Create new server
+          await convexCreateServer({
+            workspaceId: effectiveActiveWorkspaceId,
+            name: serverName,
+            enabled: serverEntry.enabled ?? false,
+            transportType,
+            command: config?.command,
+            args: config?.args,
+            env: config?.env,
+            url,
+            headers,
+            timeout: config?.timeout,
+            useOAuth: serverEntry.useOAuth,
+            oauthScopes: serverEntry.oauthFlowProfile?.scopes
+              ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
+              : undefined,
+            clientId: serverEntry.oauthFlowProfile?.clientId,
+          });
+        }
       } catch (error) {
         logger.error("Failed to sync server to Convex", {
           serverName,
@@ -509,28 +557,33 @@ export function useAppState() {
       useLocalFallback,
       isAuthenticated,
       effectiveActiveWorkspaceId,
-      effectiveWorkspaces,
-      convexUpdateWorkspace,
+      activeWorkspaceServersFlat,
+      convexCreateServer,
+      convexUpdateServer,
       logger,
     ],
   );
 
-  // Helper to remove server from Convex workspace
+  // Helper to remove server from Convex servers table
   const removeServerFromConvex = useCallback(
     async (serverName: string) => {
       // Skip Convex sync if using local fallback or not authenticated
       if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId)
         return;
 
-      const currentWorkspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
-      if (!currentWorkspace) return;
+      // Find the server in the flat servers table
+      const existingServer = activeWorkspaceServersFlat?.find(
+        (s) => s.name === serverName,
+      );
 
-      const { [serverName]: _, ...remainingServers } = currentWorkspace.servers;
+      if (!existingServer) {
+        logger.warn("Server not found in Convex for deletion", { serverName });
+        return;
+      }
 
       try {
-        await convexUpdateWorkspace({
-          workspaceId: effectiveActiveWorkspaceId,
-          servers: serializeServersForSharing(remainingServers),
+        await convexDeleteServer({
+          serverId: existingServer._id,
         });
       } catch (error) {
         logger.error("Failed to remove server from Convex", {
@@ -543,8 +596,8 @@ export function useAppState() {
       useLocalFallback,
       isAuthenticated,
       effectiveActiveWorkspaceId,
-      effectiveWorkspaces,
-      convexUpdateWorkspace,
+      activeWorkspaceServersFlat,
+      convexDeleteServer,
       logger,
     ],
   );
@@ -1027,24 +1080,13 @@ export function useAppState() {
 
       // Sync to Convex or local workspace
       if (isAuthenticated && effectiveActiveWorkspaceId) {
-        // When authenticated, sync server to Convex
-        const currentWorkspace =
-          effectiveWorkspaces[effectiveActiveWorkspaceId];
-        if (currentWorkspace) {
-          const updatedServers = {
-            ...currentWorkspace.servers,
-            [serverName]: serverEntry,
-          };
-          try {
-            await convexUpdateWorkspace({
-              workspaceId: effectiveActiveWorkspaceId,
-              servers: serializeServersForSharing(updatedServers),
-            });
-          } catch (error) {
-            logger.error("Failed to sync server to Convex", {
-              error: error instanceof Error ? error.message : "Unknown error",
-            });
-          }
+        // When authenticated, sync server to Convex servers table
+        try {
+          await syncServerToConvex(serverName, serverEntry);
+        } catch (error) {
+          logger.error("Failed to sync server to Convex", {
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
         }
       } else {
         const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
@@ -1074,8 +1116,7 @@ export function useAppState() {
       logger,
       isAuthenticated,
       effectiveActiveWorkspaceId,
-      effectiveWorkspaces,
-      convexUpdateWorkspace,
+      syncServerToConvex,
     ],
   );
 
@@ -1746,14 +1787,19 @@ export function useAppState() {
   const handleUpdateWorkspace = useCallback(
     async (workspaceId: string, updates: Partial<Workspace>) => {
       if (isAuthenticated) {
-        // Update in Convex
+        // Update in Convex - only workspace metadata, not servers
+        // Servers should be updated via syncServerToConvex (individual server operations)
         try {
           const updateData: any = { workspaceId };
           if (updates.name !== undefined) updateData.name = updates.name;
           if (updates.description !== undefined)
             updateData.description = updates.description;
+          // Note: servers are NOT synced here for authenticated users
+          // Use syncServerToConvex for individual server updates
           if (updates.servers !== undefined) {
-            updateData.servers = serializeServersForSharing(updates.servers);
+            logger.warn(
+              "Ignoring servers in handleUpdateWorkspace for authenticated user - use individual server operations",
+            );
           }
           await convexUpdateWorkspace(updateData);
         } catch (error) {
