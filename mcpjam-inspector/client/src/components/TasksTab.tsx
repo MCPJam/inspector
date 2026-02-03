@@ -469,12 +469,11 @@ export function TasksTab({
 
   return (
     <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="vertical" className="flex-1">
-        {/* Top Section - Tasks and Details */}
-        <ResizablePanel defaultSize={70} minSize={30}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Tasks List */}
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
+      <ResizablePanelGroup direction="horizontal" className="flex-1">
+        {/* Left Panel - Tasks List with Logger */}
+        <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
+          <ResizablePanelGroup direction="vertical" className="h-full">
+            <ResizablePanel defaultSize={70} minSize={30}>
               <div className="h-full flex flex-col border-r border-border bg-background">
                 {/* Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
@@ -679,8 +678,16 @@ export function TasksTab({
 
             <ResizableHandle withHandle />
 
-            {/* Right Panel - Task Details */}
-            <ResizablePanel defaultSize={70} minSize={50}>
+            <ResizablePanel defaultSize={30} minSize={10} maxSize={70}>
+              <LoggerView serverIds={serverName ? [serverName] : undefined} />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        {/* Right Panel - Task Details */}
+        <ResizablePanel defaultSize={65} minSize={40}>
               <div className="h-full flex flex-col bg-background">
                 {selectedTask ? (
                   <>
@@ -882,64 +889,16 @@ export function TasksTab({
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-        </ResizablePanel>
+        </div>
 
-        <ResizableHandle withHandle />
-
-        {/* Bottom Panel - JSON-RPC Logger and Task Status */}
-        <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={50} minSize={20}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={50} minSize={20}>
-              <div className="h-full flex flex-col border-t border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between p-4 border-b border-border">
-                  <h2 className="text-xs font-semibold text-foreground">
-                    Task Status
-                  </h2>
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="p-4">
-                      {!selectedTask ? (
-                        <div className="flex flex-col items-center justify-center py-8 text-center">
-                          <ListTodo className="h-4 w-4 text-muted-foreground mb-2" />
-                          <p className="text-xs text-muted-foreground">
-                            Select a task to view its status
-                          </p>
-                        </div>
-                      ) : (
-                        <JsonEditor
-                          value={selectedTask as object}
-                          readOnly
-                          showToolbar={false}
-                          collapsible
-                          defaultExpandDepth={2}
-                          collapseStringsAfterLength={100}
-                        />
-                      )}
-                    </div>
-                  </ScrollArea>
-                </div>
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-      </ResizablePanelGroup>
-
-      {/* Elicitation Dialog for tasks in input_required status */}
-      {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
-      {/* elicitation requests with relatedTaskId in the metadata */}
-      <ElicitationDialog
-        elicitationRequest={dialogElicitation}
-        onResponse={handleElicitationResponse}
-        loading={elicitationResponding}
-      />
-    </div>
-  );
+        {/* Elicitation Dialog for tasks in input_required status */}
+        {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
+        {/* elicitation requests with relatedTaskId in the metadata */}
+        <ElicitationDialog
+          elicitationRequest={dialogElicitation}
+          onResponse={handleElicitationResponse}
+          loading={elicitationResponding}
+        />
+      </div>
+    );
 }

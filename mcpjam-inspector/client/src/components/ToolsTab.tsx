@@ -14,7 +14,6 @@ import {
   ResizablePanelGroup,
 } from "./ui/resizable";
 import { ResultsPanel } from "./tools/ResultsPanel";
-import { LoggerView } from "./logger-view";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
@@ -618,92 +617,83 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
   return (
     <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="vertical" className="flex-1">
-        <ResizablePanel defaultSize={70} minSize={30}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ToolsSidebar
-              activeTab={activeTab}
-              onChangeTab={setActiveTab}
-              tools={tools}
-              toolNames={toolNames}
-              filteredToolNames={filteredToolNames}
-              selectedToolName={selectedTool}
-              fetchingTools={fetchingTools}
-              searchQuery={searchQuery}
-              onSearchQueryChange={setSearchQuery}
-              onRefresh={handleToolRefresh}
-              onSelectTool={setSelectedTool}
-              savedRequests={filteredSavedRequests}
-              highlightedRequestId={highlightedRequestId}
-              onLoadRequest={handleLoadRequest}
-              onRenameRequest={handleRenameRequest}
-              onDuplicateRequest={handleDuplicateRequest}
-              onDeleteRequest={handleDeleteRequest}
-              displayedToolCount={toolNames.length}
-              sentinelRef={sentinelRef}
-              loadingMore={fetchingTools}
-              cursor={cursor ?? ""}
-              // Parameters form props for full-page replacement
-              formFields={formFields}
-              onFieldChange={updateFieldValue}
-              onToggleField={updateFieldIsSet}
-              loading={loadingExecuteTool}
-              waitingOnElicitation={!!activeElicitation}
-              onExecute={executeTool}
-              onSave={handleSaveCurrent}
-              executeAsTask={
-                serverSupportsTaskToolCalls &&
-                selectedToolTaskSupport !== "forbidden"
-                  ? executeAsTask
-                  : undefined
-              }
-              onExecuteAsTaskChange={
-                serverSupportsTaskToolCalls &&
-                selectedToolTaskSupport !== "forbidden"
-                  ? setExecuteAsTask
-                  : undefined
-              }
-              taskRequired={
-                serverSupportsTaskToolCalls &&
-                selectedToolTaskSupport === "required"
-              }
-              taskTtl={taskTtl}
-              onTaskTtlChange={setTaskTtl}
-              serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
-            />
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={70} minSize={50}>
-              {selectedTool ? (
-                <ResultsPanel
-                  error={error}
-                  result={result}
-                  validationErrors={validationErrors}
-                  unstructuredValidationResult={unstructuredValidationResult}
-                  toolMeta={getToolMeta(lastToolName)}
-                />
-              ) : (
-                <div className="h-full flex items-center justify-center">
-                  <div className="text-center">
-                    <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                      <Wrench className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <p className="text-xs font-semibold text-foreground mb-1">
-                      Select a tool
-                    </p>
-                    <p className="text-xs text-muted-foreground font-medium">
-                      Choose a tool from the left to configure parameters
-                    </p>
-                  </div>
-                </div>
-              )}
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-
+      <ResizablePanelGroup direction="horizontal" className="flex-1">
+        <ToolsSidebar
+          activeTab={activeTab}
+          onChangeTab={setActiveTab}
+          tools={tools}
+          toolNames={toolNames}
+          filteredToolNames={filteredToolNames}
+          selectedToolName={selectedTool}
+          fetchingTools={fetchingTools}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          onRefresh={handleToolRefresh}
+          onSelectTool={setSelectedTool}
+          savedRequests={filteredSavedRequests}
+          highlightedRequestId={highlightedRequestId}
+          onLoadRequest={handleLoadRequest}
+          onRenameRequest={handleRenameRequest}
+          onDuplicateRequest={handleDuplicateRequest}
+          onDeleteRequest={handleDeleteRequest}
+          displayedToolCount={toolNames.length}
+          sentinelRef={sentinelRef}
+          loadingMore={fetchingTools}
+          cursor={cursor ?? ""}
+          serverName={serverName}
+          // Parameters form props for full-page replacement
+          formFields={formFields}
+          onFieldChange={updateFieldValue}
+          onToggleField={updateFieldIsSet}
+          loading={loadingExecuteTool}
+          waitingOnElicitation={!!activeElicitation}
+          onExecute={executeTool}
+          onSave={handleSaveCurrent}
+          executeAsTask={
+            serverSupportsTaskToolCalls &&
+            selectedToolTaskSupport !== "forbidden"
+              ? executeAsTask
+              : undefined
+          }
+          onExecuteAsTaskChange={
+            serverSupportsTaskToolCalls &&
+            selectedToolTaskSupport !== "forbidden"
+              ? setExecuteAsTask
+              : undefined
+          }
+          taskRequired={
+            serverSupportsTaskToolCalls &&
+            selectedToolTaskSupport === "required"
+          }
+          taskTtl={taskTtl}
+          onTaskTtlChange={setTaskTtl}
+          serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
+        />
         <ResizableHandle withHandle />
-
-        <ResizablePanel defaultSize={30} minSize={10} maxSize={70}>
-          <LoggerView serverIds={serverName ? [serverName] : undefined} />
+        <ResizablePanel defaultSize={70} minSize={50}>
+          {selectedTool ? (
+            <ResultsPanel
+              error={error}
+              result={result}
+              validationErrors={validationErrors}
+              unstructuredValidationResult={unstructuredValidationResult}
+              toolMeta={getToolMeta(lastToolName)}
+            />
+          ) : (
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center">
+                <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+                  <Wrench className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <p className="text-xs font-semibold text-foreground mb-1">
+                  Select a tool
+                </p>
+                <p className="text-xs text-muted-foreground font-medium">
+                  Choose a tool from the left to configure parameters
+                </p>
+              </div>
+            </div>
+          )}
         </ResizablePanel>
       </ResizablePanelGroup>
 

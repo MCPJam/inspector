@@ -218,12 +218,11 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
   return (
     <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="vertical" className="flex-1">
-        {/* Top Section - Prompts and Parameters */}
-        <ResizablePanel defaultSize={70} minSize={30}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Prompts List or Parameters */}
-            <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
+      <ResizablePanelGroup direction="horizontal" className="flex-1">
+        {/* Left Panel - Prompts List or Parameters with Logger */}
+        <ResizablePanel defaultSize={35} minSize={20} maxSize={55}>
+          <ResizablePanelGroup direction="vertical" className="h-full">
+            <ResizablePanel defaultSize={70} minSize={30}>
               <div className="h-full flex flex-col border-r border-border bg-background">
                 {selectedPrompt ? (
                   /* Parameters View when prompt is selected */
@@ -455,66 +454,65 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
             <ResizableHandle withHandle />
 
-            {/* Right Panel - Prompt Content Results */}
-            <ResizablePanel defaultSize={70} minSize={50}>
-              <div className="h-full flex flex-col bg-background">
-                <div className="flex items-center justify-between p-4 border-b border-border">
-                  <h2 className="text-xs font-semibold text-foreground">
-                    Prompt Content
-                  </h2>
-                </div>
-
-                <div className="flex-1 overflow-hidden">
-                  {error ? (
-                    <div className="p-4">
-                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                        {error}
-                      </div>
-                    </div>
-                  ) : promptContent ? (
-                    <ScrollArea className="h-full">
-                      <div className="p-4">
-                        {typeof promptContent === "string" ? (
-                          <pre className="whitespace-pre-wrap text-xs font-mono bg-muted p-4 rounded-md border border-border">
-                            {promptContent}
-                          </pre>
-                        ) : (
-                          <JsonEditor
-                            value={promptContent}
-                            readOnly
-                            showToolbar={false}
-                          />
-                        )}
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <div className="h-full flex items-center justify-center">
-                      <div className="text-center">
-                        <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                          <MessageSquare className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                        <p className="text-xs font-semibold text-foreground mb-1">
-                          {selectedPrompt ? "Ready to get prompt" : "Select a prompt"}
-                        </p>
-                        <p className="text-xs text-muted-foreground font-medium">
-                          {selectedPrompt
-                            ? "Click Get Prompt to see content"
-                            : "Choose a prompt from the left to view details"}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+            <ResizablePanel defaultSize={30} minSize={10} maxSize={70}>
+              <LoggerView serverIds={serverName ? [serverName] : undefined} />
             </ResizablePanel>
           </ResizablePanelGroup>
         </ResizablePanel>
 
         <ResizableHandle withHandle />
 
-        {/* Bottom Panel - JSON-RPC Logger */}
-        <ResizablePanel defaultSize={30} minSize={10} maxSize={70}>
-          <LoggerView serverIds={serverName ? [serverName] : undefined} />
+        {/* Right Panel - Prompt Content Results */}
+        <ResizablePanel defaultSize={65} minSize={40}>
+          <div className="h-full flex flex-col bg-background">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h2 className="text-xs font-semibold text-foreground">
+                Prompt Content
+              </h2>
+            </div>
+
+            <div className="flex-1 overflow-hidden">
+              {error ? (
+                <div className="p-4">
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                    {error}
+                  </div>
+                </div>
+              ) : promptContent ? (
+                <ScrollArea className="h-full">
+                  <div className="p-4">
+                    {typeof promptContent === "string" ? (
+                      <pre className="whitespace-pre-wrap text-xs font-mono bg-muted p-4 rounded-md border border-border">
+                        {promptContent}
+                      </pre>
+                    ) : (
+                      <JsonEditor
+                        value={promptContent}
+                        readOnly
+                        showToolbar={false}
+                      />
+                    )}
+                  </div>
+                </ScrollArea>
+              ) : (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+                      <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <p className="text-xs font-semibold text-foreground mb-1">
+                      {selectedPrompt ? "Ready to get prompt" : "Select a prompt"}
+                    </p>
+                    <p className="text-xs text-muted-foreground font-medium">
+                      {selectedPrompt
+                        ? "Click Get Prompt to see content"
+                        : "Choose a prompt from the left to view details"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
