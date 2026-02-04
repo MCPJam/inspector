@@ -335,26 +335,37 @@ function useWidgetFetch(
     [resolvedToolInput, resolvedToolOutput]
   );
 
+  // Debounce serializedData to avoid rapid reloads when typing fast in the editor
+  const [debouncedSerializedData, setDebouncedSerializedData] = useState(serializedData);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSerializedData(serializedData);
+    }, 300); // 300ms debounce delay
+
+    return () => clearTimeout(timer);
+  }, [serializedData]);
+
   // Detect data changes for live editing - trigger reload when toolInput/toolOutput changes
   useEffect(() => {
     if (toolState !== "output-available") return;
 
     // Skip initial load
     if (prevDataRef.current === null) {
-      prevDataRef.current = serializedData;
+      prevDataRef.current = debouncedSerializedData;
       return;
     }
 
     // If data changed after initial load, trigger a fresh fetch (skip cached HTML)
-    if (prevDataRef.current !== serializedData) {
-      prevDataRef.current = serializedData;
+    if (prevDataRef.current !== debouncedSerializedData) {
+      prevDataRef.current = debouncedSerializedData;
       // Only trigger reload if we have server connectivity (outputTemplate + toolName)
       if (outputTemplate && toolName && !isOffline) {
         setSkipCachedHtml(true);
         setWidgetUrl(null);
       }
     }
-  }, [toolState, serializedData, outputTemplate, toolName, isOffline]);
+  }, [toolState, debouncedSerializedData, outputTemplate, toolName, isOffline]);
 
   useEffect(() => {
     let isCancelled = false;
