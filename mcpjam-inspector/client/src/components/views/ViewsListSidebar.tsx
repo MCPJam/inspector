@@ -1,10 +1,10 @@
+import { useState, useRef, useEffect } from "react";
 import {
   Trash2,
   Pencil,
   Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { type AnyView } from "@/hooks/useViews";
 
@@ -15,6 +15,7 @@ interface ViewsListSidebarProps {
   onEditView: (view: AnyView) => void;
   onDuplicateView: (view: AnyView) => void;
   onDeleteView: (view: AnyView) => void;
+  onRenameView?: (view: AnyView, newName: string) => Promise<void>;
   deletingViewId: string | null;
   duplicatingViewId: string | null;
   isLoading: boolean;
@@ -27,24 +28,71 @@ export function ViewsListSidebar({
   onEditView,
   onDuplicateView,
   onDeleteView,
+  onRenameView,
   deletingViewId,
   duplicatingViewId,
   isLoading,
 }: ViewsListSidebarProps) {
-  const formatTimestamp = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  // Inline editing state
+  const [editingViewId, setEditingViewId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [isSavingName, setIsSavingName] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-    if (diffDays === 0) {
-      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    } else if (diffDays === 1) {
-      return "Yesterday";
-    } else if (diffDays < 7) {
-      return `${diffDays}d ago`;
-    } else {
-      return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  // Focus input when editing starts
+  useEffect(() => {
+    if (editingViewId && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editingViewId]);
+
+  const handleStartEditing = (view: AnyView, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingViewId(view._id);
+    setEditingName(view.name);
+  };
+
+  const handleSaveName = async (view: AnyView) => {
+    const trimmedName = editingName.trim();
+
+    // If name unchanged or empty, cancel
+    if (!trimmedName || trimmedName === view.name) {
+      setEditingViewId(null);
+      setEditingName("");
+      return;
+    }
+
+    if (!onRenameView) {
+      setEditingViewId(null);
+      setEditingName("");
+      return;
+    }
+
+    setIsSavingName(true);
+    try {
+      await onRenameView(view, trimmedName);
+      setEditingViewId(null);
+      setEditingName("");
+    } catch (error) {
+      console.error("Failed to save name:", error);
+      // Keep editing on error so user can retry
+    } finally {
+      setIsSavingName(false);
+    }
+  };
+
+  const handleCancelEditing = () => {
+    setEditingViewId(null);
+    setEditingName("");
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent, view: AnyView) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleSaveName(view);
+    } else if (e.key === "Escape") {
+      handleCancelEditing();
     }
   };
 
@@ -66,11 +114,10 @@ export function ViewsListSidebar({
             No views yet
           </div>
         ) : (
-          <div className="py-2">
+          <div className="py-1">
             {views.map((view) => {
               const isSelected = selectedViewId === view._id;
               const isDeleting = deletingViewId === view._id;
-
               const isDuplicating = duplicatingViewId === view._id;
 
               return (
@@ -78,47 +125,55 @@ export function ViewsListSidebar({
                   key={view._id}
                   onClick={() => onSelectView(view._id)}
                   className={cn(
-                    "group w-full flex items-start gap-2 px-4 py-2.5 text-left text-sm hover:bg-accent/50 transition-colors cursor-pointer",
-                    isSelected && "bg-accent"
+                    "group flex items-center gap-3 px-4 py-2 cursor-pointer transition-colors",
+                    isSelected ? "bg-accent" : "hover:bg-accent/50"
                   )}
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
+                  <div className="flex-1 min-w-0 flex items-center gap-2">
+                    {editingViewId === view._id ? (
+                      <input
+                        ref={inputRef}
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onBlur={() => handleSaveName(view)}
+                        onKeyDown={(e) => handleKeyDown(e, view)}
+                        onClick={(e) => e.stopPropagation()}
+                        disabled={isSavingName}
                         className={cn(
-                          "truncate font-medium",
-                          isSelected && "font-semibold"
+                          "flex-1 px-1.5 py-0.5 text-sm bg-background border border-input rounded focus:outline-none focus:ring-1 focus:ring-ring",
+                          isSavingName && "opacity-50"
                         )}
-                      >
-                        {view.name}
-                      </span>
-                      <Badge
-                        variant="outline"
-                        className="text-[9px] px-1 py-0 shrink-0"
-                      >
-                        {view.protocol === "mcp-apps" ? "MCP" : "OpenAI"}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs text-muted-foreground truncate">
-                        {view.toolName}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground/60">
-                        {formatTimestamp(view.updatedAt)}
-                      </span>
-                    </div>
+                      />
+                    ) : (
+                      <>
+                        <span
+                          onClick={(e) => handleStartEditing(view, e)}
+                          className={cn(
+                            "truncate text-sm cursor-text",
+                            isSelected ? "font-medium" : "font-normal"
+                          )}
+                          title="Click to rename"
+                        >
+                          {view.name}
+                        </span>
+                        <span className="text-xs text-muted-foreground truncate shrink-0">
+                          {view.toolName}
+                        </span>
+                      </>
+                    )}
                   </div>
 
                   <div
                     className={cn(
-                      "flex items-center gap-1 shrink-0 transition-opacity",
+                      "flex items-center gap-0.5 shrink-0 transition-opacity",
                       isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                     )}
                   >
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
                       onClick={(e) => {
                         e.stopPropagation();
                         onEditView(view);
@@ -130,7 +185,7 @@ export function ViewsListSidebar({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
                       onClick={(e) => {
                         e.stopPropagation();
                         onDuplicateView(view);
@@ -143,7 +198,7 @@ export function ViewsListSidebar({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
                       onClick={(e) => {
                         e.stopPropagation();
                         onDeleteView(view);

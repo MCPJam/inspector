@@ -213,6 +213,28 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     loadedToolOutputForViewId.current = null;
   }, []);
 
+  // Handle rename
+  const handleRenameView = useCallback(async (view: AnyView, newName: string) => {
+    try {
+      const updates = {
+        viewId: view._id,
+        name: newName,
+      };
+
+      if (view.protocol === "mcp-apps") {
+        await updateMcpView(updates);
+      } else {
+        await updateOpenaiView(updates);
+      }
+
+      toast.success(`View renamed to "${newName}"`);
+    } catch (error) {
+      console.error("Failed to rename view:", error);
+      toast.error("Failed to rename view");
+      throw error; // Re-throw so the sidebar knows to keep editing mode
+    }
+  }, [updateMcpView, updateOpenaiView]);
+
   // Handle duplicate
   const handleDuplicateView = useCallback(async (view: AnyView) => {
     if (!workspaceId) return;
@@ -588,8 +610,8 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       >
         {/* Left Panel - Views List or Editor */}
         <ResizablePanel
-          defaultSize={50}
-          minSize={25}
+          defaultSize={55}
+          minSize={30}
           maxSize={70}
           className="border-r bg-muted/30 flex flex-col"
         >
@@ -616,6 +638,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               onEditView={handleEditView}
               onDuplicateView={handleDuplicateView}
               onDeleteView={handleDeleteView}
+              onRenameView={handleRenameView}
               deletingViewId={deletingViewId}
               duplicatingViewId={duplicatingViewId}
               isLoading={isViewsLoading}
