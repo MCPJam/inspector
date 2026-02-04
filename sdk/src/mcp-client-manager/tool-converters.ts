@@ -138,7 +138,9 @@ export function isChatGPTAppTool(
  * @param result - The full tool call result
  * @returns A shallow copy of the result without _meta
  */
-export function scrubMetaFromToolResult(result: CallToolResult): CallToolResult {
+export function scrubMetaFromToolResult(
+  result: CallToolResult
+): CallToolResult {
   if (!result) return result;
   const copy = { ...result };
   if ((copy as Record<string, unknown>)._meta) {
@@ -211,7 +213,9 @@ export async function convertMCPToolsToVercelTools(
 
   for (const toolDescription of listToolsResult.tools) {
     const { name, description, inputSchema } = toolDescription;
-    const toolMeta = toolDescription._meta as Record<string, unknown> | undefined;
+    const toolMeta = toolDescription._meta as
+      | Record<string, unknown>
+      | undefined;
 
     // Create the execute function that delegates to the provided callTool
     const execute = async (args: unknown, options?: ToolCallOptions) => {
@@ -226,19 +230,19 @@ export async function convertMCPToolsToVercelTools(
     // Runtime signature: ({ toolCallId, input, output }) => ToolResultOutput
     // Note: Type assertion needed due to slight type misalignment between CallToolResult and JSONValue
     const toModelOutput = isMcpAppTool(toolMeta)
-      ? ((opts: { toolCallId: string; input: unknown; output: unknown }) => {
+      ? (opts: { toolCallId: string; input: unknown; output: unknown }) => {
           const scrubbed = scrubMetaAndStructuredContentFromToolResult(
             opts.output as CallToolResult
           );
           return { type: "json" as const, value: scrubbed as any } as any;
-        })
+        }
       : isChatGPTAppTool(toolMeta)
-        ? ((opts: { toolCallId: string; input: unknown; output: unknown }) => {
+        ? (opts: { toolCallId: string; input: unknown; output: unknown }) => {
             const scrubbed = scrubStructuredContentFromToolResult(
               opts.output as CallToolResult
             );
             return { type: "json" as const, value: scrubbed as any } as any;
-          })
+          }
         : undefined;
 
     let vercelTool: Tool;

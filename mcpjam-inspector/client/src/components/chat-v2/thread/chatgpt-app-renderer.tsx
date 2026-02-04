@@ -853,16 +853,6 @@ export function ChatGPTAppRenderer({
         message: event.data,
       });
 
-      if (eventType !== "openai:resize") {
-        posthog.capture("openai_app_message_received", {
-          location: "chatgpt_app_renderer",
-          type: eventType,
-          fullEventData: event.data,
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-        });
-      }
-
       switch (eventType) {
         case "openai:resize": {
           applyMeasuredHeight(event.data.height);

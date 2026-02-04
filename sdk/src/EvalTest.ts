@@ -2,6 +2,7 @@ import type { TestAgent } from "./TestAgent.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
+import { posthog } from "./telemetry.js";
 
 /**
  * Configuration for an EvalTest
@@ -155,6 +156,13 @@ export class EvalTest {
     agent: TestAgent,
     options: EvalTestRunOptions
   ): Promise<EvalRunResult> {
+    posthog.capture({
+      event: "eval_test_run_triggered",
+      properties: {
+        iterations: options.iterations,
+        concurrency: options.concurrency ?? 5,
+      },
+    });
     const concurrency = options.concurrency ?? 5;
     const retries = options.retries ?? 0;
     const timeoutMs = options.timeoutMs ?? 30000;
