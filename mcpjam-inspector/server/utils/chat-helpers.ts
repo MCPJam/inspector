@@ -72,7 +72,13 @@ export const createLlmModel = (
       return openai.chat(modelDefinition.id);
     }
     case "openrouter":
-      return createOpenRouter({ apiKey })(modelDefinition.id);
+      return createOpenRouter({
+        apiKey,
+        headers: {
+          "HTTP-Referer": "https://www.mcpjam.com/",
+          "X-Title": "MCPJam",
+        },
+      })(modelDefinition.id);
     case "xai":
       return createXai({ apiKey })(modelDefinition.id);
     case "azure":
