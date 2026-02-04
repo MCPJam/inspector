@@ -13,6 +13,7 @@ import {
   SquareSlash,
   MessageCircleQuestionIcon,
 } from "lucide-react";
+import posthog from "posthog-js";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -209,6 +210,10 @@ export function MCPSidebar({
       if (section === "app-builder" && showAppBuilderBubble) {
         localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
         setHasVisitedAppBuilder(true);
+      }
+      // Track skills tab opened
+      if (section === "skills") {
+        posthog.capture("skills_tab_opened");
       }
       onNavigate(section);
     } else {
