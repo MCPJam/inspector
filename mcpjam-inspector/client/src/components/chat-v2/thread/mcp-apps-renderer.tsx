@@ -48,7 +48,11 @@ import type {
   Transport,
   TransportSendOptions,
 } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { getMcpAppsStyleVariables } from "./mcp-apps-renderer-helper";
+import {
+  getClaudeDesktopStyleVariables,
+  CLAUDE_DESKTOP_FONT_CSS,
+  CLAUDE_DESKTOP_PLATFORM,
+} from "@/config/claude-desktop-host-context";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 
 // Injected by Vite at build time from package.json
@@ -237,19 +241,6 @@ export function MCPAppsRenderer({
   // Get device type and custom viewport from playground store for platform/containerDimensions derivation (SEP-1865)
   const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
-
-  // Derive platform from device type per SEP-1865 (web | desktop | mobile)
-  const platform = useMemo((): "web" | "desktop" | "mobile" => {
-    if (!isPlaygroundActive) return "web";
-    switch (playgroundDeviceType) {
-      case "mobile":
-      case "tablet":
-        return "mobile";
-      case "desktop":
-      default:
-        return "web";
-    }
-  }, [isPlaygroundActive, playgroundDeviceType]);
 
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
@@ -558,7 +549,7 @@ export function MCPAppsRenderer({
   // CSS Variables for theming (SEP-1865 styles.variables)
   // These are sent via hostContext.styles.variables - the SDK should pass them through
   const styleVariables = useMemo(
-    () => getMcpAppsStyleVariables(themeMode),
+    () => getClaudeDesktopStyleVariables(themeMode),
     [themeMode],
   );
 
@@ -573,12 +564,13 @@ export function MCPAppsRenderer({
       },
       locale,
       timeZone,
-      platform,
+      platform: CLAUDE_DESKTOP_PLATFORM,
       userAgent: navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,
       styles: {
         variables: styleVariables,
+        css: { fonts: CLAUDE_DESKTOP_FONT_CSS },
       },
       toolInfo: {
         id: toolCallId,
@@ -601,7 +593,6 @@ export function MCPAppsRenderer({
       maxWidth,
       locale,
       timeZone,
-      platform,
       deviceCapabilities,
       safeAreaInsets,
       styleVariables,
