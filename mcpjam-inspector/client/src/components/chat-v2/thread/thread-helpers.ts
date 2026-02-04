@@ -10,6 +10,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Loader2,
+  ShieldAlert,
+  ShieldX,
   type LucideIcon,
 } from "lucide-react";
 
@@ -75,7 +77,7 @@ export function isToolApprovalRequest(part: AnyPart): boolean {
 
 export function isToolPart(part: AnyPart): part is ToolUIPart<UITools> {
   const t = (part as any).type;
-  return typeof t === "string" && t.startsWith("tool-") && t !== "tool-approval-request";
+  return typeof t === "string" && t.startsWith("tool-");
 }
 
 export function isDynamicTool(part: unknown): part is DynamicToolUIPart {
@@ -168,6 +170,18 @@ export function getToolStateMeta(
         Icon: CheckCircle2,
         label: "Output available",
         className: "h-4 w-4 text-emerald-500",
+      };
+    case "approval-requested":
+      return {
+        Icon: ShieldAlert,
+        label: "Approval requested",
+        className: "h-4 w-4 text-amber-500",
+      };
+    case "output-denied":
+      return {
+        Icon: ShieldX,
+        label: "Denied",
+        className: "h-4 w-4 text-destructive",
       };
     case "output-error":
       return {

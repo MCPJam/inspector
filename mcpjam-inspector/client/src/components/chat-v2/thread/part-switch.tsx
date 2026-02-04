@@ -6,7 +6,6 @@ import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
 import { ToolPart } from "./parts/tool-part";
-import { ToolApprovalCard } from "./parts/tool-approval-card";
 import { ReasoningPart } from "./parts/reasoning-part";
 import { FilePart } from "./parts/file-part";
 import { SourceUrlPart } from "./parts/source-url-part";
@@ -30,10 +29,8 @@ import {
   extractUIResource,
   getDataLabel,
   getToolInfo,
-  getToolNameFromType,
   isDataPart,
   isDynamicTool,
-  isToolApprovalRequest,
   isToolPart,
 } from "./thread-helpers";
 
@@ -89,36 +86,20 @@ export function PartSwitch({
     DisplayMode[] | undefined
   >();
 
-  if (isToolApprovalRequest(part)) {
-    // The AI SDK stores approval info on the tool part itself. This works for
-    // both dynamic-tool parts and typed tool-{name} parts.
-    const toolPart = part as any;
-    const approvalId = toolPart.approval?.id;
-    const toolName = isDynamicTool(part)
-      ? (part as DynamicToolUIPart).toolName
-      : getToolNameFromType(toolPart.type);
-    const toolCallId = toolPart.toolCallId;
-    const input = toolPart.input as Record<string, unknown> | undefined;
-
-    return (
-      <ToolApprovalCard
-        toolName={toolName}
-        toolCallId={toolCallId}
-        input={input}
-        approvalId={approvalId}
-        onApprove={(id) =>
-          onToolApprovalResponse?.({ id, approved: true })
-        }
-        onDeny={(id) =>
-          onToolApprovalResponse?.({ id, approved: false })
-        }
-      />
-    );
-  }
-
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
     const toolInfo = getToolInfo(toolPart);
+
+    const approvalId = (toolPart as any).approval?.id as string | undefined;
+    const approvalProps = approvalId
+      ? {
+          approvalId,
+          onApprove: (id: string) =>
+            onToolApprovalResponse?.({ id, approved: true }),
+          onDeny: (id: string) =>
+            onToolApprovalResponse?.({ id, approved: false }),
+        }
+      : {};
     const partToolMeta = toolsMetadata[toolInfo.toolName];
     const uiType = detectUIType(partToolMeta, toolInfo.rawOutput);
     const uiResourceUri = getUIResourceUri(uiType, partToolMeta);
@@ -129,7 +110,7 @@ export function PartSwitch({
     if (uiResource) {
       return (
         <>
-          <ToolPart part={toolPart} uiType={uiType} />
+          <ToolPart part={toolPart} uiType={uiType} {...approvalProps} />
           <MCPUIResourcePart
             resource={uiResource.resource}
             onSendFollowUp={onSendFollowUp}
@@ -142,10 +123,13 @@ export function PartSwitch({
       (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
         selectedProtocolOverrideIfBothExists === UIType.OPENAI_SDK)
     ) {
-      if (toolInfo.toolState !== "output-available") {
+      if (
+        toolInfo.toolState !== "output-available" &&
+        toolInfo.toolState !== "approval-requested"
+      ) {
         return (
           <>
-            <ToolPart part={toolPart} uiType={uiType} />
+            <ToolPart part={toolPart} uiType={uiType} {...approvalProps} />
             <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
               Waiting for tool to finish executing...
             </div>
@@ -156,7 +140,7 @@ export function PartSwitch({
       if (!serverId) {
         return (
           <>
-            <ToolPart part={toolPart} uiType={uiType} />
+            <ToolPart part={toolPart} uiType={uiType} {...approvalProps} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
               Failed to load tool server id.
             </div>
@@ -177,6 +161,7 @@ export function PartSwitch({
             onExitFullscreen={onExitFullscreen}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
+            {...approvalProps}
           />
           <ChatGPTAppRenderer
             serverId={serverId}
@@ -212,7 +197,7 @@ export function PartSwitch({
       if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
         return (
           <>
-            <ToolPart part={toolPart} uiType={uiType} />
+            <ToolPart part={toolPart} uiType={uiType} {...approvalProps} />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
               Failed to load server id or resource uri for MCP App.
             </div>
@@ -234,6 +219,7 @@ export function PartSwitch({
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
             appSupportedDisplayModes={appSupportedDisplayModes}
+            {...approvalProps}
           />
           <MCPAppsRenderer
             serverId={serverId}
@@ -265,7 +251,7 @@ export function PartSwitch({
         </>
       );
     }
-    return <ToolPart part={toolPart} uiType={uiType} />;
+    return <ToolPart part={toolPart} uiType={uiType} {...approvalProps} />;
   }
 
   if (isDataPart(part)) {
