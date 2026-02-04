@@ -219,10 +219,10 @@ export function SkillsTab() {
   const handleSelectSkill = (name: string) => {
     setSelectedSkillName(name);
     setSelectedFilePath("SKILL.md");
-    setFileContent(null);
     setRawMode(false);
     setDescriptionExpanded(false);
     posthog.capture("skill_viewed", { skill_name: name });
+    fetchFileContent(name, "SKILL.md");
   };
 
   const handleSelectFile = (skillName: string, filePath: string) => {
@@ -231,6 +231,7 @@ export function SkillsTab() {
     }
     setSelectedFilePath(filePath);
     setRawMode(false);
+    fetchFileContent(skillName, filePath);
   };
 
   const handleExpandSkill = (name: string) => {
