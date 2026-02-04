@@ -311,6 +311,10 @@ function useWidgetFetch(
   const [storeError, setStoreError] = useState<string | null>(null);
   const [prevCspMode, setPrevCspMode] = useState(cspMode);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
+  // Track if we should skip cached HTML (for live editing after initial load)
+  const [skipCachedHtml, setSkipCachedHtml] = useState(false);
+  // Track serialized data to detect changes
+  const prevDataRef = useRef<string | null>(null);
 
   // Reset widget URL when CSP mode changes to trigger reload
   useEffect(() => {
@@ -320,6 +324,29 @@ function useWidgetFetch(
     }
   }, [cspMode, prevCspMode, widgetUrl]);
 
+  // Detect data changes for live editing - trigger reload when toolInput/toolOutput changes
+  useEffect(() => {
+    if (toolState !== "output-available") return;
+
+    const currentData = JSON.stringify({ input: resolvedToolInput, output: resolvedToolOutput });
+
+    // Skip initial load
+    if (prevDataRef.current === null) {
+      prevDataRef.current = currentData;
+      return;
+    }
+
+    // If data changed after initial load, trigger a fresh fetch (skip cached HTML)
+    if (prevDataRef.current !== currentData) {
+      prevDataRef.current = currentData;
+      // Only trigger reload if we have server connectivity (outputTemplate + toolName)
+      if (outputTemplate && toolName && !isOffline) {
+        setSkipCachedHtml(true);
+        setWidgetUrl(null);
+      }
+    }
+  }, [toolState, resolvedToolInput, resolvedToolOutput, outputTemplate, toolName, isOffline]);
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -328,7 +355,8 @@ function useWidgetFetch(
     // - Don't re-fetch if we already have a URL
     // - Need either outputTemplate (for live fetch) OR cachedWidgetHtmlUrl (for offline)
     // - Need toolName for live fetch (but not required for cached)
-    const canUseCachedHtml = !!cachedWidgetHtmlUrl;
+    // - skipCachedHtml disables cached HTML for live editing
+    const canUseCachedHtml = !!cachedWidgetHtmlUrl && !skipCachedHtml;
     const canUseLiveFetch = !!outputTemplate && !!toolName;
 
     if (
@@ -353,18 +381,11 @@ function useWidgetFetch(
       setIsStoringWidget(true);
       setStoreError(null);
       try {
-        // Debug log for offline rendering
-        console.log("[ChatGPTAppRenderer] storeWidgetData called", {
-          cachedWidgetHtmlUrl,
-          outputTemplate,
-          toolName,
-          isOffline,
-        });
-
         // Try cached HTML first if available (for offline Views tab rendering)
         // Pass the Convex storage URL directly - it's publicly accessible and
         // the sandbox proxy can fetch it (unlike blob URLs which are origin-specific)
-        if (cachedWidgetHtmlUrl) {
+        // Skip cached HTML when doing live editing (skipCachedHtml is true)
+        if (cachedWidgetHtmlUrl && !skipCachedHtml) {
           if (!isCancelled) {
             setWidgetUrl(cachedWidgetHtmlUrl);
             setIsStoringWidget(false);
@@ -459,6 +480,11 @@ function useWidgetFetch(
         // Set the widget URL with CSP mode query param
         // Use /widget-content directly so CSP headers are applied by the browser
         setWidgetUrl(widgetContentUrl);
+
+        // Reset skipCachedHtml AFTER setting widget URL (prevents race condition with React re-renders)
+        if (skipCachedHtml) {
+          setSkipCachedHtml(false);
+        }
       } catch (err) {
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
@@ -493,6 +519,7 @@ function useWidgetFetch(
     isOffline,
     cachedWidgetHtmlUrl,
     onWidgetHtmlCaptured,
+    skipCachedHtml,
   ]);
 
   return {

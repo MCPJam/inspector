@@ -125,7 +125,8 @@ export function PartSwitch({
       toolState: "output-available" | "output-error",
       uiType: UIType,
       resourceUri?: string,
-      outputTemplate?: string
+      outputTemplate?: string,
+      toolMetadata?: Record<string, unknown>
     ) => {
       return async () => {
         const data: ToolDataForSave = {
@@ -145,6 +146,7 @@ export function PartSwitch({
             : undefined,
           resourceUri,
           outputTemplate,
+          toolMetadata,
           // Include cached widget HTML for offline rendering (MCP Apps only)
           widgetHtml: widgetDebugInfo?.widgetHtml,
         };
@@ -188,6 +190,8 @@ export function PartSwitch({
     // Create handler for this specific tool
     // Use rawOutput as fallback if output is undefined
     const outputToSave = toolInfo.output ?? toolInfo.rawOutput;
+    // OpenAI outputTemplate is stored under "openai/outputTemplate" key
+    const outputTemplate = partToolMeta?.["openai/outputTemplate"] as string | undefined;
     const handleSaveView = createSaveViewHandler(
       toolInfo.toolName,
       toolInfo.input,
@@ -196,7 +200,8 @@ export function PartSwitch({
       toolInfo.toolState === "output-error" ? "output-error" : "output-available",
       uiType || UIType.MCP_APPS,
       uiResourceUri ?? undefined,
-      partToolMeta?.outputTemplate
+      outputTemplate,
+      partToolMeta as Record<string, unknown> | undefined
     );
 
     if (uiResource) {

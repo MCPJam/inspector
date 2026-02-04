@@ -35,6 +35,8 @@ export interface ToolDataForSave {
   serverInfo?: ServerInfo;
   // Cached widget HTML for offline rendering
   widgetHtml?: string;
+  // Tool metadata (contains openai/outputTemplate and other metadata)
+  toolMetadata?: Record<string, unknown>;
 }
 
 // Form data for save dialog
@@ -223,6 +225,7 @@ export function useSaveView({
           tags: formData.tags,
           category: formData.category,
           defaultContext: formData.defaultContext,
+          toolMetadata: toolData.toolMetadata,
         };
 
         let viewId: string;

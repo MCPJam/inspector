@@ -169,12 +169,18 @@ export function ViewPreview({
 
   if (view.protocol === "openai-apps") {
     const openaiView = view as OpenaiAppView;
-    console.log("[ViewPreview] OpenAI view data:", {
-      widgetHtmlUrl: openaiView.widgetHtmlUrl,
-      outputTemplate: openaiView.outputTemplate,
-      serverConnectionStatus,
-      isServerOffline,
-    });
+    // Get outputTemplate from view or from toolMetadata (fallback for legacy views)
+    const existingMetadata = view.toolMetadata as Record<string, unknown> | undefined;
+    const effectiveOutputTemplate =
+      openaiView.outputTemplate ||
+      (existingMetadata?.["openai/outputTemplate"] as string | undefined) ||
+      "";
+    // Merge outputTemplate into toolMetadata for ChatGPTAppRenderer
+    // (it extracts outputTemplate from toolMetadata["openai/outputTemplate"])
+    const mergedToolMetadata = {
+      ...existingMetadata,
+      ...(effectiveOutputTemplate ? { "openai/outputTemplate": effectiveOutputTemplate } : {}),
+    };
     return (
       <ChatGPTAppRenderer
         serverId={serverName}
@@ -183,7 +189,7 @@ export function ViewPreview({
         toolState={view.toolState}
         toolInput={effectiveToolInput as Record<string, unknown> | null | undefined}
         toolOutput={effectiveToolOutput}
-        toolMetadata={view.toolMetadata as Record<string, unknown> | undefined}
+        toolMetadata={mergedToolMetadata}
         onSendFollowUp={handleSendFollowUp}
         onCallTool={handleCallTool}
         onWidgetStateChange={handleWidgetStateChange}
