@@ -326,6 +326,12 @@ export function MCPAppsRenderer({
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
 
+  // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
+  useEffect(() => {
+    setWidgetHtml(null);
+    setLoadedCspMode(null);
+  }, [cachedWidgetHtmlUrl]);
+
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const lastToolInputRef = useRef<string | null>(null);

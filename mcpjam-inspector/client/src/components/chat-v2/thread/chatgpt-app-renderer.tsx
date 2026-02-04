@@ -315,6 +315,13 @@ function useWidgetFetch(
   const [skipCachedHtml, setSkipCachedHtml] = useState(false);
   // Track serialized data to detect changes
   const prevDataRef = useRef<string | null>(null);
+
+  // Reset widget URL when cachedWidgetHtmlUrl changes (e.g., different view selected)
+  useEffect(() => {
+    setWidgetUrl(null);
+    setSkipCachedHtml(false);
+  }, [cachedWidgetHtmlUrl]);
+
   // Refs to capture current tool data without causing effect re-runs
   const toolInputRef = useRef(resolvedToolInput);
   const toolOutputRef = useRef(resolvedToolOutput);
@@ -372,16 +379,24 @@ function useWidgetFetch(
 
     // Determine if we can proceed:
     // - Need output-available state
-    // - Don't re-fetch if we already have a URL
+    // - Don't re-fetch if we already have a URL that matches current inputs
     // - Need either outputTemplate (for live fetch) OR cachedWidgetHtmlUrl (for offline)
     // - Need toolName for live fetch (but not required for cached)
     // - skipCachedHtml disables cached HTML for live editing
     const canUseCachedHtml = !!cachedWidgetHtmlUrl && !skipCachedHtml;
     const canUseLiveFetch = !!outputTemplate && !!toolName;
 
+    // Check if widgetUrl is current (matches expected URL based on mode)
+    // In cached mode: widgetUrl should equal cachedWidgetHtmlUrl
+    // In live mode: widgetUrl is a widget-content endpoint URL
+    const isWidgetUrlCurrent = widgetUrl && (
+      (canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
+      (!canUseCachedHtml && widgetUrl.includes('/api/apps/chatgpt/widget-content/'))
+    );
+
     if (
       toolState !== "output-available" ||
-      widgetUrl ||
+      isWidgetUrlCurrent ||
       (!canUseCachedHtml && !canUseLiveFetch)
     ) {
       // If we already have a widget URL, make sure loading state is cleared
@@ -505,10 +520,10 @@ function useWidgetFetch(
         // Use /widget-content directly so CSP headers are applied by the browser
         setWidgetUrl(widgetContentUrl);
 
-        // Reset skipCachedHtml AFTER setting widget URL (prevents race condition with React re-renders)
-        if (skipCachedHtml) {
-          setSkipCachedHtml(false);
-        }
+        // NOTE: We intentionally do NOT reset skipCachedHtml here.
+        // Once in "live mode" (skipCachedHtml = true), we stay in live mode until
+        // the user switches views (which triggers the reset effect via cachedWidgetHtmlUrl change).
+        // This prevents live previews from reverting to stale cached HTML during view editing.
       } catch (err) {
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
