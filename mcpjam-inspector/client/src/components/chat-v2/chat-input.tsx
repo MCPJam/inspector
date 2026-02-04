@@ -4,7 +4,7 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square, Paperclip, Scan } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Scan, ShieldCheck } from "lucide-react";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -87,6 +87,9 @@ interface ChatInputProps {
   /** X-Ray mode toggle */
   xrayMode?: boolean;
   onXrayModeChange?: (enabled: boolean) => void;
+  /** Tool approval toggle */
+  requireToolApproval?: boolean;
+  onRequireToolApprovalChange?: (enabled: boolean) => void;
 }
 
 export function ChatInput({
@@ -124,6 +127,8 @@ export function ChatInput({
   onChangeFileAttachments,
   xrayMode = false,
   onXrayModeChange,
+  requireToolApproval = false,
+  onRequireToolApprovalChange,
 }: ChatInputProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -426,6 +431,28 @@ export function ChatInput({
               currentModel={currentModel}
               compact={compact}
             />
+            {onRequireToolApprovalChange && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant={requireToolApproval ? "secondary" : "ghost"}
+                    size="icon"
+                    onClick={() =>
+                      onRequireToolApprovalChange(!requireToolApproval)
+                    }
+                    className="h-8 w-8"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {requireToolApproval
+                    ? "Require tool approval (on)"
+                    : "Auto-approve tools"}
+                </TooltipContent>
+              </Tooltip>
+            )}
             {onXrayModeChange && (
               <Tooltip>
                 <TooltipTrigger asChild>

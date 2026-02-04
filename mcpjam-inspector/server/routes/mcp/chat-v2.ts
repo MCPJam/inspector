@@ -32,6 +32,7 @@ chatV2.post("/", async (c) => {
       systemPrompt,
       temperature,
       selectedServers,
+      requireToolApproval,
     } = body;
 
     // Validation
@@ -45,9 +46,19 @@ chatV2.post("/", async (c) => {
     }
 
     // Get all tools (MCP + skills)
-    const mcpTools = await mcpClientManager.getToolsForAiSdk(selectedServers);
+    const mcpTools = await mcpClientManager.getToolsForAiSdk(selectedServers, {
+      needsApproval: requireToolApproval,
+    });
     const { tools: skillTools, systemPromptSection: skillsPromptSection } =
       await getSkillToolsAndPrompt();
+
+    // Apply needsApproval to skill tools when the flag is set
+    if (requireToolApproval) {
+      for (const tool of Object.values(skillTools)) {
+        (tool as any).needsApproval = true;
+      }
+    }
+
     const allTools = { ...mcpTools, ...skillTools };
 
     // Build enhanced system prompt

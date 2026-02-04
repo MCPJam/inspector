@@ -17,7 +17,9 @@ export type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 export type ToolState =
   | "input-streaming"
   | "input-available"
+  | "approval-requested"
   | "output-available"
+  | "output-denied"
   | "output-error";
 
 type ToolInfo = {
@@ -58,9 +60,18 @@ export function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
     : [parts.filter((p) => (p as any).type !== "step-start")];
 }
 
+export function isToolApprovalRequest(part: AnyPart): boolean {
+  // The AI SDK stores approval state on the dynamic-tool part itself
+  // (state: "approval-requested") rather than creating a separate part type.
+  if (isDynamicTool(part)) {
+    return (part as DynamicToolUIPart).state === "approval-requested";
+  }
+  return false;
+}
+
 export function isToolPart(part: AnyPart): part is ToolUIPart<UITools> {
   const t = (part as any).type;
-  return typeof t === "string" && t.startsWith("tool-");
+  return typeof t === "string" && t.startsWith("tool-") && t !== "tool-approval-request";
 }
 
 export function isDynamicTool(part: unknown): part is DynamicToolUIPart {

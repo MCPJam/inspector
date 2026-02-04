@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { ToolUIPart, DynamicToolUIPart, UITools } from "ai";
+import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
 import { ToolPart } from "./parts/tool-part";
+import { ToolApprovalCard } from "./parts/tool-approval-card";
 import { ReasoningPart } from "./parts/reasoning-part";
 import { FilePart } from "./parts/file-part";
 import { SourceUrlPart } from "./parts/source-url-part";
@@ -29,8 +30,10 @@ import {
   extractUIResource,
   getDataLabel,
   getToolInfo,
+  getToolNameFromType,
   isDataPart,
   isDynamicTool,
+  isToolApprovalRequest,
   isToolPart,
 } from "./thread-helpers";
 
@@ -51,6 +54,8 @@ export function PartSwitch({
   displayMode,
   onDisplayModeChange,
   selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
+  onToolApprovalResponse,
+  messageParts,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -74,10 +79,39 @@ export function PartSwitch({
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
+  onToolApprovalResponse?: (options: {
+    id: string;
+    approved: boolean;
+  }) => void;
+  messageParts?: AnyPart[];
 }) {
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
   >();
+
+  if (isToolApprovalRequest(part)) {
+    // The AI SDK stores approval info directly on the dynamic-tool part
+    const dynamicPart = part as DynamicToolUIPart;
+    const approvalId = (dynamicPart as any).approval?.id;
+    const toolName = dynamicPart.toolName;
+    const toolCallId = dynamicPart.toolCallId;
+    const input = dynamicPart.input as Record<string, unknown> | undefined;
+
+    return (
+      <ToolApprovalCard
+        toolName={toolName}
+        toolCallId={toolCallId}
+        input={input}
+        approvalId={approvalId}
+        onApprove={(id) =>
+          onToolApprovalResponse?.({ id, approved: true })
+        }
+        onDeny={(id) =>
+          onToolApprovalResponse?.({ id, approved: false })
+        }
+      />
+    );
+  }
 
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;

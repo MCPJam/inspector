@@ -101,6 +101,8 @@ export interface ConvertOptions<
   schemas?: TOOL_SCHEMAS;
   /** Function to execute tool calls */
   callTool: CallToolExecutor;
+  /** When true, each tool requires user approval before execution */
+  needsApproval?: boolean;
 }
 
 /**
@@ -205,6 +207,7 @@ export async function convertMCPToolsToVercelTools(
   {
     schemas = "automatic",
     callTool,
+    needsApproval,
   }: ConvertOptions<ToolSchemaOverrides | "automatic">
 ): Promise<ToolSet> {
   const tools: ToolSet = {};
@@ -251,6 +254,7 @@ export async function convertMCPToolsToVercelTools(
         inputSchema: jsonSchema(normalizedInputSchema),
         execute,
         ...(toModelOutput ? { toModelOutput } : {}),
+        ...(needsApproval != null ? { needsApproval } : {}),
       });
     } else {
       // Override mode: only include tools explicitly listed in overrides
@@ -263,6 +267,7 @@ export async function convertMCPToolsToVercelTools(
         inputSchema: overrides[name].inputSchema,
         execute,
         ...(toModelOutput ? { toModelOutput } : {}),
+        ...(needsApproval != null ? { needsApproval } : {}),
       });
     }
 
