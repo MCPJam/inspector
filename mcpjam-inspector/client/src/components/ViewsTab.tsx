@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useConvexAuth } from "convex/react";
 import { Layers } from "lucide-react";
 import { toast } from "sonner";
@@ -11,7 +11,7 @@ import {
 import { useViewQueries, useViewMutations, useWorkspaceServers, type AnyView } from "@/hooks/useViews";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ViewsListSidebar } from "./views/ViewsListSidebar";
-import { ViewDetailPanel, type ViewDraft } from "./views/ViewDetailPanel";
+import { ViewDetailPanel } from "./views/ViewDetailPanel";
 import { ViewEditorPanel } from "./views/ViewEditorPanel";
 
 interface ViewsTabProps {
@@ -28,9 +28,17 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
   // View state
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
-  const [draftView, setDraftView] = useState<ViewDraft | null>(null);
-  const [isEditing, setIsEditing] = useState(false);
   const [deletingViewId, setDeletingViewId] = useState<string | null>(null);
+
+  // Live editing state for toolInput/toolOutput
+  const [liveToolInput, setLiveToolInput] = useState<unknown>(null);
+  const [liveToolOutput, setLiveToolOutput] = useState<unknown>(null);
+  const [originalToolOutput, setOriginalToolOutput] = useState<unknown>(null);
+  const [isLoadingToolOutput, setIsLoadingToolOutput] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Track the view ID we loaded output for to avoid stale data
+  const loadedToolOutputForViewId = useRef<string | null>(null);
 
   // Fetch views
   const {
@@ -65,8 +73,11 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       const viewStillExists = filteredViews.some((v) => v._id === selectedViewId);
       if (!viewStillExists) {
         setSelectedViewId(null);
-        setDraftView(null);
-        setIsEditing(false);
+        // Reset live editing state
+        setLiveToolInput(null);
+        setLiveToolOutput(null);
+        setOriginalToolOutput(null);
+        loadedToolOutputForViewId.current = null;
       }
     }
   }, [selectedServerId, selectedViewId, filteredViews]);
@@ -83,9 +94,8 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     updateOpenaiView,
     removeMcpView,
     removeOpenaiView,
-    // Upload URLs are available for future edit with output changes
-    // generateMcpUploadUrl,
-    // generateOpenaiUploadUrl,
+    generateMcpUploadUrl,
+    generateOpenaiUploadUrl,
   } = useViewMutations();
 
   // Get selected view (from filtered list)
@@ -94,75 +104,63 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     return filteredViews.find((v) => v._id === selectedViewId) ?? null;
   }, [selectedViewId, filteredViews]);
 
-  // Initialize draft when selecting a view
-  const handleSelectView = useCallback((viewId: string) => {
-    setSelectedViewId(viewId);
-    const view = filteredViews.find((v) => v._id === viewId);
-    if (view) {
-      setDraftView({
-        name: view.name,
-        description: view.description,
-        category: view.category,
-        tags: view.tags,
-        toolInput: view.toolInput,
-        toolOutput: null, // Will be loaded separately if needed
-        prefersBorder: view.prefersBorder,
-        defaultContext: view.defaultContext,
-      });
+  // Load toolOutput from blob when view is selected
+  useEffect(() => {
+    if (!selectedView) {
+      // Reset live state when no view selected
+      setLiveToolInput(null);
+      setLiveToolOutput(null);
+      setOriginalToolOutput(null);
+      loadedToolOutputForViewId.current = null;
+      return;
     }
-    setIsEditing(false);
-  }, [filteredViews]);
 
-  // Handle edit mode
-  const handleStartEditing = useCallback(() => {
-    setIsEditing(true);
-  }, []);
-
-  const handleDiscardChanges = useCallback(() => {
-    if (selectedView) {
-      setDraftView({
-        name: selectedView.name,
-        description: selectedView.description,
-        category: selectedView.category,
-        tags: selectedView.tags,
-        toolInput: selectedView.toolInput,
-        toolOutput: null,
-        prefersBorder: selectedView.prefersBorder,
-        defaultContext: selectedView.defaultContext,
-      });
+    // Skip if we already loaded for this view
+    if (loadedToolOutputForViewId.current === selectedView._id) {
+      return;
     }
-    setIsEditing(false);
-  }, [selectedView]);
 
-  // Handle save
-  const handleSaveChanges = useCallback(async () => {
-    if (!selectedView || !draftView) return;
-
-    try {
-      const updates = {
-        viewId: selectedView._id,
-        name: draftView.name,
-        description: draftView.description,
-        category: draftView.category,
-        tags: draftView.tags,
-        toolInput: draftView.toolInput,
-        prefersBorder: draftView.prefersBorder,
-        defaultContext: draftView.defaultContext,
-      };
-
-      if (selectedView.protocol === "mcp-apps") {
-        await updateMcpView(updates);
-      } else {
-        await updateOpenaiView(updates);
+    async function loadToolOutput() {
+      if (!selectedView?.toolOutputUrl) {
+        setLiveToolInput(selectedView?.toolInput ?? null);
+        setLiveToolOutput(null);
+        setOriginalToolOutput(null);
+        loadedToolOutputForViewId.current = selectedView?._id ?? null;
+        setIsLoadingToolOutput(false);
+        return;
       }
 
-      toast.success("View updated successfully");
-      setIsEditing(false);
-    } catch (error) {
-      console.error("Failed to update view:", error);
-      toast.error("Failed to update view");
+      setIsLoadingToolOutput(true);
+      try {
+        const response = await fetch(selectedView.toolOutputUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch output: ${response.status}`);
+        }
+        const data = await response.json();
+        setLiveToolInput(selectedView.toolInput);
+        setLiveToolOutput(data);
+        setOriginalToolOutput(data);
+        loadedToolOutputForViewId.current = selectedView._id;
+      } catch (err) {
+        console.error("Failed to load toolOutput:", err);
+        setLiveToolInput(selectedView.toolInput);
+        setLiveToolOutput(null);
+        setOriginalToolOutput(null);
+        loadedToolOutputForViewId.current = selectedView._id;
+      } finally {
+        setIsLoadingToolOutput(false);
+      }
     }
-  }, [selectedView, draftView, updateMcpView, updateOpenaiView]);
+
+    loadToolOutput();
+  }, [selectedView]);
+
+  // Handle view selection
+  const handleSelectView = useCallback((viewId: string) => {
+    setSelectedViewId(viewId);
+    // Reset loaded flag to trigger reload
+    loadedToolOutputForViewId.current = null;
+  }, []);
 
   // Handle delete
   const handleDeleteView = useCallback(async (view: AnyView) => {
@@ -179,8 +177,6 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       // Clear selection if deleted view was selected
       if (selectedViewId === view._id) {
         setSelectedViewId(null);
-        setDraftView(null);
-        setIsEditing(false);
       }
     } catch (error) {
       console.error("Failed to delete view:", error);
@@ -190,23 +186,114 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     }
   }, [selectedViewId, removeMcpView, removeOpenaiView]);
 
-  // Update draft field
-  const handleDraftChange = useCallback((updates: Partial<ViewDraft>) => {
-    setDraftView((prev) => (prev ? { ...prev, ...updates } : null));
-  }, []);
+  // Handle live data changes from editor (for real-time preview)
+  const handleEditorDataChange = useCallback(
+    (data: { toolInput: unknown; toolOutput: unknown }) => {
+      setLiveToolInput(data.toolInput);
+      setLiveToolOutput(data.toolOutput);
+    },
+    []
+  );
 
-  // Check if draft has changes
-  const hasUnsavedChanges = useMemo(() => {
-    if (!selectedView || !draftView) return false;
-    return (
-      draftView.name !== selectedView.name ||
-      draftView.description !== selectedView.description ||
-      draftView.category !== selectedView.category ||
-      JSON.stringify(draftView.tags) !== JSON.stringify(selectedView.tags) ||
-      JSON.stringify(draftView.toolInput) !== JSON.stringify(selectedView.toolInput) ||
-      draftView.prefersBorder !== selectedView.prefersBorder
-    );
-  }, [selectedView, draftView]);
+  // Handle reset from editor
+  const handleEditorReset = useCallback(() => {
+    if (selectedView) {
+      setLiveToolInput(selectedView.toolInput);
+      setLiveToolOutput(originalToolOutput);
+    }
+  }, [selectedView, originalToolOutput]);
+
+  // Check if there are unsaved changes in the live editor
+  const hasLiveUnsavedChanges = useMemo(() => {
+    if (!selectedView) return false;
+
+    const toolInputChanged =
+      JSON.stringify(liveToolInput) !== JSON.stringify(selectedView.toolInput);
+    const toolOutputChanged =
+      JSON.stringify(liveToolOutput) !== JSON.stringify(originalToolOutput);
+
+    return toolInputChanged || toolOutputChanged;
+  }, [selectedView, liveToolInput, liveToolOutput, originalToolOutput]);
+
+  // Handle save from editor (with blob upload if toolOutput changed)
+  const handleEditorSave = useCallback(async () => {
+    if (!selectedView || !hasLiveUnsavedChanges) return;
+
+    setIsSaving(true);
+    try {
+      const toolOutputChanged =
+        JSON.stringify(liveToolOutput) !== JSON.stringify(originalToolOutput);
+
+      let toolOutputBlobId: string | undefined;
+
+      if (toolOutputChanged && liveToolOutput !== null) {
+        // Upload new toolOutput as JSON blob
+        const uploadUrl =
+          selectedView.protocol === "mcp-apps"
+            ? await generateMcpUploadUrl()
+            : await generateOpenaiUploadUrl();
+
+        const response = await fetch(uploadUrl, {
+          method: "POST",
+          body: JSON.stringify(liveToolOutput),
+          headers: { "Content-Type": "application/json" },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to upload toolOutput: ${response.status}`);
+        }
+
+        const { storageId } = await response.json();
+        toolOutputBlobId = storageId;
+      }
+
+      // Update view with toolInput and optionally new toolOutputBlobId
+      const updates: Record<string, unknown> = {
+        viewId: selectedView._id,
+        toolInput: liveToolInput,
+      };
+
+      if (toolOutputBlobId) {
+        updates.toolOutputBlobId = toolOutputBlobId;
+      }
+
+      if (selectedView.protocol === "mcp-apps") {
+        await updateMcpView(updates);
+      } else {
+        await updateOpenaiView(updates);
+      }
+
+      // Update original values to reflect saved state
+      setOriginalToolOutput(liveToolOutput);
+
+      toast.success("View saved successfully");
+    } catch (error) {
+      console.error("Failed to save view:", error);
+      toast.error("Failed to save view");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    selectedView,
+    hasLiveUnsavedChanges,
+    liveToolInput,
+    liveToolOutput,
+    originalToolOutput,
+    generateMcpUploadUrl,
+    generateOpenaiUploadUrl,
+    updateMcpView,
+    updateOpenaiView,
+  ]);
+
+  // Handler to go back to views list
+  const handleBackToList = useCallback(() => {
+    setSelectedViewId(null);
+    // Reset live editing state
+    setLiveToolInput(null);
+    setLiveToolOutput(null);
+    setOriginalToolOutput(null);
+    loadedToolOutputForViewId.current = null;
+  }, []);
 
   // Loading state
   if (isLoading) {
@@ -264,13 +351,6 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     );
   }
 
-  // Handler to go back to views list
-  const handleBackToList = useCallback(() => {
-    setSelectedViewId(null);
-    setDraftView(null);
-    setIsEditing(false);
-  }, []);
-
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <ResizablePanelGroup
@@ -288,6 +368,13 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
             <ViewEditorPanel
               view={selectedView}
               onBack={handleBackToList}
+              initialToolOutput={originalToolOutput}
+              isLoadingToolOutput={isLoadingToolOutput}
+              onDataChange={handleEditorDataChange}
+              isSaving={isSaving}
+              onSave={handleEditorSave}
+              hasUnsavedChanges={hasLiveUnsavedChanges}
+              onReset={handleEditorReset}
             />
           ) : (
             <ViewsListSidebar
@@ -331,6 +418,8 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               view={selectedView}
               serverName={serversById.get(selectedView.serverId)}
               serverConnectionStatus={getServerConnectionStatus(serversById.get(selectedView.serverId))}
+              toolInputOverride={liveToolInput}
+              toolOutputOverride={liveToolOutput}
             />
           )}
         </ResizablePanel>

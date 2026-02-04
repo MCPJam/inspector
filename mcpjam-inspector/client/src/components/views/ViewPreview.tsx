@@ -17,6 +17,10 @@ interface ViewPreviewProps {
   serverName?: string;
   /** Server connection status for determining online/offline state */
   serverConnectionStatus?: ConnectionStatus;
+  /** Override toolInput from parent for live editing */
+  toolInputOverride?: unknown;
+  /** Override toolOutput from parent for live editing */
+  toolOutputOverride?: unknown;
 }
 
 export function ViewPreview({
@@ -25,6 +29,8 @@ export function ViewPreview({
   onDisplayModeChange,
   serverName,
   serverConnectionStatus,
+  toolInputOverride,
+  toolOutputOverride,
 }: ViewPreviewProps) {
   const [outputData, setOutputData] = useState<unknown | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,11 +39,19 @@ export function ViewPreview({
   // Determine if server is offline
   const isServerOffline = serverConnectionStatus !== "connected";
 
-  // Check if we have cached widget HTML for offline rendering (MCP Apps only)
-  const mcpView = view.protocol === "mcp-apps" ? (view as McpAppView) : null;
+  // Use override values if provided, otherwise use loaded/view data
+  const effectiveToolInput = toolInputOverride !== undefined ? toolInputOverride : view.toolInput;
+  const effectiveToolOutput = toolOutputOverride !== undefined ? toolOutputOverride : outputData;
 
-  // Load output blob when view changes
+  // Load output blob when view changes (only if no override provided)
   useEffect(() => {
+    // Skip loading if override is provided
+    if (toolOutputOverride !== undefined) {
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
+
     async function loadOutput() {
       if (!view.toolOutputUrl) {
         setOutputData(null);
@@ -65,7 +79,7 @@ export function ViewPreview({
     }
 
     loadOutput();
-  }, [view.toolOutputUrl, view._id]);
+  }, [view.toolOutputUrl, view._id, toolOutputOverride]);
 
   // No-op callbacks for view mode (read-only)
   const handleSendFollowUp = useCallback(() => {
@@ -103,7 +117,7 @@ export function ViewPreview({
     );
   }
 
-  if (error || !outputData) {
+  if (error || !effectiveToolOutput) {
     return (
       <div className="flex items-center justify-center p-8 text-destructive">
         <AlertCircle className="h-5 w-5 mr-2" />
@@ -132,8 +146,8 @@ export function ViewPreview({
           toolCallId={previewToolCallId}
           toolName={view.toolName}
           toolState={view.toolState}
-          toolInput={view.toolInput as Record<string, unknown> | undefined}
-          toolOutput={outputData}
+          toolInput={effectiveToolInput as Record<string, unknown> | undefined}
+          toolOutput={effectiveToolOutput}
           toolErrorText={view.toolErrorText}
           resourceUri={mcpViewData.resourceUri}
           toolMetadata={view.toolMetadata as Record<string, unknown> | undefined}
@@ -161,8 +175,8 @@ export function ViewPreview({
         toolCallId={previewToolCallId}
         toolName={view.toolName}
         toolState={view.toolState}
-        toolInput={view.toolInput as Record<string, unknown> | null | undefined}
-        toolOutput={outputData}
+        toolInput={effectiveToolInput as Record<string, unknown> | null | undefined}
+        toolOutput={effectiveToolOutput}
         toolMetadata={view.toolMetadata as Record<string, unknown> | undefined}
         onSendFollowUp={handleSendFollowUp}
         onCallTool={handleCallTool}

@@ -1,75 +1,113 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Save, Loader2, RotateCcw, ArrowLeft } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/ui/json-editor";
-import {
-  type AnyView,
-  useViewMutations,
-} from "@/hooks/useViews";
+import { type AnyView } from "@/hooks/useViews";
+
+/** The editor model - only toolInput and toolOutput */
+interface EditorModel {
+  toolInput: unknown;
+  toolOutput: unknown;
+}
 
 interface ViewEditorPanelProps {
   view: AnyView;
   onBack: () => void;
+  /** Initial toolOutput loaded from blob (provided by parent) */
+  initialToolOutput?: unknown;
+  /** Whether toolOutput is still loading */
+  isLoadingToolOutput?: boolean;
+  /** Callback when editor data changes */
+  onDataChange?: (data: { toolInput: unknown; toolOutput: unknown }) => void;
+  /** Whether save is in progress */
+  isSaving?: boolean;
+  /** Save handler (provided by parent) */
+  onSave?: () => Promise<void>;
+  /** Whether there are unsaved changes */
+  hasUnsavedChanges?: boolean;
+  /** Reset handler (provided by parent) */
+  onReset?: () => void;
 }
 
-export function ViewEditorPanel({ view, onBack }: ViewEditorPanelProps) {
-  const [editedView, setEditedView] = useState<AnyView>(view);
-  const [isSaving, setIsSaving] = useState(false);
+export function ViewEditorPanel({
+  view,
+  onBack,
+  initialToolOutput,
+  isLoadingToolOutput,
+  onDataChange,
+  isSaving = false,
+  onSave,
+  hasUnsavedChanges = false,
+  onReset,
+}: ViewEditorPanelProps) {
+  // Editor model contains only toolInput and toolOutput
+  const [editorModel, setEditorModel] = useState<EditorModel>({
+    toolInput: view.toolInput,
+    toolOutput: initialToolOutput ?? null,
+  });
 
-  const { updateMcpView, updateOpenaiView } = useViewMutations();
-
-  // Reset edited view when the selected view changes
+  // Update editor model when view changes or initialToolOutput loads
   useEffect(() => {
-    setEditedView(view);
-  }, [view._id]);
+    setEditorModel({
+      toolInput: view.toolInput,
+      toolOutput: initialToolOutput ?? null,
+    });
+  }, [view._id, initialToolOutput]);
 
-  // Check if there are unsaved changes
-  const hasChanges = useMemo(() => {
-    return JSON.stringify(editedView) !== JSON.stringify(view);
-  }, [editedView, view]);
-
-  const handleChange = useCallback((newValue: unknown) => {
-    if (newValue && typeof newValue === "object") {
-      setEditedView(newValue as AnyView);
-    }
-  }, []);
+  const handleChange = useCallback(
+    (newValue: unknown) => {
+      if (newValue && typeof newValue === "object") {
+        const model = newValue as EditorModel;
+        setEditorModel(model);
+        // Notify parent of data change for live preview
+        onDataChange?.({
+          toolInput: model.toolInput,
+          toolOutput: model.toolOutput,
+        });
+      }
+    },
+    [onDataChange]
+  );
 
   const handleReset = useCallback(() => {
-    setEditedView(view);
-  }, [view]);
+    // Reset to original values
+    setEditorModel({
+      toolInput: view.toolInput,
+      toolOutput: initialToolOutput ?? null,
+    });
+    onReset?.();
+  }, [view.toolInput, initialToolOutput, onReset]);
 
   const handleSave = useCallback(async () => {
-    if (!hasChanges) return;
+    if (!hasUnsavedChanges || !onSave) return;
+    await onSave();
+  }, [hasUnsavedChanges, onSave]);
 
-    setIsSaving(true);
-    try {
-      // Extract editable fields from the edited view
-      const updates = {
-        viewId: editedView._id,
-        name: editedView.name,
-        description: editedView.description,
-        category: editedView.category,
-        tags: editedView.tags,
-        toolInput: editedView.toolInput,
-        prefersBorder: editedView.prefersBorder,
-        defaultContext: editedView.defaultContext,
-      };
-
-      if (editedView.protocol === "mcp-apps") {
-        await updateMcpView(updates);
-      } else {
-        await updateOpenaiView(updates);
-      }
-
-      toast.success("View saved successfully");
-    } catch (error) {
-      console.error("Failed to save view:", error);
-      toast.error("Failed to save view");
-    } finally {
-      setIsSaving(false);
-    }
-  }, [editedView, hasChanges, updateMcpView, updateOpenaiView]);
+  // Show loading state while toolOutput is loading
+  if (isLoadingToolOutput) {
+    return (
+      <div className="flex flex-col h-full overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onBack}
+              className="h-8 w-8 p-0"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm font-medium text-muted-foreground">
+              Editor
+            </span>
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -93,7 +131,7 @@ export function ViewEditorPanel({ view, onBack }: ViewEditorPanelProps) {
             variant="ghost"
             size="sm"
             onClick={handleReset}
-            disabled={!hasChanges || isSaving}
+            disabled={!hasUnsavedChanges || isSaving}
           >
             <RotateCcw className="h-4 w-4 mr-1" />
             Reset
@@ -101,7 +139,7 @@ export function ViewEditorPanel({ view, onBack }: ViewEditorPanelProps) {
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={!hasChanges || isSaving}
+            disabled={!hasUnsavedChanges || isSaving}
           >
             {isSaving ? (
               <Loader2 className="h-4 w-4 mr-1 animate-spin" />
@@ -116,7 +154,7 @@ export function ViewEditorPanel({ view, onBack }: ViewEditorPanelProps) {
       {/* JSON Editor */}
       <div className="flex-1 overflow-hidden">
         <JsonEditor
-          value={editedView}
+          value={editorModel}
           onChange={handleChange}
           mode="edit"
           showToolbar={true}

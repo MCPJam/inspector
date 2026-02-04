@@ -109,7 +109,7 @@ export function ViewsListSidebar({
                     <DropdownMenuTrigger asChild>
                       <button
                         onClick={(e) => e.stopPropagation()}
-                        className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                        className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100"
                         aria-label="View options"
                       >
                         <MoreVertical className="h-4 w-4" />

@@ -1,35 +1,16 @@
-import {
-  type AnyView,
-  type DisplayContext,
-} from "@/hooks/useViews";
+import { type AnyView } from "@/hooks/useViews";
 import { type ConnectionStatus } from "@/state/app-types";
 import { ViewPreview } from "./ViewPreview";
 
-export interface ViewDraft {
-  name: string;
-  description?: string;
-  category?: string;
-  tags?: string[];
-  toolInput: unknown;
-  toolOutput: unknown | null;
-  prefersBorder?: boolean;
-  defaultContext?: DisplayContext;
-}
-
 interface ViewDetailPanelProps {
   view: AnyView;
-  draft?: ViewDraft | null;
-  isEditing?: boolean;
-  hasUnsavedChanges?: boolean;
-  onStartEditing?: () => void;
-  onSaveChanges?: () => Promise<void>;
-  onDiscardChanges?: () => void;
-  onDraftChange?: (updates: Partial<ViewDraft>) => void;
   serverName?: string;
   /** Server connection status for determining online/offline state */
   serverConnectionStatus?: ConnectionStatus;
-  /** Callback when view is refreshed (re-run tool) */
-  onViewRefreshed?: () => void;
+  /** Override toolInput from parent for live editing */
+  toolInputOverride?: unknown;
+  /** Override toolOutput from parent for live editing */
+  toolOutputOverride?: unknown;
 }
 
 /**
@@ -40,6 +21,8 @@ export function ViewDetailPanel({
   view,
   serverName,
   serverConnectionStatus,
+  toolInputOverride,
+  toolOutputOverride,
 }: ViewDetailPanelProps) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -57,6 +40,8 @@ export function ViewDetailPanel({
           displayMode="inline"
           serverName={serverName}
           serverConnectionStatus={serverConnectionStatus}
+          toolInputOverride={toolInputOverride}
+          toolOutputOverride={toolOutputOverride}
         />
       </div>
     </div>
