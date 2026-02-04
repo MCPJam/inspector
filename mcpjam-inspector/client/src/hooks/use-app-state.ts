@@ -1429,6 +1429,13 @@ export function useAppState() {
     [logger, removeServerFromConvex],
   );
 
+  const handleReorderServers = useCallback(
+    (orderedNames: string[]) => {
+      dispatch({ type: "REORDER_SERVERS", orderedNames });
+    },
+    [dispatch],
+  );
+
   const handleReconnect = useCallback(
     async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
       logger.info("Reconnecting to server", { serverName, options });
@@ -2062,6 +2069,7 @@ export function useAppState() {
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
+    handleReorderServers,
     setSelectedServer,
     setSelectedMCPConfigs,
     toggleMultiSelectMode,

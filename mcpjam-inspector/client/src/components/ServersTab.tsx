@@ -1,4 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+  DragOverlay,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  rectSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import {
@@ -52,6 +69,68 @@ import { formatJsonConfig } from "@/lib/json-config-parser";
 import { Skeleton } from "./ui/skeleton";
 import { HOSTED_MODE } from "@/lib/config";
 
+function arrayMove<T>(array: T[], from: number, to: number): T[] {
+  const newArray = [...array];
+  const [removed] = newArray.splice(from, 1);
+  newArray.splice(to, 0, removed);
+  return newArray;
+}
+
+interface DraggableServerCardProps {
+  item: { name: string; server: ServerWithName };
+  onDisconnect: (serverName: string) => void;
+  onReconnect: (
+    serverName: string,
+    options?: { forceOAuthFlow?: boolean },
+  ) => void;
+  onEdit: (server: ServerWithName) => void;
+  onRemove: (serverName: string) => void;
+  sharedTunnelUrl: string | null;
+}
+
+function DraggableServerCard({
+  item,
+  onDisconnect,
+  onReconnect,
+  onEdit,
+  onRemove,
+  sharedTunnelUrl,
+}: DraggableServerCardProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.name });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={`cursor-grab active:cursor-grabbing ${isDragging ? "opacity-50" : ""}`}
+    >
+      <ServerConnectionCard
+        server={item.server}
+        onDisconnect={onDisconnect}
+        onReconnect={onReconnect}
+        onEdit={onEdit}
+        onRemove={onRemove}
+        sharedTunnelUrl={sharedTunnelUrl}
+      />
+    </div>
+  );
+}
+
 interface ServersTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
@@ -66,6 +145,7 @@ interface ServersTabProps {
     skipAutoConnect?: boolean,
   ) => void;
   onRemove: (serverName: string) => void;
+  onReorder: (orderedNames: string[]) => void;
   isLoadingWorkspaces?: boolean;
 }
 
@@ -76,6 +156,7 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
+  onReorder,
   isLoadingWorkspaces,
 }: ServersTabProps) {
   const posthog = usePostHog();
@@ -93,6 +174,7 @@ export function ServersTab({
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [isTunnelUrlCopied, setIsTunnelUrlCopied] = useState(false);
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   useEffect(() => {
     posthog.capture("servers_tab_viewed", {
@@ -121,6 +203,45 @@ export function ServersTab({
   }, [getAccessToken]);
 
   const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
+
+  // Convert servers object to sorted array for drag-and-drop reordering
+  const sortedServers = useMemo(() => {
+    return Object.entries(connectedOrConnectingServerConfigs)
+      .map(([name, server]) => ({ name, server }))
+      .sort((a, b) => {
+        // Sort by order field if present, otherwise by name
+        const orderA = a.server.order ?? Number.MAX_SAFE_INTEGER;
+        const orderB = b.server.order ?? Number.MAX_SAFE_INTEGER;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name);
+      });
+  }, [connectedOrConnectingServerConfigs]);
+
+  // dnd-kit sensors for drag-and-drop
+  // Require 8px movement before activating drag to allow button clicks inside cards
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor),
+  );
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = sortedServers.findIndex((s) => s.name === active.id);
+      const newIndex = sortedServers.findIndex((s) => s.name === over.id);
+      const newOrder = arrayMove(sortedServers, oldIndex, newIndex);
+      onReorder(newOrder.map((s) => s.name));
+    }
+    setActiveId(null);
+  };
 
   const handleEditServer = (server: ServerWithName) => {
     setServerToEdit(server);
@@ -428,7 +549,7 @@ export function ServersTab({
         defaultSize={isJsonRpcPanelVisible ? 65 : 100}
         minSize={70}
       >
-        <div className="space-y-6 p-8 h-full overflow-auto">
+        <div className="space-y-6 p-8 h-full overflow-y-auto overflow-x-hidden">
           {/* Header Section */}
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
@@ -444,22 +565,46 @@ export function ServersTab({
             </div>
           </div>
 
-          {/* Server Cards Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
-            {Object.entries(connectedOrConnectingServerConfigs).map(
-              ([name, server]) => (
-                <ServerConnectionCard
-                  key={name}
-                  server={server}
-                  onDisconnect={onDisconnect}
-                  onReconnect={onReconnect}
-                  onEdit={handleEditServer}
-                  onRemove={onRemove}
-                  sharedTunnelUrl={tunnelUrl}
-                />
-              ),
-            )}
-          </div>
+          {/* Server Cards Grid - with drag-to-reorder */}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={sortedServers.map((s) => s.name)}
+              strategy={rectSortingStrategy}
+            >
+              <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
+                {sortedServers.map((item) => (
+                  <DraggableServerCard
+                    key={item.name}
+                    item={item}
+                    onDisconnect={onDisconnect}
+                    onReconnect={onReconnect}
+                    onEdit={handleEditServer}
+                    onRemove={onRemove}
+                    sharedTunnelUrl={tunnelUrl}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+            <DragOverlay>
+              {activeId ? (
+                <div className="cursor-grabbing opacity-90">
+                  <ServerConnectionCard
+                    server={sortedServers.find((s) => s.name === activeId)!.server}
+                    onDisconnect={() => {}}
+                    onReconnect={() => {}}
+                    onEdit={() => {}}
+                    onRemove={() => {}}
+                    sharedTunnelUrl={tunnelUrl}
+                  />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
         </div>
       </ResizablePanel>
 
