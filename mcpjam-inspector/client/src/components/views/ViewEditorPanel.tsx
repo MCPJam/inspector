@@ -93,9 +93,6 @@ export function ViewEditorPanel({
     await onSave();
   }, [hasUnsavedChanges, onSave]);
 
-  // Debug: log connection status
-  console.log("[ViewEditorPanel] serverConnectionStatus:", serverConnectionStatus, "onRun:", !!onRun);
-
   // Show loading state while toolOutput is loading
   if (isLoadingToolOutput) {
     return (

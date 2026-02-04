@@ -322,18 +322,26 @@ function useWidgetFetch(
 
   useEffect(() => {
     let isCancelled = false;
+
+    // Determine if we can proceed:
+    // - Need output-available state
+    // - Don't re-fetch if we already have a URL
+    // - Need either outputTemplate (for live fetch) OR cachedWidgetHtmlUrl (for offline)
+    // - Need toolName for live fetch (but not required for cached)
+    const canUseCachedHtml = !!cachedWidgetHtmlUrl;
+    const canUseLiveFetch = !!outputTemplate && !!toolName;
+
     if (
       toolState !== "output-available" ||
       widgetUrl ||
-      !outputTemplate ||
-      !toolName
+      (!canUseCachedHtml && !canUseLiveFetch)
     ) {
-      if (!outputTemplate) {
+      if (!canUseCachedHtml && !outputTemplate) {
         setWidgetUrl(null);
         setStoreError(null);
         setIsStoringWidget(false);
       }
-      if (!toolName && outputTemplate) {
+      if (!toolName && outputTemplate && !canUseCachedHtml) {
         setWidgetUrl(null);
         setStoreError("Tool name is required");
         setIsStoringWidget(false);
@@ -345,23 +353,23 @@ function useWidgetFetch(
       setIsStoringWidget(true);
       setStoreError(null);
       try {
+        // Debug log for offline rendering
+        console.log("[ChatGPTAppRenderer] storeWidgetData called", {
+          cachedWidgetHtmlUrl,
+          outputTemplate,
+          toolName,
+          isOffline,
+        });
+
         // Try cached HTML first if available (for offline Views tab rendering)
+        // Pass the Convex storage URL directly - it's publicly accessible and
+        // the sandbox proxy can fetch it (unlike blob URLs which are origin-specific)
         if (cachedWidgetHtmlUrl) {
-          try {
-            const cachedResponse = await fetch(cachedWidgetHtmlUrl);
-            if (cachedResponse.ok) {
-              const html = await cachedResponse.text();
-              const blob = new Blob([html], { type: "text/html" });
-              if (!isCancelled) {
-                setWidgetUrl(URL.createObjectURL(blob));
-                setIsStoringWidget(false);
-              }
-              return;
-            }
-          } catch (cacheErr) {
-            console.warn("Failed to load cached widget HTML:", cacheErr);
-            // Fall through to live fetch if cache fails
+          if (!isCancelled) {
+            setWidgetUrl(cachedWidgetHtmlUrl);
+            setIsStoringWidget(false);
           }
+          return;
         }
 
         // If offline and no cached HTML, show error
@@ -1340,7 +1348,8 @@ export function ChatGPTAppRenderer({
           : invokedText || "Tool completed successfully."}
       </div>
     );
-  if (!outputTemplate) {
+  // Only show "unable to render" if we have no outputTemplate AND no cached HTML
+  if (!outputTemplate && !cachedWidgetHtmlUrl) {
     if (toolState !== "output-available")
       return (
         <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">

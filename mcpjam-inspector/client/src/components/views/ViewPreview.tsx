@@ -169,6 +169,12 @@ export function ViewPreview({
 
   if (view.protocol === "openai-apps") {
     const openaiView = view as OpenaiAppView;
+    console.log("[ViewPreview] OpenAI view data:", {
+      widgetHtmlUrl: openaiView.widgetHtmlUrl,
+      outputTemplate: openaiView.outputTemplate,
+      serverConnectionStatus,
+      isServerOffline,
+    });
     return (
       <ChatGPTAppRenderer
         serverId={serverName}

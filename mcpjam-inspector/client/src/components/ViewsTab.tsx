@@ -29,7 +29,9 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
   // View state
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
   const [deletingViewId, setDeletingViewId] = useState<string | null>(null);
+  const [duplicatingViewId, setDuplicatingViewId] = useState<string | null>(null);
 
   // Live editing state for toolInput/toolOutput
   const [liveToolInput, setLiveToolInput] = useState<unknown>(null);
@@ -75,6 +77,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       const viewStillExists = filteredViews.some((v) => v._id === selectedViewId);
       if (!viewStillExists) {
         setSelectedViewId(null);
+        setIsEditing(false);
         // Reset live editing state
         setLiveToolInput(null);
         setLiveToolOutput(null);
@@ -87,13 +90,13 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Get connection status for a specific server - use appState.servers which has runtime state
   const getServerConnectionStatus = useCallback((serverName: string | undefined) => {
     if (!serverName) return undefined;
-    const status = appState.servers[serverName]?.connectionStatus;
-    console.log("[ViewsTab] getServerConnectionStatus:", serverName, "->", status, "servers:", Object.keys(appState.servers || {}));
-    return status;
+    return appState.servers[serverName]?.connectionStatus;
   }, [appState.servers]);
 
   // Mutations
   const {
+    createMcpView,
+    createOpenaiView,
     updateMcpView,
     updateOpenaiView,
     removeMcpView,
@@ -189,6 +192,128 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       setDeletingViewId(null);
     }
   }, [selectedViewId, removeMcpView, removeOpenaiView]);
+
+  // Handle edit
+  const handleEditView = useCallback((view: AnyView) => {
+    setSelectedViewId(view._id);
+    setIsEditing(true);
+    // Reset loaded flag to trigger reload
+    loadedToolOutputForViewId.current = null;
+  }, []);
+
+  // Handle duplicate
+  const handleDuplicateView = useCallback(async (view: AnyView) => {
+    if (!workspaceId) return;
+
+    setDuplicatingViewId(view._id);
+    try {
+      // Fetch the toolOutput blob if it exists
+      let toolOutputBlobId: string | undefined;
+      if (view.toolOutputUrl) {
+        // Fetch the original toolOutput
+        const response = await fetch(view.toolOutputUrl);
+        if (response.ok) {
+          const data = await response.json();
+          // Upload as a new blob
+          const uploadUrl =
+            view.protocol === "mcp-apps"
+              ? await generateMcpUploadUrl()
+              : await generateOpenaiUploadUrl();
+
+          const uploadResponse = await fetch(uploadUrl, {
+            method: "POST",
+            body: JSON.stringify(data),
+            headers: { "Content-Type": "application/json" },
+          });
+
+          if (uploadResponse.ok) {
+            const { storageId } = await uploadResponse.json();
+            toolOutputBlobId = storageId;
+          }
+        }
+      }
+
+      // Copy widget HTML blob if it exists
+      let widgetHtmlBlobId: string | undefined;
+      if (view.widgetHtmlUrl) {
+        const response = await fetch(view.widgetHtmlUrl);
+        if (response.ok) {
+          const htmlContent = await response.text();
+          const uploadUrl =
+            view.protocol === "mcp-apps"
+              ? await generateMcpUploadUrl()
+              : await generateOpenaiUploadUrl();
+
+          const uploadResponse = await fetch(uploadUrl, {
+            method: "POST",
+            body: htmlContent,
+            headers: { "Content-Type": "text/html" },
+          });
+
+          if (uploadResponse.ok) {
+            const { storageId } = await uploadResponse.json();
+            widgetHtmlBlobId = storageId;
+          }
+        }
+      }
+
+      // Create the duplicate view
+      const baseName = view.name.replace(/ \(copy( \d+)?\)$/, "");
+      const existingCopies = filteredViews.filter((v) =>
+        v.name.startsWith(baseName) && v.name.match(/ \(copy( \d+)?\)$/)
+      );
+      const copyNumber = existingCopies.length + 1;
+      const newName = copyNumber === 1 ? `${baseName} (copy)` : `${baseName} (copy ${copyNumber})`;
+
+      if (view.protocol === "mcp-apps") {
+        await createMcpView({
+          workspaceId,
+          serverId: view.serverId,
+          name: newName,
+          description: view.description,
+          resourceUri: (view as any).resourceUri,
+          toolName: view.toolName,
+          toolState: view.toolState,
+          toolInput: view.toolInput,
+          toolOutputBlobId,
+          widgetHtmlBlobId,
+          toolErrorText: view.toolErrorText,
+          toolMetadata: view.toolMetadata,
+          prefersBorder: view.prefersBorder,
+          tags: view.tags,
+          category: view.category,
+          defaultContext: view.defaultContext,
+        });
+      } else {
+        await createOpenaiView({
+          workspaceId,
+          serverId: view.serverId,
+          name: newName,
+          description: view.description,
+          outputTemplate: (view as any).outputTemplate,
+          toolName: view.toolName,
+          toolState: view.toolState,
+          toolInput: view.toolInput,
+          toolOutputBlobId,
+          widgetHtmlBlobId,
+          toolErrorText: view.toolErrorText,
+          toolMetadata: view.toolMetadata,
+          prefersBorder: view.prefersBorder,
+          tags: view.tags,
+          category: view.category,
+          defaultContext: view.defaultContext,
+          serverInfo: (view as any).serverInfo,
+        });
+      }
+
+      toast.success(`View duplicated as "${newName}"`);
+    } catch (error) {
+      console.error("Failed to duplicate view:", error);
+      toast.error("Failed to duplicate view");
+    } finally {
+      setDuplicatingViewId(null);
+    }
+  }, [workspaceId, filteredViews, createMcpView, createOpenaiView, generateMcpUploadUrl, generateOpenaiUploadUrl]);
 
   // Handle live data changes from editor (for real-time preview)
   const handleEditorDataChange = useCallback(
@@ -334,6 +459,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Handler to go back to views list
   const handleBackToList = useCallback(() => {
     setSelectedViewId(null);
+    setIsEditing(false);
     // Reset live editing state
     setLiveToolInput(null);
     setLiveToolOutput(null);
@@ -410,7 +536,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
           maxSize={70}
           className="border-r bg-muted/30 flex flex-col"
         >
-          {selectedView ? (
+          {selectedView && isEditing ? (
             <ViewEditorPanel
               view={selectedView}
               onBack={handleBackToList}
@@ -430,8 +556,11 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               views={filteredViews}
               selectedViewId={selectedViewId}
               onSelectView={handleSelectView}
+              onEditView={handleEditView}
+              onDuplicateView={handleDuplicateView}
               onDeleteView={handleDeleteView}
               deletingViewId={deletingViewId}
+              duplicatingViewId={duplicatingViewId}
               isLoading={isViewsLoading}
             />
           )}

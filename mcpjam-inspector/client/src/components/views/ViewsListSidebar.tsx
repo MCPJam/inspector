@@ -1,13 +1,9 @@
 import {
-  MoreVertical,
   Trash2,
+  Pencil,
+  Copy,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { type AnyView } from "@/hooks/useViews";
@@ -16,8 +12,11 @@ interface ViewsListSidebarProps {
   views: AnyView[];
   selectedViewId: string | null;
   onSelectView: (viewId: string) => void;
+  onEditView: (view: AnyView) => void;
+  onDuplicateView: (view: AnyView) => void;
   onDeleteView: (view: AnyView) => void;
   deletingViewId: string | null;
+  duplicatingViewId: string | null;
   isLoading: boolean;
 }
 
@@ -25,8 +24,11 @@ export function ViewsListSidebar({
   views,
   selectedViewId,
   onSelectView,
+  onEditView,
+  onDuplicateView,
   onDeleteView,
   deletingViewId,
+  duplicatingViewId,
   isLoading,
 }: ViewsListSidebarProps) {
   const formatTimestamp = (timestamp: number) => {
@@ -69,6 +71,8 @@ export function ViewsListSidebar({
               const isSelected = selectedViewId === view._id;
               const isDeleting = deletingViewId === view._id;
 
+              const isDuplicating = duplicatingViewId === view._id;
+
               return (
                 <div
                   key={view._id}
@@ -105,30 +109,51 @@ export function ViewsListSidebar({
                     </div>
                   </div>
 
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        onClick={(e) => e.stopPropagation()}
-                        className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100"
-                        aria-label="View options"
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteView(view);
-                        }}
-                        disabled={isDeleting}
-                        variant="destructive"
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        {isDeleting ? "Deleting..." : "Delete"}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <div
+                    className={cn(
+                      "flex items-center gap-1 shrink-0 transition-opacity",
+                      isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    )}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditView(view);
+                      }}
+                      aria-label="Edit view"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDuplicateView(view);
+                      }}
+                      disabled={isDuplicating}
+                      aria-label="Duplicate view"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteView(view);
+                      }}
+                      disabled={isDeleting}
+                      aria-label="Delete view"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
               );
             })}
