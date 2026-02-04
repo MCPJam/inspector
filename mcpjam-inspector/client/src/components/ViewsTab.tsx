@@ -14,6 +14,8 @@ import { ViewsListSidebar } from "./views/ViewsListSidebar";
 import { ViewDetailPanel } from "./views/ViewDetailPanel";
 import { ViewEditorPanel } from "./views/ViewEditorPanel";
 import { executeToolApi } from "@/lib/apis/mcp-tools-api";
+import { useCurrentDisplayContext, areDisplayContextsEqual } from "@/lib/display-context-utils";
+import { useUIPlaygroundStore, type DeviceType } from "@/stores/ui-playground-store";
 
 interface ViewsTabProps {
   selectedServer?: string;
@@ -40,6 +42,16 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   const [isLoadingToolOutput, setIsLoadingToolOutput] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+
+  // Get current display context from UI Playground store
+  const currentDisplayContext = useCurrentDisplayContext();
+
+  // Store actions for resetting display context
+  const setDeviceType = useUIPlaygroundStore((s) => s.setDeviceType);
+  const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
+  const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
+  const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
+  const setSafeAreaInsets = useUIPlaygroundStore((s) => s.setSafeAreaInsets);
 
   // Track the view ID we loaded output for to avoid stale data
   const loadedToolOutputForViewId = useRef<string | null>(null);
@@ -327,10 +339,42 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Handle reset from editor
   const handleEditorReset = useCallback(() => {
     if (selectedView) {
+      // Reset tool data
       setLiveToolInput(selectedView.toolInput);
       setLiveToolOutput(originalToolOutput);
+
+      // Reset display context to saved values
+      const ctx = selectedView.defaultContext;
+      if (ctx) {
+        if (ctx.deviceType) {
+          setDeviceType(ctx.deviceType as DeviceType);
+        }
+        if (ctx.viewport) {
+          setCustomViewport(ctx.viewport);
+        }
+        if (ctx.locale) {
+          updateGlobal("locale", ctx.locale);
+        }
+        if (ctx.timeZone) {
+          updateGlobal("timeZone", ctx.timeZone);
+        }
+        if (ctx.capabilities) {
+          setCapabilities(ctx.capabilities);
+        }
+        if (ctx.safeAreaInsets) {
+          setSafeAreaInsets(ctx.safeAreaInsets);
+        }
+      }
     }
-  }, [selectedView, originalToolOutput]);
+  }, [
+    selectedView,
+    originalToolOutput,
+    setDeviceType,
+    setCustomViewport,
+    updateGlobal,
+    setCapabilities,
+    setSafeAreaInsets,
+  ]);
 
   // Check if there are unsaved changes in the live editor
   const hasLiveUnsavedChanges = useMemo(() => {
@@ -340,9 +384,13 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       JSON.stringify(liveToolInput) !== JSON.stringify(selectedView.toolInput);
     const toolOutputChanged =
       JSON.stringify(liveToolOutput) !== JSON.stringify(originalToolOutput);
+    const contextChanged = !areDisplayContextsEqual(
+      currentDisplayContext,
+      selectedView.defaultContext
+    );
 
-    return toolInputChanged || toolOutputChanged;
-  }, [selectedView, liveToolInput, liveToolOutput, originalToolOutput]);
+    return toolInputChanged || toolOutputChanged || contextChanged;
+  }, [selectedView, liveToolInput, liveToolOutput, originalToolOutput, currentDisplayContext]);
 
   // Handle save from editor (with blob upload if toolOutput changed)
   const handleEditorSave = useCallback(async () => {
@@ -352,6 +400,10 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     try {
       const toolOutputChanged =
         JSON.stringify(liveToolOutput) !== JSON.stringify(originalToolOutput);
+      const contextChanged = !areDisplayContextsEqual(
+        currentDisplayContext,
+        selectedView.defaultContext
+      );
 
       let toolOutputBlobId: string | undefined;
 
@@ -386,6 +438,10 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         updates.toolOutputBlobId = toolOutputBlobId;
       }
 
+      if (contextChanged) {
+        updates.defaultContext = currentDisplayContext;
+      }
+
       if (selectedView.protocol === "mcp-apps") {
         await updateMcpView(updates);
       } else {
@@ -408,6 +464,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     liveToolInput,
     liveToolOutput,
     originalToolOutput,
+    currentDisplayContext,
     generateMcpUploadUrl,
     generateOpenaiUploadUrl,
     updateMcpView,

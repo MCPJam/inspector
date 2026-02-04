@@ -9,6 +9,7 @@ import {
   type ServerInfo,
 } from "./useViews";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { useCurrentDisplayContext } from "@/lib/display-context-utils";
 
 // Data extracted from ToolPart for saving
 export interface ToolDataForSave {
@@ -68,6 +69,9 @@ export function useSaveView({
   existingViewNames = new Set(),
 }: UseSaveViewOptions) {
   const [isSaving, setIsSaving] = useState(false);
+
+  // Get current display context from shared utility
+  const currentDisplayContext = useCurrentDisplayContext();
 
   const {
     createMcpView,
@@ -283,9 +287,9 @@ export function useSaveView({
   const saveViewInstant = useCallback(
     async (toolData: ToolDataForSave) => {
       const uniqueName = generateUniqueViewName(toolData.toolName, existingViewNames);
-      return saveView(toolData, { name: uniqueName });
+      return saveView(toolData, { name: uniqueName, defaultContext: currentDisplayContext });
     },
-    [saveView, existingViewNames]
+    [saveView, existingViewNames, currentDisplayContext]
   );
 
   return {
