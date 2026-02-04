@@ -2,11 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "./ui/resizable";
+import { ThreePanelLayout } from "./ui/three-panel-layout";
 import {
   ListTodo,
   RefreshCw,
@@ -14,11 +10,11 @@ import {
   Square,
   Trash2,
   AlertCircle,
+  PanelLeftClose,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { MCPServerConfig } from "@mcpjam/sdk";
-import { LoggerView } from "./logger-view";
 import {
   Task,
   listTasks,
@@ -117,6 +113,9 @@ export function TasksTab({
   >(undefined);
   // Track the task ID for pending input_required requests to avoid race conditions
   const pendingInputRequestTaskIdRef = useRef<string | null>(null);
+
+  // Collapsible sidebar state
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
 
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
@@ -467,471 +466,409 @@ export function TasksTab({
     );
   }
 
-  return (
-    <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="vertical" className="flex-1">
-        {/* Top Section - Tasks and Details */}
-        <ResizablePanel defaultSize={70} minSize={30}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            {/* Left Panel - Tasks List */}
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
-              <div className="h-full flex flex-col border-r border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
-                  <div className="flex items-center gap-2">
-                    <ListTodo className="h-3.5 w-3.5 text-muted-foreground" />
-                    <h2 className="text-xs font-semibold text-foreground">
-                      Tasks
-                    </h2>
-                    <Badge variant="secondary" className="text-xs font-mono">
-                      {tasks.length}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-3 ml-4">
-                    {/* Polling controls - always show input, prefilled with effective interval */}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5">
-                          <Input
-                            type="number"
-                            min={500}
-                            step={500}
-                            defaultValue={pollInterval}
-                            key={`poll-${pollInterval}`}
-                            onBlur={(e) =>
-                              handlePollIntervalChange(e.target.value)
-                            }
-                            className="h-6 w-16 text-[10px] px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          />
-                          <span className="text-[10px] text-muted-foreground">
-                            ms
-                          </span>
-                          {usingServerInterval && (
-                            <Badge
-                              variant="secondary"
-                              className="text-[9px] px-1 py-0 h-4 ml-0.5"
-                            >
-                              server
-                            </Badge>
-                          )}
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-xs">
-                        {usingServerInterval ? (
-                          <span>
-                            Prefilled with server-suggested interval.
-                            <br />
-                            Edit to override.
-                          </span>
-                        ) : (
-                          <span>Poll interval (min 500ms)</span>
-                        )}
-                      </TooltipContent>
-                    </Tooltip>
+  const sidebarContent = (
+    <div className="h-full flex flex-col border-r border-border bg-background">
+      {/* App Builder-style Header */}
+      <div className="border-b border-border flex-shrink-0">
+        <div className="px-2 py-1.5 flex items-center gap-2">
+          {/* Tabs area - just Tasks for now */}
+          <div className="flex items-center gap-1.5">
+            <button className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary/10 text-primary cursor-default">
+              Tasks
+              <span className="ml-1 text-[10px] font-mono opacity-70">
+                {tasks.length}
+              </span>
+            </button>
+          </div>
 
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1.5">
-                          <Switch
-                            id="auto-refresh"
-                            checked={autoRefresh}
-                            onCheckedChange={(checked) => {
-                              setAutoRefresh(checked);
-                              // Track if user explicitly disabled to avoid re-enabling
-                              if (!checked) {
-                                userDisabledAutoRefresh.current = true;
-                              }
-                            }}
-                            className="scale-75"
-                          />
-                          <label
-                            htmlFor="auto-refresh"
-                            className="text-[10px] text-muted-foreground cursor-pointer"
-                          >
-                            Auto
-                          </label>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        Automatically poll for task status updates
-                      </TooltipContent>
-                    </Tooltip>
-
-                    {/* Divider */}
-                    <div className="h-4 w-px bg-border" />
-
-                    {/* Action buttons */}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          onClick={fetchTasks}
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          disabled={fetchingTasks}
-                        >
-                          <RefreshCw
-                            className={`h-3.5 w-3.5 ${fetchingTasks ? "animate-spin-pulse text-primary" : ""}`}
-                          />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        Refresh tasks
-                      </TooltipContent>
-                    </Tooltip>
-
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          onClick={handleClearTasks}
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          disabled={tasks.length === 0}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        Clear all tasks
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </div>
-
-                {/* Tasks List */}
-                <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="p-2">
-                      {fetchingTasks && tasks.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-center">
-                          <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                            <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-                          </div>
-                          <p className="text-xs text-muted-foreground font-semibold mb-1">
-                            Loading tasks...
-                          </p>
-                          <p className="text-xs text-muted-foreground/70">
-                            Fetching active tasks from server
-                          </p>
-                        </div>
-                      ) : tasks.length === 0 ? (
-                        <div className="text-center py-8">
-                          <p className="text-sm text-muted-foreground">
-                            No tasks available
-                          </p>
-                          <p className="text-xs text-muted-foreground/70 mt-1">
-                            Tasks will appear here when created by tool calls
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          {tasks.map((task) => {
-                            const trackedTask = getTrackedTaskById(task.taskId);
-                            const primitiveName =
-                              trackedTask?.primitiveName ||
-                              trackedTask?.toolName ||
-                              task.taskId.substring(0, 12);
-
-                            return (
-                              <div
-                                key={task.taskId}
-                                className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                  selectedTaskId === task.taskId
-                                    ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                    : "hover:shadow-sm"
-                                }`}
-                                onClick={() => setSelectedTaskId(task.taskId)}
-                              >
-                                <div className="flex items-start gap-3">
-                                  <div className="mt-0.5">
-                                    <TaskStatusIcon status={task.status} />
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    {/* Primary: Name */}
-                                    <span className="font-medium text-xs text-foreground truncate block mb-1">
-                                      {primitiveName}
-                                    </span>
-                                    {/* Secondary: Relative time */}
-                                    <span className="text-[10px] text-muted-foreground">
-                                      {formatRelativeTime(task.createdAt)}
-                                    </span>
-                                    {/* Inline progress for working tasks */}
-                                    {task.status === "working" && (
-                                      <TaskInlineProgress
-                                        serverId={serverName}
-                                        startedAt={task.createdAt}
-                                      />
-                                    )}
-                                  </div>
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </ScrollArea>
-                </div>
-              </div>
-            </ResizablePanel>
-
-            <ResizableHandle withHandle />
-
-            {/* Right Panel - Task Details */}
-            <ResizablePanel defaultSize={70} minSize={50}>
-              <div className="h-full flex flex-col bg-background">
-                {selectedTask ? (
-                  <>
-                    {/* Header */}
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2">
-                          <TaskStatusIcon status={selectedTask.status} />
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${STATUS_CONFIG[selectedTask.status].bgColor} ${STATUS_CONFIG[selectedTask.status].color} border-0`}
-                          >
-                            {selectedTask.status}
-                          </Badge>
-                        </div>
-                        <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                          {selectedTask.taskId}
-                        </code>
-                        {selectedTask.ttl !== null && (
-                          <Badge variant="outline" className="text-xs">
-                            TTL: {selectedTask.ttl}ms
-                          </Badge>
-                        )}
-                        {selectedTask.pollInterval && (
-                          <Badge variant="outline" className="text-xs">
-                            Poll interval: {selectedTask.pollInterval}ms
-                          </Badge>
-                        )}
-                      </div>
-                      {!isTerminalStatus(selectedTask.status) && (
-                        <Button
-                          onClick={handleCancelTask}
-                          disabled={cancelling}
-                          variant="destructive"
-                          size="sm"
-                        >
-                          {cancelling ? (
-                            <>
-                              <RefreshCw className="h-3 w-3 animate-spin" />
-                              Cancelling
-                            </>
-                          ) : (
-                            <>
-                              <Square className="h-3 w-3" />
-                              Cancel Task
-                            </>
-                          )}
-                        </Button>
-                      )}
-                    </div>
-
-                    {/* Task Details */}
-                    <div className="px-6 py-4 bg-muted/50 border-b border-border space-y-3">
-                      <div className="grid grid-cols-2 gap-4 text-xs">
-                        <div>
-                          <span className="text-muted-foreground">
-                            Created:
-                          </span>
-                          <span className="ml-2 font-mono text-foreground">
-                            {formatDate(selectedTask.createdAt)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">
-                            Updated:
-                          </span>
-                          <span className="ml-2 font-mono text-foreground">
-                            {formatDate(selectedTask.lastUpdatedAt)}
-                          </span>
-                        </div>
-                      </div>
-                      {selectedTask.statusMessage && (
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          {selectedTask.statusMessage}
-                        </p>
-                      )}
-                      {/* Progress bar for working tasks */}
-                      {selectedTask.status === "working" &&
-                        progress &&
-                        progress.total && (
-                          <div className="space-y-1.5 pt-2">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">
-                                Progress
-                              </span>
-                              <span className="font-mono text-foreground">
-                                {progress.progress} / {progress.total}
-                                <span className="ml-2 text-muted-foreground">
-                                  (
-                                  {Math.round(
-                                    (progress.progress / progress.total) * 100,
-                                  )}
-                                  %)
-                                </span>
-                              </span>
-                            </div>
-                            <Progress
-                              value={(progress.progress / progress.total) * 100}
-                              className="h-2"
-                            />
-                            {progress.message && (
-                              <p className="text-xs text-muted-foreground/80 italic">
-                                {progress.message}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                    </div>
-
-                    {/* Task Result in Details Panel */}
-                    <div className="flex-1 overflow-hidden flex flex-col">
-                      <div className="px-6 py-3 border-b border-border bg-background">
-                        <h3 className="text-xs font-semibold text-foreground">
-                          {selectedTask.status === "input_required"
-                            ? "Pending Request"
-                            : "Task Result"}
-                        </h3>
-                      </div>
-                      <ScrollArea className="flex-1">
-                        <div className="p-4">
-                          {error && (
-                            <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                              {error}
-                            </div>
-                          )}
-                          {loading ? (
-                            <div className="flex flex-col items-center justify-center py-8 text-center">
-                              <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
-                              <p className="text-xs text-muted-foreground">
-                                Fetching result...
-                              </p>
-                            </div>
-                          ) : selectedTask.status === "input_required" ? (
-                            pendingRequest ? (
-                              <JsonEditor
-                                value={pendingRequest as object}
-                                readOnly
-                                showToolbar={false}
-                                collapsible
-                                defaultExpandDepth={2}
-                                collapseStringsAfterLength={100}
-                              />
-                            ) : (
-                              <div className="flex flex-col items-center justify-center py-8 text-center">
-                                <AlertCircle className="h-4 w-4 text-warning mb-2" />
-                                <p className="text-xs text-muted-foreground">
-                                  Waiting for input from client
-                                </p>
-                              </div>
-                            )
-                          ) : selectedTask.status === "completed" ||
-                            selectedTask.status === "failed" ? (
-                            taskResult !== null ? (
-                              <JsonEditor
-                                value={taskResult as object}
-                                readOnly
-                                showToolbar={false}
-                                collapsible
-                                defaultExpandDepth={2}
-                                collapseStringsAfterLength={100}
-                              />
-                            ) : (
-                              <div className="flex flex-col items-center justify-center py-8 text-center">
-                                <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
-                                <p className="text-xs text-muted-foreground">
-                                  Loading result...
-                                </p>
-                              </div>
-                            )
-                          ) : (
-                            <div className="flex flex-col items-center justify-center py-8 text-center">
-                              <TaskStatusIcon status={selectedTask.status} />
-                              <p className="text-xs text-muted-foreground mt-2">
-                                {selectedTask.status === "working"
-                                  ? "Result available when task completes"
-                                  : "No result available"}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </>
-                ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                        <ListTodo className="h-5 w-5 text-muted-foreground" />
-                      </div>
-                      <p className="text-xs font-semibold text-foreground mb-1">
-                        Select a task
-                      </p>
-                      <p className="text-xs text-muted-foreground font-medium">
-                        Choose a task from the left to view its details
-                      </p>
-                    </div>
-                  </div>
+          {/* Polling controls */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  min={500}
+                  step={500}
+                  defaultValue={pollInterval}
+                  key={`poll-${pollInterval}`}
+                  onBlur={(e) => handlePollIntervalChange(e.target.value)}
+                  className="h-6 w-14 text-[10px] px-1.5 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <span className="text-[10px] text-muted-foreground">ms</span>
+                {usingServerInterval && (
+                  <Badge
+                    variant="secondary"
+                    className="text-[9px] px-1 py-0 h-4"
+                  >
+                    server
+                  </Badge>
                 )}
               </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              {usingServerInterval ? (
+                <span>
+                  Prefilled with server-suggested interval.
+                  <br />
+                  Edit to override.
+                </span>
+              ) : (
+                <span>Poll interval (min 500ms)</span>
+              )}
+            </TooltipContent>
+          </Tooltip>
 
-        <ResizableHandle withHandle />
-
-        {/* Bottom Panel - JSON-RPC Logger and Task Status */}
-        <ResizablePanel defaultSize={30} minSize={15} maxSize={70}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={50} minSize={20}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={50} minSize={20}>
-              <div className="h-full flex flex-col border-t border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between p-4 border-b border-border">
-                  <h2 className="text-xs font-semibold text-foreground">
-                    Task Status
-                  </h2>
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 overflow-hidden">
-                  <ScrollArea className="h-full">
-                    <div className="p-4">
-                      {!selectedTask ? (
-                        <div className="flex flex-col items-center justify-center py-8 text-center">
-                          <ListTodo className="h-4 w-4 text-muted-foreground mb-2" />
-                          <p className="text-xs text-muted-foreground">
-                            Select a task to view its status
-                          </p>
-                        </div>
-                      ) : (
-                        <JsonEditor
-                          value={selectedTask as object}
-                          readOnly
-                          showToolbar={false}
-                          collapsible
-                          defaultExpandDepth={2}
-                          collapseStringsAfterLength={100}
-                        />
-                      )}
-                    </div>
-                  </ScrollArea>
-                </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-1">
+                <Switch
+                  id="auto-refresh"
+                  checked={autoRefresh}
+                  onCheckedChange={(checked) => {
+                    setAutoRefresh(checked);
+                    if (!checked) {
+                      userDisabledAutoRefresh.current = true;
+                    }
+                  }}
+                  className="scale-75"
+                />
+                <label
+                  htmlFor="auto-refresh"
+                  className="text-[10px] text-muted-foreground cursor-pointer"
+                >
+                  Auto
+                </label>
               </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Automatically poll for task status updates
+            </TooltipContent>
+          </Tooltip>
 
+          {/* Secondary actions */}
+          <div className="flex items-center gap-0.5 text-muted-foreground/80">
+            <Button
+              onClick={fetchTasks}
+              variant="ghost"
+              size="sm"
+              disabled={fetchingTasks}
+              className="h-7 w-7 p-0"
+              title="Refresh tasks"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${fetchingTasks ? "animate-spin" : ""}`}
+              />
+            </Button>
+            <Button
+              onClick={handleClearTasks}
+              variant="ghost"
+              size="sm"
+              disabled={tasks.length === 0}
+              className="h-7 w-7 p-0"
+              title="Clear all tasks"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              onClick={() => setIsSidebarVisible(false)}
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              title="Hide sidebar"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Tasks List */}
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full">
+          <div className="p-2 pb-16">
+            {fetchingTasks && tasks.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                  <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
+                </div>
+                <p className="text-xs text-muted-foreground font-semibold mb-1">
+                  Loading tasks...
+                </p>
+                <p className="text-xs text-muted-foreground/70">
+                  Fetching active tasks from server
+                </p>
+              </div>
+            ) : tasks.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-sm text-muted-foreground">
+                  No tasks available
+                </p>
+                <p className="text-xs text-muted-foreground/70 mt-1">
+                  Tasks will appear here when created by tool calls
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {tasks.map((task) => {
+                  const trackedTask = getTrackedTaskById(task.taskId);
+                  const primitiveName =
+                    trackedTask?.primitiveName ||
+                    trackedTask?.toolName ||
+                    task.taskId.substring(0, 12);
+
+                  return (
+                    <div
+                      key={task.taskId}
+                      className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                        selectedTaskId === task.taskId
+                          ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                          : "hover:shadow-sm"
+                      }`}
+                      onClick={() => setSelectedTaskId(task.taskId)}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5">
+                          <TaskStatusIcon status={task.status} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          {/* Primary: Name */}
+                          <span className="font-medium text-xs text-foreground truncate block mb-1">
+                            {primitiveName}
+                          </span>
+                          {/* Secondary: Relative time */}
+                          <span className="text-[10px] text-muted-foreground">
+                            {formatRelativeTime(task.createdAt)}
+                          </span>
+                          {/* Inline progress for working tasks */}
+                          {task.status === "working" && (
+                            <TaskInlineProgress
+                              serverId={serverName}
+                              startedAt={task.createdAt}
+                            />
+                          )}
+                        </div>
+                        <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+    </div>
+  );
+
+  const centerContent = (
+    <div className="h-full flex flex-col bg-background">
+      {selectedTask ? (
+        <>
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-background">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <TaskStatusIcon status={selectedTask.status} />
+                <Badge
+                  variant="outline"
+                  className={`text-xs ${STATUS_CONFIG[selectedTask.status].bgColor} ${STATUS_CONFIG[selectedTask.status].color} border-0`}
+                >
+                  {selectedTask.status}
+                </Badge>
+              </div>
+              <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
+                {selectedTask.taskId}
+              </code>
+              {selectedTask.ttl !== null && (
+                <Badge variant="outline" className="text-xs">
+                  TTL: {selectedTask.ttl}ms
+                </Badge>
+              )}
+              {selectedTask.pollInterval && (
+                <Badge variant="outline" className="text-xs">
+                  Poll interval: {selectedTask.pollInterval}ms
+                </Badge>
+              )}
+            </div>
+            {!isTerminalStatus(selectedTask.status) && (
+              <Button
+                onClick={handleCancelTask}
+                disabled={cancelling}
+                variant="destructive"
+                size="sm"
+              >
+                {cancelling ? (
+                  <>
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    Cancelling
+                  </>
+                ) : (
+                  <>
+                    <Square className="h-3 w-3" />
+                    Cancel Task
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+
+          {/* Task Details */}
+          <div className="px-6 py-4 bg-muted/50 border-b border-border space-y-3">
+            <div className="grid grid-cols-2 gap-4 text-xs">
+              <div>
+                <span className="text-muted-foreground">Created:</span>
+                <span className="ml-2 font-mono text-foreground">
+                  {formatDate(selectedTask.createdAt)}
+                </span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Updated:</span>
+                <span className="ml-2 font-mono text-foreground">
+                  {formatDate(selectedTask.lastUpdatedAt)}
+                </span>
+              </div>
+            </div>
+            {selectedTask.statusMessage && (
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {selectedTask.statusMessage}
+              </p>
+            )}
+            {/* Progress bar for working tasks */}
+            {selectedTask.status === "working" &&
+              progress &&
+              progress.total && (
+                <div className="space-y-1.5 pt-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Progress</span>
+                    <span className="font-mono text-foreground">
+                      {progress.progress} / {progress.total}
+                      <span className="ml-2 text-muted-foreground">
+                        (
+                        {Math.round((progress.progress / progress.total) * 100)}
+                        %)
+                      </span>
+                    </span>
+                  </div>
+                  <Progress
+                    value={(progress.progress / progress.total) * 100}
+                    className="h-2"
+                  />
+                  {progress.message && (
+                    <p className="text-xs text-muted-foreground/80 italic">
+                      {progress.message}
+                    </p>
+                  )}
+                </div>
+              )}
+          </div>
+
+          {/* Task Result in Details Panel */}
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="px-6 py-3 border-b border-border bg-background">
+              <h3 className="text-xs font-semibold text-foreground">
+                {selectedTask.status === "input_required"
+                  ? "Pending Request"
+                  : "Task Result"}
+              </h3>
+            </div>
+            <div className="flex-1 min-h-0 p-4 flex flex-col">
+              {error && (
+                <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                  {error}
+                </div>
+              )}
+              {loading ? (
+                <div className="h-full flex flex-col items-center justify-center text-center">
+                  <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
+                  <p className="text-xs text-muted-foreground">
+                    Fetching result...
+                  </p>
+                </div>
+              ) : selectedTask.status === "input_required" ? (
+                pendingRequest ? (
+                  <div className="flex-1 min-h-0 border border-border rounded-md overflow-hidden">
+                    <JsonEditor
+                      value={pendingRequest as object}
+                      readOnly
+                      showToolbar={false}
+                      collapsible
+                      defaultExpandDepth={2}
+                      collapseStringsAfterLength={100}
+                      height="100%"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center">
+                    <AlertCircle className="h-4 w-4 text-warning mb-2" />
+                    <p className="text-xs text-muted-foreground">
+                      Waiting for input from client
+                    </p>
+                  </div>
+                )
+              ) : selectedTask.status === "completed" ||
+                selectedTask.status === "failed" ? (
+                taskResult !== null ? (
+                  <div className="flex-1 min-h-0 border border-border rounded-md overflow-hidden">
+                    <JsonEditor
+                      value={taskResult as object}
+                      readOnly
+                      showToolbar={false}
+                      collapsible
+                      defaultExpandDepth={2}
+                      collapseStringsAfterLength={100}
+                      height="100%"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center">
+                    <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
+                    <p className="text-xs text-muted-foreground">
+                      Loading result...
+                    </p>
+                  </div>
+                )
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-center">
+                  <TaskStatusIcon status={selectedTask.status} />
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {selectedTask.status === "working"
+                      ? "Result available when task completes"
+                      : "No result available"}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+              <ListTodo className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <p className="text-xs font-semibold text-foreground mb-1">
+              No selection
+            </p>
+            <p className="text-xs text-muted-foreground font-medium">
+              Choose a task from the left to view its details
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <>
+      <ThreePanelLayout
+        id="tasks"
+        sidebar={sidebarContent}
+        content={centerContent}
+        sidebarVisible={isSidebarVisible}
+        onSidebarVisibilityChange={setIsSidebarVisible}
+        sidebarTooltip="Show tasks sidebar"
+        serverName={serverName}
+      />
       {/* Elicitation Dialog for tasks in input_required status */}
       {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
       {/* elicitation requests with relatedTaskId in the metadata */}
@@ -940,6 +877,6 @@ export function TasksTab({
         onResponse={handleElicitationResponse}
         loading={elicitationResponding}
       />
-    </div>
+    </>
   );
 }

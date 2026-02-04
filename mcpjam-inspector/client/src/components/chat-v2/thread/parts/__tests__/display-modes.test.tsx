@@ -77,6 +77,13 @@ vi.mock("../../csp-debug-panel", () => ({
   CspDebugPanel: () => null,
 }));
 
+// Mock JsonEditor to avoid pulling in additional lucide icons
+vi.mock("@/components/ui/json-editor", () => ({
+  JsonEditor: ({ value }: any) => (
+    <pre data-testid="json-editor">{JSON.stringify(value)}</pre>
+  ),
+}));
+
 const basePart = {
   type: "tool-invocation" as const,
   toolName: "test-tool",

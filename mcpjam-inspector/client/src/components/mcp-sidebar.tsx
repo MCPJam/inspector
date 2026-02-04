@@ -7,15 +7,14 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
-  HandMetal,
   Workflow,
-  FileCode,
-  Activity,
-  Fish,
+  Anvil,
   Layers,
   ListTodo,
   SquareSlash,
+  MessageCircleQuestionIcon,
 } from "lucide-react";
+import posthog from "posthog-js";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -53,11 +52,6 @@ const navigationSections = [
         url: "#chat-v2",
         icon: MessageCircle,
       },
-      {
-        title: "Skills",
-        url: "#skills",
-        icon: SquareSlash,
-      },
     ],
   },
   {
@@ -66,7 +60,7 @@ const navigationSections = [
       {
         title: "App Builder",
         url: "#app-builder",
-        icon: Fish,
+        icon: Anvil,
       },
       {
         title: "Views",
@@ -78,6 +72,26 @@ const navigationSections = [
         url: "#evals",
         icon: FlaskConical,
       },
+    ],
+  },
+  {
+    id: "others",
+    items: [
+      {
+        title: "Skills",
+        url: "#skills",
+        icon: SquareSlash,
+      },
+      {
+        title: "OAuth Debugger",
+        url: "#oauth-flow",
+        icon: Workflow,
+      },
+      // {
+      //   title: "Tracing",
+      //   url: "#tracing",
+      //   icon: Activity,
+      // },
     ],
   },
   {
@@ -94,11 +108,6 @@ const navigationSections = [
         icon: BookOpen,
       },
       {
-        title: "Resource Templates",
-        url: "#resource-templates",
-        icon: FileCode,
-      },
-      {
         title: "Prompts",
         url: "#prompts",
         icon: MessageSquareCode,
@@ -111,27 +120,12 @@ const navigationSections = [
     ],
   },
   {
-    id: "others",
-    items: [
-      {
-        title: "OAuth Debugger",
-        url: "#oauth-flow",
-        icon: Workflow,
-      },
-      {
-        title: "Tracing",
-        url: "#tracing",
-        icon: Activity,
-      },
-    ],
-  },
-  {
     id: "settings",
     items: [
       {
         title: "Feedback",
         url: "https://github.com/MCPJam/inspector/issues/new",
-        icon: HandMetal,
+        icon: MessageCircleQuestionIcon,
       },
       {
         title: "Settings",
@@ -188,7 +182,7 @@ export function MCPSidebar({
       await Promise.all(
         connectedServerNames.map(async (serverName) => {
           try {
-            const result = await listTools(serverName);
+            const result = await listTools({ serverId: serverName });
             newToolsDataMap[serverName] = result;
           } catch {
             newToolsDataMap[serverName] = null;
@@ -222,6 +216,10 @@ export function MCPSidebar({
       if (section === "app-builder" && showAppBuilderBubble) {
         localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
         setHasVisitedAppBuilder(true);
+      }
+      // Track skills tab opened
+      if (section === "skills") {
+        posthog.capture("skills_tab_opened");
       }
       onNavigate(section);
     } else {

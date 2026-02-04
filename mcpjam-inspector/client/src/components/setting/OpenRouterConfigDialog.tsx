@@ -23,6 +23,8 @@ interface OpenRouterConfigDialogProps {
   onSelectedModelsChange: (models: string[]) => void;
   onSave: (apiKey: string, selectedModels: string[]) => void;
   onCancel: () => void;
+  onRemove?: () => void;
+  isConfigured?: boolean;
 }
 
 export function OpenRouterConfigDialog({
@@ -34,6 +36,8 @@ export function OpenRouterConfigDialog({
   onSelectedModelsChange,
   onSave,
   onCancel,
+  onRemove,
+  isConfigured,
 }: OpenRouterConfigDialogProps) {
   const { models, loading, error } = useOpenRouterModels();
   const [internalSelectedModels, setInternalSelectedModels] =
@@ -161,16 +165,29 @@ export function OpenRouterConfigDialog({
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSave}
-            disabled={internalSelectedModels.length === 0}
-          >
-            Save Configuration
-          </Button>
+        <DialogFooter className="flex-row justify-between sm:justify-between">
+          {isConfigured && onRemove ? (
+            <Button
+              variant="ghost"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={onRemove}
+            >
+              Remove
+            </Button>
+          ) : (
+            <div />
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSave}
+              disabled={internalSelectedModels.length === 0}
+            >
+              Save
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

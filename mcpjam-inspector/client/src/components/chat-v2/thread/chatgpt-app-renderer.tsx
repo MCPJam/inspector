@@ -322,11 +322,19 @@ function useWidgetFetch(
     setSkipCachedHtml(false);
   }, [cachedWidgetHtmlUrl]);
 
-  // Refs to capture current tool data without causing effect re-runs
-  const toolInputRef = useRef(resolvedToolInput);
-  const toolOutputRef = useRef(resolvedToolOutput);
-  toolInputRef.current = resolvedToolInput;
-  toolOutputRef.current = resolvedToolOutput;
+  // Use refs for values consumed inside the async storeWidgetData function.
+  // These change reference (but not value) on every re-render during text
+  // streaming because the AI SDK recreates message/part objects for each chunk.
+  // Without refs, the effect would cancel and re-run on every text chunk,
+  // racing with the in-flight store request.
+  const resolvedToolInputRef = useRef(resolvedToolInput);
+  resolvedToolInputRef.current = resolvedToolInput;
+  const resolvedToolOutputRef = useRef(resolvedToolOutput);
+  resolvedToolOutputRef.current = resolvedToolOutput;
+  const toolResponseMetadataRef = useRef(toolResponseMetadata);
+  toolResponseMetadataRef.current = toolResponseMetadata;
+  const onCspConfigReceivedRef = useRef(onCspConfigReceived);
+  onCspConfigReceivedRef.current = onCspConfigReceived;
 
   // Reset widget URL when CSP mode changes to trigger reload
   useEffect(() => {
@@ -455,9 +463,9 @@ function useWidgetFetch(
             body: JSON.stringify({
               serverId,
               uri: outputTemplate,
-              toolInput: toolInputRef.current,
-              toolOutput: toolOutputRef.current,
-              toolResponseMetadata,
+              toolInput: resolvedToolInputRef.current,
+              toolOutput: resolvedToolOutputRef.current,
+              toolResponseMetadata: toolResponseMetadataRef.current,
               toolId: resolvedToolCallId,
               toolName,
               theme: themeMode,
@@ -484,8 +492,8 @@ function useWidgetFetch(
           const data = await htmlResponse.json();
 
           // Update CSP info in widget debug store
-          if (data.csp && onCspConfigReceived) {
-            onCspConfigReceived({
+          if (data.csp && onCspConfigReceivedRef.current) {
+            onCspConfigReceivedRef.current({
               mode: data.csp.mode,
               connectDomains: data.csp.connectDomains,
               resourceDomains: data.csp.resourceDomains,
@@ -551,17 +559,15 @@ function useWidgetFetch(
     outputTemplate,
     toolName,
     serverId,
-    // Note: resolvedToolInput and resolvedToolOutput are accessed via refs
-    // to avoid re-running this effect on reference changes.
+    // Note: resolvedToolInput, resolvedToolOutput, toolResponseMetadata, and onCspConfigReceived
+    // are accessed via refs to avoid re-running this effect on reference changes.
     // The data change detection effect handles triggering re-fetches when data changes.
-    toolResponseMetadata,
     themeMode,
     locale,
     cspMode,
     deviceType,
     capabilities,
     safeAreaInsets,
-    onCspConfigReceived,
     isOffline,
     cachedWidgetHtmlUrl,
     onWidgetHtmlCaptured,

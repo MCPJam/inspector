@@ -11,6 +11,7 @@ import {
 import { uploadSkillFolder } from "@/lib/apis/mcp-skills-api";
 import type { SkillResult } from "./skill-types";
 import { isValidSkillName } from "../../../../../../shared/skill-types";
+import posthog from "posthog-js";
 
 interface SkillUploadDialogProps {
   open: boolean;
@@ -199,6 +200,10 @@ export function SkillUploadDialog({
 
     try {
       const skill = await uploadSkillFolder(files, skillInfo.name);
+      posthog.capture("skill_uploaded", {
+        skill_name: skillInfo.name,
+        file_count: files.length,
+      });
       onSkillCreated?.(skill);
       handleOpenChange(false);
     } catch (err) {

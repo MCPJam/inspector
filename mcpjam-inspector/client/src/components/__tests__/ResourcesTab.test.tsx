@@ -5,13 +5,12 @@ import type { MCPServerConfig } from "@mcpjam/sdk";
 
 // Mock APIs
 const mockListResources = vi.fn();
+const mockReadResource = vi.fn();
 
 vi.mock("@/lib/apis/mcp-resources-api", () => ({
   listResources: (...args: unknown[]) => mockListResources(...args),
+  readResource: (...args: unknown[]) => mockReadResource(...args),
 }));
-
-// Mock fetch for readResource
-global.fetch = vi.fn();
 
 // Mock ResizablePanelGroup to simplify rendering
 vi.mock("../ui/resizable", () => ({
@@ -47,10 +46,7 @@ describe("ResourcesTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockListResources.mockResolvedValue({ resources: [] });
-    (global.fetch as any).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ content: null }),
-    });
+    mockReadResource.mockResolvedValue({ content: null });
   });
 
   describe("empty state", () => {
@@ -168,11 +164,11 @@ describe("ResourcesTab", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText("Select a resource")).toBeInTheDocument();
+        expect(screen.getByText("No selection")).toBeInTheDocument();
       });
     });
 
-    it("selects resource when clicked", async () => {
+    it("selects resource and auto-reads when clicked", async () => {
       const serverConfig = createServerConfig();
 
       mockListResources.mockResolvedValue({
@@ -185,6 +181,12 @@ describe("ResourcesTab", () => {
         ],
       });
 
+      mockReadResource.mockResolvedValue({
+        content: {
+          contents: [{ type: "text", text: "File content" }],
+        },
+      });
+
       render(
         <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
       );
@@ -195,31 +197,28 @@ describe("ResourcesTab", () => {
 
       fireEvent.click(screen.getByText("test.txt"));
 
-      // After selection, the Read button should be visible
+      // Resource is auto-read when clicked
       await waitFor(() => {
-        expect(
-          screen.getByRole("button", { name: /read/i }),
-        ).toBeInTheDocument();
+        expect(mockReadResource).toHaveBeenCalledWith(
+          "test-server",
+          "file:///test.txt",
+        );
       });
     });
   });
 
   describe("reading resources", () => {
-    it("reads resource when Read button is clicked", async () => {
+    it("reads resource automatically when clicked", async () => {
       const serverConfig = createServerConfig();
 
       mockListResources.mockResolvedValue({
         resources: [{ name: "test.txt", uri: "file:///test.txt" }],
       });
 
-      (global.fetch as any).mockResolvedValue({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            content: {
-              contents: [{ type: "text", text: "Hello World" }],
-            },
-          }),
+      mockReadResource.mockResolvedValue({
+        content: {
+          contents: [{ type: "text", text: "Hello World" }],
+        },
       });
 
       render(
@@ -230,26 +229,13 @@ describe("ResourcesTab", () => {
         expect(screen.getByText("test.txt")).toBeInTheDocument();
       });
 
+      // Clicking the resource auto-reads it
       fireEvent.click(screen.getByText("test.txt"));
 
       await waitFor(() => {
-        expect(
-          screen.getByRole("button", { name: /read/i }),
-        ).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByRole("button", { name: /read/i }));
-
-      await waitFor(() => {
-        expect(global.fetch).toHaveBeenCalledWith(
-          "/api/mcp/resources/read",
-          expect.objectContaining({
-            method: "POST",
-            body: JSON.stringify({
-              serverId: "test-server",
-              uri: "file:///test.txt",
-            }),
-          }),
+        expect(mockReadResource).toHaveBeenCalledWith(
+          "test-server",
+          "file:///test.txt",
         );
       });
     });
@@ -261,10 +247,7 @@ describe("ResourcesTab", () => {
         resources: [{ name: "test.txt", uri: "file:///test.txt" }],
       });
 
-      (global.fetch as any).mockResolvedValue({
-        ok: false,
-        json: () => Promise.resolve({ error: "Resource not found" }),
-      });
+      mockReadResource.mockRejectedValue(new Error("Resource not found"));
 
       render(
         <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
@@ -274,15 +257,11 @@ describe("ResourcesTab", () => {
         expect(screen.getByText("test.txt")).toBeInTheDocument();
       });
 
+      // Clicking auto-reads, which will fail
       fireEvent.click(screen.getByText("test.txt"));
 
       await waitFor(() => {
-        const readButton = screen.getByRole("button", { name: /read/i });
-        fireEvent.click(readButton);
-      });
-
-      await waitFor(() => {
-        expect(screen.getByText("Resource not found")).toBeInTheDocument();
+        expect(screen.getByText(/Error reading resource/i)).toBeInTheDocument();
       });
     });
   });

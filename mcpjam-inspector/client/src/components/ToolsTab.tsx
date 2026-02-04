@@ -8,14 +8,8 @@ import type {
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { EmptyState } from "./ui/empty-state";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "./ui/resizable";
-import { ParametersPanel } from "./tools/ParametersPanel";
+import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { ResultsPanel } from "./tools/ResultsPanel";
-import { LoggerView } from "./logger-view";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
@@ -130,6 +124,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     description?: string;
   }>({ title: "" });
   const [executeAsTask, setExecuteAsTask] = useState(false);
+  const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
   const [taskCapabilities, setTaskCapabilities] =
     useState<TaskCapabilities | null>(null);
@@ -617,109 +612,91 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     );
   }
 
+  const sidebarContent = (
+    <ToolsSidebar
+      activeTab={activeTab}
+      onChangeTab={setActiveTab}
+      tools={tools}
+      toolNames={toolNames}
+      filteredToolNames={filteredToolNames}
+      selectedToolName={selectedTool}
+      fetchingTools={fetchingTools}
+      searchQuery={searchQuery}
+      onSearchQueryChange={setSearchQuery}
+      onRefresh={handleToolRefresh}
+      onSelectTool={setSelectedTool}
+      savedRequests={filteredSavedRequests}
+      highlightedRequestId={highlightedRequestId}
+      onLoadRequest={handleLoadRequest}
+      onRenameRequest={handleRenameRequest}
+      onDuplicateRequest={handleDuplicateRequest}
+      onDeleteRequest={handleDeleteRequest}
+      displayedToolCount={toolNames.length}
+      sentinelRef={sentinelRef}
+      loadingMore={fetchingTools}
+      cursor={cursor ?? ""}
+      formFields={formFields}
+      onFieldChange={updateFieldValue}
+      onToggleField={updateFieldIsSet}
+      loading={loadingExecuteTool}
+      waitingOnElicitation={!!activeElicitation}
+      onExecute={executeTool}
+      onSave={handleSaveCurrent}
+      executeAsTask={
+        serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden"
+          ? executeAsTask
+          : undefined
+      }
+      onExecuteAsTaskChange={
+        serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden"
+          ? setExecuteAsTask
+          : undefined
+      }
+      taskRequired={
+        serverSupportsTaskToolCalls && selectedToolTaskSupport === "required"
+      }
+      taskTtl={taskTtl}
+      onTaskTtlChange={setTaskTtl}
+      serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
+      onClose={() => setIsSidebarVisible(false)}
+    />
+  );
+
+  const centerContent = selectedTool ? (
+    <ResultsPanel
+      error={error}
+      result={result}
+      validationErrors={validationErrors}
+      unstructuredValidationResult={unstructuredValidationResult}
+      toolMeta={getToolMeta(lastToolName)}
+    />
+  ) : (
+    <div className="h-full flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+          <Wrench className="h-5 w-5 text-muted-foreground" />
+        </div>
+        <p className="text-xs font-semibold text-foreground mb-1">
+          No selection
+        </p>
+        <p className="text-xs text-muted-foreground font-medium">
+          Choose a tool from the left to configure parameters
+        </p>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="vertical" className="flex-1">
-        <ResizablePanel defaultSize={70} minSize={30}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ToolsSidebar
-              activeTab={activeTab}
-              onChangeTab={setActiveTab}
-              tools={tools}
-              toolNames={toolNames}
-              filteredToolNames={filteredToolNames}
-              selectedToolName={selectedTool}
-              fetchingTools={fetchingTools}
-              searchQuery={searchQuery}
-              onSearchQueryChange={setSearchQuery}
-              onRefresh={handleToolRefresh}
-              onSelectTool={setSelectedTool}
-              savedRequests={filteredSavedRequests}
-              highlightedRequestId={highlightedRequestId}
-              onLoadRequest={handleLoadRequest}
-              onRenameRequest={handleRenameRequest}
-              onDuplicateRequest={handleDuplicateRequest}
-              onDeleteRequest={handleDeleteRequest}
-              displayedToolCount={toolNames.length}
-              sentinelRef={sentinelRef}
-              loadingMore={fetchingTools}
-              cursor={cursor ?? ""}
-            />
-            <ResizableHandle withHandle />
-            {selectedTool ? (
-              <ParametersPanel
-                selectedTool={selectedTool}
-                toolDescription={tools[selectedTool]?.description}
-                formFields={formFields}
-                onToggleField={updateFieldIsSet}
-                loading={loadingExecuteTool}
-                waitingOnElicitation={!!activeElicitation}
-                onExecute={executeTool}
-                onSave={handleSaveCurrent}
-                onFieldChange={updateFieldValue}
-                // Only show task execution option if server supports tasks and tool allows it
-                // Per MCP spec: clients MUST NOT use task augmentation without server capability
-                executeAsTask={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport !== "forbidden"
-                    ? executeAsTask
-                    : undefined
-                }
-                onExecuteAsTaskChange={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport !== "forbidden"
-                    ? setExecuteAsTask
-                    : undefined
-                }
-                taskRequired={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport === "required"
-                }
-                // MCP Tasks spec 2025-11-25: TTL configuration
-                taskTtl={taskTtl}
-                onTaskTtlChange={setTaskTtl}
-                serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
-              />
-            ) : (
-              <ResizablePanel defaultSize={70} minSize={50}>
-                <div className="h-full flex items-center justify-center">
-                  <div className="text-center">
-                    <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                      <Wrench className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <p className="text-xs font-semibold text-foreground mb-1">
-                      Select a tool
-                    </p>
-                    <p className="text-xs text-muted-foreground font-medium">
-                      Choose a tool from the left to configure parameters
-                    </p>
-                  </div>
-                </div>
-              </ResizablePanel>
-            )}
-          </ResizablePanelGroup>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel defaultSize={40} minSize={15} maxSize={85}>
-          <ResizablePanelGroup direction="horizontal" className="h-full">
-            <ResizablePanel defaultSize={40} minSize={10}>
-              <LoggerView serverIds={serverName ? [serverName] : undefined} />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={60} minSize={30}>
-              <ResultsPanel
-                error={error}
-                result={result}
-                validationErrors={validationErrors}
-                unstructuredValidationResult={unstructuredValidationResult}
-                toolMeta={getToolMeta(lastToolName)}
-              />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+    <>
+      <ThreePanelLayout
+        id="tools"
+        sidebar={sidebarContent}
+        content={centerContent}
+        sidebarVisible={isSidebarVisible}
+        onSidebarVisibilityChange={setIsSidebarVisible}
+        sidebarTooltip="Show tools sidebar"
+        serverName={serverName}
+      />
 
       <ElicitationDialog
         elicitationRequest={dialogElicitation}
@@ -763,6 +740,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           }
         }}
       />
-    </div>
+    </>
   );
 }

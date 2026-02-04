@@ -356,7 +356,7 @@ export const OAuthFlowProgressSimple = ({
               onClick={proceedToNextStep}
               disabled={flowState.isInitiatingAuth}
             >
-              {flowState.isInitiatingAuth ? "Processing..." : "Continue"}
+              {"Continue"}
             </Button>
           </>
         )}

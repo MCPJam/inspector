@@ -97,11 +97,9 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
-      // First prompt is auto-selected, so both names appear (list + header)
-      // Check that both prompt names exist in the list
+      // Prompts should be displayed in the list view
       await waitFor(() => {
-        const greetingElements = screen.getAllByText("greeting");
-        expect(greetingElements.length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByText("greeting")).toBeInTheDocument();
         expect(screen.getByText("farewell")).toBeInTheDocument();
       });
     });
@@ -119,6 +117,7 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // Count should be displayed in the header in list view
       await waitFor(() => {
         expect(screen.getByText("3")).toBeInTheDocument();
       });
@@ -140,7 +139,7 @@ describe("PromptsTab", () => {
   });
 
   describe("prompt selection", () => {
-    it("auto-selects first prompt when fetched", async () => {
+    it("shows list view by default (no auto-selection)", async () => {
       const serverConfig = createServerConfig();
 
       mockListPrompts.mockResolvedValue([
@@ -152,15 +151,14 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
-      // First prompt should be auto-selected, showing Get Prompt button
+      // Both prompts should be visible in the list
       await waitFor(() => {
-        expect(
-          screen.getByRole("button", { name: /get prompt/i }),
-        ).toBeInTheDocument();
+        expect(screen.getByText("first-prompt")).toBeInTheDocument();
+        expect(screen.getByText("second-prompt")).toBeInTheDocument();
       });
     });
 
-    it("selects different prompt when clicked", async () => {
+    it("selects prompt when clicked", async () => {
       const serverConfig = createServerConfig();
 
       mockListPrompts.mockResolvedValue([
@@ -172,23 +170,23 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // Wait for list to load
       await waitFor(() => {
         expect(screen.getByText("prompt-b")).toBeInTheDocument();
       });
 
+      // Click prompt-b in the list
       fireEvent.click(screen.getByText("prompt-b"));
 
-      // After selection, the prompt name should appear in the header
+      // After selection, the SelectedToolHeader should show with "Click to change tool"
       await waitFor(() => {
-        // Get all elements with prompt-b text, one should be in header as code element
-        const codeElements = screen.getAllByText("prompt-b");
-        expect(codeElements.length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByTitle("Click to change tool")).toBeInTheDocument();
       });
     });
   });
 
   describe("getting prompts", () => {
-    it("gets prompt when Get Prompt button is clicked", async () => {
+    it("gets prompt when Run button is clicked", async () => {
       const serverConfig = createServerConfig();
 
       mockListPrompts.mockResolvedValue([{ name: "greeting", arguments: [] }]);
@@ -201,13 +199,21 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // Wait for list to load and click the prompt
+      await waitFor(() => {
+        expect(screen.getByText("greeting")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("greeting"));
+
+      // Wait for selection and click Run
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /get prompt/i }),
+          screen.getByRole("button", { name: /run/i }),
         ).toBeInTheDocument();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /get prompt/i }));
+      fireEvent.click(screen.getByRole("button", { name: /run/i }));
 
       await waitFor(() => {
         expect(mockGetPrompt).toHaveBeenCalledWith(
@@ -229,13 +235,21 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // Wait for list to load and click the prompt
+      await waitFor(() => {
+        expect(screen.getByText("failing-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("failing-prompt"));
+
+      // Wait for selection and click Run
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /get prompt/i }),
+          screen.getByRole("button", { name: /run/i }),
         ).toBeInTheDocument();
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /get prompt/i }));
+      fireEvent.click(screen.getByRole("button", { name: /run/i }));
 
       await waitFor(() => {
         expect(screen.getByText("Prompt not found")).toBeInTheDocument();
@@ -261,6 +275,14 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // Wait for list and click the prompt
+      await waitFor(() => {
+        expect(screen.getByText("greet")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("greet"));
+
+      // Now parameters should be visible
       await waitFor(() => {
         expect(screen.getByText("name")).toBeInTheDocument();
         expect(screen.getByText("language")).toBeInTheDocument();
@@ -275,6 +297,13 @@ describe("PromptsTab", () => {
       render(
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
+
+      // Wait for list and click the prompt
+      await waitFor(() => {
+        expect(screen.getByText("simple-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("simple-prompt"));
 
       await waitFor(() => {
         expect(screen.getByText("No parameters required")).toBeInTheDocument();
@@ -297,6 +326,13 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // Wait for list and click the prompt
+      await waitFor(() => {
+        expect(screen.getByText("greet")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("greet"));
+
       await waitFor(() => {
         expect(screen.getByPlaceholderText("Enter name")).toBeInTheDocument();
       });
@@ -306,7 +342,7 @@ describe("PromptsTab", () => {
         target: { value: "Alice" },
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /get prompt/i }));
+      fireEvent.click(screen.getByRole("button", { name: /run/i }));
 
       await waitFor(() => {
         expect(mockGetPrompt).toHaveBeenCalledWith("test-server", "greet", {
@@ -355,6 +391,7 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // Title should be visible in the list view
       await waitFor(() => {
         expect(screen.getByText("Code Review Assistant")).toBeInTheDocument();
       });
@@ -409,14 +446,21 @@ describe("PromptsTab", () => {
         <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
+      // Wait for list and click the prompt
+      await waitFor(() => {
+        expect(screen.getByText("test-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("test-prompt"));
+
       await waitFor(() => {
         expect(screen.getByText("required_field")).toBeInTheDocument();
         expect(screen.getByText("optional_field")).toBeInTheDocument();
       });
 
-      // Required field should have an indicator
-      const requiredIndicator = screen.getByTitle("Required field");
-      expect(requiredIndicator).toBeInTheDocument();
+      // Required field should have a "required" badge
+      const requiredBadge = screen.getByText("required");
+      expect(requiredBadge).toBeInTheDocument();
     });
   });
 });

@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
-import { ResourceTemplatesTab } from "./components/ResourceTemplatesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
@@ -284,7 +283,6 @@ export default function App() {
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
-    activeTab === "resource-templates" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
@@ -365,29 +363,30 @@ export default function App() {
             <ViewsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "resources" && (
-            <ResourcesTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
-          )}
-
-          {activeTab === "resource-templates" && (
-            <ResourceTemplatesTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <ResourcesTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
 
           {activeTab === "prompts" && (
-            <PromptsTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <PromptsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
 
           {activeTab === "skills" && <SkillsTab />}
 
-          <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
+          <div
+            className={
+              activeTab === "tasks" ? "h-full overflow-hidden" : "hidden"
+            }
+          >
             <TasksTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}

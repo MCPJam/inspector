@@ -1,11 +1,13 @@
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { useState } from "react";
-import { ProvidersTable } from "./setting/ProvidersTable";
 import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
 import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
 import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
 import { AzureOpenAIConfigDialog } from "./setting/AzureOpenAIConfigDialog";
+import { SettingsSection } from "./setting/SettingsSection";
+import { SettingsRow } from "./setting/SettingsRow";
+import { ProviderRow } from "./setting/ProviderRow";
 
 interface ProviderConfig {
   id: string;
@@ -58,13 +60,14 @@ export function SettingsTab() {
   const [azureUrl, setAzureUrl] = useState("");
   const [azureApiKey, setAzureApiKey] = useState("");
   const [editingBaseUrl, setEditingBaseUrl] = useState("");
+
   const providerConfigs: ProviderConfig[] = [
     {
       id: "openai",
       name: "OpenAI",
       logo: "/openai_logo.png",
       logoAlt: "OpenAI",
-      description: "GPT-4, GPT-4o, GPT-4o-mini, GPT-4.1, GPT-5, etc.",
+      description: "GPT-4, GPT-4o, GPT-4o-mini, GPT-4.1, GPT-5",
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.openai.com/api-keys",
       defaultBaseUrl: "https://api.openai.com/v1",
@@ -74,35 +77,35 @@ export function SettingsTab() {
       name: "Anthropic",
       logo: "/claude_logo.png",
       logoAlt: "Claude",
-      description: "Claude 3.5, Claude 3.7, Claude Opus 4, etc.",
+      description: "Claude 3.5, Claude 3.7, Claude Opus 4",
       placeholder: "sk-ant-...",
       getApiKeyUrl: "https://console.anthropic.com/",
       defaultBaseUrl: "https://api.anthropic.com/v1",
-    },
-    {
-      id: "deepseek",
-      name: "DeepSeek",
-      logo: "/deepseek_logo.svg",
-      logoAlt: "DeepSeek",
-      description: "DeepSeek Chat, DeepSeek Reasoner, etc.",
-      placeholder: "sk-...",
-      getApiKeyUrl: "https://platform.deepseek.com/api_keys",
     },
     {
       id: "google",
       name: "Google AI",
       logo: "/google_logo.png",
       logoAlt: "Google AI",
-      description: "Gemini 2.5, Gemini 2.5 Flash, Gemini 2.5 Flash Lite",
+      description: "Gemini 2.5, Gemini 2.5 Flash",
       placeholder: "AI...",
       getApiKeyUrl: "https://aistudio.google.com/app/apikey",
+    },
+    {
+      id: "deepseek",
+      name: "DeepSeek",
+      logo: "/deepseek_logo.svg",
+      logoAlt: "DeepSeek",
+      description: "DeepSeek Chat, DeepSeek Reasoner",
+      placeholder: "sk-...",
+      getApiKeyUrl: "https://platform.deepseek.com/api_keys",
     },
     {
       id: "mistral",
       name: "Mistral AI",
       logo: "/mistral_logo.png",
       logoAlt: "Mistral AI",
-      description: "Mistral Large, Mistral Small, Codestral, etc.",
+      description: "Mistral Large, Mistral Small, Codestral",
       placeholder: "...",
       getApiKeyUrl: "https://console.mistral.ai/api-keys/",
     },
@@ -111,9 +114,66 @@ export function SettingsTab() {
       name: "xAI",
       logo: "/xai_logo.png",
       logoAlt: "xAI Grok",
-      description: "Grok 3, Grok 3 Mini, Grok Code Fast 1, etc.",
+      description: "Grok 3, Grok 3 Mini",
       placeholder: "xai-...",
       getApiKeyUrl: "https://console.x.ai/",
+    },
+  ];
+
+  const selfHostedProviders: Array<{
+    id: string;
+    name: string;
+    logo: string;
+    isConfigured: boolean;
+    onEdit: () => void;
+    configType?: "api-key" | "base-url";
+  }> = [
+    {
+      id: "ollama",
+      name: "Ollama",
+      logo: "/ollama_logo.svg",
+      isConfigured: Boolean(getOllamaBaseUrl()),
+      configType: "base-url",
+      onEdit: () => {
+        setOllamaUrl(getOllamaBaseUrl());
+        setOllamaDialogOpen(true);
+      },
+    },
+    {
+      id: "litellm",
+      name: "LiteLLM",
+      logo: "/litellm_logo.png",
+      isConfigured: Boolean(getLiteLLMBaseUrl()),
+      configType: "base-url",
+      onEdit: () => {
+        setLitellmUrl(getLiteLLMBaseUrl());
+        setLitellmApiKey(tokens.litellm || "");
+        setLitellmModelAlias(getLiteLLMModelAlias());
+        setLitellmDialogOpen(true);
+      },
+    },
+    {
+      id: "openrouter",
+      name: "OpenRouter",
+      logo: "/openrouter_logo.png",
+      isConfigured: Boolean(tokens.openrouter),
+      onEdit: () => {
+        setOpenRouterApiKeyInput(tokens.openrouter || "");
+        setOpenRouterSelectedModelsInput(getOpenRouterSelectedModels());
+        setOpenRouterDialogOpen(true);
+      },
+    },
+    {
+      id: "azure",
+      name: "Azure OpenAI",
+      logo: "/azure_logo.png",
+      isConfigured: Boolean(getAzureBaseUrl()),
+      configType: "base-url",
+      onEdit: () => {
+        setAzureUrl(getAzureBaseUrl());
+        setAzureApiKey(tokens.azure || "");
+        setAzureDialogOpen(true);
+      },
     },
   ];
 
@@ -172,19 +232,6 @@ export function SettingsTab() {
     setEditingBaseUrl("");
   };
 
-  const handleDelete = (providerId: string) => {
-    clearToken(providerId as keyof typeof tokens);
-    // Also clear OpenRouter selected models if deleting OpenRouter provider
-    if (providerId === "openrouter") {
-      setOpenRouterSelectedModels([]);
-    }
-  };
-
-  const handleOllamaEdit = () => {
-    setOllamaUrl(getOllamaBaseUrl());
-    setOllamaDialogOpen(true);
-  };
-
   const handleOllamaSave = () => {
     setOllamaBaseUrl(ollamaUrl);
     setOllamaDialogOpen(false);
@@ -194,13 +241,6 @@ export function SettingsTab() {
   const handleOllamaCancel = () => {
     setOllamaDialogOpen(false);
     setOllamaUrl("");
-  };
-
-  const handleLiteLLMEdit = () => {
-    setLitellmUrl(getLiteLLMBaseUrl());
-    setLitellmApiKey(tokens.litellm || "");
-    setLitellmModelAlias(getLiteLLMModelAlias());
-    setLitellmDialogOpen(true);
   };
 
   const handleLiteLLMSave = () => {
@@ -220,33 +260,16 @@ export function SettingsTab() {
     setLitellmModelAlias("");
   };
 
-  const handleOpenRouterEdit = () => {
-    const currentModels = getOpenRouterSelectedModels();
-    setOpenRouterApiKeyInput(tokens.openrouter || "");
-    setOpenRouterSelectedModelsInput(currentModels);
-    setOpenRouterDialogOpen(true);
-  };
-
   const handleOpenRouterSave = (apiKey: string, selectedModels: string[]) => {
     setToken("openrouter", apiKey);
     setOpenRouterSelectedModels(selectedModels);
     setOpenRouterDialogOpen(false);
   };
 
-  const handleOpenRouterModelsChange = (models: string[]) => {
-    setOpenRouterSelectedModelsInput(models);
-  };
-
   const handleOpenRouterCancel = () => {
     setOpenRouterDialogOpen(false);
     setOpenRouterApiKeyInput("");
     setOpenRouterSelectedModelsInput([]);
-  };
-
-  const handleAzureEdit = () => {
-    setAzureUrl(getAzureBaseUrl());
-    setAzureApiKey(tokens.azure || "");
-    setAzureDialogOpen(true);
   };
 
   const handleAzureSave = () => {
@@ -265,39 +288,40 @@ export function SettingsTab() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="container mx-auto p-6 max-w-6xl space-y-8">
-        <div className="flex flex-col gap-3 mb-6">
-          <h1 className="text-2xl font-bold">Settings</h1>
-          <p className="text-sm text-muted-foreground">
-            MCPJam Version: v{__APP_VERSION__}
-          </p>
-        </div>
+      <div className="p-10 space-y-8 max-w-3xl">
+        <h1 className="text-2xl font-semibold">Settings</h1>
 
-        <div className="space-y-4">
-          <div>
-            <h3 className="text-lg font-semibold">LLM Provider API Keys</h3>
-          </div>
+        {/* About */}
+        <SettingsSection title="About">
+          <SettingsRow label="Version" value={`v${__APP_VERSION__}`} />
+        </SettingsSection>
 
-          <ProvidersTable
-            providerConfigs={providerConfigs}
-            hasToken={(providerId) =>
-              hasToken(providerId as keyof typeof tokens)
-            }
-            onEditProvider={handleEdit}
-            onDeleteProvider={handleDelete}
-            ollamaBaseUrl={getOllamaBaseUrl()}
-            onEditOllama={handleOllamaEdit}
-            litellmBaseUrl={getLiteLLMBaseUrl()}
-            litellmModelAlias={getLiteLLMModelAlias()}
-            onEditLiteLLM={handleLiteLLMEdit}
-            openRouterSelectedModels={getOpenRouterSelectedModels()}
-            onEditOpenRouter={handleOpenRouterEdit}
-            azureBaseUrl={getAzureBaseUrl()}
-            onEditAzure={handleAzureEdit}
-          />
-        </div>
+        {/* LLM Providers */}
+        <SettingsSection title="LLM Providers">
+          {providerConfigs.map((config) => (
+            <ProviderRow
+              key={config.id}
+              logo={config.logo}
+              logoAlt={config.logoAlt}
+              name={config.name}
+              isConfigured={hasToken(config.id as keyof typeof tokens)}
+              onEdit={() => handleEdit(config.id)}
+            />
+          ))}
+          {selfHostedProviders.map((provider) => (
+            <ProviderRow
+              key={provider.id}
+              logo={provider.logo}
+              logoAlt={provider.name}
+              name={provider.name}
+              isConfigured={provider.isConfigured}
+              onEdit={provider.onEdit}
+              configType={provider.configType}
+            />
+          ))}
+        </SettingsSection>
 
-        {/* API Key Configuration Dialog */}
+        {/* Dialogs */}
         <ProviderConfigDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
@@ -308,9 +332,22 @@ export function SettingsTab() {
           onBaseUrlChange={setEditingBaseUrl}
           onSave={handleSave}
           onCancel={handleCancel}
+          onRemove={() => {
+            if (selectedProvider) {
+              clearToken(selectedProvider.id as keyof typeof tokens);
+              setDialogOpen(false);
+              setSelectedProvider(null);
+              setEditingValue("");
+              setEditingBaseUrl("");
+            }
+          }}
+          isConfigured={
+            selectedProvider
+              ? hasToken(selectedProvider.id as keyof typeof tokens)
+              : false
+          }
         />
 
-        {/* Ollama URL Configuration Dialog */}
         <OllamaConfigDialog
           open={ollamaDialogOpen}
           onOpenChange={setOllamaDialogOpen}
@@ -320,7 +357,6 @@ export function SettingsTab() {
           onCancel={handleOllamaCancel}
         />
 
-        {/* LiteLLM Configuration Dialog */}
         <LiteLLMConfigDialog
           open={litellmDialogOpen}
           onOpenChange={setLitellmDialogOpen}
@@ -334,7 +370,6 @@ export function SettingsTab() {
           onCancel={handleLiteLLMCancel}
         />
 
-        {/* Azure Configuration Dialog */}
         <AzureOpenAIConfigDialog
           open={azureDialogOpen}
           onOpenChange={setAzureDialogOpen}
@@ -346,16 +381,21 @@ export function SettingsTab() {
           onCancel={handleAzureCancel}
         />
 
-        {/* OpenRouter Configuration Dialog */}
         <OpenRouterConfigDialog
           open={openRouterDialogOpen}
           onOpenChange={setOpenRouterDialogOpen}
           apiKey={openRouterApiKeyInput}
           selectedModels={openRouterSelectedModelsInput}
           onApiKeyChange={setOpenRouterApiKeyInput}
-          onSelectedModelsChange={handleOpenRouterModelsChange}
+          onSelectedModelsChange={setOpenRouterSelectedModelsInput}
           onSave={handleOpenRouterSave}
           onCancel={handleOpenRouterCancel}
+          onRemove={() => {
+            clearToken("openrouter");
+            setOpenRouterSelectedModels([]);
+            setOpenRouterDialogOpen(false);
+          }}
+          isConfigured={Boolean(tokens.openrouter)}
         />
       </div>
     </div>

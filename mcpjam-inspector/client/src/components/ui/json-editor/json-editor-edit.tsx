@@ -241,11 +241,11 @@ export function JsonEditorEdit({
       {/* Line numbers */}
       <div
         ref={lineNumbersRef}
-        className="flex-shrink-0 overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
+        className="flex-shrink-0 h-full overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
         style={{ width: "3rem" }}
       >
         <div
-          className="py-3 pr-2 text-xs text-muted-foreground leading-5"
+          className="py-3 pr-2 text-xs text-muted-foreground leading-5 min-h-full"
           style={fontStyle}
         >
           {lineNumbers.map((num) => (
@@ -266,13 +266,13 @@ export function JsonEditorEdit({
       </div>
 
       {/* Editor area with overlay */}
-      <div className="relative flex-1 min-w-0 overflow-auto">
+      <div className="relative flex-1 min-w-0 h-full overflow-auto">
         {readOnly ? (
           /* Read-only mode: Use JsonHighlighter with per-value copy */
           <pre
             ref={highlightRef}
             className={cn(
-              "p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto m-0",
+              "p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto m-0 min-h-full",
               "select-text cursor-text",
             )}
             style={fontStyle}
