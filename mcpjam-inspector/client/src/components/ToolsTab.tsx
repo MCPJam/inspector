@@ -8,16 +8,9 @@ import type {
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { EmptyState } from "./ui/empty-state";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "./ui/resizable";
+import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { ResultsPanel } from "./tools/ResultsPanel";
 import { ToolsSidebar } from "./tools/ToolsSidebar";
-import { LoggerView } from "./logger-view";
-import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
-import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import SaveRequestDialog from "./tools/SaveRequestDialog";
 import {
   applyParametersToFields as applyParamsToFields,
@@ -100,8 +93,6 @@ interface ToolsTabProps {
 export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const posthog = usePostHog();
-  const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
-    useJsonRpcPanelVisibility();
   const [tools, setTools] = useState<ToolMap>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -621,139 +612,91 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     );
   }
 
-  return (
-    <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {isSidebarVisible ? (
-          <>
-            <ResizablePanel
-              id="tools-left"
-              order={1}
-              defaultSize={35}
-              minSize={1}
-              maxSize={55}
-              collapsible={true}
-              collapsedSize={0}
-              onCollapse={() => setIsSidebarVisible(false)}
-            >
-              <ToolsSidebar
-                activeTab={activeTab}
-                onChangeTab={setActiveTab}
-                tools={tools}
-                toolNames={toolNames}
-                filteredToolNames={filteredToolNames}
-                selectedToolName={selectedTool}
-                fetchingTools={fetchingTools}
-                searchQuery={searchQuery}
-                onSearchQueryChange={setSearchQuery}
-                onRefresh={handleToolRefresh}
-                onSelectTool={setSelectedTool}
-                savedRequests={filteredSavedRequests}
-                highlightedRequestId={highlightedRequestId}
-                onLoadRequest={handleLoadRequest}
-                onRenameRequest={handleRenameRequest}
-                onDuplicateRequest={handleDuplicateRequest}
-                onDeleteRequest={handleDeleteRequest}
-                displayedToolCount={toolNames.length}
-                sentinelRef={sentinelRef}
-                loadingMore={fetchingTools}
-                cursor={cursor ?? ""}
-                // Parameters form props for full-page replacement
-                formFields={formFields}
-                onFieldChange={updateFieldValue}
-                onToggleField={updateFieldIsSet}
-                loading={loadingExecuteTool}
-                waitingOnElicitation={!!activeElicitation}
-                onExecute={executeTool}
-                onSave={handleSaveCurrent}
-                executeAsTask={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport !== "forbidden"
-                    ? executeAsTask
-                    : undefined
-                }
-                onExecuteAsTaskChange={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport !== "forbidden"
-                    ? setExecuteAsTask
-                    : undefined
-                }
-                taskRequired={
-                  serverSupportsTaskToolCalls &&
-                  selectedToolTaskSupport === "required"
-                }
-                taskTtl={taskTtl}
-                onTaskTtlChange={setTaskTtl}
-                serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
-                onClose={() => setIsSidebarVisible(false)}
-              />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        ) : (
-          <CollapsedPanelStrip
-            side="left"
-            onOpen={() => setIsSidebarVisible(true)}
-            tooltipText="Show tools sidebar"
-          />
-        )}
-        <ResizablePanel
-          id="tools-center"
-          order={2}
-          defaultSize={isJsonRpcPanelVisible ? 40 : 65}
-          minSize={30}
-        >
-          {selectedTool ? (
-            <ResultsPanel
-              error={error}
-              result={result}
-              validationErrors={validationErrors}
-              unstructuredValidationResult={unstructuredValidationResult}
-              toolMeta={getToolMeta(lastToolName)}
-            />
-          ) : (
-            <div className="h-full flex items-center justify-center">
-              <div className="text-center">
-                <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                  <Wrench className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <p className="text-xs font-semibold text-foreground mb-1">
-                  No selection
-                </p>
-                <p className="text-xs text-muted-foreground font-medium">
-                  Choose a tool from the left to configure parameters
-                </p>
-              </div>
-            </div>
-          )}
-        </ResizablePanel>
+  const sidebarContent = (
+    <ToolsSidebar
+      activeTab={activeTab}
+      onChangeTab={setActiveTab}
+      tools={tools}
+      toolNames={toolNames}
+      filteredToolNames={filteredToolNames}
+      selectedToolName={selectedTool}
+      fetchingTools={fetchingTools}
+      searchQuery={searchQuery}
+      onSearchQueryChange={setSearchQuery}
+      onRefresh={handleToolRefresh}
+      onSelectTool={setSelectedTool}
+      savedRequests={filteredSavedRequests}
+      highlightedRequestId={highlightedRequestId}
+      onLoadRequest={handleLoadRequest}
+      onRenameRequest={handleRenameRequest}
+      onDuplicateRequest={handleDuplicateRequest}
+      onDeleteRequest={handleDeleteRequest}
+      displayedToolCount={toolNames.length}
+      sentinelRef={sentinelRef}
+      loadingMore={fetchingTools}
+      cursor={cursor ?? ""}
+      formFields={formFields}
+      onFieldChange={updateFieldValue}
+      onToggleField={updateFieldIsSet}
+      loading={loadingExecuteTool}
+      waitingOnElicitation={!!activeElicitation}
+      onExecute={executeTool}
+      onSave={handleSaveCurrent}
+      executeAsTask={
+        serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden"
+          ? executeAsTask
+          : undefined
+      }
+      onExecuteAsTaskChange={
+        serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden"
+          ? setExecuteAsTask
+          : undefined
+      }
+      taskRequired={
+        serverSupportsTaskToolCalls && selectedToolTaskSupport === "required"
+      }
+      taskTtl={taskTtl}
+      onTaskTtlChange={setTaskTtl}
+      serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
+      onClose={() => setIsSidebarVisible(false)}
+    />
+  );
 
-        {isJsonRpcPanelVisible ? (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              id="tools-right"
-              order={3}
-              defaultSize={30}
-              minSize={2}
-              maxSize={50}
-              collapsible={true}
-              collapsedSize={0}
-              onCollapse={toggleJsonRpcPanel}
-              className="min-h-0 overflow-hidden"
-            >
-              <div className="h-full min-h-0 overflow-hidden">
-                <LoggerView
-                  serverIds={serverName ? [serverName] : undefined}
-                  onClose={toggleJsonRpcPanel}
-                />
-              </div>
-            </ResizablePanel>
-          </>
-        ) : (
-          <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
-        )}
-      </ResizablePanelGroup>
+  const centerContent = selectedTool ? (
+    <ResultsPanel
+      error={error}
+      result={result}
+      validationErrors={validationErrors}
+      unstructuredValidationResult={unstructuredValidationResult}
+      toolMeta={getToolMeta(lastToolName)}
+    />
+  ) : (
+    <div className="h-full flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+          <Wrench className="h-5 w-5 text-muted-foreground" />
+        </div>
+        <p className="text-xs font-semibold text-foreground mb-1">
+          No selection
+        </p>
+        <p className="text-xs text-muted-foreground font-medium">
+          Choose a tool from the left to configure parameters
+        </p>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <ThreePanelLayout
+        id="tools"
+        sidebar={sidebarContent}
+        content={centerContent}
+        sidebarVisible={isSidebarVisible}
+        onSidebarVisibilityChange={setIsSidebarVisible}
+        sidebarTooltip="Show tools sidebar"
+        serverName={serverName}
+      />
 
       <ElicitationDialog
         elicitationRequest={dialogElicitation}
@@ -797,6 +740,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           }
         }}
       />
-    </div>
+    </>
   );
 }

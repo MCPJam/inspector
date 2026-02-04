@@ -3,11 +3,6 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
 import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "./ui/resizable";
-import {
   FolderOpen,
   File,
   RefreshCw,
@@ -17,6 +12,7 @@ import {
   FileCode,
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
+import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
   MCPServerConfig,
@@ -24,9 +20,6 @@ import {
   type MCPResource,
   type MCPResourceTemplate,
 } from "@mcpjam/sdk";
-import { LoggerView } from "./logger-view";
-import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
-import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import {
   listResources,
   readResource as readResourceApi,
@@ -92,8 +85,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
   // Panel state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
-  const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
-    useJsonRpcPanelVisibility();
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   // Derived data
@@ -334,429 +325,373 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     );
   }
 
-  return (
-    <div className="h-full flex flex-col">
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Left Panel - Resources/Templates Sidebar */}
-        {isSidebarVisible ? (
-          <>
-            <ResizablePanel
-              id="resources-left"
-              order={1}
-              defaultSize={35}
-              minSize={1}
-              maxSize={55}
-              collapsible={true}
-              collapsedSize={0}
-              onCollapse={() => setIsSidebarVisible(false)}
+  const sidebarContent = (
+    <div className="h-full flex flex-col border-r border-border bg-background">
+      {/* App Builder-style Header */}
+      <div className="border-b border-border flex-shrink-0">
+        <div className="px-2 py-1.5 flex items-center gap-2">
+          {/* Tabs */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => {
+                setActiveTab("resources");
+                setSelectedTemplate("");
+                setResourceContent(null);
+              }}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "resources"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
             >
-              <div className="h-full flex flex-col border-r border-border bg-background">
-                {/* App Builder-style Header */}
-                <div className="border-b border-border flex-shrink-0">
-                  <div className="px-2 py-1.5 flex items-center gap-2">
-                    {/* Tabs */}
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => {
-                          setActiveTab("resources");
-                          setSelectedTemplate("");
-                          setResourceContent(null);
-                        }}
-                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                          activeTab === "resources"
-                            ? "bg-primary/10 text-primary"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        Resources
-                        <span className="ml-1 text-[10px] font-mono opacity-70">
-                          {resources.length}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setActiveTab("templates");
-                          setSelectedResource("");
-                          setResourceContent(null);
-                        }}
-                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                          activeTab === "templates"
-                            ? "bg-primary/10 text-primary"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        Templates
-                        {templates.length > 0 && (
-                          <span className="ml-1 text-[10px] font-mono opacity-70">
-                            {templates.length}
-                          </span>
-                        )}
-                      </button>
-                    </div>
+              Resources
+              <span className="ml-1 text-[10px] font-mono opacity-70">
+                {resources.length}
+              </span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab("templates");
+                setSelectedResource("");
+                setResourceContent(null);
+              }}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "templates"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Templates
+              {templates.length > 0 && (
+                <span className="ml-1 text-[10px] font-mono opacity-70">
+                  {templates.length}
+                </span>
+              )}
+            </button>
+          </div>
 
-                    {/* Secondary actions */}
-                    <div className="flex items-center gap-0.5 text-muted-foreground/80">
-                      <Button
-                        onClick={handleRefresh}
-                        variant="ghost"
-                        size="sm"
-                        disabled={isFetching}
-                        className="h-7 w-7 p-0"
-                        title="Refresh"
-                      >
-                        <RefreshCw
-                          className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`}
-                        />
-                      </Button>
-                      <Button
-                        onClick={() => setIsSidebarVisible(false)}
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0"
-                        title="Hide sidebar"
-                      >
-                        <PanelLeftClose className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+          {/* Secondary actions */}
+          <div className="flex items-center gap-0.5 text-muted-foreground/80">
+            <Button
+              onClick={handleRefresh}
+              variant="ghost"
+              size="sm"
+              disabled={isFetching}
+              className="h-7 w-7 p-0"
+              title="Refresh"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`}
+              />
+            </Button>
+            <Button
+              onClick={() => setIsSidebarVisible(false)}
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              title="Hide sidebar"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </Button>
+          </div>
 
-                    {/* Read button - only for templates since resources auto-read */}
-                    {activeTab === "templates" && (
-                      <Button
-                        onClick={handleRead}
-                        disabled={loading || !canRead}
-                        size="sm"
-                        className="h-8 px-3 text-xs ml-auto"
-                      >
-                        {loading ? (
-                          <RefreshCw className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Eye className="h-3 w-3" />
-                        )}
-                        <span className="ml-1">
-                          {loading ? "Reading" : "Read"}
-                        </span>
-                      </Button>
-                    )}
-                  </div>
-                </div>
+          {/* Read button - only for templates since resources auto-read */}
+          {activeTab === "templates" && (
+            <Button
+              onClick={handleRead}
+              disabled={loading || !canRead}
+              size="sm"
+              className="h-8 px-3 text-xs ml-auto"
+            >
+              {loading ? (
+                <RefreshCw className="h-3 w-3 animate-spin" />
+              ) : (
+                <Eye className="h-3 w-3" />
+              )}
+              <span className="ml-1">{loading ? "Reading" : "Read"}</span>
+            </Button>
+          )}
+        </div>
+      </div>
 
-                {/* Content area - show detail view when item is selected */}
-                {activeTab === "resources" &&
-                selectedResource &&
-                selectedResourceData ? (
-                  // Resource detail view - minimal since response shows in center panel
-                  <div className="flex-1 flex flex-col min-h-0">
-                    <SelectedToolHeader
-                      toolName={selectedResourceData.name || selectedResource}
-                      description={selectedResourceData.description}
-                      onExpand={() => setSelectedResource("")}
-                      onClear={() => setSelectedResource("")}
-                    />
-                  </div>
-                ) : activeTab === "templates" &&
-                  selectedTemplate &&
-                  selectedTemplateData ? (
-                  // Template parameters view
-                  <div className="flex-1 flex flex-col min-h-0">
-                    <SelectedToolHeader
-                      toolName={selectedTemplateData.name || selectedTemplate}
-                      description={selectedTemplateData.description}
-                      onExpand={() => setSelectedTemplate("")}
-                      onClear={() => setSelectedTemplate("")}
-                    />
-
-                    {/* URI template */}
-                    <div className="px-3 py-2 bg-muted/40 border-b border-border">
-                      <code className="text-[10px] font-mono text-muted-foreground break-all block">
-                        {getResolvedUri() || selectedTemplateData.uriTemplate}
-                      </code>
-                    </div>
-
-                    <ScrollArea className="flex-1">
-                      <div className="p-3 space-y-4">
-                        {templateParams.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center py-8 text-center">
-                            <p className="text-xs text-muted-foreground font-medium">
-                              No parameters required
-                            </p>
-                            <p className="text-xs text-muted-foreground/70 mt-1">
-                              Click Read to fetch this resource
-                            </p>
-                          </div>
-                        ) : (
-                          templateParams.map((param) => (
-                            <div key={param.name} className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <code className="font-mono text-xs font-semibold text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
-                                    {param.name}
-                                  </code>
-                                  <div
-                                    className="w-1.5 h-1.5 bg-amber-400 dark:bg-amber-500 rounded-full"
-                                    title="Required parameter"
-                                  />
-                                </div>
-                                <Badge
-                                  variant="secondary"
-                                  className="text-[10px] font-mono"
-                                >
-                                  string
-                                </Badge>
-                              </div>
-                              <Input
-                                type="text"
-                                value={param.value}
-                                onChange={(e) =>
-                                  updateParamValue(param.name, e.target.value)
-                                }
-                                onKeyDown={handleInputKeyDown}
-                                placeholder={`Enter ${param.name}`}
-                                className="h-8 text-xs"
-                              />
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </ScrollArea>
-                  </div>
-                ) : (
-                  // List view
-                  <div className="flex-1 overflow-hidden">
-                    <ScrollArea className="h-full">
-                      <div className="p-2 pb-16">
-                        {activeTab === "resources" ? (
-                          // Resources list
-                          <>
-                            {fetchingResources ? (
-                              <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                                  <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-                                </div>
-                                <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                  Loading resources...
-                                </p>
-                              </div>
-                            ) : resources.length === 0 ? (
-                              <div className="text-center py-8">
-                                <p className="text-sm text-muted-foreground">
-                                  No resources available
-                                </p>
-                              </div>
-                            ) : (
-                              <>
-                                <div className="space-y-1">
-                                  {resources.map((resource) => (
-                                    <div
-                                      key={resource.uri}
-                                      className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                        selectedResource === resource.uri
-                                          ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                          : "hover:shadow-sm"
-                                      }`}
-                                      onClick={() => {
-                                        setSelectedResource(resource.uri);
-                                        readResource(resource.uri);
-                                      }}
-                                    >
-                                      <div className="flex items-start gap-3">
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-center gap-2 mb-1">
-                                            <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                                            <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
-                                              {resource.name}
-                                            </code>
-                                          </div>
-                                          {resource.description && (
-                                            <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                              {resource.description}
-                                            </p>
-                                          )}
-                                        </div>
-                                        <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div ref={sentinelRef} className="h-4" />
-                                {loadingMore && (
-                                  <div className="flex items-center justify-center py-3 text-xs text-muted-foreground gap-2">
-                                    <RefreshCw className="h-3 w-3 animate-spin" />
-                                    <span>Loading more resources…</span>
-                                  </div>
-                                )}
-                                {!nextCursor &&
-                                  resources.length > 0 &&
-                                  !loadingMore && (
-                                    <div className="text-center py-3 text-xs text-muted-foreground">
-                                      No more resources
-                                    </div>
-                                  )}
-                              </>
-                            )}
-                          </>
-                        ) : (
-                          // Templates list
-                          <>
-                            {fetchingTemplates ? (
-                              <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                                  <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-                                </div>
-                                <p className="text-xs text-muted-foreground font-semibold mb-1">
-                                  Loading templates...
-                                </p>
-                              </div>
-                            ) : templates.length === 0 ? (
-                              <div className="text-center py-8">
-                                <p className="text-sm text-muted-foreground">
-                                  No resource templates available
-                                </p>
-                              </div>
-                            ) : (
-                              <div className="space-y-1">
-                                {templates.map((template) => (
-                                  <div
-                                    key={template.uriTemplate}
-                                    className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                                      selectedTemplate === template.uriTemplate
-                                        ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                                        : "hover:shadow-sm"
-                                    }`}
-                                    onClick={() => {
-                                      setTemplateOverrides({});
-                                      setSelectedTemplate(template.uriTemplate);
-                                      setResourceContent(null);
-                                    }}
-                                  >
-                                    <div className="flex items-start gap-3">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                          <FileCode className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                                          <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
-                                            {template.name}
-                                          </code>
-                                        </div>
-                                        <p className="text-xs mt-1 line-clamp-1 leading-relaxed text-muted-foreground font-mono">
-                                          {template.uriTemplate}
-                                        </p>
-                                        {template.description && (
-                                          <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                            {template.description}
-                                          </p>
-                                        )}
-                                      </div>
-                                      <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </ScrollArea>
-                  </div>
-                )}
-              </div>
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        ) : (
-          <CollapsedPanelStrip
-            side="left"
-            onOpen={() => setIsSidebarVisible(true)}
-            tooltipText="Show resources sidebar"
+      {/* Content area - show detail view when item is selected */}
+      {activeTab === "resources" && selectedResource && selectedResourceData ? (
+        // Resource detail view - minimal since response shows in center panel
+        <div className="flex-1 flex flex-col min-h-0">
+          <SelectedToolHeader
+            toolName={selectedResourceData.name || selectedResource}
+            description={selectedResourceData.description}
+            onExpand={() => setSelectedResource("")}
+            onClear={() => setSelectedResource("")}
           />
-        )}
+        </div>
+      ) : activeTab === "templates" &&
+        selectedTemplate &&
+        selectedTemplateData ? (
+        // Template parameters view
+        <div className="flex-1 flex flex-col min-h-0">
+          <SelectedToolHeader
+            toolName={selectedTemplateData.name || selectedTemplate}
+            description={selectedTemplateData.description}
+            onExpand={() => setSelectedTemplate("")}
+            onClear={() => setSelectedTemplate("")}
+          />
 
-        {/* Center Panel - Response Content Only */}
-        <ResizablePanel
-          id="resources-center"
-          order={2}
-          defaultSize={isJsonRpcPanelVisible ? 40 : 65}
-          minSize={30}
-        >
-          <div className="h-full flex flex-col bg-background">
-            {error ? (
-              <div className="p-4">
-                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                  {error}
+          {/* URI template */}
+          <div className="px-3 py-2 bg-muted/40 border-b border-border">
+            <code className="text-[10px] font-mono text-muted-foreground break-all block">
+              {getResolvedUri() || selectedTemplateData.uriTemplate}
+            </code>
+          </div>
+
+          <ScrollArea className="flex-1">
+            <div className="p-3 space-y-4">
+              {templateParams.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <p className="text-xs text-muted-foreground font-medium">
+                    No parameters required
+                  </p>
+                  <p className="text-xs text-muted-foreground/70 mt-1">
+                    Click Read to fetch this resource
+                  </p>
                 </div>
-              </div>
-            ) : resourceContent ? (
-              <div className="flex-1 min-h-0 p-4 flex flex-col">
-                {resourceContent?.contents?.map(
-                  (content: any, index: number) => (
-                    <div key={index} className="flex-1 min-h-0">
-                      {content.type === "text" ? (
-                        <pre className="h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto">
-                          {content.text}
-                        </pre>
-                      ) : (
-                        <div className="h-full">
-                          <JsonEditor
-                            value={content}
-                            readOnly
-                            showToolbar={false}
-                            height="100%"
-                          />
+              ) : (
+                templateParams.map((param) => (
+                  <div key={param.name} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <code className="font-mono text-xs font-semibold text-foreground bg-muted px-1.5 py-0.5 rounded border border-border">
+                          {param.name}
+                        </code>
+                        <div
+                          className="w-1.5 h-1.5 bg-amber-400 dark:bg-amber-500 rounded-full"
+                          title="Required parameter"
+                        />
+                      </div>
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] font-mono"
+                      >
+                        string
+                      </Badge>
+                    </div>
+                    <Input
+                      type="text"
+                      value={param.value}
+                      onChange={(e) =>
+                        updateParamValue(param.name, e.target.value)
+                      }
+                      onKeyDown={handleInputKeyDown}
+                      placeholder={`Enter ${param.name}`}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      ) : (
+        // List view
+        <div className="flex-1 overflow-hidden">
+          <ScrollArea className="h-full">
+            <div className="p-2 pb-16">
+              {activeTab === "resources" ? (
+                // Resources list
+                <>
+                  {fetchingResources ? (
+                    <div className="flex flex-col items-center justify-center py-16 text-center">
+                      <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                        <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
+                      </div>
+                      <p className="text-xs text-muted-foreground font-semibold mb-1">
+                        Loading resources...
+                      </p>
+                    </div>
+                  ) : resources.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-muted-foreground">
+                        No resources available
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-1">
+                        {resources.map((resource) => (
+                          <div
+                            key={resource.uri}
+                            className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                              selectedResource === resource.uri
+                                ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                                : "hover:shadow-sm"
+                            }`}
+                            onClick={() => {
+                              setSelectedResource(resource.uri);
+                              readResource(resource.uri);
+                            }}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                  <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                                    {resource.name}
+                                  </code>
+                                </div>
+                                {resource.description && (
+                                  <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                                    {resource.description}
+                                  </p>
+                                )}
+                              </div>
+                              <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div ref={sentinelRef} className="h-4" />
+                      {loadingMore && (
+                        <div className="flex items-center justify-center py-3 text-xs text-muted-foreground gap-2">
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          <span>Loading more resources…</span>
                         </div>
                       )}
+                      {!nextCursor && resources.length > 0 && !loadingMore && (
+                        <div className="text-center py-3 text-xs text-muted-foreground">
+                          No more resources
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              ) : (
+                // Templates list
+                <>
+                  {fetchingTemplates ? (
+                    <div className="flex flex-col items-center justify-center py-16 text-center">
+                      <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                        <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
+                      </div>
+                      <p className="text-xs text-muted-foreground font-semibold mb-1">
+                        Loading templates...
+                      </p>
                     </div>
-                  ),
-                )}
-              </div>
-            ) : (
-              <div className="h-full flex items-center justify-center">
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                    <Eye className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                  <p className="text-xs font-semibold text-foreground mb-1">
-                    {selectedResource || selectedTemplate
-                      ? "Response"
-                      : "No selection"}
-                  </p>
-                  <p className="text-xs text-muted-foreground font-medium">
-                    {selectedResource
-                      ? "Loading..."
-                      : selectedTemplate
-                        ? "Fill in parameters and click Read"
-                        : "Select an item from the sidebar"}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        </ResizablePanel>
-
-        {/* Right Panel - Logger */}
-        {isJsonRpcPanelVisible ? (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              id="resources-right"
-              order={3}
-              defaultSize={30}
-              minSize={2}
-              maxSize={50}
-              collapsible={true}
-              collapsedSize={0}
-              onCollapse={toggleJsonRpcPanel}
-              className="min-h-0 overflow-hidden"
-            >
-              <div className="h-full min-h-0 overflow-hidden">
-                <LoggerView
-                  serverIds={serverName ? [serverName] : undefined}
-                  onClose={toggleJsonRpcPanel}
-                />
-              </div>
-            </ResizablePanel>
-          </>
-        ) : (
-          <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
-        )}
-      </ResizablePanelGroup>
+                  ) : templates.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-muted-foreground">
+                        No resource templates available
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {templates.map((template) => (
+                        <div
+                          key={template.uriTemplate}
+                          className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                            selectedTemplate === template.uriTemplate
+                              ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                              : "hover:shadow-sm"
+                          }`}
+                          onClick={() => {
+                            setTemplateOverrides({});
+                            setSelectedTemplate(template.uriTemplate);
+                            setResourceContent(null);
+                          }}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <FileCode className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                                  {template.name}
+                                </code>
+                              </div>
+                              <p className="text-xs mt-1 line-clamp-1 leading-relaxed text-muted-foreground font-mono">
+                                {template.uriTemplate}
+                              </p>
+                              {template.description && (
+                                <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                                  {template.description}
+                                </p>
+                              )}
+                            </div>
+                            <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      )}
     </div>
+  );
+
+  const centerContent = (
+    <div className="h-full flex flex-col bg-background">
+      {error ? (
+        <div className="p-4">
+          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+            {error}
+          </div>
+        </div>
+      ) : resourceContent ? (
+        <div className="flex-1 min-h-0 p-4 flex flex-col">
+          {resourceContent?.contents?.map((content: any, index: number) => (
+            <div key={index} className="flex-1 min-h-0">
+              {content.type === "text" ? (
+                <pre className="h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto">
+                  {content.text}
+                </pre>
+              ) : (
+                <div className="h-full">
+                  <JsonEditor
+                    value={content}
+                    readOnly
+                    showToolbar={false}
+                    height="100%"
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+              <Eye className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <p className="text-xs font-semibold text-foreground mb-1">
+              {selectedResource || selectedTemplate
+                ? "Response"
+                : "No selection"}
+            </p>
+            <p className="text-xs text-muted-foreground font-medium">
+              {selectedResource
+                ? "Loading..."
+                : selectedTemplate
+                  ? "Fill in parameters and click Read"
+                  : "Select an item from the sidebar"}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <ThreePanelLayout
+      id="resources"
+      sidebar={sidebarContent}
+      content={centerContent}
+      sidebarVisible={isSidebarVisible}
+      onSidebarVisibilityChange={setIsSidebarVisible}
+      sidebarTooltip="Show resources sidebar"
+      serverName={serverName}
+    />
   );
 }
