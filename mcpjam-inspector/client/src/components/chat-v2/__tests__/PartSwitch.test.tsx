@@ -3,6 +3,10 @@ import { render, screen } from "@testing-library/react";
 import { PartSwitch } from "../thread/part-switch";
 import type { UIMessage } from "@ai-sdk/react";
 
+const { mockUseSaveView } = vi.hoisted(() => ({
+  mockUseSaveView: vi.fn(),
+}));
+
 // Mock all part components
 vi.mock("../thread/parts/text-part", () => ({
   TextPart: ({ text, role }: { text: string; role: string }) => (
@@ -68,6 +72,33 @@ vi.mock("../thread/mcp-apps-renderer", () => ({
   MCPAppsRenderer: ({ toolName }: { toolName: string }) => (
     <div data-testid="mcp-apps-renderer">{toolName}</div>
   ),
+}));
+
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({ isAuthenticated: true }),
+}));
+
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({
+    workspaces: {
+      default: {
+        sharedWorkspaceId: "workspace-1",
+      },
+    },
+    activeWorkspaceId: "default",
+    selectedServer: "selected-server",
+  }),
+}));
+
+vi.mock("@/hooks/useViews", () => ({
+  useViewQueries: () => ({ sortedViews: [] }),
+}));
+
+vi.mock("@/hooks/useSaveView", () => ({
+  useSaveView: (args: any) => {
+    mockUseSaveView(args);
+    return { saveViewInstant: vi.fn(), isSaving: false };
+  },
 }));
 
 // Mock thread-helpers
@@ -266,6 +297,32 @@ describe("PartSwitch", () => {
       );
 
       expect(screen.getByTestId("tool-part")).toBeInTheDocument();
+    });
+
+    it("uses the tool server when configuring save views", () => {
+      const part = {
+        type: "tool-invocation",
+        toolName: "read_file",
+        toolCallId: "call-1",
+        state: "output-available",
+        input: { path: "/test.txt" },
+        output: { content: "file content" },
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{}}
+          toolServerMap={{}}
+        />,
+      );
+
+      expect(mockUseSaveView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverName: "server-1",
+        }),
+      );
     });
   });
 });

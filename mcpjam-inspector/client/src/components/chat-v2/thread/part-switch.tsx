@@ -92,8 +92,18 @@ export function PartSwitch({
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
 
-  // Get the current selected server name
-  const currentServerName = appState.selectedServer ?? "unknown";
+  const toolInfoFromPart =
+    isToolPart(part) || isDynamicTool(part)
+      ? getToolInfo(part as ToolUIPart<UITools> | DynamicToolUIPart)
+      : null;
+
+  // Prefer the tool's server when saving views to avoid cross-server mismatch
+  const currentServerName =
+    (toolInfoFromPart
+      ? getToolServerId(toolInfoFromPart.toolName, toolServerMap)
+      : undefined) ??
+    appState.selectedServer ??
+    "unknown";
 
   // Get existing view names for duplicate handling
   const { sortedViews } = useViewQueries({
@@ -166,7 +176,7 @@ export function PartSwitch({
 
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
-    const toolInfo = getToolInfo(toolPart);
+    const toolInfo = toolInfoFromPart ?? getToolInfo(toolPart);
     const partToolMeta = toolsMetadata[toolInfo.toolName];
     const uiType = detectUIType(partToolMeta, toolInfo.rawOutput);
     const uiResourceUri = getUIResourceUri(uiType, partToolMeta);
