@@ -155,15 +155,17 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
     return params;
   };
 
-  const getPrompt = async () => {
-    if (!selectedPrompt || !serverName) return;
+  // Get prompt - can be called with explicit promptName for auto-run on selection
+  const getPrompt = async (promptName?: string, params?: Record<string, string>) => {
+    const targetPrompt = promptName ?? selectedPrompt;
+    if (!targetPrompt || !serverName) return;
 
     setLoading(true);
     setError("");
 
     try {
-      const params = buildParameters();
-      const data = await getPromptApi(serverName, selectedPrompt, params);
+      const resolvedParams = params ?? buildParameters();
+      const data = await getPromptApi(serverName, targetPrompt, resolvedParams);
       setPromptContent(data.content);
     } catch (err) {
       const message =
@@ -257,7 +259,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
           {/* Run button */}
           <Button
-            onClick={getPrompt}
+            onClick={() => getPrompt()}
             disabled={loading || !selectedPrompt}
             size="sm"
             className="h-8 px-3 text-xs ml-auto"
@@ -421,21 +423,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                             !prompt.arguments ||
                             prompt.arguments.length === 0
                           ) {
-                            if (!serverName) return;
-                            // Need to call getPrompt with the prompt name directly
-                            // since state won't be updated yet
-                            setLoading(true);
-                            setError("");
-                            getPromptApi(serverName, prompt.name, {})
-                              .then((data) => setPromptContent(data.content))
-                              .catch((err) =>
-                                setError(
-                                  err instanceof Error
-                                    ? err.message
-                                    : String(err),
-                                ),
-                              )
-                              .finally(() => setLoading(false));
+                            getPrompt(prompt.name, {});
                           }
                         }}
                       >
