@@ -718,7 +718,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
                   <Wrench className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <p className="text-xs font-semibold text-foreground mb-1">
-                  Select a tool
+                  No selection
                 </p>
                 <p className="text-xs text-muted-foreground font-medium">
                   Choose a tool from the left to configure parameters

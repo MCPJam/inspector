@@ -461,11 +461,12 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                       !prompt.arguments ||
                                       prompt.arguments.length === 0
                                     ) {
+                                      if (!serverName) return;
                                       // Need to call getPrompt with the prompt name directly
                                       // since state won't be updated yet
                                       setLoading(true);
                                       setError("");
-                                      getPromptApi(serverName!, prompt.name, {})
+                                      getPromptApi(serverName, prompt.name, {})
                                         .then((data) =>
                                           setPromptContent(data.content),
                                         )

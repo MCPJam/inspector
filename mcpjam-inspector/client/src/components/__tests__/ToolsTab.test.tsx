@@ -194,7 +194,7 @@ describe("ToolsTab", () => {
       render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
 
       await waitFor(() => {
-        expect(screen.getByText("Select a tool")).toBeInTheDocument();
+        expect(screen.getByText("No selection")).toBeInTheDocument();
       });
     });
 

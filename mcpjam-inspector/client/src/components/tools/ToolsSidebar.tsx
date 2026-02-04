@@ -237,6 +237,7 @@ export function ToolsSidebar({
               fields={formFields}
               onFieldChange={onFieldChange}
               onToggleField={onToggleField ?? (() => {})}
+              onExecute={onExecute}
             />
 
             {/* Task execution options */}
