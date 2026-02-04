@@ -315,6 +315,11 @@ function useWidgetFetch(
   const [skipCachedHtml, setSkipCachedHtml] = useState(false);
   // Track serialized data to detect changes
   const prevDataRef = useRef<string | null>(null);
+  // Refs to capture current tool data without causing effect re-runs
+  const toolInputRef = useRef(resolvedToolInput);
+  const toolOutputRef = useRef(resolvedToolOutput);
+  toolInputRef.current = resolvedToolInput;
+  toolOutputRef.current = resolvedToolOutput;
 
   // Reset widget URL when CSP mode changes to trigger reload
   useEffect(() => {
@@ -324,28 +329,32 @@ function useWidgetFetch(
     }
   }, [cspMode, prevCspMode, widgetUrl]);
 
+  // Serialize data for stable comparison (avoids re-running effect on reference changes)
+  const serializedData = useMemo(
+    () => JSON.stringify({ input: resolvedToolInput, output: resolvedToolOutput }),
+    [resolvedToolInput, resolvedToolOutput]
+  );
+
   // Detect data changes for live editing - trigger reload when toolInput/toolOutput changes
   useEffect(() => {
     if (toolState !== "output-available") return;
 
-    const currentData = JSON.stringify({ input: resolvedToolInput, output: resolvedToolOutput });
-
     // Skip initial load
     if (prevDataRef.current === null) {
-      prevDataRef.current = currentData;
+      prevDataRef.current = serializedData;
       return;
     }
 
     // If data changed after initial load, trigger a fresh fetch (skip cached HTML)
-    if (prevDataRef.current !== currentData) {
-      prevDataRef.current = currentData;
+    if (prevDataRef.current !== serializedData) {
+      prevDataRef.current = serializedData;
       // Only trigger reload if we have server connectivity (outputTemplate + toolName)
       if (outputTemplate && toolName && !isOffline) {
         setSkipCachedHtml(true);
         setWidgetUrl(null);
       }
     }
-  }, [toolState, resolvedToolInput, resolvedToolOutput, outputTemplate, toolName, isOffline]);
+  }, [toolState, serializedData, outputTemplate, toolName, isOffline]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -364,6 +373,10 @@ function useWidgetFetch(
       widgetUrl ||
       (!canUseCachedHtml && !canUseLiveFetch)
     ) {
+      // If we already have a widget URL, make sure loading state is cleared
+      if (widgetUrl) {
+        setIsStoringWidget(false);
+      }
       if (!canUseCachedHtml && !outputTemplate) {
         setWidgetUrl(null);
         setStoreError(null);
@@ -413,8 +426,8 @@ function useWidgetFetch(
             body: JSON.stringify({
               serverId,
               uri: outputTemplate,
-              toolInput: resolvedToolInput,
-              toolOutput: resolvedToolOutput,
+              toolInput: toolInputRef.current,
+              toolOutput: toolOutputRef.current,
               toolResponseMetadata,
               toolId: resolvedToolCallId,
               toolName,
@@ -506,8 +519,9 @@ function useWidgetFetch(
     outputTemplate,
     toolName,
     serverId,
-    resolvedToolInput,
-    resolvedToolOutput,
+    // Note: resolvedToolInput and resolvedToolOutput are accessed via refs
+    // to avoid re-running this effect on reference changes.
+    // The data change detection effect handles triggering re-fetches when data changes.
     toolResponseMetadata,
     themeMode,
     locale,
