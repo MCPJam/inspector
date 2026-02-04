@@ -655,6 +655,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               serverConnectionStatus={getServerConnectionStatus(serversById.get(selectedView.serverId))}
               toolInputOverride={liveToolInput}
               toolOutputOverride={liveToolOutput}
+              isEditing={isEditing}
             />
           )}
         </ResizablePanel>

@@ -15,6 +15,8 @@ interface ViewDetailPanelProps {
   toolInputOverride?: unknown;
   /** Override toolOutput from parent for live editing */
   toolOutputOverride?: unknown;
+  /** Whether the view is being edited - controls header visibility */
+  isEditing?: boolean;
 }
 
 /**
@@ -27,6 +29,7 @@ export function ViewDetailPanel({
   serverConnectionStatus,
   toolInputOverride,
   toolOutputOverride,
+  isEditing = false,
 }: ViewDetailPanelProps) {
   // Store state for device frame
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
@@ -103,10 +106,12 @@ export function ViewDetailPanel({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header with display context controls */}
-      <div className="flex items-center justify-center px-4 py-2 border-b bg-muted/30 text-xs text-muted-foreground">
-        <DisplayContextHeader protocol={protocol} />
-      </div>
+      {/* Header with display context controls - only shown in edit mode */}
+      {isEditing && (
+        <div className="flex items-center justify-center px-4 py-2 border-b bg-muted/30 text-xs text-muted-foreground">
+          <DisplayContextHeader protocol={protocol} />
+        </div>
+      )}
 
       {/* Preview with device frame */}
       <div className="flex-1 flex items-center justify-center p-4 min-h-0 overflow-auto bg-muted/20">
