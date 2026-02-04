@@ -40,6 +40,7 @@ import {
 import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp-prompt-result-card";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
+import posthog from "posthog-js";
 
 interface ChatInputProps {
   value: string;
@@ -433,7 +434,12 @@ export function ChatInput({
                     type="button"
                     variant={xrayMode ? "secondary" : "ghost"}
                     size={compact ? "icon" : "sm"}
-                    onClick={() => onXrayModeChange(!xrayMode)}
+                    onClick={() => {
+                      if (!xrayMode) {
+                        posthog.capture("xray_opened");
+                      }
+                      onXrayModeChange(!xrayMode);
+                    }}
                     className={
                       compact
                         ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"

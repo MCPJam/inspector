@@ -20,6 +20,7 @@ import {
   getXRayPayload,
   type XRayPayloadResponse,
 } from "@/lib/apis/mcp-xray-api";
+import posthog from "posthog-js";
 
 interface XRaySnapshotViewProps {
   systemPrompt: string | undefined;
@@ -103,7 +104,13 @@ export function XRaySnapshotView({
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => copyToClipboard(payload, "Model payload")}
+                onClick={() => {
+                  posthog.capture("xray_payload_copied", {
+                    tool_count: Object.keys(payload.tools).length,
+                    message_count: payload.messages.length,
+                  });
+                  copyToClipboard(payload, "Model payload");
+                }}
                 className="h-7 w-7"
               >
                 <Copy className="h-3.5 w-3.5" />
