@@ -7,12 +7,11 @@ import {
   MessageSquareCode,
   BookOpen,
   FlaskConical,
-  HandMetal,
   Workflow,
-  Activity,
-  Fish,
+  Anvil,
   ListTodo,
   SquareSlash,
+  MessageCircleQuestionIcon,
 } from "lucide-react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
@@ -51,11 +50,6 @@ const navigationSections = [
         url: "#chat-v2",
         icon: MessageCircle,
       },
-      {
-        title: "Skills",
-        url: "#skills",
-        icon: SquareSlash,
-      },
     ],
   },
   {
@@ -64,13 +58,33 @@ const navigationSections = [
       {
         title: "App Builder",
         url: "#app-builder",
-        icon: Fish,
+        icon: Anvil,
       },
       {
         title: "Test Cases",
         url: "#evals",
         icon: FlaskConical,
       },
+    ],
+  },
+  {
+    id: "others",
+    items: [
+      {
+        title: "Skills",
+        url: "#skills",
+        icon: SquareSlash,
+      },
+      {
+        title: "OAuth Debugger",
+        url: "#oauth-flow",
+        icon: Workflow,
+      },
+      // {
+      //   title: "Tracing",
+      //   url: "#tracing",
+      //   icon: Activity,
+      // },
     ],
   },
   {
@@ -99,27 +113,12 @@ const navigationSections = [
     ],
   },
   {
-    id: "others",
-    items: [
-      {
-        title: "OAuth Debugger",
-        url: "#oauth-flow",
-        icon: Workflow,
-      },
-      {
-        title: "Tracing",
-        url: "#tracing",
-        icon: Activity,
-      },
-    ],
-  },
-  {
     id: "settings",
     items: [
       {
         title: "Feedback",
         url: "https://github.com/MCPJam/inspector/issues/new",
-        icon: HandMetal,
+        icon: MessageCircleQuestionIcon,
       },
       {
         title: "Settings",
@@ -176,7 +175,7 @@ export function MCPSidebar({
       await Promise.all(
         connectedServerNames.map(async (serverName) => {
           try {
-            const result = await listTools(serverName);
+            const result = await listTools({ serverId: serverName });
             newToolsDataMap[serverName] = result;
           } catch {
             newToolsDataMap[serverName] = null;

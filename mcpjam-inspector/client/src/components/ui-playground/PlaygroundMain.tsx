@@ -1405,9 +1405,9 @@ export function PlaygroundMain({
       />
 
       {/* Device frame container */}
-      <div className="flex-1 flex items-center justify-center p-4 min-h-0 overflow-auto">
+      <div className="flex-1 flex items-center justify-center min-h-0 overflow-auto">
         <div
-          className="relative bg-background border border-border rounded-xl shadow-lg flex flex-col overflow-hidden"
+          className="relative bg-background flex flex-col overflow-hidden"
           style={{
             width: deviceConfig.width,
             maxWidth: "100%",

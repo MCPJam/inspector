@@ -86,7 +86,7 @@ export function IterationDetails({
         await Promise.all(
           serverNames.map(async (serverId) => {
             try {
-              const result = await listTools(serverId);
+              const result = await listTools({ serverId: serverId });
 
               // Extract tools with schemas
               if (result.tools) {
@@ -396,7 +396,7 @@ export function IterationDetails({
               <TraceViewer
                 trace={blob}
                 modelProvider={
-                  testCase?.provider ||
+                  testCase?.models[0]?.provider ||
                   iteration.testCaseSnapshot?.provider ||
                   "openai"
                 }

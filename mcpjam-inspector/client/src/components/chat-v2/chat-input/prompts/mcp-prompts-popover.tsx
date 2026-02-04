@@ -83,6 +83,7 @@ export function PromptsPopover({
   const [isHovering, setIsHovering] = useState(false);
   const [skillsCount, setSkillsCount] = useState(0);
   const [isSkillUploadDialogOpen, setIsSkillUploadDialogOpen] = useState(false);
+  const skillsEnabled = Boolean(onSkillSelected);
 
   useEffect(() => {
     // Fetch prompts for selected servers
@@ -120,7 +121,7 @@ export function PromptsPopover({
   // Fetch skills count for navigation (only when skills UI is enabled)
   useEffect(() => {
     // If skills UI is disabled, reset count to 0
-    if (!onSkillSelected) {
+    if (!skillsEnabled) {
       setSkillsCount(0);
       return;
     }
@@ -138,7 +139,7 @@ export function PromptsPopover({
     return () => {
       active = false;
     };
-  }, [onSkillSelected]);
+  }, [skillsEnabled]);
 
   // Total items for navigation (prompts + skills)
   const totalItems = promptListItems.length + skillsCount;
