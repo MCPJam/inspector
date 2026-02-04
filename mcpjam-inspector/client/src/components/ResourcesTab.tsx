@@ -93,9 +93,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const selectedTemplateData = useMemo(() => {
-    return (
-      templates.find((t) => t.uriTemplate === selectedTemplate) ?? null
-    );
+    return templates.find((t) => t.uriTemplate === selectedTemplate) ?? null;
   }, [templates, selectedTemplate]);
 
   const templateParams = useMemo(() => {
@@ -185,11 +183,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     if (loadingMore) return;
     if (!nextCursor) return;
 
-    try {
-      await fetchResources(nextCursor, true);
-    } catch {
-      // Error is already handled in fetchResources
-    }
+    await fetchResources(nextCursor, true);
   }, [nextCursor, loadingMore]);
 
   // Intersection observer for pagination
@@ -294,7 +288,11 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
       if (activeTab === "resources" && selectedResource && !loading) {
         e.preventDefault();
         readResource(selectedResource);
-      } else if (activeTab === "templates" && selectedTemplate && !templateLoading) {
+      } else if (
+        activeTab === "templates" &&
+        selectedTemplate &&
+        !templateLoading
+      ) {
         e.preventDefault();
         readTemplateResource();
       }
@@ -302,7 +300,14 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedResource, loading, activeTab, selectedTemplate, templateLoading, readTemplateResource]);
+  }, [
+    selectedResource,
+    loading,
+    activeTab,
+    selectedTemplate,
+    templateLoading,
+    readTemplateResource,
+  ]);
 
   if (!serverConfig || !serverName) {
     return (
@@ -314,7 +319,8 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     );
   }
 
-  const isFetching = activeTab === "resources" ? fetchingResources : fetchingTemplates;
+  const isFetching =
+    activeTab === "resources" ? fetchingResources : fetchingTemplates;
 
   const sidebarContent = (
     <div className="h-full flex flex-col border-r border-border bg-background">
@@ -558,57 +564,55 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                     )}
                   </>
                 )
+              ) : /* Templates List */
+              fetchingTemplates ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                    <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
+                  </div>
+                  <p className="text-xs text-muted-foreground font-semibold mb-1">
+                    Loading templates...
+                  </p>
+                </div>
+              ) : templates.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-sm text-muted-foreground">
+                    No resource templates available
+                  </p>
+                </div>
               ) : (
-                /* Templates List */
-                fetchingTemplates ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                      <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-                    </div>
-                    <p className="text-xs text-muted-foreground font-semibold mb-1">
-                      Loading templates...
-                    </p>
-                  </div>
-                ) : templates.length === 0 ? (
-                  <div className="text-center py-8">
-                    <p className="text-sm text-muted-foreground">
-                      No resource templates available
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {templates.map((template) => (
-                      <div
-                        key={template.uriTemplate}
-                        className={`cursor-pointer transition-shadow duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                          selectedTemplate === template.uriTemplate
-                            ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                            : "hover:shadow-sm"
-                        }`}
-                        onClick={() => {
-                          setTemplateOverrides({});
-                          setSelectedTemplate(template.uriTemplate);
-                          setTemplateContent(null);
-                        }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileCode className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                          <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
-                            {template.name}
-                          </code>
-                        </div>
-                        <p className="text-xs mt-1 line-clamp-1 leading-relaxed text-muted-foreground font-mono">
-                          {template.uriTemplate}
-                        </p>
-                        {template.description && (
-                          <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                            {template.description}
-                          </p>
-                        )}
+                <div className="space-y-1">
+                  {templates.map((template) => (
+                    <div
+                      key={template.uriTemplate}
+                      className={`cursor-pointer transition-shadow duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                        selectedTemplate === template.uriTemplate
+                          ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                          : "hover:shadow-sm"
+                      }`}
+                      onClick={() => {
+                        setTemplateOverrides({});
+                        setSelectedTemplate(template.uriTemplate);
+                        setTemplateContent(null);
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                          {template.name}
+                        </code>
                       </div>
-                    ))}
-                  </div>
-                )
+                      <p className="text-xs mt-1 line-clamp-1 leading-relaxed text-muted-foreground font-mono">
+                        {template.uriTemplate}
+                      </p>
+                      {template.description && (
+                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                          {template.description}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </ScrollArea>
@@ -739,7 +743,11 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     <ThreePanelLayout
       id="resources"
       sidebar={sidebarContent}
-      content={activeTab === "templates" ? templatesCenterContent : resourcesCenterContent}
+      content={
+        activeTab === "templates"
+          ? templatesCenterContent
+          : resourcesCenterContent
+      }
       sidebarVisible={isSidebarVisible}
       onSidebarVisibilityChange={setIsSidebarVisible}
       sidebarTooltip="Show resources sidebar"
