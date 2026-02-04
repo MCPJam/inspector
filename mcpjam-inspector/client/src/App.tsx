@@ -107,6 +107,7 @@ export default function App() {
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
+    handleReorderServers,
     setSelectedServer,
     toggleServerSelection,
     setSelectedMultipleServersToAllServers,
@@ -301,6 +302,7 @@ export default function App() {
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
+              onReorder={handleReorderServers}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
             />
           )}

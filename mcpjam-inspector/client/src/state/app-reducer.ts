@@ -343,6 +343,42 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       };
     }
 
+    case "REORDER_SERVERS": {
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      if (!activeWorkspace) return state;
+
+      // Update order field for each server based on position in orderedNames array
+      const updatedServers: AppState["servers"] = {};
+      action.orderedNames.forEach((name, index) => {
+        const server = state.servers[name];
+        if (server) {
+          updatedServers[name] = { ...server, order: index };
+        }
+      });
+
+      // Also update workspace servers
+      const updatedWorkspaceServers: Record<string, ServerWithName> = {};
+      action.orderedNames.forEach((name, index) => {
+        const server = activeWorkspace.servers[name];
+        if (server) {
+          updatedWorkspaceServers[name] = { ...server, order: index };
+        }
+      });
+
+      return {
+        ...state,
+        servers: updatedServers,
+        workspaces: {
+          ...state.workspaces,
+          [state.activeWorkspaceId]: {
+            ...activeWorkspace,
+            servers: updatedWorkspaceServers,
+            updatedAt: new Date(),
+          },
+        },
+      };
+    }
+
     default:
       return state;
   }
