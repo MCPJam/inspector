@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ErrorBoundary } from "@/components/evals/ErrorBoundary";
 import { useJsonEditor } from "./use-json-editor";
 import { JsonEditorView } from "./json-editor-view";
@@ -189,18 +188,17 @@ export function JsonEditor({
         )}
 
         {/* Content area */}
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 h-full">
           {mode === "view" ? (
-            <ScrollArea className="h-full">
-              <JsonEditorView
-                value={isRawMode ? editor.getParsedValue() : value}
-                collapsible={collapsible}
-                defaultExpandDepth={defaultExpandDepth}
-                collapsedPaths={collapsedPaths}
-                onCollapseChange={onCollapseChange}
-                collapseStringsAfterLength={collapseStringsAfterLength}
-              />
-            </ScrollArea>
+            <JsonEditorView
+              value={isRawMode ? editor.getParsedValue() : value}
+              height="100%"
+              collapsible={collapsible}
+              defaultExpandDepth={defaultExpandDepth}
+              collapsedPaths={collapsedPaths}
+              onCollapseChange={onCollapseChange}
+              collapseStringsAfterLength={collapseStringsAfterLength}
+            />
           ) : (
             <JsonEditorEdit
               content={editor.content}

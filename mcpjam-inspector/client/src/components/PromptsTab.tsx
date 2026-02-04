@@ -16,7 +16,13 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { MessageSquare, Play, RefreshCw, ChevronRight, PanelLeftClose } from "lucide-react";
+import {
+  MessageSquare,
+  Play,
+  RefreshCw,
+  ChevronRight,
+  PanelLeftClose,
+} from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { MCPServerConfig, type MCPPrompt } from "@mcpjam/sdk";
@@ -28,7 +34,6 @@ import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
-import { TruncatedText } from "./ui/truncated-text";
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
@@ -88,13 +93,12 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
       const serverPrompts = await listPromptsApi(serverName);
       setPrompts(serverPrompts);
 
-      if (serverPrompts.length === 0) {
-        setSelectedPrompt("");
-        setPromptContent(null);
-      } else if (
+      // Clear selection if the selected prompt no longer exists
+      if (
+        selectedPrompt &&
         !serverPrompts.some((prompt) => prompt.name === selectedPrompt)
       ) {
-        setSelectedPrompt(serverPrompts[0].name);
+        setSelectedPrompt("");
         setPromptContent(null);
       }
     } catch (err) {
@@ -287,7 +291,9 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                       ) : (
                         <Play className="h-3 w-3" />
                       )}
-                      <span className="ml-1">{loading ? "Loading" : "Run"}</span>
+                      <span className="ml-1">
+                        {loading ? "Loading" : "Run"}
+                      </span>
                     </Button>
                   </div>
                 </div>
@@ -298,19 +304,10 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                   <div className="flex-1 flex flex-col min-h-0">
                     <SelectedToolHeader
                       toolName={selectedPrompt}
+                      description={selectedPromptData?.description}
                       onExpand={() => setSelectedPrompt("")}
                       onClear={() => setSelectedPrompt("")}
                     />
-
-                    {selectedPromptData?.description && (
-                      <div className="px-3 py-3 bg-muted/50 border-b border-border">
-                        <TruncatedText
-                          text={selectedPromptData.description}
-                          title={selectedPrompt}
-                          maxLength={200}
-                        />
-                      </div>
-                    )}
 
                     <ScrollArea className="flex-1">
                       <div className="px-3 py-3">
@@ -353,7 +350,10 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                       </SelectTrigger>
                                       <SelectContent>
                                         {field.enum?.map((option) => (
-                                          <SelectItem key={option} value={option}>
+                                          <SelectItem
+                                            key={option}
+                                            value={option}
+                                          >
                                             {option}
                                           </SelectItem>
                                         ))}
@@ -365,15 +365,21 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                         type="checkbox"
                                         checked={field.value === true}
                                         onChange={(e) =>
-                                          updateFieldValue(field.name, e.target.checked)
+                                          updateFieldValue(
+                                            field.name,
+                                            e.target.checked,
+                                          )
                                         }
                                         className="w-4 h-4 rounded border-border accent-primary"
                                       />
                                       <span className="text-xs text-foreground">
-                                        {field.value === true ? "true" : "false"}
+                                        {field.value === true
+                                          ? "true"
+                                          : "false"}
                                       </span>
                                     </div>
-                                  ) : field.type === "array" || field.type === "object" ? (
+                                  ) : field.type === "array" ||
+                                    field.type === "object" ? (
                                     <Textarea
                                       value={
                                         typeof field.value === "string"
@@ -381,7 +387,10 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                           : JSON.stringify(field.value, null, 2)
                                       }
                                       onChange={(e) =>
-                                        updateFieldValue(field.name, e.target.value)
+                                        updateFieldValue(
+                                          field.name,
+                                          e.target.value,
+                                        )
                                       }
                                       placeholder={`Enter ${field.type} as JSON`}
                                       className="font-mono text-xs min-h-[80px] bg-background border-border resize-y"
@@ -389,13 +398,17 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                   ) : (
                                     <Input
                                       type={
-                                        field.type === "number" || field.type === "integer"
+                                        field.type === "number" ||
+                                        field.type === "integer"
                                           ? "number"
                                           : "text"
                                       }
                                       value={String(field.value)}
                                       onChange={(e) =>
-                                        updateFieldValue(field.name, e.target.value)
+                                        updateFieldValue(
+                                          field.name,
+                                          e.target.value,
+                                        )
                                       }
                                       onKeyDown={handleInputKeyDown}
                                       placeholder={`Enter ${field.name}`}
@@ -441,7 +454,31 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                                 <div
                                   key={prompt.name}
                                   className="cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 hover:shadow-sm"
-                                  onClick={() => setSelectedPrompt(prompt.name)}
+                                  onClick={() => {
+                                    setSelectedPrompt(prompt.name);
+                                    // Auto-run if no arguments required
+                                    if (
+                                      !prompt.arguments ||
+                                      prompt.arguments.length === 0
+                                    ) {
+                                      // Need to call getPrompt with the prompt name directly
+                                      // since state won't be updated yet
+                                      setLoading(true);
+                                      setError("");
+                                      getPromptApi(serverName!, prompt.name, {})
+                                        .then((data) =>
+                                          setPromptContent(data.content),
+                                        )
+                                        .catch((err) =>
+                                          setError(
+                                            err instanceof Error
+                                              ? err.message
+                                              : String(err),
+                                          ),
+                                        )
+                                        .finally(() => setLoading(false));
+                                    }
+                                  }}
                                 >
                                   <div className="flex items-start gap-3">
                                     <div className="flex-1 min-w-0">
@@ -492,13 +529,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
           minSize={30}
         >
           <div className="h-full flex flex-col bg-background">
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h2 className="text-xs font-semibold text-foreground">
-                Prompt Content
-              </h2>
-            </div>
-
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 min-h-0 flex flex-col">
               {error ? (
                 <div className="p-4">
                   <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
@@ -506,21 +537,22 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                   </div>
                 </div>
               ) : promptContent ? (
-                <ScrollArea className="h-full">
-                  <div className="p-4">
-                    {typeof promptContent === "string" ? (
-                      <pre className="whitespace-pre-wrap text-xs font-mono bg-muted p-4 rounded-md border border-border">
-                        {promptContent}
-                      </pre>
-                    ) : (
+                <div className="flex-1 min-h-0 p-4 flex flex-col">
+                  {typeof promptContent === "string" ? (
+                    <pre className="flex-1 min-h-0 whitespace-pre-wrap text-xs font-mono bg-muted/30 p-4 rounded-md border border-border overflow-auto">
+                      {promptContent}
+                    </pre>
+                  ) : (
+                    <div className="flex-1 min-h-0">
                       <JsonEditor
                         value={promptContent}
                         readOnly
                         showToolbar={false}
+                        height="100%"
                       />
-                    )}
-                  </div>
-                </ScrollArea>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="h-full flex items-center justify-center">
                   <div className="text-center">
@@ -528,12 +560,14 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
                       <MessageSquare className="h-5 w-5 text-muted-foreground" />
                     </div>
                     <p className="text-xs font-semibold text-foreground mb-1">
-                      {selectedPrompt ? "Ready to get prompt" : "Select a prompt"}
+                      {selectedPrompt ? "Response" : "No selection"}
                     </p>
                     <p className="text-xs text-muted-foreground font-medium">
                       {selectedPrompt
-                        ? "Click Run to see content"
-                        : "Choose a prompt from the left to view details"}
+                        ? formFields.length > 0
+                          ? "Fill in parameters and click Run"
+                          : "Loading..."
+                        : "Select a prompt from the sidebar"}
                     </p>
                   </div>
                 </div>

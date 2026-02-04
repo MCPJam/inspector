@@ -316,22 +316,30 @@ export default function App() {
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "resources" && (
-            <ResourcesTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <ResourcesTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
 
           {activeTab === "prompts" && (
-            <PromptsTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <PromptsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
 
           {activeTab === "skills" && <SkillsTab />}
 
-          <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
+          <div
+            className={
+              activeTab === "tasks" ? "h-full overflow-hidden" : "hidden"
+            }
+          >
             <TasksTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}

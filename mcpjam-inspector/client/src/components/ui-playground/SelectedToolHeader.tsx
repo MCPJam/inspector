@@ -16,6 +16,8 @@ interface SelectedToolHeaderProps {
   toolName: string;
   onExpand: () => void;
   onClear: () => void;
+  // Optional description shown below tool name
+  description?: string;
   // Optional save action
   onSave?: () => void;
   // Protocol selector (optional)
@@ -26,6 +28,7 @@ export function SelectedToolHeader({
   toolName,
   onExpand,
   onClear,
+  description,
   onSave,
   showProtocolSelector = false,
 }: SelectedToolHeaderProps) {
@@ -36,16 +39,23 @@ export function SelectedToolHeader({
   return (
     <div className="border-b border-border bg-muted/30 flex-shrink-0">
       {/* Tool name header */}
-      <div className="px-3 py-2 flex items-center gap-2">
-        <button
-          onClick={onExpand}
-          className="flex-1 min-w-0 hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 transition-colors text-left"
-          title="Click to change tool"
-        >
-          <code className="text-xs font-mono font-medium text-foreground truncate block">
-            {toolName}
-          </code>
-        </button>
+      <div className="px-3 py-2 flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <button
+            onClick={onExpand}
+            className="hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 transition-colors text-left"
+            title="Click to change tool"
+          >
+            <code className="text-xs font-mono font-medium text-foreground truncate block">
+              {toolName}
+            </code>
+          </button>
+          {description && (
+            <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+              {description}
+            </p>
+          )}
+        </div>
         {onSave && (
           <Tooltip>
             <TooltipTrigger asChild>

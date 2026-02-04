@@ -13,7 +13,6 @@ import { usePostHog } from "posthog-js/react";
 import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
 import { ParametersForm } from "../ui-playground/ParametersForm";
 import type { FormField } from "@/lib/tool-form";
-import { TruncatedText } from "../ui/truncated-text";
 
 interface ToolsSidebarProps {
   activeTab: "tools" | "saved";
@@ -215,7 +214,9 @@ export function ToolsSidebar({
             ) : (
               <Play className="h-3 w-3" />
             )}
-            <span className="ml-1">{loading ? (waitingOnElicitation ? "Waiting" : "Running") : "Run"}</span>
+            <span className="ml-1">
+              {loading ? (waitingOnElicitation ? "Waiting" : "Running") : "Run"}
+            </span>
           </Button>
         </div>
       </div>
@@ -226,19 +227,10 @@ export function ToolsSidebar({
         <div className="flex-1 flex flex-col min-h-0">
           <SelectedToolHeader
             toolName={selectedToolName}
+            description={selectedTool?.description}
             onExpand={() => onSelectTool("")}
             onClear={() => onSelectTool("")}
           />
-
-          {selectedTool?.description && (
-            <div className="px-3 py-3 bg-muted/50 border-b border-border">
-              <TruncatedText
-                text={selectedTool.description}
-                title={selectedToolName}
-                maxLength={200}
-              />
-            </div>
-          )}
 
           <ScrollArea className="flex-1">
             <ParametersForm
@@ -280,7 +272,9 @@ export function ToolsSidebar({
                       <input
                         type="checkbox"
                         checked={executeAsTask ?? false}
-                        onChange={(e) => onExecuteAsTaskChange(e.target.checked)}
+                        onChange={(e) =>
+                          onExecuteAsTaskChange(e.target.checked)
+                        }
                         className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
                       />
                       <Clock className="h-3 w-3" />
@@ -317,7 +311,11 @@ export function ToolsSidebar({
             <SearchInput
               value={searchQuery}
               onValueChange={onSearchQueryChange}
-              placeholder={activeTab === "tools" ? "Search tools..." : "Search saved requests..."}
+              placeholder={
+                activeTab === "tools"
+                  ? "Search tools..."
+                  : "Search saved requests..."
+              }
             />
           </div>
 

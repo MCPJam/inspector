@@ -7,7 +7,15 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import { FolderOpen, File, RefreshCw, ChevronRight, Eye, PanelLeftClose, FileCode } from "lucide-react";
+import {
+  FolderOpen,
+  File,
+  RefreshCw,
+  ChevronRight,
+  Eye,
+  PanelLeftClose,
+  FileCode,
+} from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
@@ -19,11 +27,13 @@ import {
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
-import { listResources, readResource as readResourceApi } from "@/lib/apis/mcp-resources-api";
+import {
+  listResources,
+  readResource as readResourceApi,
+} from "@/lib/apis/mcp-resources-api";
 import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/apis/mcp-resource-templates-api";
 import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
 import { Input } from "./ui/input";
-import { TruncatedText } from "./ui/truncated-text";
 import { parseTemplate } from "url-template";
 
 interface ResourcesTabProps {
@@ -76,7 +86,9 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   const [templates, setTemplates] = useState<MCPResourceTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
   const [fetchingTemplates, setFetchingTemplates] = useState(false);
-  const [templateOverrides, setTemplateOverrides] = useState<Record<string, string>>({});
+  const [templateOverrides, setTemplateOverrides] = useState<
+    Record<string, string>
+  >({});
 
   // Panel state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -86,16 +98,23 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
 
   // Derived data
   const selectedResourceData = useMemo(() => {
-    return resources.find((resource) => resource.uri === selectedResource) ?? null;
+    return (
+      resources.find((resource) => resource.uri === selectedResource) ?? null
+    );
   }, [resources, selectedResource]);
 
   const selectedTemplateData = useMemo(() => {
-    return templates.find((template) => template.uriTemplate === selectedTemplate) ?? null;
+    return (
+      templates.find((template) => template.uriTemplate === selectedTemplate) ??
+      null
+    );
   }, [templates, selectedTemplate]);
 
   const templateParams = useMemo(() => {
     if (selectedTemplateData?.uriTemplate) {
-      const paramNames = extractTemplateParameters(selectedTemplateData.uriTemplate);
+      const paramNames = extractTemplateParameters(
+        selectedTemplateData.uriTemplate,
+      );
       return paramNames.map((name) => ({
         name,
         value: templateOverrides[name] ?? "",
@@ -300,8 +319,10 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     }
   };
 
-  const canRead = activeTab === "resources" ? !!selectedResource : !!selectedTemplate;
-  const isFetching = activeTab === "resources" ? fetchingResources : fetchingTemplates;
+  const canRead =
+    activeTab === "resources" ? !!selectedResource : !!selectedTemplate;
+  const isFetching =
+    activeTab === "resources" ? fetchingResources : fetchingTemplates;
 
   if (!serverConfig || !serverName) {
     return (
@@ -398,49 +419,58 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                       </Button>
                     </div>
 
-                    {/* Read button */}
-                    <Button
-                      onClick={handleRead}
-                      disabled={loading || !canRead}
-                      size="sm"
-                      className="h-8 px-3 text-xs ml-auto"
-                    >
-                      {loading ? (
-                        <RefreshCw className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Eye className="h-3 w-3" />
-                      )}
-                      <span className="ml-1">{loading ? "Reading" : "Read"}</span>
-                    </Button>
+                    {/* Read button - only for templates since resources auto-read */}
+                    {activeTab === "templates" && (
+                      <Button
+                        onClick={handleRead}
+                        disabled={loading || !canRead}
+                        size="sm"
+                        className="h-8 px-3 text-xs ml-auto"
+                      >
+                        {loading ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Eye className="h-3 w-3" />
+                        )}
+                        <span className="ml-1">
+                          {loading ? "Reading" : "Read"}
+                        </span>
+                      </Button>
+                    )}
                   </div>
                 </div>
 
-                {/* Content area - show parameters form when template is selected */}
-                {activeTab === "templates" && selectedTemplate && selectedTemplateData ? (
+                {/* Content area - show detail view when item is selected */}
+                {activeTab === "resources" &&
+                selectedResource &&
+                selectedResourceData ? (
+                  // Resource detail view - minimal since response shows in center panel
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <SelectedToolHeader
+                      toolName={selectedResourceData.name || selectedResource}
+                      description={selectedResourceData.description}
+                      onExpand={() => setSelectedResource("")}
+                      onClear={() => setSelectedResource("")}
+                    />
+                  </div>
+                ) : activeTab === "templates" &&
+                  selectedTemplate &&
+                  selectedTemplateData ? (
                   // Template parameters view
                   <div className="flex-1 flex flex-col min-h-0">
                     <SelectedToolHeader
                       toolName={selectedTemplateData.name || selectedTemplate}
+                      description={selectedTemplateData.description}
                       onExpand={() => setSelectedTemplate("")}
                       onClear={() => setSelectedTemplate("")}
                     />
 
                     {/* URI template */}
-                    <div className="px-3 py-2 bg-muted/30 border-b border-border">
-                      <code className="text-[10px] font-mono text-muted-foreground break-all">
+                    <div className="px-3 py-2 bg-muted/40 border-b border-border">
+                      <code className="text-[10px] font-mono text-muted-foreground break-all block">
                         {getResolvedUri() || selectedTemplateData.uriTemplate}
                       </code>
                     </div>
-
-                    {selectedTemplateData.description && (
-                      <div className="px-3 py-3 bg-muted/50 border-b border-border">
-                        <TruncatedText
-                          text={selectedTemplateData.description}
-                          title={selectedTemplateData.name || "Template"}
-                          maxLength={200}
-                        />
-                      </div>
-                    )}
 
                     <ScrollArea className="flex-1">
                       <div className="p-3 space-y-4">
@@ -476,7 +506,9 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                               <Input
                                 type="text"
                                 value={param.value}
-                                onChange={(e) => updateParamValue(param.name, e.target.value)}
+                                onChange={(e) =>
+                                  updateParamValue(param.name, e.target.value)
+                                }
                                 onKeyDown={handleInputKeyDown}
                                 placeholder={`Enter ${param.name}`}
                                 className="h-8 text-xs"
@@ -521,7 +553,10 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                                           ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
                                           : "hover:shadow-sm"
                                       }`}
-                                      onClick={() => setSelectedResource(resource.uri)}
+                                      onClick={() => {
+                                        setSelectedResource(resource.uri);
+                                        readResource(resource.uri);
+                                      }}
                                     >
                                       <div className="flex items-start gap-3">
                                         <div className="flex-1 min-w-0">
@@ -549,11 +584,13 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                                     <span>Loading more resources…</span>
                                   </div>
                                 )}
-                                {!nextCursor && resources.length > 0 && !loadingMore && (
-                                  <div className="text-center py-3 text-xs text-muted-foreground">
-                                    No more resources
-                                  </div>
-                                )}
+                                {!nextCursor &&
+                                  resources.length > 0 &&
+                                  !loadingMore && (
+                                    <div className="text-center py-3 text-xs text-muted-foreground">
+                                      No more resources
+                                    </div>
+                                  )}
                               </>
                             )}
                           </>
@@ -632,7 +669,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           />
         )}
 
-        {/* Center Panel - Resource Content */}
+        {/* Center Panel - Response Content Only */}
         <ResizablePanel
           id="resources-center"
           order={2}
@@ -640,102 +677,52 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           minSize={30}
         >
           <div className="h-full flex flex-col bg-background">
-            {(selectedResource || selectedTemplate) ? (
-              <>
-                {/* Header */}
-                <div className="flex items-center justify-between px-6 py-5 border-b border-border bg-background">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
-                        {activeTab === "resources"
-                          ? (selectedResourceData?.name || selectedResource)
-                          : (selectedTemplateData?.name || selectedTemplate)}
-                      </code>
-                      {(selectedResourceData?.mimeType || selectedTemplateData?.mimeType) && (
-                        <Badge variant="outline" className="text-xs font-mono">
-                          {selectedResourceData?.mimeType || selectedTemplateData?.mimeType}
-                        </Badge>
+            {error ? (
+              <div className="p-4">
+                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
+                  {error}
+                </div>
+              </div>
+            ) : resourceContent ? (
+              <div className="flex-1 min-h-0 p-4 flex flex-col">
+                {resourceContent?.contents?.map(
+                  (content: any, index: number) => (
+                    <div key={index} className="flex-1 min-h-0">
+                      {content.type === "text" ? (
+                        <pre className="h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto">
+                          {content.text}
+                        </pre>
+                      ) : (
+                        <div className="h-full">
+                          <JsonEditor
+                            value={content}
+                            readOnly
+                            showToolbar={false}
+                            height="100%"
+                          />
+                        </div>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground font-mono truncate max-w-md">
-                      {activeTab === "resources" ? selectedResource : getResolvedUri()}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Description */}
-                {(selectedResourceData?.description || selectedTemplateData?.description) && (
-                  <div className="px-6 py-4 bg-muted/50 border-b border-border">
-                    <p className="text-xs text-muted-foreground leading-relaxed font-medium">
-                      {selectedResourceData?.description || selectedTemplateData?.description}
-                    </p>
-                  </div>
+                  ),
                 )}
-
-                {/* Response Content */}
-                <div className="flex-1 overflow-hidden">
-                  {error ? (
-                    <div className="p-4">
-                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
-                        {error}
-                      </div>
-                    </div>
-                  ) : (
-                    <ScrollArea className="h-full">
-                      <div className="p-4">
-                        {!resourceContent ? (
-                          <div className="flex flex-col items-center justify-center py-16 text-center">
-                            <div className="w-10 h-10 bg-muted rounded-full flex items-center justify-center mb-3">
-                              <Eye className="h-4 w-4 text-muted-foreground" />
-                            </div>
-                            <p className="text-xs text-muted-foreground font-semibold mb-1">
-                              Ready to read resource
-                            </p>
-                            <p className="text-xs text-muted-foreground/70">
-                              Click the Read button to view resource content
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-4">
-                            {resourceContent?.contents?.map(
-                              (content: any, index: number) => (
-                                <div key={index} className="group">
-                                  <div className="overflow-hidden">
-                                    {content.type === "text" ? (
-                                      <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
-                                        {content.text}
-                                      </pre>
-                                    ) : (
-                                      <div className="p-4">
-                                        <JsonEditor
-                                          value={content}
-                                          readOnly
-                                          showToolbar={false}
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              ),
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </ScrollArea>
-                  )}
-                </div>
-              </>
+              </div>
             ) : (
               <div className="h-full flex items-center justify-center">
                 <div className="text-center">
                   <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
-                    <FolderOpen className="h-5 w-5 text-muted-foreground" />
+                    <Eye className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <p className="text-xs font-semibold text-foreground mb-1">
-                    Select a {activeTab === "resources" ? "resource" : "template"}
+                    {selectedResource || selectedTemplate
+                      ? "Response"
+                      : "No selection"}
                   </p>
                   <p className="text-xs text-muted-foreground font-medium">
-                    Choose from the left to preview its content
+                    {selectedResource
+                      ? "Loading..."
+                      : selectedTemplate
+                        ? "Fill in parameters and click Read"
+                        : "Select an item from the sidebar"}
                   </p>
                 </div>
               </div>
