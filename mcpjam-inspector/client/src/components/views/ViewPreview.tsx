@@ -186,6 +186,8 @@ export function ViewPreview({
         onDisplayModeChange={onDisplayModeChange}
         pipWidgetId={null}
         fullscreenWidgetId={null}
+        isOffline={isServerOffline}
+        cachedWidgetHtmlUrl={openaiView.widgetHtmlUrl ?? undefined}
       />
     );
   }

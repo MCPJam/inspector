@@ -144,9 +144,12 @@ export function useSaveView({
 
   // Upload widget HTML blob to Convex storage (for offline rendering)
   const uploadWidgetHtmlBlob = useCallback(
-    async (html: string): Promise<string> => {
-      // Only MCP apps support widget HTML caching
-      const uploadUrl = await generateMcpUploadUrl({});
+    async (html: string, protocol: "mcp-apps" | "openai-apps"): Promise<string> => {
+      // Both MCP and OpenAI apps now support widget HTML caching
+      const uploadUrl =
+        protocol === "mcp-apps"
+          ? await generateMcpUploadUrl({})
+          : await generateOpenaiUploadUrl({});
 
       // Create blob from HTML
       const blob = new Blob([html], {
@@ -166,7 +169,7 @@ export function useSaveView({
       const result = await response.json();
       return result.storageId;
     },
-    [generateMcpUploadUrl]
+    [generateMcpUploadUrl, generateOpenaiUploadUrl]
   );
 
   // Save view
@@ -195,10 +198,10 @@ export function useSaveView({
         // Upload output blob
         const toolOutputBlobId = await uploadOutputBlob(toolData.output, protocol);
 
-        // Upload widget HTML blob (for MCP apps with cached HTML)
+        // Upload widget HTML blob (for offline rendering - both MCP and OpenAI apps)
         let widgetHtmlBlobId: string | undefined;
-        if (protocol === "mcp-apps" && toolData.widgetHtml) {
-          widgetHtmlBlobId = await uploadWidgetHtmlBlob(toolData.widgetHtml);
+        if (toolData.widgetHtml) {
+          widgetHtmlBlobId = await uploadWidgetHtmlBlob(toolData.widgetHtml, protocol);
         }
 
         // Prepare base args
@@ -249,6 +252,7 @@ export function useSaveView({
             ...baseArgs,
             outputTemplate: toolData.outputTemplate || "",
             serverInfo: toolData.serverInfo,
+            widgetHtmlBlobId, // Include cached widget HTML for offline rendering
           });
         }
 

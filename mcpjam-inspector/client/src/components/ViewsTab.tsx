@@ -13,6 +13,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { ViewsListSidebar } from "./views/ViewsListSidebar";
 import { ViewDetailPanel } from "./views/ViewDetailPanel";
 import { ViewEditorPanel } from "./views/ViewEditorPanel";
+import { executeToolApi } from "@/lib/apis/mcp-tools-api";
 
 interface ViewsTabProps {
   selectedServer?: string;
@@ -36,6 +37,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   const [originalToolOutput, setOriginalToolOutput] = useState<unknown>(null);
   const [isLoadingToolOutput, setIsLoadingToolOutput] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
 
   // Track the view ID we loaded output for to avoid stale data
   const loadedToolOutputForViewId = useRef<string | null>(null);
@@ -82,11 +84,13 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     }
   }, [selectedServerId, selectedViewId, filteredViews]);
 
-  // Get connection status for a specific server by server ID
+  // Get connection status for a specific server - use appState.servers which has runtime state
   const getServerConnectionStatus = useCallback((serverName: string | undefined) => {
     if (!serverName) return undefined;
-    return activeWorkspace?.servers[serverName]?.connectionStatus;
-  }, [activeWorkspace]);
+    const status = appState.servers[serverName]?.connectionStatus;
+    console.log("[ViewsTab] getServerConnectionStatus:", serverName, "->", status, "servers:", Object.keys(appState.servers || {}));
+    return status;
+  }, [appState.servers]);
 
   // Mutations
   const {
@@ -285,6 +289,48 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     updateOpenaiView,
   ]);
 
+  // Handle running the tool with current input
+  const handleRun = useCallback(async () => {
+    if (!selectedView || liveToolInput === null || !selectedServer) return;
+
+    const status = getServerConnectionStatus(selectedServer);
+    if (status !== "connected") {
+      toast.error("Server is not connected");
+      return;
+    }
+
+    setIsRunning(true);
+
+    try {
+      const params = (liveToolInput ?? {}) as Record<string, unknown>;
+      const response = await executeToolApi(selectedServer, selectedView.toolName, params);
+
+      if ("error" in response) {
+        toast.error(`Execution failed: ${response.error}`);
+        return;
+      }
+
+      if (response.status === "elicitation_required") {
+        toast.error("Tool requires elicitation (not supported in Views)");
+        return;
+      }
+
+      if (response.status === "task_created") {
+        toast.error("Background tasks not supported in Views");
+        return;
+      }
+
+      // Success - update liveToolOutput with new result
+      setLiveToolOutput(response.result);
+      toast.success("Tool executed successfully");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Execution failed";
+      toast.error(msg);
+    } finally {
+      setIsRunning(false);
+    }
+  }, [selectedView, liveToolInput, selectedServer, getServerConnectionStatus]);
+
   // Handler to go back to views list
   const handleBackToList = useCallback(() => {
     setSelectedViewId(null);
@@ -375,6 +421,9 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               onSave={handleEditorSave}
               hasUnsavedChanges={hasLiveUnsavedChanges}
               onReset={handleEditorReset}
+              serverConnectionStatus={getServerConnectionStatus(selectedServer)}
+              isRunning={isRunning}
+              onRun={handleRun}
             />
           ) : (
             <ViewsListSidebar

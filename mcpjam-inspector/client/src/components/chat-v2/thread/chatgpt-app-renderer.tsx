@@ -124,6 +124,10 @@ interface ChatGPTAppRendererProps {
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  /** Whether the server is offline (for Views tab offline rendering) */
+  isOffline?: boolean;
+  /** Cached widget HTML URL for offline rendering */
+  cachedWidgetHtmlUrl?: string;
 }
 
 // ============================================================================
@@ -294,6 +298,9 @@ function useWidgetFetch(
   capabilities: { hover: boolean; touch: boolean },
   safeAreaInsets: { top: number; bottom: number; left: number; right: number },
   onCspConfigReceived?: (csp: WidgetCspData) => void,
+  isOffline?: boolean,
+  cachedWidgetHtmlUrl?: string,
+  onWidgetHtmlCaptured?: (toolCallId: string, html: string) => void,
 ) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
@@ -338,6 +345,34 @@ function useWidgetFetch(
       setIsStoringWidget(true);
       setStoreError(null);
       try {
+        // Try cached HTML first if available (for offline Views tab rendering)
+        if (cachedWidgetHtmlUrl) {
+          try {
+            const cachedResponse = await fetch(cachedWidgetHtmlUrl);
+            if (cachedResponse.ok) {
+              const html = await cachedResponse.text();
+              const blob = new Blob([html], { type: "text/html" });
+              if (!isCancelled) {
+                setWidgetUrl(URL.createObjectURL(blob));
+                setIsStoringWidget(false);
+              }
+              return;
+            }
+          } catch (cacheErr) {
+            console.warn("Failed to load cached widget HTML:", cacheErr);
+            // Fall through to live fetch if cache fails
+          }
+        }
+
+        // If offline and no cached HTML, show error
+        if (isOffline) {
+          if (!isCancelled) {
+            setStoreError("Server offline and no cached widget HTML available");
+            setIsStoringWidget(false);
+          }
+          return;
+        }
+
         // Host-controlled values per SDK spec
         const userLocation = await getUserLocation(); // Coarse IP-based location
 
@@ -399,11 +434,23 @@ function useWidgetFetch(
           setPrefersBorder(data.prefersBorder ?? true);
         }
 
+        // Fetch and cache the widget HTML for later saving
+        const widgetContentUrl = `/api/apps/chatgpt/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
+        if (onWidgetHtmlCaptured) {
+          try {
+            const contentResponse = await fetch(widgetContentUrl);
+            if (contentResponse.ok) {
+              const html = await contentResponse.text();
+              onWidgetHtmlCaptured(resolvedToolCallId, html);
+            }
+          } catch (captureErr) {
+            console.warn("Failed to capture widget HTML for caching:", captureErr);
+          }
+        }
+
         // Set the widget URL with CSP mode query param
         // Use /widget-content directly so CSP headers are applied by the browser
-        setWidgetUrl(
-          `/api/apps/chatgpt/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`,
-        );
+        setWidgetUrl(widgetContentUrl);
       } catch (err) {
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
@@ -435,6 +482,9 @@ function useWidgetFetch(
     capabilities,
     safeAreaInsets,
     onCspConfigReceived,
+    isOffline,
+    cachedWidgetHtmlUrl,
+    onWidgetHtmlCaptured,
   ]);
 
   return {
@@ -474,6 +524,8 @@ export function ChatGPTAppRenderer({
   onDisplayModeChange,
   onRequestFullscreen,
   onExitFullscreen,
+  isOffline,
+  cachedWidgetHtmlUrl,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
@@ -588,6 +640,7 @@ export function ChatGPTAppRenderer({
     ? playgroundSafeAreaInsets
     : DEFAULT_SAFE_AREA_INSETS;
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
+  const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
 
   // Mobile playground mode detection
   const isMobilePlaygroundMode = isPlaygroundActive && deviceType === "mobile";
@@ -601,6 +654,14 @@ export function ChatGPTAppRenderer({
       setWidgetCsp(resolvedToolCallId, csp);
     },
     [resolvedToolCallId, setWidgetCsp],
+  );
+
+  // Callback to capture widget HTML for offline rendering cache
+  const handleWidgetHtmlCaptured = useCallback(
+    (toolCallId: string, html: string) => {
+      setWidgetHtml(toolCallId, html);
+    },
+    [setWidgetHtml],
   );
 
   const isFullscreen = effectiveDisplayMode === "fullscreen";
@@ -631,6 +692,9 @@ export function ChatGPTAppRenderer({
     capabilities,
     safeAreaInsets,
     handleCspConfigReceived,
+    isOffline,
+    cachedWidgetHtmlUrl,
+    handleWidgetHtmlCaptured,
   );
 
   const applyMeasuredHeight = useCallback(

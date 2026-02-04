@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect } from "react";
-import { Save, Loader2, RotateCcw, ArrowLeft } from "lucide-react";
+import { Save, Loader2, RotateCcw, ArrowLeft, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { type AnyView } from "@/hooks/useViews";
+import { type ConnectionStatus } from "@/state/app-types";
 
 /** The editor model - only toolInput and toolOutput */
 interface EditorModel {
@@ -27,6 +28,12 @@ interface ViewEditorPanelProps {
   hasUnsavedChanges?: boolean;
   /** Reset handler (provided by parent) */
   onReset?: () => void;
+  /** Server connection status for showing Run button */
+  serverConnectionStatus?: ConnectionStatus;
+  /** Whether tool execution is in progress */
+  isRunning?: boolean;
+  /** Run handler to execute the tool with current input */
+  onRun?: () => Promise<void>;
 }
 
 export function ViewEditorPanel({
@@ -39,6 +46,9 @@ export function ViewEditorPanel({
   onSave,
   hasUnsavedChanges = false,
   onReset,
+  serverConnectionStatus,
+  isRunning = false,
+  onRun,
 }: ViewEditorPanelProps) {
   // Editor model contains only toolInput and toolOutput
   const [editorModel, setEditorModel] = useState<EditorModel>({
@@ -82,6 +92,9 @@ export function ViewEditorPanel({
     if (!hasUnsavedChanges || !onSave) return;
     await onSave();
   }, [hasUnsavedChanges, onSave]);
+
+  // Debug: log connection status
+  console.log("[ViewEditorPanel] serverConnectionStatus:", serverConnectionStatus, "onRun:", !!onRun);
 
   // Show loading state while toolOutput is loading
   if (isLoadingToolOutput) {
@@ -131,15 +144,30 @@ export function ViewEditorPanel({
             variant="ghost"
             size="sm"
             onClick={handleReset}
-            disabled={!hasUnsavedChanges || isSaving}
+            disabled={!hasUnsavedChanges || isSaving || isRunning}
           >
             <RotateCcw className="h-4 w-4 mr-1" />
             Reset
           </Button>
+          {serverConnectionStatus === "connected" && onRun && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRun}
+              disabled={isRunning || isSaving}
+            >
+              {isRunning ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4 mr-1" />
+              )}
+              Run
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={!hasUnsavedChanges || isSaving}
+            disabled={!hasUnsavedChanges || isSaving || isRunning}
           >
             {isSaving ? (
               <Loader2 className="h-4 w-4 mr-1 animate-spin" />
