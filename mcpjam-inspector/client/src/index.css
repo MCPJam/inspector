@@ -36,8 +36,8 @@
   --muted-foreground: oklch(0.6059 0.0075 97.4233);
   --accent: oklch(0.9245 0.0138 92.9892);
   --accent-foreground: oklch(0.2671 0.0196 98.939);
-  --destructive: oklch(0.1908 0.002 106.5859);
-  --destructive-foreground: oklch(1 0 0);
+  --destructive: oklch(0.55 0.22 27);
+  --destructive-foreground: oklch(0.25 0.1 25);
   --border: oklch(0.8847 0.0069 97.3627);
   --input: oklch(0.7621 0.0156 98.3528);
   --ring: oklch(0.6171 0.1375 39.0427);
@@ -73,6 +73,17 @@
   --font-mono:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
+  --font-code:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  /* JSON syntax highlighting colors (light mode) - Asana-inspired */
+  --json-key: oklch(0.55 0.2 255); /* Blue for keys */
+  --json-string: oklch(0.5 0.1 55); /* Warm brown/tan */
+  --json-number: oklch(0.5 0.1 55); /* Same as strings */
+  --json-boolean: oklch(0.5 0.15 145); /* Green (for true) */
+  --json-boolean-false: oklch(0.55 0.18 25); /* Red/coral (for false) */
+  --json-null: oklch(0.55 0.02 270); /* Gray */
+  --json-punctuation: oklch(0.55 0.01 270); /* Muted gray */
   --radius: 0.5rem;
   --shadow-x: 0;
   --shadow-y: 1px;
@@ -99,6 +110,14 @@
 .dark {
   --background: oklch(0.2679 0.0036 106.6427);
   --foreground: oklch(0.8074 0.0142 93.0137);
+  /* JSON syntax highlighting colors (dark mode) - Asana-inspired */
+  --json-key: oklch(0.7 0.18 255); /* Blue for keys */
+  --json-string: oklch(0.7 0.1 55); /* Warm brown/tan */
+  --json-number: oklch(0.7 0.1 55); /* Same as strings */
+  --json-boolean: oklch(0.65 0.15 145); /* Green (for true) */
+  --json-boolean-false: oklch(0.68 0.16 25); /* Red/coral (for false) */
+  --json-null: oklch(0.6 0.02 270); /* Gray */
+  --json-punctuation: oklch(0.5 0.01 270); /* Muted gray */
   --card: oklch(0.2679 0.0036 106.6427);
   --card-foreground: oklch(0.9818 0.0054 95.0986);
   --popover: oklch(0.3085 0.0035 106.6039);
@@ -120,11 +139,11 @@
   --success: oklch(0.648 0.15 152);
   --success-foreground: oklch(1 0 0);
   --warning: oklch(0.75 0.183 55);
-  --warning-foreground: oklch(0.239 0.06 60);
+  --warning-foreground: oklch(0.95 0.06 70);
   --info: oklch(0.623 0.214 259);
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.75 0.183 55);
-  --pending-foreground: oklch(0.239 0.06 60);
+  --pending-foreground: oklch(0.95 0.06 70);
   /* Overlay color */
   --overlay: oklch(0 0 0 / 0.5);
   --chart-1: oklch(0.5583 0.1276 42.9956);
@@ -339,4 +358,67 @@
 
 .animate-spin-pulse {
   animation: spin-pulse 1s ease-in-out infinite;
+}
+
+/* JSON syntax highlighting classes */
+.json-string {
+  color: var(--json-string);
+}
+
+.json-number {
+  color: var(--json-number);
+}
+
+.json-boolean {
+  color: var(--json-boolean);
+}
+
+.json-boolean-false {
+  color: var(--json-boolean-false);
+}
+
+.json-null {
+  color: var(--json-null);
+}
+
+.json-key {
+  color: var(--json-key);
+}
+
+.json-punctuation {
+  color: var(--json-punctuation);
+}
+
+/* JSON string truncation */
+.json-string-truncated {
+  cursor: pointer;
+}
+
+/* JSON collapse toggle */
+.json-collapse-toggle {
+  transition: transform 150ms ease-out;
+}
+
+.json-collapse-toggle[data-state="open"] {
+  transform: rotate(90deg);
+}
+
+/* JSON editor validation pulse animation */
+@keyframes validation-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.json-status-error {
+  animation: validation-pulse 0.5s ease-in-out 2;
+}
+
+/* Font code variable for theme */
+@theme inline {
+  --font-code: var(--font-code);
 }

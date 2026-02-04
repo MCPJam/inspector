@@ -1,0 +1,341 @@
+---
+title: "EvalSuite"
+description: "API reference for EvalSuite"
+icon: "book"
+---
+
+The `EvalSuite` class groups multiple `EvalTest` instances and provides aggregate metrics across all tests.
+
+## Import
+
+```typescript
+import { EvalSuite, EvalTest } from "@mcpjam/sdk";
+```
+
+## Constructor
+
+```typescript
+new EvalSuite(options: EvalSuiteOptions)
+```
+
+### Parameters
+
+<ParamField path="options" type="EvalSuiteOptions" required>
+  Configuration for the evaluation suite.
+</ParamField>
+
+### EvalSuiteOptions
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | `string` | Yes | Name for the suite |
+
+### Example
+
+```typescript
+const suite = new EvalSuite({ name: "Math Operations" });
+```
+
+---
+
+## Methods
+
+### add()
+
+Adds a test to the suite.
+
+```typescript
+add(test: EvalTest): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `test` | `EvalTest` | The test to add |
+
+#### Example
+
+```typescript
+suite.add(new EvalTest({
+  name: "addition",
+  test: async (agent) => {
+    const r = await agent.prompt("Add 2 and 3");
+    return r.hasToolCall("add");
+  },
+}));
+
+suite.add(new EvalTest({
+  name: "multiplication",
+  test: async (agent) => {
+    const r = await agent.prompt("Multiply 4 by 5");
+    return r.hasToolCall("multiply");
+  },
+}));
+```
+
+---
+
+### run()
+
+Runs all tests in the suite.
+
+```typescript
+run(agent: TestAgent, options: RunOptions): Promise<void>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent` | `TestAgent` | The agent to test with |
+| `options` | `RunOptions` | Run configuration (same as EvalTest) |
+
+#### RunOptions
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `iterations` | `number` | Yes | - | Number of runs per test |
+| `concurrency` | `number` | No | `1` | Parallel runs per test |
+| `retries` | `number` | No | `0` | Retry failed tests |
+| `timeoutMs` | `number` | No | `60000` | Timeout per test (ms) |
+| `onProgress` | `ProgressCallback` | No | - | Progress callback |
+
+#### Example
+
+```typescript
+await suite.run(agent, {
+  iterations: 30,
+  concurrency: 5,
+});
+```
+
+<Note>
+Tests within the suite run sequentially, but each test's iterations can run concurrently based on the `concurrency` setting.
+</Note>
+
+---
+
+### accuracy()
+
+Returns the aggregate accuracy across all tests.
+
+```typescript
+accuracy(): number
+```
+
+#### Returns
+
+`number` - Average accuracy of all tests (0.0 - 1.0).
+
+#### Example
+
+```typescript
+console.log(`Suite accuracy: ${(suite.accuracy() * 100).toFixed(1)}%`);
+```
+
+---
+
+### get()
+
+Retrieves a specific test by name.
+
+```typescript
+get(name: string): EvalTest | undefined
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `string` | The test name |
+
+#### Returns
+
+`EvalTest | undefined` - The test, or `undefined` if not found.
+
+#### Example
+
+```typescript
+const addTest = suite.get("addition");
+if (addTest) {
+  console.log(`Addition: ${(addTest.accuracy() * 100).toFixed(1)}%`);
+}
+```
+
+---
+
+### getTests()
+
+Returns all tests in the suite.
+
+```typescript
+getTests(): EvalTest[]
+```
+
+#### Returns
+
+`EvalTest[]` - Array of all tests.
+
+#### Example
+
+```typescript
+for (const test of suite.getTests()) {
+  console.log(`${test.name}: ${(test.accuracy() * 100).toFixed(1)}%`);
+}
+```
+
+---
+
+## Properties
+
+### name
+
+The suite's name.
+
+```typescript
+suite.name // "Math Operations"
+```
+
+---
+
+## Complete Example
+
+```typescript
+import { MCPClientManager, TestAgent, EvalSuite, EvalTest } from "@mcpjam/sdk";
+
+async function main() {
+  // Setup
+  const manager = new MCPClientManager({
+    everything: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+    },
+  });
+  await manager.connectToServer("everything");
+
+  const agent = new TestAgent({
+    tools: await manager.getTools(),
+    model: "anthropic/claude-sonnet-4-20250514",
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    temperature: 0.1,
+  });
+
+  // Build suite
+  const suite = new EvalSuite({ name: "Everything Server Tests" });
+
+  suite.add(new EvalTest({
+    name: "add",
+    test: async (a) => (await a.prompt("Add 2+3")).hasToolCall("add"),
+  }));
+
+  suite.add(new EvalTest({
+    name: "echo",
+    test: async (a) => (await a.prompt("Echo 'test'")).hasToolCall("echo"),
+  }));
+
+  suite.add(new EvalTest({
+    name: "longRunningOperation",
+    test: async (a) => (await a.prompt("Run a long operation")).hasToolCall("longRunningOperation"),
+  }));
+
+  // Run
+  console.log(`Running ${suite.name}...\n`);
+
+  await suite.run(agent, {
+    iterations: 20,
+    concurrency: 3,
+    onProgress: (done, total) => {
+      process.stdout.write(`\r  Progress: ${done}/${total}`);
+    },
+  });
+
+  // Report
+  console.log("\n\n📊 Results");
+  console.log("═".repeat(40));
+  console.log(`Overall: ${(suite.accuracy() * 100).toFixed(1)}%\n`);
+
+  console.log("Per-test breakdown:");
+  for (const test of suite.getTests()) {
+    const pct = (test.accuracy() * 100).toFixed(1);
+    const icon = test.accuracy() >= 0.9 ? "✅" : test.accuracy() >= 0.7 ? "⚠️" : "❌";
+    console.log(`  ${icon} ${test.name}: ${pct}%`);
+  }
+
+  // Access individual test
+  const echoTest = suite.get("echo");
+  if (echoTest) {
+    console.log(`\nEcho test details:`);
+    console.log(`  Precision: ${(echoTest.precision() * 100).toFixed(1)}%`);
+    console.log(`  Recall: ${(echoTest.recall() * 100).toFixed(1)}%`);
+    console.log(`  Avg tokens: ${echoTest.averageTokenUse()}`);
+  }
+
+  // Cleanup
+  await manager.disconnectServer("everything");
+}
+```
+
+---
+
+## Patterns
+
+### CI Quality Gate
+
+```typescript
+await suite.run(agent, { iterations: 30 });
+
+if (suite.accuracy() < 0.90) {
+  console.error(`❌ Suite accuracy ${(suite.accuracy() * 100).toFixed(1)}% below 90% threshold`);
+  process.exit(1);
+}
+
+console.log("✅ All quality gates passed");
+```
+
+### Per-Test Thresholds
+
+```typescript
+await suite.run(agent, { iterations: 30 });
+
+const criticalTests = ["createOrder", "processPayment"];
+let failed = false;
+
+for (const name of criticalTests) {
+  const test = suite.get(name);
+  if (test && test.accuracy() < 0.95) {
+    console.error(`❌ Critical test "${name}" below 95%`);
+    failed = true;
+  }
+}
+
+if (failed) process.exit(1);
+```
+
+### Comparing Across Providers
+
+```typescript
+const providers = [
+  { model: "anthropic/claude-sonnet-4-20250514", key: "ANTHROPIC_API_KEY" },
+  { model: "openai/gpt-4o", key: "OPENAI_API_KEY" },
+];
+
+for (const { model, key } of providers) {
+  const agent = new TestAgent({
+    tools,
+    model,
+    apiKey: process.env[key],
+  });
+
+  await suite.run(agent, { iterations: 20 });
+  console.log(`${model}: ${(suite.accuracy() * 100).toFixed(1)}%`);
+}
+```
+
+---
+
+## Related
+
+- [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
+- [EvalTest Reference](/sdk/reference/eval-test) - Individual test API
+- [Testing Across Providers](/sdk/concepts/multi-provider) - Compare LLMs

@@ -26,7 +26,6 @@ export default defineConfig({
     "@ai-sdk/deepseek",
     "ollama-ai-provider",
     "zod",
-    "zod-to-json-schema",
     "clsx",
     "tailwind-merge",
     // Keep environment PATH fixers external (these may use CJS internals and dynamic requires)
@@ -45,13 +44,14 @@ export default defineConfig({
   noExternal: [
     // Force bundling of problematic packages
     "exit-hook",
+    "@mcpjam/sdk",
   ],
   esbuildOptions(options) {
     options.platform = "node";
     options.mainFields = ["module", "main"];
-    // Configure path alias for @/sdk
+    // Configure path alias for @mcpjam/sdk
     options.alias = {
-      "@/sdk": join(rootDir, "sdk/dist/index.js"),
+      "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.mjs"),
     };
   },
   async onSuccess() {

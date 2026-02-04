@@ -23,7 +23,7 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { generateFormFieldsFromSchema } from "@/lib/tool-form";
-import type { MCPServerConfig } from "@/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 
@@ -140,7 +140,7 @@ export function UIPlaygroundTab({
     reset();
     setToolsMetadata({});
     try {
-      const data = await listTools(serverName);
+      const data = await listTools({ serverId: serverName });
       const toolArray = data.tools ?? [];
       const dictionary = Object.fromEntries(
         toolArray.map((tool: Tool) => [tool.name, tool]),

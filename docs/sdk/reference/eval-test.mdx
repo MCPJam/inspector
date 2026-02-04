@@ -1,0 +1,369 @@
+---
+title: "EvalTest"
+description: "API reference for EvalTest"
+icon: "book"
+---
+
+The `EvalTest` class runs a single test scenario multiple times and provides statistical metrics like accuracy, precision, and recall.
+
+## Import
+
+```typescript
+import { EvalTest } from "@mcpjam/sdk";
+```
+
+## Constructor
+
+```typescript
+new EvalTest(options: EvalTestOptions)
+```
+
+### Parameters
+
+<ParamField path="options" type="EvalTestOptions" required>
+  Configuration for the evaluation test.
+</ParamField>
+
+### EvalTestOptions
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | `string` | Yes | Unique identifier for the test |
+| `test` | `TestFunction` | Yes | The test function to run |
+
+### TestFunction Type
+
+```typescript
+type TestFunction = (agent: TestAgent) => Promise<boolean>
+```
+
+The test function receives a `TestAgent` and must return a `boolean`:
+- `true` = test passed
+- `false` = test failed
+
+### Example
+
+```typescript
+const test = new EvalTest({
+  name: "addition-accuracy",
+  test: async (agent) => {
+    const result = await agent.prompt("Add 2 and 3");
+    return result.hasToolCall("add");
+  },
+});
+```
+
+---
+
+## Methods
+
+### run()
+
+Executes the test multiple times.
+
+```typescript
+run(agent: TestAgent, options: RunOptions): Promise<void>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent` | `TestAgent` | The agent to test with |
+| `options` | `RunOptions` | Run configuration |
+
+#### RunOptions
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `iterations` | `number` | Yes | - | Number of test runs |
+| `concurrency` | `number` | No | `1` | Parallel test runs |
+| `retries` | `number` | No | `0` | Retry failed tests |
+| `timeoutMs` | `number` | No | `60000` | Timeout per test (ms) |
+| `onProgress` | `ProgressCallback` | No | - | Progress callback |
+
+#### ProgressCallback Type
+
+```typescript
+type ProgressCallback = (completed: number, total: number) => void
+```
+
+#### Example
+
+```typescript
+await test.run(agent, {
+  iterations: 30,
+  concurrency: 5,
+  retries: 2,
+  timeoutMs: 30000,
+  onProgress: (done, total) => {
+    console.log(`${done}/${total}`);
+  },
+});
+```
+
+---
+
+### accuracy()
+
+Returns the success rate (0.0 - 1.0).
+
+```typescript
+accuracy(): number
+```
+
+#### Returns
+
+`number` - Proportion of tests that passed.
+
+#### Example
+
+```typescript
+console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
+// "Accuracy: 96.7%"
+```
+
+---
+
+### precision()
+
+Returns the precision metric.
+
+```typescript
+precision(): number
+```
+
+#### Returns
+
+`number` - True positives / (True positives + False positives).
+
+---
+
+### recall()
+
+Returns the recall metric.
+
+```typescript
+recall(): number
+```
+
+#### Returns
+
+`number` - True positives / (True positives + False negatives).
+
+---
+
+### truePositiveRate()
+
+Returns the true positive rate (same as recall).
+
+```typescript
+truePositiveRate(): number
+```
+
+---
+
+### falsePositiveRate()
+
+Returns the false positive rate.
+
+```typescript
+falsePositiveRate(): number
+```
+
+#### Returns
+
+`number` - False positives / (False positives + True negatives).
+
+---
+
+### averageTokenUse()
+
+Returns the average tokens used per iteration.
+
+```typescript
+averageTokenUse(): number
+```
+
+#### Returns
+
+`number` - Mean token count.
+
+#### Example
+
+```typescript
+console.log(`Avg tokens: ${test.averageTokenUse()}`);
+```
+
+---
+
+### getResults()
+
+Returns raw results from all iterations.
+
+```typescript
+getResults(): TestResult[]
+```
+
+#### Returns
+
+`TestResult[]` - Array of individual test results.
+
+#### TestResult Type
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | Whether the test passed |
+| `error` | `string \| undefined` | Error message if failed |
+| `latencyMs` | `number` | Time taken |
+| `tokens` | `number` | Tokens used |
+
+#### Example
+
+```typescript
+const results = test.getResults();
+
+const failures = results.filter(r => !r.passed);
+console.log(`Failures: ${failures.length}`);
+
+for (const fail of failures) {
+  console.log(`  Error: ${fail.error}`);
+}
+```
+
+---
+
+## Properties
+
+### name
+
+The test's identifier.
+
+```typescript
+test.name // "addition-accuracy"
+```
+
+---
+
+## Test Function Patterns
+
+### Simple Tool Check
+
+```typescript
+test: async (agent) => {
+  const result = await agent.prompt("Add 5 and 3");
+  return result.hasToolCall("add");
+}
+```
+
+### Argument Validation
+
+```typescript
+test: async (agent) => {
+  const result = await agent.prompt("Add 10 and 20");
+  const args = result.getToolArguments("add");
+  return args?.a === 10 && args?.b === 20;
+}
+```
+
+### Response Content
+
+```typescript
+test: async (agent) => {
+  const result = await agent.prompt("What is 5 + 5?");
+  return result.getText().includes("10");
+}
+```
+
+### Multiple Conditions
+
+```typescript
+test: async (agent) => {
+  const result = await agent.prompt("Calculate 5 * 3");
+  return (
+    result.hasToolCall("multiply") &&
+    !result.hasError() &&
+    result.getText().length > 0
+  );
+}
+```
+
+### Multi-Turn Conversation
+
+```typescript
+test: async (agent) => {
+  const r1 = await agent.prompt("Create a project");
+  const r2 = await agent.prompt("Add a task to it", { context: r1 });
+  return r1.hasToolCall("createProject") && r2.hasToolCall("createTask");
+}
+```
+
+### With Validators
+
+```typescript
+import { matchToolCallWithArgs } from "@mcpjam/sdk";
+
+test: async (agent) => {
+  const result = await agent.prompt("Add 2 and 3");
+  return matchToolCallWithArgs("add", { a: 2, b: 3 }, result.getToolCalls());
+}
+```
+
+---
+
+## Complete Example
+
+```typescript
+import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+
+async function main() {
+  const manager = new MCPClientManager({
+    everything: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+    },
+  });
+  await manager.connectToServer("everything");
+
+  const agent = new TestAgent({
+    tools: await manager.getTools(),
+    model: "anthropic/claude-sonnet-4-20250514",
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    temperature: 0.1,
+  });
+
+  const test = new EvalTest({
+    name: "addition",
+    test: async (agent) => {
+      const r = await agent.prompt("Add 2 and 3");
+      return r.hasToolCall("add");
+    },
+  });
+
+  console.log("Running evaluation...");
+
+  await test.run(agent, {
+    iterations: 30,
+    concurrency: 5,
+    onProgress: (done, total) => {
+      process.stdout.write(`\r${done}/${total}`);
+    },
+  });
+
+  console.log("\n\nResults:");
+  console.log(`  Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
+  console.log(`  Precision: ${(test.precision() * 100).toFixed(1)}%`);
+  console.log(`  Recall: ${(test.recall() * 100).toFixed(1)}%`);
+  console.log(`  Avg tokens: ${test.averageTokenUse()}`);
+
+  await manager.disconnectServer("everything");
+}
+```
+
+---
+
+## Related
+
+- [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
+- [EvalSuite Reference](/sdk/reference/eval-suite) - Group multiple tests
+- [Validators Reference](/sdk/reference/validators) - Assertion functions

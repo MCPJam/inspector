@@ -1,0 +1,286 @@
+---
+title: "TestAgent"
+description: "API reference for TestAgent"
+icon: "book"
+---
+
+The `TestAgent` class wraps LLM providers via the Vercel AI SDK, enabling you to run prompts with MCP tools. It handles the agentic loop and returns rich result objects.
+
+## Import
+
+```typescript
+import { TestAgent } from "@mcpjam/sdk";
+```
+
+## Constructor
+
+```typescript
+new TestAgent(options: TestAgentOptions)
+```
+
+### Parameters
+
+<ParamField path="options" type="TestAgentOptions" required>
+  Configuration for the test agent.
+</ParamField>
+
+### TestAgentOptions
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `tools` | `Record<string, Tool>` | Yes | - | MCP tools from `manager.getTools()` |
+| `model` | `string` | Yes | - | Model identifier in `provider/model` format |
+| `apiKey` | `string` | Yes | - | API key for the LLM provider |
+| `systemPrompt` | `string` | No | `undefined` | System prompt for the LLM |
+| `temperature` | `number` | No | `undefined` | Sampling temperature (0-2). If undefined, uses model default. |
+| `maxSteps` | `number` | No | `10` | Maximum agentic loop iterations |
+| `customProviders` | `Record<string, CustomProvider>` | No | `undefined` | Custom LLM provider definitions |
+
+### Example
+
+```typescript
+const agent = new TestAgent({
+  tools: await manager.getTools(),
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  systemPrompt: "You are a helpful assistant.",
+  temperature: 0.3,
+  maxSteps: 5,
+});
+```
+
+---
+
+## Methods
+
+### prompt()
+
+Sends a prompt to the LLM and returns the result.
+
+```typescript
+prompt(
+  message: string,
+  options?: PromptOptions
+): Promise<PromptResult>
+```
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | `string` | Yes | The user prompt |
+| `options` | `PromptOptions` | No | Additional options |
+
+#### PromptOptions
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `context` | `PromptResult \| PromptResult[]` | Previous result(s) for multi-turn conversations |
+
+#### Returns
+
+`Promise<PromptResult>` - The result object with response and metadata.
+
+#### Example
+
+```typescript
+// Simple prompt
+const result = await agent.prompt("Add 2 and 3");
+
+// Multi-turn conversation
+const r1 = await agent.prompt("Create a task called 'Test'");
+const r2 = await agent.prompt("Mark it complete", { context: r1 });
+
+// Multiple context items
+const r3 = await agent.prompt("Show summary", { context: [r1, r2] });
+```
+
+<Note>
+`prompt()` never throws exceptions. Errors are captured in the `PromptResult`. Check `result.hasError()` to detect failures.
+</Note>
+
+---
+
+## Model String Format
+
+Models are specified as `provider/model`:
+
+```typescript
+// Anthropic
+"anthropic/claude-sonnet-4-20250514"
+"anthropic/claude-3-haiku-20240307"
+
+// OpenAI
+"openai/gpt-4o"
+"openai/gpt-4o-mini"
+
+// Google
+"google/gemini-1.5-pro"
+"google/gemini-1.5-flash"
+
+// Azure
+"azure/gpt-4o"
+
+// Mistral
+"mistral/mistral-large-latest"
+
+// DeepSeek
+"deepseek/deepseek-chat"
+
+// Ollama (local)
+"ollama/llama3"
+
+// OpenRouter
+"openrouter/anthropic/claude-3-opus"
+
+// xAI
+"xai/grok-beta"
+```
+
+---
+
+## Custom Providers
+
+Add custom OpenAI or Anthropic-compatible endpoints.
+
+### CustomProvider Type
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | `string` | Yes | Provider identifier |
+| `protocol` | `"openai-compatible" \| "anthropic-compatible"` | Yes | API protocol |
+| `baseUrl` | `string` | Yes | API endpoint URL |
+| `modelIds` | `string[]` | Yes | Available model IDs |
+| `useChatCompletions` | `boolean` | No | Use `/chat/completions` endpoint |
+| `apiKeyEnvVar` | `string` | No | Custom env var for API key |
+
+### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "my-litellm/gpt-4",
+  apiKey: process.env.LITELLM_API_KEY,
+  customProviders: {
+    "my-litellm": {
+      name: "my-litellm",
+      protocol: "openai-compatible",
+      baseUrl: "http://localhost:8000",
+      modelIds: ["gpt-4", "gpt-3.5-turbo", "claude-3-sonnet"],
+      useChatCompletions: true,
+    },
+  },
+});
+```
+
+---
+
+## Configuration Properties
+
+### tools
+
+The MCP tools available to the agent. Obtained from `MCPClientManager.getTools()`.
+
+```typescript
+const tools = await manager.getTools();
+const agent = new TestAgent({ tools, ... });
+```
+
+### model
+
+The LLM model identifier. Format: `provider/model-id`.
+
+```typescript
+model: "anthropic/claude-sonnet-4-20250514"
+```
+
+### apiKey
+
+The API key for the LLM provider.
+
+```typescript
+apiKey: process.env.ANTHROPIC_API_KEY
+```
+
+### systemPrompt
+
+Optional system prompt to guide the LLM's behavior.
+
+```typescript
+systemPrompt: "You are a task management assistant. Be concise."
+```
+
+### temperature
+
+Controls response randomness. Range: 0.0 (deterministic) to 1.0 (creative).
+
+```typescript
+temperature: 0.1  // More deterministic, better for testing
+temperature: 0.9  // More creative
+```
+
+### maxSteps
+
+Maximum iterations of the agentic loop (prompt → tool → result → continue).
+
+```typescript
+maxSteps: 5  // Stop after 5 tool calls
+```
+
+<Warning>
+Setting `maxSteps` too low may prevent complex tasks from completing. Setting it too high may allow runaway loops.
+</Warning>
+
+---
+
+## Complete Example
+
+```typescript
+import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+
+async function main() {
+  // Setup
+  const manager = new MCPClientManager({
+    everything: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+    },
+  });
+  await manager.connectToServer("everything");
+
+  // Create agent
+  const agent = new TestAgent({
+    tools: await manager.getTools(),
+    model: "anthropic/claude-sonnet-4-20250514",
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    systemPrompt: "You are a helpful assistant.",
+    temperature: 0.3,
+    maxSteps: 10,
+  });
+
+  // Single prompt
+  const r1 = await agent.prompt("What is 15 + 27?");
+  console.log(r1.getText());
+  console.log("Tools:", r1.toolsCalled());
+
+  // Multi-turn
+  const r2 = await agent.prompt("Now multiply that by 2", { context: r1 });
+  console.log(r2.getText());
+
+  // Error handling
+  if (r2.hasError()) {
+    console.error("Error:", r2.getError());
+  }
+
+  // Cleanup
+  await manager.disconnectServer("everything");
+}
+```
+
+---
+
+## Related
+
+- [Testing with LLMs](/sdk/concepts/testing-with-llms) - Conceptual guide
+- [PromptResult Reference](/sdk/reference/prompt-result) - Result object API
+- [LLM Providers Reference](/sdk/reference/llm-providers) - All providers

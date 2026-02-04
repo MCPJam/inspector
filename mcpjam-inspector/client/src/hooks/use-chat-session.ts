@@ -21,11 +21,7 @@ import {
   useLayoutEffect,
 } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
-import {
-  DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithToolCalls,
-  generateId,
-} from "ai";
+import { DefaultChatTransport, generateId } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { ModelDefinition, isGPT5Model } from "@/shared/types";
@@ -69,7 +65,15 @@ export interface UseChatSessionReturn {
   // Chat state
   messages: UIMessage[];
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
-  sendMessage: (options: { text: string }) => void;
+  sendMessage: (options: {
+    text: string;
+    files?: Array<{
+      type: "file";
+      mediaType: string;
+      filename?: string;
+      url: string;
+    }>;
+  }) => void;
   stop: () => void;
   status: "submitted" | "streaming" | "ready" | "error";
   error: Error | undefined;
@@ -213,7 +217,10 @@ export function useChatSession({
 
     // Merge session auth headers with workos auth headers
     const sessionHeaders = getSessionAuthHeaders();
-    const mergedHeaders = { ...sessionHeaders, ...authHeaders };
+    const mergedHeaders = { ...sessionHeaders, ...authHeaders } as Record<
+      string,
+      string
+    >;
 
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
@@ -237,13 +244,39 @@ export function useChatSession({
   ]);
 
   // useChat hook
-  const { messages, sendMessage, stop, status, error, setMessages } = useChat({
+  const {
+    messages,
+    sendMessage: baseSendMessage,
+    stop,
+    status,
+    error,
+    setMessages,
+  } = useChat({
     id: chatSessionId,
     transport: transport!,
-    sendAutomaticallyWhen: isMcpJamModel
-      ? undefined
-      : lastAssistantMessageIsCompleteWithToolCalls,
   });
+
+  // Wrapped sendMessage that accepts FileUIPart[]
+  const sendMessage = useCallback(
+    (options: {
+      text: string;
+      files?: Array<{
+        type: "file";
+        mediaType: string;
+        filename?: string;
+        url: string;
+      }>;
+    }) => {
+      const { text, files } = options;
+      if (files && files.length > 0) {
+        // AI SDK accepts FileUIPart[] with data URLs
+        baseSendMessage({ text, files });
+      } else {
+        baseSendMessage({ text });
+      }
+    },
+    [baseSendMessage],
+  );
 
   // Reset chat
   const resetChat = useCallback(() => {

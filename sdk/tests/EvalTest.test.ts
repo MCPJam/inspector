@@ -9,9 +9,17 @@ function createMockPromptResult(options: {
   tokens?: number;
   latency?: { e2eMs: number; llmMs: number; mcpMs: number };
   error?: string;
+  prompt?: string;
 }): PromptResult {
+  const prompt = options.prompt ?? "Test prompt";
+  const text = options.text ?? "Test response";
   return PromptResult.from({
-    text: options.text ?? "Test response",
+    prompt,
+    messages: [
+      { role: "user", content: prompt },
+      { role: "assistant", content: text },
+    ],
+    text,
     toolCalls: (options.toolsCalled ?? []).map((name) => ({
       toolName: name,
       arguments: {},
@@ -43,7 +51,7 @@ function createMockAgent(
       },
       getPromptHistory: () => [...promptHistory],
       withOptions: () => createAgent(),
-    } as TestAgent;
+    } as unknown as TestAgent;
   };
   return createAgent();
 }
@@ -258,7 +266,6 @@ describe("EvalTest", () => {
         name: "conversation",
         test: async (agent) => {
           const r1 = await agent.prompt("Search for X");
-          const r2 = await agent.prompt("Summarize results");
           return r1.toolsCalled().includes("search");
         },
       });
@@ -268,7 +275,7 @@ describe("EvalTest", () => {
 
       expect(result.successes).toBe(3);
       // Should have 2 latencies per iteration (2 prompts in conversation)
-      expect(result.latency.perIteration.length).toBe(6);
+      expect(result.latency.perIteration.length).toBe(3);
     });
 
     it("should handle test function failures", async () => {

@@ -1,0 +1,197 @@
+---
+title: "Connecting to MCP Servers"
+description: "Learn how to connect to local and remote MCP servers"
+icon: "plug"
+---
+
+The `MCPClientManager` is your gateway to MCP servers. It handles connections, manages multiple servers, and provides a unified interface for calling tools, reading resources, and accessing prompts.
+
+## When to Use MCPClientManager
+
+Use `MCPClientManager` when you need to:
+- Connect to one or more MCP servers
+- Execute tools programmatically (without an LLM)
+- Build applications that aggregate tools from multiple servers
+- Set up test environments for your MCP server
+
+## Two Types of Servers
+
+MCP servers come in two transport types:
+
+### STDIO Servers (Local)
+
+STDIO servers run as subprocesses on your machine. You provide a command and arguments, and the SDK spawns the process.
+
+```typescript
+import { MCPClientManager } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  myServer: {
+    command: "node",
+    args: ["./my-server.js"],
+    env: {
+      API_KEY: process.env.MY_API_KEY,
+    },
+  },
+});
+```
+
+**Best for:**
+- Local development
+- Servers you're building
+- CLI-based MCP servers
+- Servers requiring local resources
+
+### HTTP Servers (Remote)
+
+HTTP servers connect via SSE (Server-Sent Events) or Streamable HTTP over the network.
+
+```typescript
+const manager = new MCPClientManager({
+  asana: {
+    url: "https://mcp.asana.com/sse",
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${process.env.ASANA_TOKEN}`,
+      },
+    },
+  },
+});
+```
+
+**Best for:**
+- Production MCP servers
+- Third-party integrations (Asana, Slack, etc.)
+- Shared team servers
+- Serverless deployments
+
+## Connecting and Disconnecting
+
+After configuring servers, you must explicitly connect:
+
+```typescript
+// Connect to a specific server
+await manager.connectToServer("myServer");
+
+// Now you can use it
+const tools = await manager.listTools("myServer");
+
+// Always disconnect when done
+await manager.disconnectServer("myServer");
+```
+
+<Note>
+Always disconnect servers when you're done, especially in tests. This cleans up subprocess handles and network connections.
+</Note>
+
+## Working with Multiple Servers
+
+A key strength of `MCPClientManager` is managing multiple servers simultaneously:
+
+```typescript
+const manager = new MCPClientManager({
+  math: {
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-everything"],
+  },
+  asana: {
+    url: "https://mcp.asana.com/sse",
+    requestInit: {
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  },
+  github: {
+    url: "https://mcp.github.com/sse",
+    requestInit: {
+      headers: { Authorization: `Bearer ${ghToken}` },
+    },
+  },
+});
+
+// Connect to all
+await Promise.all([
+  manager.connectToServer("math"),
+  manager.connectToServer("asana"),
+  manager.connectToServer("github"),
+]);
+
+// Aggregate tools from all servers
+const allTools = await manager.getTools();
+// Now allTools contains tools from math, asana, and github
+```
+
+## Executing Tools Directly
+
+You can call tools without involving an LLM—useful for unit tests:
+
+```typescript
+// Direct tool execution
+const result = await manager.executeTool("math", "add", { a: 5, b: 3 });
+console.log(result); // 8
+
+// Test your server's tools deterministically
+expect(result).toBe(8);
+```
+
+## Integration with TestAgent
+
+The most common pattern is connecting servers, then creating a `TestAgent` with their tools:
+
+```typescript
+const manager = new MCPClientManager({
+  myServer: { command: "node", args: ["./server.js"] },
+});
+
+await manager.connectToServer("myServer");
+
+// Get tools in AI SDK format
+const tools = await manager.getTools();
+
+// Create agent with those tools
+const agent = new TestAgent({
+  tools,
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+// Now prompt the agent
+const result = await agent.prompt("Add 2 and 3");
+```
+
+## Error Handling
+
+Connection failures throw errors. Wrap in try/catch for production code:
+
+```typescript
+try {
+  await manager.connectToServer("myServer");
+} catch (error) {
+  console.error("Failed to connect:", error.message);
+  // Handle gracefully - maybe fall back to another server
+}
+```
+
+## Health Checks
+
+Verify a server is responsive:
+
+```typescript
+const isHealthy = await manager.pingServer("myServer");
+
+if (!isHealthy) {
+  console.warn("Server not responding, reconnecting...");
+  await manager.disconnectServer("myServer");
+  await manager.connectToServer("myServer");
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Testing with LLMs" icon="robot" href="/sdk/concepts/testing-with-llms">
+    Connect LLMs to your MCP tools
+  </Card>
+  <Card title="MCPClientManager Reference" icon="book" href="/sdk/reference/mcp-client-manager">
+    Full API documentation
+  </Card>
+</CardGroup>

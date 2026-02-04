@@ -21,6 +21,8 @@ import tokenizer from "./tokenizer";
 import tunnelsRoute from "./tunnels";
 import logLevel from "./log-level";
 import tasks from "./tasks";
+import skills from "./skills";
+import xrayPayload from "./xray-payload";
 
 // ES module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -113,5 +115,11 @@ mcp.route("/log-level", logLevel);
 
 // Tasks endpoints - MCP Tasks experimental feature (spec 2025-11-25)
 mcp.route("/tasks", tasks);
+
+// Skills endpoints - Agent skills from .mcpjam/skills/
+mcp.route("/skills", skills);
+
+// X-Ray payload endpoint - returns actual payload sent to model
+mcp.route("/xray-payload", xrayPayload);
 
 export default mcp;

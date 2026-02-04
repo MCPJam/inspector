@@ -11,7 +11,7 @@ import {
 } from "../../services/negative-test-agent";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
-import type { MCPClientManager } from "@/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 
@@ -66,10 +66,7 @@ async function collectToolsForServers(
 ): Promise<DiscoveredTool[]> {
   const perServerTools = await Promise.all(
     serverIds.map(async (serverId) => {
-      if (
-        clientManager.getConnectionStatusByAttemptingPing(serverId) !==
-        "connected"
-      ) {
+      if (clientManager.getConnectionStatus(serverId) !== "connected") {
         return [] as DiscoveredTool[];
       }
 

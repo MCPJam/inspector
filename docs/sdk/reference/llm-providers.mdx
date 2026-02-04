@@ -1,0 +1,451 @@
+---
+title: "LLM Providers"
+description: "API reference for LLM provider configuration"
+icon: "book"
+---
+
+The SDK supports 9 built-in LLM providers and allows custom provider configuration for any OpenAI or Anthropic-compatible endpoint.
+
+## Model String Format
+
+All models use the format `provider/model-id`:
+
+```typescript
+"anthropic/claude-sonnet-4-20250514"
+"openai/gpt-4o"
+"google/gemini-1.5-pro"
+```
+
+---
+
+## Built-in Providers
+
+### Anthropic
+
+| Property | Value |
+|----------|-------|
+| Prefix | `anthropic/` |
+| Environment Variable | `ANTHROPIC_API_KEY` |
+
+#### Models
+
+| Model ID | Description |
+|----------|-------------|
+| `claude-sonnet-4-20250514` | Latest Sonnet (recommended) |
+| `claude-3-5-sonnet-20241022` | Claude 3.5 Sonnet |
+| `claude-3-haiku-20240307` | Fast, efficient |
+| `claude-3-opus-20240229` | Most capable |
+
+#### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+```
+
+---
+
+### OpenAI
+
+| Property | Value |
+|----------|-------|
+| Prefix | `openai/` |
+| Environment Variable | `OPENAI_API_KEY` |
+
+#### Models
+
+| Model ID | Description |
+|----------|-------------|
+| `gpt-4o` | Latest GPT-4 Omni (recommended) |
+| `gpt-4o-mini` | Fast, cost-effective |
+| `gpt-4-turbo` | GPT-4 Turbo |
+| `gpt-4` | Original GPT-4 |
+| `gpt-3.5-turbo` | Fast, economical |
+
+#### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "openai/gpt-4o",
+  apiKey: process.env.OPENAI_API_KEY,
+});
+```
+
+---
+
+### Azure OpenAI
+
+| Property | Value |
+|----------|-------|
+| Prefix | `azure/` |
+| Environment Variables | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
+
+#### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AZURE_OPENAI_API_KEY` | Yes | API key |
+| `AZURE_OPENAI_ENDPOINT` | Yes | Endpoint URL |
+| `AZURE_OPENAI_API_VERSION` | No | API version |
+
+#### Example
+
+```typescript
+// Set environment variables first:
+// AZURE_OPENAI_API_KEY=...
+// AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+
+const agent = new TestAgent({
+  tools,
+  model: "azure/gpt-4o",
+  apiKey: process.env.AZURE_OPENAI_API_KEY,
+});
+```
+
+---
+
+### Google (Gemini)
+
+| Property | Value |
+|----------|-------|
+| Prefix | `google/` |
+| Environment Variable | `GOOGLE_GENERATIVE_AI_API_KEY` |
+
+#### Models
+
+| Model ID | Description |
+|----------|-------------|
+| `gemini-1.5-pro` | Most capable (recommended) |
+| `gemini-1.5-flash` | Fast, efficient |
+| `gemini-pro` | Original Gemini Pro |
+
+#### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "google/gemini-1.5-pro",
+  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+});
+```
+
+---
+
+### Mistral
+
+| Property | Value |
+|----------|-------|
+| Prefix | `mistral/` |
+| Environment Variable | `MISTRAL_API_KEY` |
+
+#### Models
+
+| Model ID | Description |
+|----------|-------------|
+| `mistral-large-latest` | Most capable |
+| `mistral-medium-latest` | Balanced |
+| `mistral-small-latest` | Fast, economical |
+| `open-mistral-7b` | Open source |
+| `open-mixtral-8x7b` | Open source MoE |
+
+#### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "mistral/mistral-large-latest",
+  apiKey: process.env.MISTRAL_API_KEY,
+});
+```
+
+---
+
+### DeepSeek
+
+| Property | Value |
+|----------|-------|
+| Prefix | `deepseek/` |
+| Environment Variable | `DEEPSEEK_API_KEY` |
+
+#### Models
+
+| Model ID | Description |
+|----------|-------------|
+| `deepseek-chat` | General chat |
+| `deepseek-coder` | Code-focused |
+
+#### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "deepseek/deepseek-chat",
+  apiKey: process.env.DEEPSEEK_API_KEY,
+});
+```
+
+---
+
+### Ollama (Local)
+
+| Property | Value |
+|----------|-------|
+| Prefix | `ollama/` |
+| Default URL | `http://localhost:11434` |
+
+#### Models
+
+Any locally installed model:
+- `llama3`
+- `codellama`
+- `mistral`
+- `mixtral`
+- etc.
+
+<Note>
+Ensure Ollama is running locally before use. The API key parameter is required but not used—pass any string.
+</Note>
+
+#### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "ollama/llama3",
+  apiKey: "ollama", // Required but not used
+});
+```
+
+---
+
+### OpenRouter
+
+| Property | Value |
+|----------|-------|
+| Prefix | `openrouter/` |
+| Environment Variable | `OPENROUTER_API_KEY` |
+
+Access many models through one API:
+
+| Model ID | Description |
+|----------|-------------|
+| `anthropic/claude-3-opus` | Claude 3 Opus via OpenRouter |
+| `openai/gpt-4-turbo` | GPT-4 Turbo via OpenRouter |
+| `google/gemini-pro` | Gemini via OpenRouter |
+| `meta-llama/llama-3-70b-instruct` | Llama 3 70B |
+
+#### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "openrouter/anthropic/claude-3-opus",
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
+```
+
+---
+
+### xAI (Grok)
+
+| Property | Value |
+|----------|-------|
+| Prefix | `xai/` |
+| Environment Variable | `XAI_API_KEY` |
+
+#### Models
+
+| Model ID | Description |
+|----------|-------------|
+| `grok-beta` | Grok beta |
+
+#### Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "xai/grok-beta",
+  apiKey: process.env.XAI_API_KEY,
+});
+```
+
+---
+
+## Custom Providers
+
+Add your own OpenAI or Anthropic-compatible endpoints.
+
+### CustomProvider Type
+
+```typescript
+interface CustomProvider {
+  name: string;
+  protocol: "openai-compatible" | "anthropic-compatible";
+  baseUrl: string;
+  modelIds: string[];
+  useChatCompletions?: boolean;
+  apiKeyEnvVar?: string;
+}
+```
+
+### Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | `string` | Yes | Provider identifier (used in model string) |
+| `protocol` | `string` | Yes | `"openai-compatible"` or `"anthropic-compatible"` |
+| `baseUrl` | `string` | Yes | API endpoint URL |
+| `modelIds` | `string[]` | Yes | Available model IDs |
+| `useChatCompletions` | `boolean` | No | Use `/chat/completions` endpoint |
+| `apiKeyEnvVar` | `string` | No | Custom env var name for API key |
+
+### OpenAI-Compatible Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "my-openai/gpt-4",
+  apiKey: process.env.MY_API_KEY,
+  customProviders: {
+    "my-openai": {
+      name: "my-openai",
+      protocol: "openai-compatible",
+      baseUrl: "https://api.my-provider.com/v1",
+      modelIds: ["gpt-4", "gpt-3.5-turbo"],
+    },
+  },
+});
+```
+
+### Anthropic-Compatible Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "my-anthropic/claude-3-sonnet",
+  apiKey: process.env.MY_API_KEY,
+  customProviders: {
+    "my-anthropic": {
+      name: "my-anthropic",
+      protocol: "anthropic-compatible",
+      baseUrl: "https://api.my-provider.com",
+      modelIds: ["claude-3-sonnet", "claude-3-haiku"],
+    },
+  },
+});
+```
+
+### LiteLLM Example
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "litellm/gpt-4",
+  apiKey: process.env.LITELLM_API_KEY,
+  customProviders: {
+    litellm: {
+      name: "litellm",
+      protocol: "openai-compatible",
+      baseUrl: "http://localhost:8000",
+      modelIds: ["gpt-4", "claude-3-sonnet", "gemini-pro"],
+      useChatCompletions: true, // Required for LiteLLM
+    },
+  },
+});
+```
+
+---
+
+## Helper Functions
+
+### parseLLMString()
+
+Parse a model string into provider and model ID.
+
+```typescript
+import { parseLLMString } from "@mcpjam/sdk";
+
+parseLLMString(modelString: string): { provider: string; modelId: string }
+```
+
+#### Example
+
+```typescript
+const { provider, modelId } = parseLLMString("anthropic/claude-sonnet-4-20250514");
+// provider: "anthropic"
+// modelId: "claude-sonnet-4-20250514"
+```
+
+---
+
+### createModelFromString()
+
+Create a Vercel AI SDK model directly.
+
+```typescript
+import { createModelFromString } from "@mcpjam/sdk";
+
+createModelFromString(
+  llmString: string,
+  options: CreateModelOptions
+): ProviderLanguageModel
+```
+
+#### Example
+
+```typescript
+const model = createModelFromString(
+  "openai/gpt-4o",
+  { apiKey: process.env.OPENAI_API_KEY }
+);
+```
+
+---
+
+### createCustomProvider()
+
+Create a custom provider configuration object.
+
+```typescript
+import { createCustomProvider } from "@mcpjam/sdk";
+
+createCustomProvider(config: CustomProvider): CustomProvider
+```
+
+#### Example
+
+```typescript
+const provider = createCustomProvider({
+  name: "my-litellm",
+  protocol: "openai-compatible",
+  baseUrl: "http://localhost:8000",
+  modelIds: ["gpt-4", "claude-3-sonnet"],
+  useChatCompletions: true,
+});
+```
+
+---
+
+## Environment Variables Summary
+
+| Provider | Variable |
+|----------|----------|
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Azure | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
+| Google | `GOOGLE_GENERATIVE_AI_API_KEY` |
+| Mistral | `MISTRAL_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| xAI | `XAI_API_KEY` |
+
+---
+
+## Related
+
+- [Testing Across Providers](/sdk/concepts/multi-provider) - Conceptual guide
+- [TestAgent Reference](/sdk/reference/test-agent) - Agent configuration

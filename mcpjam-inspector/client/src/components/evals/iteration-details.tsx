@@ -4,15 +4,12 @@ import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import { MessageSquare, Code2, ChevronDown, ChevronRight } from "lucide-react";
 import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
-import JsonView from "react18-json-view";
-import "react18-json-view/src/style.css";
-import "react18-json-view/src/dark.css";
+import { JsonEditor } from "@/components/ui/json-editor";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { isMCPJamProvidedModel } from "@/shared/types";
 
 export function IterationDetails({
   iteration,
@@ -89,7 +86,7 @@ export function IterationDetails({
         await Promise.all(
           serverNames.map(async (serverId) => {
             try {
-              const result = await listTools(serverId);
+              const result = await listTools({ serverId: serverId });
 
               // Extract tools with schemas
               if (result.tools) {
@@ -201,11 +198,6 @@ export function IterationDetails({
   const errorDetailsJson = parseErrorDetails(iteration.errorDetails);
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
 
-  // Determine if the iteration used an MCPJam provided model
-  const modelId =
-    iteration.testCaseSnapshot?.model || testCase?.models[0]?.model;
-  const isMCPJamModel = modelId ? isMCPJamProvidedModel(modelId) : false;
-
   return (
     <div className="space-y-4 py-2">
       {/* Error Display */}
@@ -215,11 +207,9 @@ export function IterationDetails({
             Error
           </div>
           <div className="text-xs text-destructive whitespace-pre-wrap font-mono">
-            {isMCPJamModel
-              ? "An error has occurred while using an MCPJam provided model"
-              : iteration.error}
+            {iteration.error}
           </div>
-          {iteration.errorDetails && !isMCPJamModel && (
+          {iteration.errorDetails && (
             <Collapsible
               open={isErrorDetailsOpen}
               onOpenChange={setIsErrorDetailsOpen}
@@ -235,12 +225,10 @@ export function IterationDetails({
               <CollapsibleContent className="mt-2">
                 <div className="rounded border border-destructive/30 bg-background/50 p-2">
                   {errorDetailsJson ? (
-                    <JsonView
-                      src={errorDetailsJson}
-                      style={{
-                        backgroundColor: "transparent",
-                        fontSize: "11px",
-                      }}
+                    <JsonEditor
+                      value={errorDetailsJson}
+                      readOnly
+                      showToolbar={false}
                     />
                   ) : (
                     <pre className="text-xs font-mono text-destructive whitespace-pre-wrap overflow-x-auto">
@@ -408,7 +396,7 @@ export function IterationDetails({
               <TraceViewer
                 trace={blob}
                 modelProvider={
-                  testCase?.provider ||
+                  testCase?.models[0]?.provider ||
                   iteration.testCaseSnapshot?.provider ||
                   "openai"
                 }

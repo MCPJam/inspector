@@ -53,7 +53,7 @@ import { Skeleton } from "./ui/skeleton";
 import { HOSTED_MODE } from "@/lib/config";
 
 interface ServersTabProps {
-  connectedServerConfigs: Record<string, ServerWithName>;
+  connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
@@ -70,7 +70,7 @@ interface ServersTabProps {
 }
 
 export function ServersTab({
-  connectedServerConfigs,
+  connectedOrConnectingServerConfigs,
   onConnect,
   onDisconnect,
   onReconnect,
@@ -99,7 +99,7 @@ export function ServersTab({
       location: "servers_tab",
       platform: detectPlatform(),
       environment: detectEnvironment(),
-      num_servers: Object.keys(connectedServerConfigs).length,
+      num_servers: Object.keys(connectedOrConnectingServerConfigs).length,
     });
   }, []);
 
@@ -120,7 +120,7 @@ export function ServersTab({
     checkExistingTunnel();
   }, [getAccessToken]);
 
-  const connectedCount = Object.keys(connectedServerConfigs).length;
+  const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
 
   const handleEditServer = (server: ServerWithName) => {
     setServerToEdit(server);
@@ -178,7 +178,7 @@ export function ServersTab({
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
-    const formattedJson = formatJsonConfig(connectedServerConfigs);
+    const formattedJson = formatJsonConfig(connectedOrConnectingServerConfigs);
     const timestamp = new Date()
       .toISOString()
       .split(".")[0]
@@ -370,7 +370,7 @@ export function ServersTab({
 
   const renderServerActionsMenu = () => (
     <>
-      {Object.keys(connectedServerConfigs ?? {}).length > 0 && (
+      {Object.keys(connectedOrConnectingServerConfigs ?? {}).length > 0 && (
         <Button
           variant="outline"
           size="sm"
@@ -446,17 +446,19 @@ export function ServersTab({
 
           {/* Server Cards Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
-            {Object.entries(connectedServerConfigs).map(([name, server]) => (
-              <ServerConnectionCard
-                key={name}
-                server={server}
-                onDisconnect={onDisconnect}
-                onReconnect={onReconnect}
-                onEdit={handleEditServer}
-                onRemove={onRemove}
-                sharedTunnelUrl={tunnelUrl}
-              />
-            ))}
+            {Object.entries(connectedOrConnectingServerConfigs).map(
+              ([name, server]) => (
+                <ServerConnectionCard
+                  key={name}
+                  server={server}
+                  onDisconnect={onDisconnect}
+                  onReconnect={onReconnect}
+                  onEdit={handleEditServer}
+                  onRemove={onRemove}
+                  sharedTunnelUrl={tunnelUrl}
+                />
+              ),
+            )}
           </div>
         </div>
       </ResizablePanel>

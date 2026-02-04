@@ -1,0 +1,195 @@
+---
+title: "Testing with LLMs"
+description: "Use TestAgent to run prompts and inspect tool calls"
+icon: "robot"
+---
+
+The `TestAgent` connects an LLM to your MCP tools, letting you test how models interact with your server. It handles the agentic loop (prompt → tool call → result → response) and gives you rich inspection capabilities.
+
+## Why Test with LLMs?
+
+Unit tests verify your tools work correctly in isolation. But in production, an LLM decides *which* tool to call and *what arguments* to pass. Testing with real LLMs catches issues like:
+
+- Ambiguous tool descriptions that confuse the model
+- Missing or unclear parameter documentation
+- Tools that the model consistently misuses
+- Edge cases in natural language interpretation
+
+## Creating a TestAgent
+
+```typescript
+import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+
+// Connect to your MCP server
+const manager = new MCPClientManager({
+  myServer: {
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-everything"],
+  },
+});
+await manager.connectToServer("myServer");
+
+// Create an agent with your tools
+const agent = new TestAgent({
+  tools: await manager.getTools(),
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+```
+
+## Running Prompts
+
+Send natural language prompts and inspect what happens:
+
+```typescript
+const result = await agent.prompt("What is 15 plus 27?");
+
+// What did the model say?
+console.log(result.getText());
+// "15 plus 27 equals 42."
+
+// What tools did it call?
+console.log(result.toolsCalled());
+// ["add"]
+
+// What arguments did it pass?
+console.log(result.getToolArguments("add"));
+// { a: 15, b: 27 }
+```
+
+## The PromptResult Object
+
+Every prompt returns a `PromptResult` with rich inspection methods:
+
+```typescript
+const result = await agent.prompt("...");
+
+// Tool inspection
+result.toolsCalled();           // string[] - names of tools called
+result.hasToolCall("add");      // boolean - was this tool called?
+result.getToolCalls();          // detailed tool call info
+result.getToolArguments("add"); // arguments for a specific tool
+
+// Performance
+result.e2eLatencyMs();          // total time
+result.llmLatencyMs();          // time in LLM API
+result.mcpLatencyMs();          // time executing tools
+result.totalTokens();           // tokens used
+
+// Error handling
+result.hasError();              // did something go wrong?
+result.getError();              // error message if so
+```
+
+<Info>
+`TestAgent` never throws exceptions. Errors are captured in the result, making it safe to run many tests without try/catch blocks.
+</Info>
+
+## Multi-Turn Conversations
+
+Pass previous results as context to maintain conversation history:
+
+```typescript
+// First turn
+const r1 = await agent.prompt("Create a task called 'Buy groceries'");
+
+// Second turn (model sees the first exchange)
+const r2 = await agent.prompt("Mark it as high priority", {
+  context: r1,
+});
+
+// Third turn (model sees both previous exchanges)
+const r3 = await agent.prompt("Now show me all my tasks", {
+  context: [r1, r2],
+});
+```
+
+This is essential for testing workflows that span multiple interactions.
+
+## Tuning Agent Behavior
+
+### System Prompt
+
+Guide the model's behavior:
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  systemPrompt: "You are a task management assistant. Always confirm before deleting tasks.",
+});
+```
+
+### Temperature
+
+Control randomness (lower = more deterministic):
+
+```typescript
+const agent = new TestAgent({
+  // ...
+  temperature: 0.1, // More consistent for testing
+});
+```
+
+### Max Steps
+
+Limit the agentic loop iterations:
+
+```typescript
+const agent = new TestAgent({
+  // ...
+  maxSteps: 5, // Stop after 5 tool calls
+});
+```
+
+## Writing Assertions
+
+Use validators to assert tool call behavior:
+
+```typescript
+import { matchToolCalls, matchToolCallWithArgs } from "@mcpjam/sdk";
+
+const result = await agent.prompt("Add 10 and 5");
+
+// Check the right tool was called
+expect(matchToolCalls(["add"], result.toolsCalled())).toBe(true);
+
+// Check the arguments were correct
+expect(
+  matchToolCallWithArgs("add", { a: 10, b: 5 }, result.getToolCalls())
+).toBe(true);
+```
+
+## Performance Insights
+
+Understand where time is spent:
+
+```typescript
+const result = await agent.prompt("Run a complex operation");
+
+const latency = result.getLatency();
+console.log(`Total: ${latency.e2eMs}ms`);
+console.log(`  LLM: ${latency.llmMs}ms (${(latency.llmMs/latency.e2eMs*100).toFixed(0)}%)`);
+console.log(`  Tools: ${latency.mcpMs}ms (${(latency.mcpMs/latency.e2eMs*100).toFixed(0)}%)`);
+
+// Token usage for cost estimation
+console.log(`Tokens: ${result.totalTokens()}`);
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Running Evals" icon="chart-bar" href="/sdk/concepts/running-evals">
+    Run statistical evaluations
+  </Card>
+  <Card title="TestAgent Reference" icon="book" href="/sdk/reference/test-agent">
+    Full API documentation
+  </Card>
+  <Card title="PromptResult Reference" icon="book" href="/sdk/reference/prompt-result">
+    All result methods
+  </Card>
+  <Card title="Validators Reference" icon="book" href="/sdk/reference/validators">
+    Assertion functions
+  </Card>
+</CardGroup>

@@ -1,25 +1,53 @@
-import {
-  extractToolCalls,
-  extractToolNames,
-  GenerateTextResultLike,
-} from "../src/tool-extraction";
+import { GenerateTextResult, ToolSet } from "ai";
+import { extractToolCalls, extractToolNames } from "../src/tool-extraction";
+
+// Minimal type for testing - only includes what extractToolCalls actually uses
+type GenerateTextResultLike = {
+  text?: string;
+  steps?: Array<{
+    toolCalls?: Array<{
+      toolName: string;
+      input?: Record<string, unknown>;
+      type?: string;
+      toolCallId?: string;
+    }>;
+  }>;
+  toolCalls?: Array<{
+    toolName: string;
+    input?: Record<string, unknown>;
+    type?: string;
+    toolCallId?: string;
+  }>;
+};
 
 describe("tool-extraction", () => {
   describe("extractToolCalls", () => {
     it("should extract tool calls from steps", () => {
-      const result: GenerateTextResultLike = {
+      const result = {
         text: "Done",
         steps: [
           {
             toolCalls: [
-              { toolName: "add", args: { a: 1, b: 2 } },
-              { toolName: "multiply", args: { x: 3, y: 4 } },
+              {
+                type: "tool-call",
+                toolCallId: "1",
+                toolName: "add",
+                input: { a: 1, b: 2 },
+              },
+              {
+                type: "tool-call",
+                toolCallId: "2",
+                toolName: "multiply",
+                input: { x: 3, y: 4 },
+              },
             ],
           },
         ],
-      };
+      } as GenerateTextResult<ToolSet, never>;
 
-      const toolCalls = extractToolCalls(result);
+      const toolCalls = extractToolCalls(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(toolCalls).toHaveLength(2);
       expect(toolCalls[0]).toEqual({
@@ -37,18 +65,41 @@ describe("tool-extraction", () => {
         text: "Done",
         steps: [
           {
-            toolCalls: [{ toolName: "search", args: { query: "test" } }],
+            toolCalls: [
+              {
+                type: "tool-call",
+                toolCallId: "1",
+                toolName: "search",
+                input: { query: "test" },
+              },
+            ],
           },
           {
-            toolCalls: [{ toolName: "read", args: { file: "data.txt" } }],
+            toolCalls: [
+              {
+                type: "tool-call",
+                toolCallId: "2",
+                toolName: "read",
+                input: { file: "data.txt" },
+              },
+            ],
           },
           {
-            toolCalls: [{ toolName: "write", args: { file: "out.txt" } }],
+            toolCalls: [
+              {
+                type: "tool-call",
+                toolCallId: "3",
+                toolName: "write",
+                input: { file: "out.txt" },
+              },
+            ],
           },
         ],
       };
 
-      const toolCalls = extractToolCalls(result);
+      const toolCalls = extractToolCalls(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(toolCalls).toHaveLength(3);
       expect(toolCalls.map((tc) => tc.toolName)).toEqual([
@@ -61,10 +112,19 @@ describe("tool-extraction", () => {
     it("should extract from top-level toolCalls when no steps", () => {
       const result: GenerateTextResultLike = {
         text: "Done",
-        toolCalls: [{ toolName: "echo", args: { message: "hello" } }],
+        toolCalls: [
+          {
+            type: "tool-call",
+            toolCallId: "1",
+            toolName: "echo",
+            input: { message: "hello" },
+          },
+        ],
       };
 
-      const toolCalls = extractToolCalls(result);
+      const toolCalls = extractToolCalls(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(toolCalls).toHaveLength(1);
       expect(toolCalls[0].toolName).toBe("echo");
@@ -75,13 +135,29 @@ describe("tool-extraction", () => {
         text: "Done",
         steps: [
           {
-            toolCalls: [{ toolName: "fromSteps", args: {} }],
+            toolCalls: [
+              {
+                type: "tool-call",
+                toolCallId: "1",
+                toolName: "fromSteps",
+                input: {},
+              },
+            ],
           },
         ],
-        toolCalls: [{ toolName: "fromTopLevel", args: {} }],
+        toolCalls: [
+          {
+            type: "tool-call",
+            toolCallId: "2",
+            toolName: "fromTopLevel",
+            input: {},
+          },
+        ],
       };
 
-      const toolCalls = extractToolCalls(result);
+      const toolCalls = extractToolCalls(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(toolCalls).toHaveLength(1);
       expect(toolCalls[0].toolName).toBe("fromSteps");
@@ -92,7 +168,9 @@ describe("tool-extraction", () => {
         text: "Just text response",
       };
 
-      const toolCalls = extractToolCalls(result);
+      const toolCalls = extractToolCalls(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(toolCalls).toEqual([]);
     });
@@ -102,12 +180,23 @@ describe("tool-extraction", () => {
         text: "Done",
         steps: [
           { toolCalls: undefined },
-          { toolCalls: [{ toolName: "test", args: {} }] },
+          {
+            toolCalls: [
+              {
+                type: "tool-call",
+                toolCallId: "1",
+                toolName: "test",
+                input: {},
+              },
+            ],
+          },
           {},
         ],
       };
 
-      const toolCalls = extractToolCalls(result);
+      const toolCalls = extractToolCalls(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(toolCalls).toHaveLength(1);
       expect(toolCalls[0].toolName).toBe("test");
@@ -120,15 +209,19 @@ describe("tool-extraction", () => {
           {
             toolCalls: [
               {
+                type: "tool-call",
+                toolCallId: "1",
                 toolName: "noArgs",
-                args: undefined as unknown as Record<string, unknown>,
+                input: undefined as unknown as Record<string, unknown>,
               },
             ],
           },
         ],
       };
 
-      const toolCalls = extractToolCalls(result);
+      const toolCalls = extractToolCalls(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(toolCalls).toHaveLength(1);
       expect(toolCalls[0].arguments).toEqual({});
@@ -142,15 +235,32 @@ describe("tool-extraction", () => {
         steps: [
           {
             toolCalls: [
-              { toolName: "add", args: {} },
-              { toolName: "subtract", args: {} },
-              { toolName: "multiply", args: {} },
+              {
+                type: "tool-call",
+                toolCallId: "1",
+                toolName: "add",
+                input: {},
+              },
+              {
+                type: "tool-call",
+                toolCallId: "2",
+                toolName: "subtract",
+                input: {},
+              },
+              {
+                type: "tool-call",
+                toolCallId: "3",
+                toolName: "multiply",
+                input: {},
+              },
             ],
           },
         ],
       };
 
-      const names = extractToolNames(result);
+      const names = extractToolNames(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(names).toEqual(["add", "subtract", "multiply"]);
     });
@@ -160,26 +270,44 @@ describe("tool-extraction", () => {
         text: "No tools",
       };
 
-      const names = extractToolNames(result);
+      const names = extractToolNames(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(names).toEqual([]);
     });
 
     it("should preserve order and duplicates", () => {
-      const result: GenerateTextResultLike = {
-        text: "Done",
+      const result = {
         steps: [
           {
             toolCalls: [
-              { toolName: "fetch", args: {} },
-              { toolName: "process", args: {} },
-              { toolName: "fetch", args: {} },
+              {
+                type: "tool-call",
+                toolCallId: "1",
+                toolName: "fetch",
+                input: {},
+              },
+              {
+                type: "tool-call",
+                toolCallId: "2",
+                toolName: "process",
+                input: {},
+              },
+              {
+                type: "tool-call",
+                toolCallId: "3",
+                toolName: "fetch",
+                input: {},
+              },
             ],
           },
         ],
-      };
+      } as GenerateTextResult<ToolSet, never>;
 
-      const names = extractToolNames(result);
+      const names = extractToolNames(
+        result as GenerateTextResult<ToolSet, never>
+      );
 
       expect(names).toEqual(["fetch", "process", "fetch"]);
     });

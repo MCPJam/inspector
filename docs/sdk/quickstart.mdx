@@ -1,0 +1,177 @@
+---
+title: "Quickstart"
+description: "Get started with @mcpjam/sdk in 5 minutes"
+icon: "rocket"
+---
+
+This guide walks you through installing the SDK, connecting to an MCP server, and running your first evaluation.
+
+## Prerequisites
+
+- Node.js 18+
+- An LLM API key (Anthropic, OpenAI, etc.)
+
+## Installation
+
+```bash
+npm install @mcpjam/sdk
+```
+
+## Step 1: Connect to an MCP Server
+
+```typescript
+import { MCPClientManager } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  everything: {
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-everything"],
+  },
+});
+
+await manager.connectToServer("everything");
+
+// List available tools
+const tools = await manager.listTools("everything");
+console.log("Tools:", tools.map(t => t.name));
+```
+
+<Note>
+`@modelcontextprotocol/server-everything` is a reference MCP server with sample tools like `add`, `echo`, and `longRunningOperation`.
+</Note>
+
+## Step 2: Execute Tools Directly
+
+Call tools without an LLM—useful for unit tests:
+
+```typescript
+const result = await manager.executeTool("everything", "add", {
+  a: 5,
+  b: 3,
+});
+console.log("5 + 3 =", result); // 8
+```
+
+## Step 3: Create a TestAgent
+
+Connect an LLM to your MCP tools:
+
+```typescript
+import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+
+const agent = new TestAgent({
+  tools: await manager.getTools(),
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+```
+
+## Step 4: Run Prompts
+
+```typescript
+const result = await agent.prompt("What is 15 plus 27?");
+
+console.log("Response:", result.getText());
+console.log("Tools called:", result.toolsCalled());
+console.log("Arguments:", result.getToolArguments("add"));
+console.log("Latency:", result.e2eLatencyMs(), "ms");
+```
+
+## Step 5: Write a Test
+
+```typescript
+import { matchToolCalls } from "@mcpjam/sdk";
+import { describe, it, expect } from "vitest";
+
+describe("Math MCP Server", () => {
+  it("should call add for addition", async () => {
+    const result = await agent.prompt("Add 10 and 5");
+    expect(matchToolCalls(["add"], result.toolsCalled())).toBe(true);
+  });
+});
+```
+
+## Step 6: Run Statistical Evaluations
+
+```typescript
+import { EvalTest } from "@mcpjam/sdk";
+
+const test = new EvalTest({
+  name: "addition-accuracy",
+  test: async (agent) => {
+    const result = await agent.prompt("Add 2 and 3");
+    return result.hasToolCall("add");
+  },
+});
+
+await test.run(agent, { iterations: 30 });
+
+console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
+```
+
+## Complete Example
+
+```typescript
+import { MCPClientManager, TestAgent, EvalSuite, EvalTest } from "@mcpjam/sdk";
+
+async function main() {
+  // Setup
+  const manager = new MCPClientManager({
+    everything: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+    },
+  });
+  await manager.connectToServer("everything");
+
+  const agent = new TestAgent({
+    tools: await manager.getTools(),
+    model: "anthropic/claude-sonnet-4-20250514",
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+
+  // Quick test
+  const result = await agent.prompt("Echo 'Hello!'");
+  console.log("Response:", result.getText());
+  console.log("Tools:", result.toolsCalled());
+
+  // Run eval suite
+  const suite = new EvalSuite({ name: "Basic Operations" });
+
+  suite.add(new EvalTest({
+    name: "echo",
+    test: async (a) => (await a.prompt("Echo 'test'")).hasToolCall("echo"),
+  }));
+
+  suite.add(new EvalTest({
+    name: "add",
+    test: async (a) => (await a.prompt("Add 1 and 2")).hasToolCall("add"),
+  }));
+
+  await suite.run(agent, { iterations: 10 });
+
+  console.log(`\nSuite accuracy: ${(suite.accuracy() * 100).toFixed(1)}%`);
+
+  // Cleanup
+  await manager.disconnectServer("everything");
+}
+
+main();
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Connecting to Servers" icon="plug" href="/sdk/concepts/connecting-servers">
+    STDIO vs HTTP servers
+  </Card>
+  <Card title="Testing with LLMs" icon="robot" href="/sdk/concepts/testing-with-llms">
+    Prompting and result inspection
+  </Card>
+  <Card title="Running Evals" icon="chart-bar" href="/sdk/concepts/running-evals">
+    Statistical evaluations
+  </Card>
+  <Card title="API Reference" icon="book" href="/sdk/reference/mcp-client-manager">
+    Complete API docs
+  </Card>
+</CardGroup>

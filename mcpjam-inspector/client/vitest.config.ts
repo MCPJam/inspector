@@ -20,7 +20,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@/shared": path.resolve(__dirname, "../shared"),
-      "@/sdk": path.resolve(__dirname, "../sdk/src/index.ts"),
       "@": path.resolve(__dirname, "./src"),
     },
   },

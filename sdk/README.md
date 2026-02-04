@@ -1,441 +1,300 @@
-# MCPJam SDK
+# @mcpjam/sdk
 
-The MCPJam SDK `@mcpjam/sdk` provides utilities for MCP server unit testing, end to end (e2e) testing, and server evals.
+Use the MCPJam SDK to write unit tests and evals for your MCP server. 
 
-## SDK use cases & intended user
+## Installation
 
-The SDK is useful for:
-- MCP server developers
-- MCP client developers
-- MCP-apps / ChatGPT apps marketplace maintainers
-- SDK developers
-
-Example use cases:
-- Unit test and evaluate MCP servers for server developers.
-- Implement a spec-compliant MCP client with an LLM - for client developers
-- Maintainers of a apps marketplace can test performance and security of apps on their marketplace
-- Write conformance tests on MCP server code in the MCP SDKs.
-
-## MCPClientManager
-
-The official [Typescript MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk/tree/main/packages/client/src/client) contains the `Client` class. This object handles the connection between the MCP client and the server, sending and receiving JSON-RPC messages. This `Client` object is limited to a single MCP connection.
-
-`MCPClientManager` is a class in the MCPJam SDK that handles multiple `Client` objects. It manages a dictionary of `Client` objects. The `serverId` mapped to the Client.
-
-```ts
-const clientConnections = new Map()<string, Client>
+```bash
+npm install @mcpjam/sdk
 ```
 
-Connecting to an MCP server via `MCPClientManager` uses the familiar `mcp.json` format:
+Compatible with your favorite testing framework like [Jest](https://jestjs.io/) and [Vitest](https://vitest.dev/) 
+
+## Quick Start
+
+### Unit Test
+
+Test the individual parts, request response flow of your MCP server. MCP unit tests are deterministic. 
 
 ```ts
-  const manager = new MCPClientManager(
-    {
-      // STDIO server
-      everything: {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+import { MCPClientManager } from "@mcpjam/sdk";
+
+describe("Everything MCP example", () => {
+  let manager: MCPClientManager;
+
+  beforeAll(async () => {
+    manager = new MCPClientManager();
+    await manager.connectToServer("everything", {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+    });
+  });
+
+  afterAll(async () => {
+    await manager.disconnectServer("everything");
+  });
+
+  test("server has expected tools", async () => {
+    const tools = await manager.listTools("everything");
+    expect(tools.tools.map((t) => t.name)).toContain("get-sum");
+  });
+
+  test("get-sum tool returns correct result", async () => {
+    const result = await manager.executeTool("everything", "get-sum", { a: 2, b: 3 });
+    expect(result.content[0].text).toBe("5");
+  });
+});
+```
+
+### MCP evals 
+
+Test that an LLM correctly understands how to use your MCP server. Evals are non-deterministic and multiple runs are needed. 
+
+```ts
+import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+
+describe("Asana MCP Evals", () => {
+  let manager: MCPClientManager;
+  let agent: TestAgent;
+
+  beforeAll(async () => {
+    manager = new MCPClientManager();
+    await manager.connectToServer("asana", {
+      url: "https://mcp.asana.com/sse",
+      requestInit: {
+        headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}` },
       },
-      // SSE / Streamable HTTP server
-      asana: {
-        url: new URL("https://mcp.asana.com/sse"),
-        requestInit: {
-            headers: {
-                Authorization: "Bearer YOUR_TOKEN",
-            },
-        },
-      }
-    },
-    { name: 'mcpjam', version: '1.0.0' },
-    { capabilities: {} }
-  );
-```
+    });
 
+    agent = new TestAgent({
+      tools: await manager.getToolsForAiSdk(["asana"]),
+      model: "openai/gpt-4o",
+      apiKey: process.env.OPENAI_API_KEY!,
+    });
+  });
 
-### `MCPClientManager` capabilities
-The capabilities of the client manager should match all capabilities of the native `Client`. For every operation in `Client`, we can do the same exact operation except having to specify the `serverId`.
+  afterAll(async () => {
+    await manager.disconnectServer("asana");
+  });
 
-```ts
-  import { MCPClientManager } from "@mcpjam/sdk"
-  const manager = new MCPClientManager(
-    {
-      // STDIO server
-      everything: {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+  // Single-turn eval
+  test("list workspaces > 80% accuracy", async () => {
+    const evalTest = new EvalTest({
+      name: "list-workspaces",
+      test: async (agent) => {
+        const result = await agent.prompt("Show me all my Asana workspaces");
+        return result.hasToolCall("asana_list_workspaces");
       },
-      // SSE / Streamable HTTP server
-      asana: {
-        url: new URL("https://mcp.asana.com/sse"),
-        requestInit: {
-            headers: {
-                Authorization: "Bearer YOUR_TOKEN",
-            },
-        },
-      }
-    },
-    { name: 'mcpjam', version: '1.0.0' },
-    { capabilities: {} }
-  );
+    });
 
-  // List tools
-  const tools = await manager.listTools("everything");
-  console.log(tools);
+    await evalTest.run(agent, {
+      iterations: 10,
+      onFailure: (report) => console.error(report), // Print the report when a test iteration fails. 
+    });
 
-  // Execute tool
-  const addToolResult = await manager.executeTool("everything", "add", {
-    a: 1,
-    b: 2,
-  });
-  console.log(addToolResult);
-
-  // List resources
-  const resources = await manager.listResources("everything");
-
-  // Read resource
-  const resource = await manager.readResource("everything", {
-    uri: "test://static/resource/1",
+    expect(evalTest.accuracy()).toBeGreaterThan(0.8); // Pass threshold 
   });
 
-  // Subscribe to resource
-  const subscription = await manager.subscribeResource("everything", {
-    uri: "test://static/resource/1",
+  // Multi-turn eval
+  test("get user then list projects > 80% accuracy", async () => {
+    const evalTest = new EvalTest({
+      name: "user-then-projects",
+      test: async (agent) => {
+        const r1 = await agent.prompt("Who am I in Asana?");
+        if (!r1.hasToolCall("asana_get_user")) return false;
+
+        const r2 = await agent.prompt("Now list my projects", { context: [r1] }); // Continue the conversation from the previous prompt
+        return r2.hasToolCall("asana_get_projects");
+      },
+    });
+
+    await evalTest.run(agent, {
+      iterations: 5,
+      onFailure: (report) => console.error(report),
+    });
+
+    expect(evalTest.accuracy()).toBeGreaterThan(0.8);
   });
 
-  // Unsubscribe from resource
-  await manager.unsubscribeResource("everything", {
-    uri: "test://static/resource/1",
+  // Validating tool arguments
+  test("search tasks passes correct workspace_gid", async () => {
+    const evalTest = new EvalTest({
+      name: "search-args",
+      test: async (agent) => {
+        const result = await agent.prompt("Search for tasks containing 'bug' in my workspace");
+        const args = result.getToolArguments("asana_search_tasks");
+        return result.hasToolCall("asana_search_tasks") && typeof args?.workspace_gid === "string";
+      },
+    });
+
+    await evalTest.run(agent, {
+      iterations: 5,
+      onFailure: (report) => console.error(report),
+    });
+
+    expect(evalTest.accuracy()).toBeGreaterThan(0.8);
   });
-
-  // List prompts
-  const prompts = await manager.listPrompts("everything");
-
-  // Get prompt
-  const prompt = await manager.getPrompt("everything", {
-    name: "simple_prompt",
-  });
-
-  // Ping server
-  await manager.pingServer("everything");
-
-  // Disconnect server
-  await manager.disconnectServer("everything");
+});
 ```
 
-### Integration with an agent SDK (like Vercel AI-SDK)
-Has the capability to expose tools and other MCP properties to agent SDKs such as Vercel AI SDK. Extensible to other agent SDK's like Mastra and Langchain.
+---
 
-This is valuable if you're building an AI assistant connect to MCP - any real world MCP client. Will also be used for MCP server evals / e2e testing where LLM's are involved.
+## API Reference
+
+<details>
+<summary><strong>MCPClientManager</strong></summary>
+
+Manages connections to one or more MCP servers.
 
 ```ts
-// Integrate with Vercel AI SDK
-import { generateText } from "ai";
-import { openai } from "@ai-sdk/openai";
+const manager = new MCPClientManager();
 
-const manager = new MCPClientManager(
-    {
-        ...
-    },
-    { name: 'mcpjam', version: '1.0.0' },
-    { capabilities: {} }
-);
+// Connect to STDIO server
+await manager.connectToServer("everything", {
+  command: "npx",
+  args: ["-y", "@modelcontextprotocol/server-everything"],
+});
 
-const response = await generateText({
-  model: openai("gpt-4o-mini"),
+// Connect to HTTP/SSE server
+await manager.connectToServer("asana", {
+  url: "https://mcp.asana.com/sse",
+  requestInit: {
+    headers: { Authorization: "Bearer TOKEN" },
+  },
+});
+
+// Get tools for AI SDK integration
+const tools = await manager.getToolsForAiSdk(["everything", "asana"]);
+
+// Direct MCP operations
+await manager.listTools("everything");
+await manager.executeTool("everything", "add", { a: 1, b: 2 });
+await manager.listResources("everything");
+await manager.readResource("everything", { uri: "file:///tmp/test.txt" });
+await manager.listPrompts("everything");
+await manager.getPrompt("everything", { name: "greeting" });
+await manager.pingServer("everything");
+
+// Disconnect
+await manager.disconnectServer("everything");
+```
+
+</details>
+
+<details>
+<summary><strong>TestAgent</strong></summary>
+
+Runs LLM prompts with MCP tool access.
+
+```ts
+const agent = new TestAgent({
   tools: await manager.getToolsForAiSdk(),
-  messages: [{ role: "user", content: "List files in /tmp" }],
+  model: "openai/gpt-4o",        // provider/model format
+  apiKey: process.env.OPENAI_API_KEY!,
+  systemPrompt: "You are a helpful assistant.",  // optional
+  temperature: 0.7,              // optional, omit for reasoning models
+  maxSteps: 10,                  // optional, max tool call loops
 });
 
-console.log(response) // The files in /tmp are ...
+// Run a prompt
+const result = await agent.prompt("Add 2 and 3");
+
+// Multi-turn with context
+const r1 = await agent.prompt("Who am I?");
+const r2 = await agent.prompt("List my projects", { context: [r1] });
 ```
 
-## Unit Testing
+**Supported providers:** `openai`, `anthropic`, `azure`, `google`, `mistral`, `deepseek`, `ollama`, `openrouter`, `xai`
 
-MCP primitives like tools, resources, prompts, etc. are at its foundation functions with deterministic return values. MCP unit testing tests your MCP server's primitives.
+</details>
 
-How MCP unit testing works:
-1. `MCPClientManager` connects to your MCP server.
-2. `MCPClientManager` invokes functions such as `listTools`, `callTool`, `readResource`, etc. This sends JSON-RPC messages to your MCP server.
-3. We test that your MCP server responds properly to these requests.
+<details>
+<summary><strong>PromptResult</strong></summary>
 
-You can use any testing framework such as Jest for unit testing. We envision unit tests to live inside the MCP server code base. See the [Bright Data MCP server](https://github.com/brightdata/brightdata-mcp) for example, they have MCPJam evals CLI test cases inside the codebase. Unit tests can be run manually by developers, or integrated in a CI/CD pipeline.
-
-Example of unit testing an MCP server with Jest and `@mcpjam/sdk`:
+Returned by `agent.prompt()`. Contains the LLM response and tool calls.
 
 ```ts
-import { MCPClientManager } from "@mcpjam/sdk";
-
-beforeEach(() => {
-    const clientManager = new MCPClientManager(
-        {
-            asana: {
-                url: new URL("https://staging.asana.com/mcp"),
-                requestInit: {
-                    headers: {
-                        Authorization: "Bearer abCD2EfG",
-                    },
-                },
-            }
-        },
-        { name: 'mcpjam', version: '1.0.0' },
-        { capabilities: {} }
-    );
-});
-
-test('Server connection works', () => {
-    await expect(clientManager.ping("asana")).resolves.not.toThrowError();
-});
-
-test('Server has the right capabilities', () => {
-    const capabilities = clientManager.listServerCapabilities("asana");
-    expect(capabilities.tools).toBeDefined();
-    expect(capabilities.tasks).toBeUndefined();
-    ...
-});
-
-test('Server has the right tools', () => {
-    const tools = clientManager.listTools("asana");
-    expect(tools.length).toBe(26);
-    expect(tools[0].name).toBe("asana_list_projects");
-    ...
-})
-
-test('Call asana_list_projects fetches projects properly', () => {
-    ...
-})
-
-// Deterministically test any capability of the MCP server.
-```
-
-## Testing ChatGPT apps / MCP apps (ext-apps)
-
-Test compliance with ChatGPT apps SDK and MCP apps. Used for app developers to maintain the server's compliance to ext-apps. Can also be used by app marketplace maintainers to test that apps are valid.
-
-Examples of testing for MCP apps (ext-apps).
-
-```ts
-import { MCPClientManager } from "@mcpjam/sdk";
-import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
-
-beforeEach(() => {
-  const manager = new MCPClientManager(
-      {
-          sip-cocktails: {
-              url: new URL("https://localhost:3000/mcp"),
-          }
-      },
-      { name: 'mcpjam', version: '1.0.0' },
-      { capabilities: {} }
-  );
-});
-
-test('tools with UI contain a correct resource Uri', () => {
-  const allTools = manager.listTools("sip-cocktails");
-  expect(getToolUiResourceUri(allTools[0])).toBeDefined();
-  expect(getToolUiResourceUri(allTools[0])).toBe("ui://cocktail/cocktail-recipe-widget.html");
-});
-
-test('cocktail widget has the proper CSP configurations', () => {
-  const cocktailWidgetResource = manager.readResource("sip-cocktails", {
-    uri: "ui://cocktail/cocktail-recipe-widget.html",
-  })
-  expect(cocktailWidgetResource.contents[0]._meta._ui.csp.connectedDomains.length).toBe(3);
-  ...
-});
-
-```
-
-## Evaluations
-
-MCP evals helps measure a MCP server's "tool ergonomics", designing MCP tools so that an LLM understands how to use them.
-
-Here's how MCP evals works:
-
-1. A mock agent is launched and connected to your MCP server, simulating how clients like Claude Code, Cursor, or ChatGPT would interact with it.
-2. The agent is exposed to your server's entire toolset.
-3. We give the agent a prompt, simulating a user asking the LLM a real-world question.
-4. The agent runs the prompt, makes decisions on whether or not to call a tool. Executes tools and spits an output.
-5. We examine the agent's output, evaluate whether or not the right tool was called.
-
-### `TestAgent`
-
-`TestAgent` is the simulated agent that has access to all tools from the client manager. Set up the LLM with API key, system prompt, and temperature.
-
-```ts
-const testAgent = new TestAgent({
-    tools: await manager.getToolsForAiSdk(),
-    model: "openai/gpt-4o",
-    apiKey: process.env.OPENAI_API_KEY,
-    systemPrompt: "You are an ...",
-    temperature: 0.8,
-    maxSteps: 10, // Maximum agentic loop steps (default: 10)
-});
-```
-
-#### Supported LLM Providers
-
-The SDK supports 9 built-in providers:
-- `anthropic` - Anthropic (Claude models)
-- `openai` - OpenAI
-- `azure` - Azure OpenAI
-- `deepseek` - DeepSeek
-- `google` - Google AI (Gemini models)
-- `ollama` - Ollama (local models)
-- `mistral` - Mistral AI
-- `openrouter` - OpenRouter
-- `xai` - xAI (Grok models)
-
-Custom providers (OpenAI-compatible or Anthropic-compatible endpoints) are also supported via the `customProviders` option.
-
-### `PromptResult`
-
-When you call `testAgent.prompt()`, you get back a `PromptResult` object with rich information:
-
-```ts
-const result = await testAgent.prompt("Add 2 and 3");
-
-// Original prompt and conversation history
-result.prompt;                           // "Add 2 and 3" - original query
-result.getPrompt();                      // Same as above
-result.getMessages();                    // Full conversation: user, assistant, tool messages
-result.getUserMessages();                // Only user messages
-result.getAssistantMessages();           // Only assistant messages
-result.getToolMessages();                // Only tool result messages
+const result = await agent.prompt("Add 2 and 3");
 
 // Tool calls
-result.toolsCalled();                    // string[] - e.g., ["add"]
-result.hasToolCall("add");               // boolean
-result.getToolCalls();                   // ToolCall[] with arguments
-result.getToolArguments("add");          // { a: 2, b: 3 }
+result.hasToolCall("add");           // boolean
+result.toolsCalled();                // ["add"]
+result.getToolCalls();               // [{ toolName: "add", arguments: { a: 2, b: 3 } }]
+result.getToolArguments("add");      // { a: 2, b: 3 }
 
-// Latency breakdown
-result.e2eLatencyMs();                   // Total wall-clock time
-result.llmLatencyMs();                   // LLM API call time
-result.mcpLatencyMs();                   // MCP tool execution time
-result.getLatency();                     // { e2eMs, llmMs, mcpMs }
+// Response
+result.text;                         // "The result is 5"
 
-// Token usage
+// Messages (full conversation)
+result.getMessages();                // CoreMessage[]
+result.getUserMessages();            // user messages only
+result.getAssistantMessages();       // assistant messages only
+result.getToolMessages();            // tool result messages only
+
+// Latency
+result.e2eLatencyMs();               // total wall-clock time
+result.llmLatencyMs();               // LLM API time
+result.mcpLatencyMs();               // MCP tool execution time
+
+// Tokens
 result.totalTokens();
 result.inputTokens();
 result.outputTokens();
 
-// Error handling
-result.hasError();                       // boolean
-result.getError();                       // string | undefined
+// Errors
+result.hasError();
+result.getError();
 
-// Response text
-result.text;                             // LLM response text
+// Debug trace (JSON dump of messages)
+result.formatTrace();
 ```
 
-The `getMessages()` method returns an array of AI SDK `CoreMessage` objects showing the full conversation:
+</details>
+
+<details>
+<summary><strong>EvalTest</strong></summary>
+
+Runs a single test scenario with multiple iterations.
 
 ```ts
-const messages = result.getMessages();
-// [
-//   { role: "user", content: "Add 2 and 3" },
-//   { role: "assistant", content: [{ type: "tool-call", toolName: "add", args: { a: 2, b: 3 } }] },
-//   { role: "tool", content: [{ type: "tool-result", result: 5 }] },
-//   { role: "assistant", content: "The result of adding 2 and 3 is 5." }
-// ]
-```
-
-### `EvalTest` - Single Test Scenario
-
-`EvalTest` runs a single test scenario with multiple iterations. It can be run standalone or as part of an `EvalSuite`.
-
-All tests use a `test` function that receives a `TestAgent` and returns a boolean indicating success.
-
-```ts
-import { EvalTest } from "@mcpjam/sdk";
-
 const test = new EvalTest({
   name: "addition",
   test: async (agent) => {
-    const result = await agent.prompt("Add 2+3");
+    const result = await agent.prompt("Add 2 and 3");
     return result.hasToolCall("add");
   },
 });
 
-await test.run(agent, { iterations: 30 });
-console.log(test.accuracy()); // 0.97
-```
-
-#### Custom Validation
-
-```ts
-const test = new EvalTest({
-  name: "addition-args",
-  test: async (agent) => {
-    const result = await agent.prompt("What is 2 + 3?");
-    const calls = result.getToolCalls();
-    const addCall = calls.find(c => c.toolName === "add");
-    return addCall?.arguments?.a === 2 && addCall?.arguments?.b === 3;
-  },
-});
-
-await test.run(agent, { iterations: 30 });
-```
-
-#### Multi-turn Conversations
-
-```ts
-const test = new EvalTest({
-  name: "search-and-summarize",
-  test: async (agent) => {
-    const r1 = await agent.prompt("Search for X");
-    if (!r1.toolsCalled().includes("search")) return false;
-    const r2 = await agent.prompt(`Summarize: ${r1.text}`);
-    return r2.toolsCalled().includes("summarize");
-  },
-});
-
-await test.run(agent, { iterations: 5 });
-```
-
-#### Accessing Iteration Results
-
-```ts
-await test.run(agent, { iterations: 10 });
-
-console.log("All:", test.getAllIterations().length);
-console.log("Failed:", test.getFailedIterations().length);
-console.log("Successful:", test.getSuccessfulIterations().length);
-console.log("Errors:", test.getFailedIterations().map(i => i.error));
-
-// Access full prompt/response details for each iteration
-for (const iteration of test.getResults().iterationDetails) {
-  if (iteration.prompts) {
-    for (const promptResult of iteration.prompts) {
-      console.log("Query:", promptResult.getPrompt());
-      console.log("Messages:", promptResult.getMessages());
-      console.log("Response:", promptResult.text);
-    }
-  }
-}
-```
-
-#### Run Options
-
-```ts
 await test.run(agent, {
   iterations: 30,
-  concurrency: 5,              // Parallel iterations (default: 5)
-  retries: 2,                  // Retry failed iterations (default: 0)
-  timeoutMs: 30000,            // Timeout per iteration (default: 30000)
-  onProgress: (completed, total) => {
-    console.log(`Progress: ${completed}/${total}`);
-  },
+  concurrency: 5,                    // parallel iterations (default: 5)
+  retries: 2,                        // retry failed iterations (default: 0)
+  timeoutMs: 30000,                  // timeout per iteration (default: 30000)
+  onProgress: (completed, total) => console.log(`${completed}/${total}`),
+  onFailure: (report) => console.error(report),  // called if any iteration fails
 });
+
+// Metrics
+test.accuracy();                     // success rate (0-1)
+test.averageTokenUse();              // avg tokens per iteration
+
+// Iteration details
+test.getAllIterations();             // all iteration results
+test.getFailedIterations();          // failed iterations only
+test.getSuccessfulIterations();      // successful iterations only
+test.getFailureReport();             // formatted string of failed traces
 ```
 
-### `EvalSuite` - Group Multiple Tests
+</details>
 
-`EvalSuite` groups multiple `EvalTest` instances and provides aggregate metrics across all tests.
+<details>
+<summary><strong>EvalSuite</strong></summary>
+
+Groups multiple `EvalTest` instances for aggregate metrics.
 
 ```ts
-import { EvalSuite, EvalTest } from "@mcpjam/sdk";
-
 const suite = new EvalSuite({ name: "Math Operations" });
+
 suite.add(new EvalTest({
   name: "addition",
   test: async (agent) => {
@@ -443,6 +302,7 @@ suite.add(new EvalTest({
     return r.hasToolCall("add");
   },
 }));
+
 suite.add(new EvalTest({
   name: "multiply",
   test: async (agent) => {
@@ -453,49 +313,22 @@ suite.add(new EvalTest({
 
 await suite.run(agent, { iterations: 30 });
 
-console.log(suite.accuracy());                 // Aggregate: 0.95
-console.log(suite.get("addition").accuracy()); // Individual: 0.97
-console.log(suite.get("multiply").accuracy()); // Individual: 0.93
+// Aggregate metrics
+suite.accuracy();                    // overall accuracy
+suite.averageTokenUse();
+
+// Individual test access
+suite.get("addition")?.accuracy();
+suite.get("multiply")?.accuracy();
+suite.getAll();                      // all EvalTest instances
 ```
 
-### Metrics and Results
+</details>
 
-Both `EvalTest` and `EvalSuite` provide these metrics after running:
+<details>
+<summary><strong>Validators</strong></summary>
 
-```ts
-test.accuracy();              // Success rate
-test.recall();                // True positive rate
-test.precision();             // Precision
-test.truePositiveRate();      // Same as recall
-test.falsePositiveRate();     // False positive rate
-test.averageTokenUse();       // Average tokens per iteration
-```
-
-The `EvalRunResult` contains detailed data:
-
-```ts
-interface EvalRunResult {
-  iterations: number;
-  successes: number;
-  failures: number;
-  results: boolean[];
-  iterationDetails: IterationResult[];
-  tokenUsage: {
-    total: number;
-    perIteration: number[];
-  };
-  latency: {
-    e2e: LatencyStats;               // { min, max, mean, p50, p95 }
-    llm: LatencyStats;
-    mcp: LatencyStats;
-    perIteration: LatencyBreakdown[];
-  };
-}
-```
-
-### Validators
-
-The SDK provides 9 validator functions for tool call matching:
+Helper functions for matching tool calls.
 
 ```ts
 import {
@@ -510,140 +343,30 @@ import {
   matchToolArgumentWith,
 } from "@mcpjam/sdk";
 
-// Exact match - all expected tools in exact order
-matchToolCalls(["add", "multiply"], result.toolsCalled());
+const tools = result.toolsCalled();      // ["add", "multiply"]
+const calls = result.getToolCalls();     // ToolCall[]
 
-// Subset match - all expected present, any order
-matchToolCallsSubset(["add"], result.toolsCalled());
+// Exact match (order matters)
+matchToolCalls(["add", "multiply"], tools);           // true
+matchToolCalls(["multiply", "add"], tools);           // false
 
-// Any match - at least one matches
-matchAnyToolCall(["add", "subtract"], result.toolsCalled());
+// Subset match (order doesn't matter)
+matchToolCallsSubset(["add"], tools);                 // true
 
-// Count match - tool called exactly N times
-matchToolCallCount("add", result.toolsCalled(), 2);
+// Any match (at least one)
+matchAnyToolCall(["add", "subtract"], tools);         // true
+
+// Count match
+matchToolCallCount("add", tools, 1);                  // true
 
 // No tools called
-matchNoToolCalls(result.toolsCalled());
+matchNoToolCalls([]);                                 // true
 
 // Argument matching
-matchToolCallWithArgs("add", { a: 2, b: 3 }, result.getToolCalls());
-matchToolCallWithPartialArgs("add", { a: 2 }, result.getToolCalls());
-matchToolArgument("add", "a", 2, result.getToolCalls());
-matchToolArgumentWith("echo", "message", (v) => typeof v === "string", result.getToolCalls());
+matchToolCallWithArgs("add", { a: 2, b: 3 }, calls);         // exact match
+matchToolCallWithPartialArgs("add", { a: 2 }, calls);        // partial match
+matchToolArgument("add", "a", 2, calls);                     // single arg
+matchToolArgumentWith("add", "a", (v) => v > 0, calls);      // predicate
 ```
 
-### Full Example
-
-```ts
-import { MCPClientManager, TestAgent, EvalTest, EvalSuite } from "@mcpjam/sdk";
-
-const manager = new MCPClientManager(
-  {
-    asana: {
-      url: new URL("https://mcp.asana.com/sse"),
-      requestInit: {
-        headers: {
-          Authorization: "Bearer abCD2EfG",
-        },
-      },
-    }
-  },
-  { name: 'mcpjam', version: '1.0.0' },
-  { capabilities: {} }
-);
-
-await manager.connectToServer("asana");
-
-const testAgent = new TestAgent({
-  tools: await manager.getToolsForAiSdk(["asana"]),
-  model: "openai/gpt-4o",
-  apiKey: process.env.OPENAI_API_KEY,
-  systemPrompt: "You are an assistant with access to Asana.",
-  temperature: 0.8,
-});
-
-// Single test standalone
-const createProjectTest = new EvalTest({
-  name: "create-project",
-  test: async (agent) => {
-    const result = await agent.prompt("Create a new Asana project called 'Onboard Joe'");
-    return result.hasToolCall("asana_create_project");
-  },
-});
-
-await createProjectTest.run(testAgent, { iterations: 30, concurrency: 5 });
-
-console.log("Accuracy:", createProjectTest.accuracy());
-console.log("E2E P50:", createProjectTest.getResults()?.latency.e2e.p50, "ms");
-console.log("Total tokens:", createProjectTest.getResults()?.tokenUsage.total);
-```
-
-## Using with Jest
-
-```ts
-import { MCPClientManager, TestAgent, EvalTest, EvalSuite } from "@mcpjam/sdk";
-
-describe("Asana MCP Server Evals", () => {
-  let manager: MCPClientManager;
-  let testAgent: TestAgent;
-  let suite: EvalSuite;
-
-  beforeAll(async () => {
-    manager = new MCPClientManager(
-      {
-        asana: {
-          url: new URL("https://mcp.asana.com/sse"),
-          requestInit: {
-            headers: { Authorization: "Bearer abCD2EfG" },
-          },
-        }
-      },
-      { name: 'mcpjam', version: '1.0.0' },
-      { capabilities: {} }
-    );
-    await manager.connectToServer("asana");
-
-    testAgent = new TestAgent({
-      tools: await manager.getToolsForAiSdk(["asana"]),
-      model: "openai/gpt-4o",
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-
-    // Set up the test suite
-    suite = new EvalSuite({ name: "Asana Operations" });
-    suite.add(new EvalTest({
-      name: "create-project",
-      test: async (agent) => {
-        const result = await agent.prompt("Create a new Asana project called 'Onboard Joe'");
-        return result.hasToolCall("asana_create_project");
-      },
-    }));
-    suite.add(new EvalTest({
-      name: "list-tasks",
-      test: async (agent) => {
-        const result = await agent.prompt("List all tasks in the Marketing project");
-        return result.hasToolCall("asana_list_tasks");
-      },
-    }));
-
-    // Run all tests once
-    await suite.run(testAgent, { iterations: 30 });
-  });
-
-  afterAll(async () => {
-    await manager.disconnectServer("asana");
-  });
-
-  test("create project accuracy > 90%", () => {
-    expect(suite.get("create-project")!.accuracy()).toBeGreaterThan(0.9);
-  });
-
-  test("list tasks accuracy > 90%", () => {
-    expect(suite.get("list-tasks")!.accuracy()).toBeGreaterThan(0.9);
-  });
-
-  test("overall suite accuracy > 90%", () => {
-    expect(suite.accuracy()).toBeGreaterThan(0.9);
-  });
-});
-```
+</details>

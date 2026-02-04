@@ -4,7 +4,7 @@ import type {
   ElicitResult,
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { MCPTask, TaskOptions } from "@/sdk";
+import type { MCPTask, TaskOptions } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
@@ -42,11 +42,15 @@ export type ToolExecutionResponse =
       error: string;
     };
 
-export async function listTools(
-  serverId: string,
-  modelId?: string,
-  cursor?: string,
-): Promise<ListToolsResultWithMetadata> {
+export async function listTools({
+  serverId,
+  modelId,
+  cursor,
+}: {
+  serverId?: string | undefined;
+  modelId?: string | undefined;
+  cursor?: string | undefined;
+}): Promise<ListToolsResultWithMetadata> {
   const res = await authFetch("/api/mcp/tools/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -155,7 +159,7 @@ export async function getToolsMetadata(
 
   await Promise.all(
     serverIds.map(async (serverId) => {
-      const data = await listTools(serverId, modelId);
+      const data = await listTools({ serverId, modelId });
       const toolsMetadata = data.toolsMetadata ?? {};
 
       for (const [toolName, meta] of Object.entries(toolsMetadata)) {

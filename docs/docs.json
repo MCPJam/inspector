@@ -13,7 +13,12 @@
       {
         "group": "Overview",
         "icon": "book-open",
-        "pages": ["index", "getting-started", "installation", "inspector/launch-from-code"]
+        "pages": [
+          "index",
+          "getting-started",
+          "installation",
+          "inspector/launch-from-code"
+        ]
       },
       {
         "group": "Inspector Features",
@@ -24,13 +29,40 @@
           "inspector/guided-oauth",
           "inspector/tools-prompts-resources",
           "inspector/test-cases",
-          "inspector/workspaces"
+          "inspector/workspaces",
+          "inspector/skills"
         ]
       },
       {
         "group": "SDK",
         "icon": "code",
-        "pages": ["evals/overview"]
+        "pages": [
+          "sdk/index",
+          "sdk/quickstart",
+          {
+            "group": "Guides",
+            "icon": "map",
+            "pages": [
+              "sdk/concepts/connecting-servers",
+              "sdk/concepts/testing-with-llms",
+              "sdk/concepts/running-evals",
+              "sdk/concepts/multi-provider"
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "book",
+            "pages": [
+              "sdk/reference/mcp-client-manager",
+              "sdk/reference/test-agent",
+              "sdk/reference/prompt-result",
+              "sdk/reference/eval-test",
+              "sdk/reference/eval-suite",
+              "sdk/reference/validators",
+              "sdk/reference/llm-providers"
+            ]
+          }
+        ]
       },
       {
         "group": "Guides",

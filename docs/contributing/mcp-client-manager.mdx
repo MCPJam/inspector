@@ -106,7 +106,7 @@ connecting → disconnected (on connection failure)
 connected → disconnected (on close/disconnect)
 ```
 
-**Connection Status Verification**: The manager verifies connection status by attempting a ping to the server each time `getConnectionStatusByAttemptingPing()` is called. This ensures the status reflects the actual server availability rather than cached state.
+**Connection Status Verification**: The manager verifies connection status by attempting a ping to the server each time `getConnectionStatus()` is called. This ensures the status reflects the actual server availability rather than cached state.
 
 ### 2. Transport Selection
 
@@ -290,7 +290,7 @@ await mcpClientManager.connectToServer("filesystem", {
 });
 
 // Check status (verifies with ping)
-const status = mcpClientManager.getConnectionStatusByAttemptingPing("filesystem");
+const status = mcpClientManager.getConnectionStatus("filesystem");
 // Returns: "connected" | "connecting" | "disconnected"
 
 // Get all servers
@@ -346,7 +346,7 @@ await mcpClientManager.disconnectAllServers();
 </ResponseField>
 
 <ResponseField
-  name="getConnectionStatusByAttemptingPing"
+  name="getConnectionStatus"
   type="(serverId: string) => MCPConnectionStatus"
 >
   Get connection status by attempting a ping to verify server availability:
@@ -551,7 +551,7 @@ Options:
 
 <CodeGroup>
 ```typescript Basic Setup
-import { MCPClientManager } from "@/sdk";
+import { MCPClientManager } from "@mcpjam/sdk";
 
 const manager = new MCPClientManager({
 // STDIO server
@@ -620,7 +620,7 @@ url: new URL("http://localhost:3000/mcp"),
 });
 
 // Check status (verifies with ping)
-if (manager.getConnectionStatusByAttemptingPing("weather") === "connected") {
+if (manager.getConnectionStatus("weather") === "connected") {
 const { resources } = await manager.listResources("weather");
 console.log(resources);
 }

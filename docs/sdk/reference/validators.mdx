@@ -1,0 +1,416 @@
+---
+title: "Validators"
+description: "API reference for validator functions"
+icon: "book"
+---
+
+The SDK provides 9 validator functions for asserting tool call behavior in tests. All validators return `boolean` values.
+
+## Import
+
+```typescript
+import {
+  matchToolCalls,
+  matchToolCallsSubset,
+  matchAnyToolCall,
+  matchToolCallCount,
+  matchNoToolCalls,
+  matchToolCallWithArgs,
+  matchToolCallWithPartialArgs,
+  matchToolArgument,
+  matchToolArgumentWith,
+} from "@mcpjam/sdk";
+```
+
+---
+
+## Tool Name Validators
+
+### matchToolCalls()
+
+Exact match - all tools in exact order.
+
+```typescript
+matchToolCalls(expected: string[], actual: string[]): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `expected` | `string[]` | Expected tool names in order |
+| `actual` | `string[]` | Actual tool names (from `result.toolsCalled()`) |
+
+#### Returns
+
+`boolean` - `true` if exact match.
+
+#### Example
+
+```typescript
+const result = await agent.prompt("Add 2+3, then multiply by 4");
+// toolsCalled() = ["add", "multiply"]
+
+matchToolCalls(["add", "multiply"], result.toolsCalled()); // true
+matchToolCalls(["multiply", "add"], result.toolsCalled()); // false (wrong order)
+matchToolCalls(["add"], result.toolsCalled());             // false (missing multiply)
+```
+
+---
+
+### matchToolCallsSubset()
+
+Checks if all expected tools were called (any order, extras allowed).
+
+```typescript
+matchToolCallsSubset(expected: string[], actual: string[]): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `expected` | `string[]` | Tools that must be present |
+| `actual` | `string[]` | Actual tool names |
+
+#### Returns
+
+`boolean` - `true` if all expected tools are present.
+
+#### Example
+
+```typescript
+// toolsCalled() = ["add", "multiply"]
+
+matchToolCallsSubset(["add"], result.toolsCalled());             // true
+matchToolCallsSubset(["multiply", "add"], result.toolsCalled()); // true (order doesn't matter)
+matchToolCallsSubset(["divide"], result.toolsCalled());          // false
+```
+
+---
+
+### matchAnyToolCall()
+
+Checks if at least one expected tool was called.
+
+```typescript
+matchAnyToolCall(expected: string[], actual: string[]): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `expected` | `string[]` | Any of these tools should be called |
+| `actual` | `string[]` | Actual tool names |
+
+#### Returns
+
+`boolean` - `true` if at least one match.
+
+#### Example
+
+```typescript
+// toolsCalled() = ["add"]
+
+matchAnyToolCall(["add", "subtract"], result.toolsCalled()); // true
+matchAnyToolCall(["multiply", "divide"], result.toolsCalled()); // false
+```
+
+---
+
+### matchToolCallCount()
+
+Checks if a tool was called exactly N times.
+
+```typescript
+matchToolCallCount(
+  toolName: string,
+  actual: string[],
+  count: number
+): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `toolName` | `string` | Tool to count |
+| `actual` | `string[]` | Actual tool names |
+| `count` | `number` | Expected count |
+
+#### Returns
+
+`boolean` - `true` if count matches.
+
+#### Example
+
+```typescript
+// toolsCalled() = ["add", "add", "add"]
+
+matchToolCallCount("add", result.toolsCalled(), 3); // true
+matchToolCallCount("add", result.toolsCalled(), 2); // false
+```
+
+---
+
+### matchNoToolCalls()
+
+Checks that no tools were called.
+
+```typescript
+matchNoToolCalls(actual: string[]): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `actual` | `string[]` | Actual tool names |
+
+#### Returns
+
+`boolean` - `true` if empty.
+
+#### Example
+
+```typescript
+const result = await agent.prompt("What is the capital of France?");
+matchNoToolCalls(result.toolsCalled()); // true (if no tools called)
+```
+
+---
+
+## Argument Validators
+
+### matchToolCallWithArgs()
+
+Checks if a tool was called with exactly the specified arguments.
+
+```typescript
+matchToolCallWithArgs(
+  toolName: string,
+  expectedArgs: Record<string, unknown>,
+  toolCalls: ToolCall[]
+): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `toolName` | `string` | Tool to check |
+| `expectedArgs` | `Record<string, unknown>` | Expected arguments (exact match) |
+| `toolCalls` | `ToolCall[]` | From `result.getToolCalls()` |
+
+#### Returns
+
+`boolean` - `true` if exact argument match.
+
+#### Example
+
+```typescript
+const result = await agent.prompt("Add 2 and 3");
+
+matchToolCallWithArgs("add", { a: 2, b: 3 }, result.getToolCalls()); // true
+matchToolCallWithArgs("add", { a: 2 }, result.getToolCalls());       // false (missing b)
+matchToolCallWithArgs("add", { a: 3, b: 2 }, result.getToolCalls()); // false (wrong values)
+```
+
+---
+
+### matchToolCallWithPartialArgs()
+
+Checks if a tool was called with arguments containing the expected subset.
+
+```typescript
+matchToolCallWithPartialArgs(
+  toolName: string,
+  expectedArgs: Record<string, unknown>,
+  toolCalls: ToolCall[]
+): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `toolName` | `string` | Tool to check |
+| `expectedArgs` | `Record<string, unknown>` | Arguments to match (subset) |
+| `toolCalls` | `ToolCall[]` | From `result.getToolCalls()` |
+
+#### Returns
+
+`boolean` - `true` if all expected args present with matching values.
+
+#### Example
+
+```typescript
+// Tool called with { name: "Task", priority: "high", project: "default" }
+
+matchToolCallWithPartialArgs("createTask", { name: "Task" }, calls);     // true
+matchToolCallWithPartialArgs("createTask", { priority: "high" }, calls); // true
+matchToolCallWithPartialArgs("createTask", { status: "open" }, calls);   // false
+```
+
+---
+
+### matchToolArgument()
+
+Checks if a specific argument has the expected value.
+
+```typescript
+matchToolArgument(
+  toolName: string,
+  argName: string,
+  expectedValue: unknown,
+  toolCalls: ToolCall[]
+): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `toolName` | `string` | Tool to check |
+| `argName` | `string` | Argument name |
+| `expectedValue` | `unknown` | Expected value |
+| `toolCalls` | `ToolCall[]` | From `result.getToolCalls()` |
+
+#### Returns
+
+`boolean` - `true` if argument matches.
+
+#### Example
+
+```typescript
+matchToolArgument("add", "a", 5, result.getToolCalls());  // true if a=5
+matchToolArgument("add", "b", 10, result.getToolCalls()); // true if b=10
+```
+
+---
+
+### matchToolArgumentWith()
+
+Checks if an argument passes a custom predicate.
+
+```typescript
+matchToolArgumentWith(
+  toolName: string,
+  argName: string,
+  predicate: (value: unknown) => boolean,
+  toolCalls: ToolCall[]
+): boolean
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `toolName` | `string` | Tool to check |
+| `argName` | `string` | Argument name |
+| `predicate` | `(value: unknown) => boolean` | Custom validation function |
+| `toolCalls` | `ToolCall[]` | From `result.getToolCalls()` |
+
+#### Returns
+
+`boolean` - `true` if predicate returns `true`.
+
+#### Example
+
+```typescript
+// Type check
+matchToolArgumentWith(
+  "echo",
+  "message",
+  (v) => typeof v === "string",
+  result.getToolCalls()
+);
+
+// Content check
+matchToolArgumentWith(
+  "echo",
+  "message",
+  (v) => String(v).includes("hello"),
+  result.getToolCalls()
+);
+
+// Range check
+matchToolArgumentWith(
+  "add",
+  "a",
+  (v) => typeof v === "number" && v > 0 && v < 100,
+  result.getToolCalls()
+);
+
+// Email validation
+matchToolArgumentWith(
+  "sendEmail",
+  "to",
+  (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v)),
+  result.getToolCalls()
+);
+```
+
+---
+
+## Usage with Test Frameworks
+
+### Jest / Vitest
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { matchToolCalls, matchToolCallWithArgs } from "@mcpjam/sdk";
+
+describe("Calculator", () => {
+  it("calls add for addition", async () => {
+    const result = await agent.prompt("Add 5 and 3");
+    expect(matchToolCalls(["add"], result.toolsCalled())).toBe(true);
+  });
+
+  it("passes correct arguments", async () => {
+    const result = await agent.prompt("Add 10 and 20");
+    expect(
+      matchToolCallWithArgs("add", { a: 10, b: 20 }, result.getToolCalls())
+    ).toBe(true);
+  });
+});
+```
+
+### With EvalTest
+
+```typescript
+import { EvalTest, matchToolCallsSubset } from "@mcpjam/sdk";
+
+const test = new EvalTest({
+  name: "multi-step",
+  test: async (agent) => {
+    const result = await agent.prompt("Add 2+3, then multiply by 4");
+    return matchToolCallsSubset(["add", "multiply"], result.toolsCalled());
+  },
+});
+```
+
+---
+
+## Quick Reference
+
+| Validator | Use Case |
+|-----------|----------|
+| `matchToolCalls` | Exact sequence of tools |
+| `matchToolCallsSubset` | Required tools (any order) |
+| `matchAnyToolCall` | At least one of these tools |
+| `matchToolCallCount` | Tool called N times |
+| `matchNoToolCalls` | No tools called |
+| `matchToolCallWithArgs` | Exact argument match |
+| `matchToolCallWithPartialArgs` | Subset of arguments |
+| `matchToolArgument` | Single argument value |
+| `matchToolArgumentWith` | Custom validation |
+
+---
+
+## Related
+
+- [Testing with LLMs](/sdk/concepts/testing-with-llms) - Conceptual guide
+- [PromptResult Reference](/sdk/reference/prompt-result) - Get tool calls
+- [EvalTest Reference](/sdk/reference/eval-test) - Use in evaluations

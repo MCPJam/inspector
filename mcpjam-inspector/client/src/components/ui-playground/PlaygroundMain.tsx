@@ -50,6 +50,12 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
+import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
+import {
+  type FileAttachment,
+  attachmentsToFileUIParts,
+  revokeFileAttachmentUrls,
+} from "@/components/chat-v2/chat-input/attachments/file-utils";
 import {
   useUIPlaygroundStore,
   DEVICE_VIEWPORT_CONFIGS,
@@ -72,6 +78,7 @@ import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 const PRESET_DEVICE_CONFIGS: Record<
@@ -254,6 +261,8 @@ export function PlaygroundMain({
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
+  const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+  const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
   const [modelContextQueue, setModelContextQueue] = useState<
     {
       toolCallId: string;
@@ -264,6 +273,7 @@ export function PlaygroundMain({
     }[]
   >([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [xrayMode, setXrayMode] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
   const [devicePopoverOpen, setDevicePopoverOpen] = useState(false);
@@ -472,13 +482,11 @@ export function PlaygroundMain({
   };
 
   // Submit handler
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (
-      (input.trim() || mcpPromptResults.length > 0) &&
-      status === "ready" &&
-      !submitBlocked
-    ) {
+    const hasContent =
+      input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
+    if (hasContent && status === "ready" && !submitBlocked) {
       if (displayMode === "fullscreen" && isWidgetFullscreen) {
         setIsFullscreenChatOpen(true);
       }
@@ -514,9 +522,18 @@ export function PlaygroundMain({
         setMessages((prev) => [...prev, ...contextMessages]);
       }
 
-      sendMessage({ text: input });
+      // Convert file attachments to FileUIPart[] format for the AI SDK
+      const files =
+        fileAttachments.length > 0
+          ? await attachmentsToFileUIParts(fileAttachments)
+          : undefined;
+
+      sendMessage({ text: input, files });
       setInput("");
       setMcpPromptResults([]);
+      // Revoke object URLs and clear file attachments
+      revokeFileAttachmentUrls(fileAttachments);
+      setFileAttachments([]);
       setModelContextQueue([]); // Clear after sending
     }
   };
@@ -556,12 +573,18 @@ export function PlaygroundMain({
     selectedServers,
     mcpToolsTokenCount: null,
     mcpToolsTokenCountLoading: false,
-    connectedServerConfigs: { [serverName]: { name: serverName } },
+    connectedOrConnectingServerConfigs: { [serverName]: { name: serverName } },
     systemPromptTokenCount: null,
     systemPromptTokenCountLoading: false,
     mcpPromptResults,
     onChangeMcpPromptResults: setMcpPromptResults,
+    skillResults,
+    onChangeSkillResults: setSkillResults,
     compact: isCompact,
+    fileAttachments,
+    onChangeFileAttachments: setFileAttachments,
+    xrayMode,
+    onXrayModeChange: setXrayMode,
   };
 
   // Check if widget should take over the full container
@@ -638,15 +661,6 @@ export function PlaygroundMain({
                   customMessage={invokingMessage}
                 />
               )}
-              {errorMessage && (
-                <div className="px-4 pb-4 pt-4">
-                  <ErrorBox
-                    message={errorMessage.message}
-                    errorDetails={errorMessage.details}
-                    onResetChat={resetChat}
-                  />
-                </div>
-              )}
             </StickToBottom.Content>
             <ScrollToBottomButton />
           </div>
@@ -657,12 +671,25 @@ export function PlaygroundMain({
       {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
         <div
           className={cn(
-            "flex-shrink-0 max-w-xl mx-auto w-full",
+            "flex-shrink-0 max-w-3xl mx-auto w-full",
             isThreadEmpty
               ? "px-4 pb-4"
               : "bg-background/80 backdrop-blur-sm p-3",
           )}
         >
+          {errorMessage && (
+            <div className="pb-3">
+              <ErrorBox
+                message={errorMessage.message}
+                errorDetails={errorMessage.details}
+                code={errorMessage.code}
+                statusCode={errorMessage.statusCode}
+                isRetryable={errorMessage.isRetryable}
+                isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                onResetChat={resetChat}
+              />
+            </div>
+          )}
           <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
         </div>
       )}
@@ -1378,9 +1405,9 @@ export function PlaygroundMain({
       />
 
       {/* Device frame container */}
-      <div className="flex-1 flex items-center justify-center p-4 min-h-0 overflow-auto">
+      <div className="flex-1 flex items-center justify-center min-h-0 overflow-auto">
         <div
-          className="relative bg-background border border-border rounded-xl shadow-lg flex flex-col overflow-hidden"
+          className="relative bg-background flex flex-col overflow-hidden"
           style={{
             width: deviceConfig.width,
             maxWidth: "100%",
@@ -1389,7 +1416,35 @@ export function PlaygroundMain({
             transform: isWidgetFullscreen ? "none" : "translateZ(0)",
           }}
         >
-          {threadContent}
+          {xrayMode ? (
+            <StickToBottom
+              className="relative flex flex-1 flex-col min-h-0"
+              resize="smooth"
+              initial="smooth"
+            >
+              <div className="relative flex-1 min-h-0">
+                <StickToBottom.Content className="flex flex-col min-h-0">
+                  <XRaySnapshotView
+                    systemPrompt={systemPrompt}
+                    messages={messages}
+                    selectedServers={selectedServers}
+                    onClose={() => setXrayMode(false)}
+                  />
+                </StickToBottom.Content>
+                <ScrollToBottomButton />
+              </div>
+              <div className="flex-shrink-0 bg-background/80 backdrop-blur-sm border-t border-border">
+                <div className="max-w-xl mx-auto w-full p-3">
+                  <ChatInput
+                    {...sharedChatInputProps}
+                    hasMessages={!isThreadEmpty}
+                  />
+                </div>
+              </div>
+            </StickToBottom>
+          ) : (
+            threadContent
+          )}
         </div>
       </div>
     </div>

@@ -33,6 +33,8 @@ interface ProviderConfigDialogProps {
   onBaseUrlChange?: (value: string) => void;
   onSave: () => void;
   onCancel: () => void;
+  onRemove?: () => void;
+  isConfigured?: boolean;
 }
 
 export function ProviderConfigDialog({
@@ -45,6 +47,8 @@ export function ProviderConfigDialog({
   onBaseUrlChange,
   onSave,
   onCancel,
+  onRemove,
+  isConfigured,
 }: ProviderConfigDialogProps) {
   const posthog = usePostHog();
   return (
@@ -145,23 +149,36 @@ export function ProviderConfigDialog({
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => {
-              posthog.capture("save_api_key", {
-                location: "provider_config_dialog",
-                platform: detectPlatform(),
-                environment: detectEnvironment(),
-              });
-              onSave();
-            }}
-            disabled={!value.trim()}
-          >
-            Save API Key
-          </Button>
+        <DialogFooter className="flex-row justify-between sm:justify-between">
+          {isConfigured && onRemove ? (
+            <Button
+              variant="ghost"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={onRemove}
+            >
+              Remove
+            </Button>
+          ) : (
+            <div />
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                posthog.capture("save_api_key", {
+                  location: "provider_config_dialog",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                });
+                onSave();
+              }}
+              disabled={!value.trim()}
+            >
+              Save
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

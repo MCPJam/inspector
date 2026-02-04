@@ -1,0 +1,220 @@
+---
+title: "Testing Across Providers"
+description: "Compare your MCP server's performance across different LLMs"
+icon: "microchip"
+---
+
+Different LLMs interpret tool descriptions differently. A tool that works perfectly with Claude might struggle with GPT-4, or vice versa. Testing across providers ensures your MCP server works reliably for all users.
+
+## Why Test Multiple Providers?
+
+Your users connect to MCP servers from various clients:
+- Claude Desktop (Anthropic)
+- ChatGPT plugins (OpenAI)
+- Cursor (various models)
+- Custom apps (any provider)
+
+Each LLM has different:
+- Tool calling capabilities
+- Interpretation of descriptions
+- Handling of complex arguments
+- Response patterns
+
+## Supported Providers
+
+The SDK supports 9 providers out of the box:
+
+| Provider | Model Format | Example |
+|----------|-------------|---------|
+| Anthropic | `anthropic/model` | `anthropic/claude-sonnet-4-20250514` |
+| OpenAI | `openai/model` | `openai/gpt-4o` |
+| Google | `google/model` | `google/gemini-1.5-pro` |
+| Azure | `azure/model` | `azure/gpt-4o` |
+| Mistral | `mistral/model` | `mistral/mistral-large-latest` |
+| DeepSeek | `deepseek/model` | `deepseek/deepseek-chat` |
+| Ollama | `ollama/model` | `ollama/llama3` |
+| OpenRouter | `openrouter/org/model` | `openrouter/anthropic/claude-3-opus` |
+| xAI | `xai/model` | `xai/grok-beta` |
+
+## Comparing Providers
+
+Create agents for each provider and run the same tests:
+
+```typescript
+import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  myServer: { command: "node", args: ["./server.js"] },
+});
+await manager.connectToServer("myServer");
+
+const tools = await manager.getTools();
+
+// Test definition (reused across providers)
+const additionTest = new EvalTest({
+  name: "addition",
+  test: async (agent) => {
+    const r = await agent.prompt("Add 2 and 3");
+    return r.hasToolCall("add");
+  },
+});
+
+// Providers to test
+const providers = [
+  { model: "anthropic/claude-sonnet-4-20250514", key: "ANTHROPIC_API_KEY" },
+  { model: "openai/gpt-4o", key: "OPENAI_API_KEY" },
+  { model: "google/gemini-1.5-pro", key: "GOOGLE_GENERATIVE_AI_API_KEY" },
+];
+
+// Run across all providers
+for (const { model, key } of providers) {
+  const apiKey = process.env[key];
+  if (!apiKey) continue;
+
+  const agent = new TestAgent({ tools, model, apiKey });
+  await additionTest.run(agent, { iterations: 20 });
+
+  console.log(`${model}: ${(additionTest.accuracy() * 100).toFixed(1)}%`);
+}
+```
+
+## Provider Comparison Script
+
+A complete script for benchmarking:
+
+```typescript
+import { MCPClientManager, TestAgent, EvalSuite, EvalTest } from "@mcpjam/sdk";
+
+async function compareProviders() {
+  // Setup
+  const manager = new MCPClientManager({
+    everything: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+    },
+  });
+  await manager.connectToServer("everything");
+  const tools = await manager.getTools();
+
+  // Build test suite
+  const suite = new EvalSuite({ name: "Tool Selection" });
+
+  suite.add(new EvalTest({
+    name: "add",
+    test: async (a) => (await a.prompt("Add 2+3")).hasToolCall("add"),
+  }));
+
+  suite.add(new EvalTest({
+    name: "echo",
+    test: async (a) => (await a.prompt("Echo 'hello'")).hasToolCall("echo"),
+  }));
+
+  // Providers
+  const providers = [
+    { name: "Claude", model: "anthropic/claude-sonnet-4-20250514", key: "ANTHROPIC_API_KEY" },
+    { name: "GPT-4o", model: "openai/gpt-4o", key: "OPENAI_API_KEY" },
+    { name: "Gemini", model: "google/gemini-1.5-pro", key: "GOOGLE_GENERATIVE_AI_API_KEY" },
+  ];
+
+  const results: Record<string, number> = {};
+
+  for (const { name, model, key } of providers) {
+    const apiKey = process.env[key];
+    if (!apiKey) {
+      console.log(`⏭️  ${name}: Skipped (no API key)`);
+      continue;
+    }
+
+    const agent = new TestAgent({ tools, model, apiKey, temperature: 0.1 });
+
+    console.log(`🧪 Testing ${name}...`);
+    await suite.run(agent, { iterations: 20, concurrency: 3 });
+
+    results[name] = suite.accuracy();
+  }
+
+  // Report
+  console.log("\n📊 Results:");
+  console.log("─".repeat(30));
+
+  for (const [name, accuracy] of Object.entries(results)) {
+    const bar = "█".repeat(Math.round(accuracy * 20));
+    console.log(`${name.padEnd(10)} ${bar} ${(accuracy * 100).toFixed(1)}%`);
+  }
+
+  await manager.disconnectServer("everything");
+}
+
+compareProviders();
+```
+
+## Custom Providers
+
+Add your own OpenAI or Anthropic-compatible endpoints:
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "my-provider/gpt-4",
+  apiKey: process.env.MY_API_KEY,
+  customProviders: {
+    "my-provider": {
+      name: "my-provider",
+      protocol: "openai-compatible",
+      baseUrl: "https://api.my-provider.com/v1",
+      modelIds: ["gpt-4", "gpt-3.5-turbo"],
+    },
+  },
+});
+```
+
+### LiteLLM Proxy
+
+Test many models through a single proxy:
+
+```typescript
+const agent = new TestAgent({
+  tools,
+  model: "litellm/gpt-4",
+  apiKey: process.env.LITELLM_API_KEY,
+  customProviders: {
+    litellm: {
+      name: "litellm",
+      protocol: "openai-compatible",
+      baseUrl: "http://localhost:8000",
+      modelIds: ["gpt-4", "claude-3-sonnet", "gemini-pro"],
+      useChatCompletions: true,
+    },
+  },
+});
+```
+
+## Interpreting Results
+
+When comparing providers, look for:
+
+### Consistent High Performance
+All providers score >90%? Your tool descriptions are clear and well-documented.
+
+### One Provider Struggling
+If Claude works but GPT-4 doesn't, your descriptions might use Claude-specific patterns. Review and generalize.
+
+### All Providers Struggling
+Low accuracy across the board suggests ambiguous tool names or descriptions. Improve your MCP server's documentation.
+
+### High Variance
+If the same provider gives 70% one run and 95% the next, try:
+- Lower temperature
+- More iterations
+- Clearer prompts in tests
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="LLM Providers Reference" icon="book" href="/sdk/reference/llm-providers">
+    All providers and configuration options
+  </Card>
+  <Card title="Running Evals" icon="chart-bar" href="/sdk/concepts/running-evals">
+    Statistical evaluation basics
+  </Card>
+</CardGroup>

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { UIPlaygroundTab } from "../UIPlaygroundTab";
-import type { MCPServerConfig } from "@/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk";
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
@@ -247,7 +247,7 @@ describe("UIPlaygroundTab", () => {
       );
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith("test-server");
+        expect(mockListTools).toHaveBeenCalledWith({ serverId: "test-server" });
       });
     });
 
@@ -487,7 +487,9 @@ describe("UIPlaygroundTab", () => {
       );
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith("server-1");
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "server-1",
+        });
       });
 
       rerender(
@@ -495,7 +497,9 @@ describe("UIPlaygroundTab", () => {
       );
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith("server-2");
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "server-2",
+        });
       });
     });
 

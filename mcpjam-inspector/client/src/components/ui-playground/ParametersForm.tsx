@@ -13,12 +13,14 @@ interface ParametersFormProps {
   fields: FormField[];
   onFieldChange: (name: string, value: unknown) => void;
   onToggleField: (name: string, isSet: boolean) => void;
+  onExecute?: () => void;
 }
 
 export function ParametersForm({
   fields,
   onFieldChange,
   onToggleField,
+  onExecute,
 }: ParametersFormProps) {
   if (fields.length === 0) {
     return (
@@ -36,6 +38,7 @@ export function ParametersForm({
           field={field}
           onFieldChange={onFieldChange}
           onToggleField={onToggleField}
+          onExecute={onExecute}
         />
       ))}
     </div>
@@ -46,12 +49,14 @@ interface ParameterFieldProps {
   field: FormField;
   onFieldChange: (name: string, value: unknown) => void;
   onToggleField: (name: string, isSet: boolean) => void;
+  onExecute?: () => void;
 }
 
 function ParameterField({
   field,
   onFieldChange,
   onToggleField,
+  onExecute,
 }: ParameterFieldProps) {
   const isDisabled = !field.required && !field.isSet;
 
@@ -96,6 +101,7 @@ function ParameterField({
           field={field}
           disabled={isDisabled}
           onFieldChange={onFieldChange}
+          onExecute={onExecute}
         />
       </div>
     </div>
@@ -106,9 +112,21 @@ interface FieldInputProps {
   field: FormField;
   disabled: boolean;
   onFieldChange: (name: string, value: unknown) => void;
+  onExecute?: () => void;
 }
 
-function FieldInput({ field, disabled, onFieldChange }: FieldInputProps) {
+function FieldInput({
+  field,
+  disabled,
+  onFieldChange,
+  onExecute,
+}: FieldInputProps) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && onExecute) {
+      e.preventDefault();
+      onExecute();
+    }
+  };
   if (field.type === "enum") {
     return (
       <select
@@ -167,6 +185,7 @@ function FieldInput({ field, disabled, onFieldChange }: FieldInputProps) {
       }
       value={field.value}
       onChange={(e) => onFieldChange(field.name, e.target.value)}
+      onKeyDown={handleKeyDown}
       placeholder={`Enter ${field.name}`}
       disabled={disabled}
       className="bg-background border-border text-xs h-8 disabled:cursor-not-allowed disabled:opacity-50"

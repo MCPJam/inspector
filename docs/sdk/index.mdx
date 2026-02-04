@@ -1,0 +1,68 @@
+---
+title: "@mcpjam/sdk"
+description: "MCP server unit testing, end-to-end (e2e) testing, and server evals"
+icon: "cube"
+---
+
+The [**@mcpjam/sdk**](https://www.npmjs.com/package/@mcpjam/sdk) is a TypeScript SDK for testing, evaluating, and building applications with MCP (Model Context Protocol) servers. It provides everything you need to ensure your MCP server works reliably across different LLMs and environments.
+
+## Who is this for?
+
+- **MCP Server Developers** - Test your tools work correctly with real LLMs
+- **MCP Client Developers** - Build robust multi-server applications
+- **App Marketplace Maintainers** - Evaluate server quality and compatibility
+- **SDK Developers** - Integrate MCP capabilities into your products
+
+## What can you do with it?
+
+<CardGroup cols={2}>
+  <Card title="Unit Testing" icon="flask-vial">
+    Test MCP primitives (tools, resources, prompts) deterministically without LLM calls
+  </Card>
+  <Card title="End-to-End Testing" icon="arrows-rotate">
+    Simulate real user interactions by connecting LLMs to your MCP servers
+  </Card>
+</CardGroup>
+
+## Installation
+
+```bash
+npm install @mcpjam/sdk
+```
+
+## Quick Example
+
+```typescript
+import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
+
+// Connect to your MCP server
+const manager = new MCPClientManager({
+  myServer: {
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-everything"],
+  },
+});
+
+// Create an agent with LLM + MCP tools
+const agent = new TestAgent({
+  tools: await manager.getTools(),
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+// Run a prompt and inspect results
+const result = await agent.prompt("Add 2 and 3");
+console.log(result.toolsCalled());     // ["add"]
+console.log(result.e2eLatencyMs());    // 1234
+
+// Run statistical evaluation
+const test = new EvalTest({
+  name: "addition",
+  test: async (agent) => {
+    const r = await agent.prompt("Add 2+3");
+    return r.hasToolCall("add");
+  },
+});
+await test.run(agent, { iterations: 30 });
+console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
+```

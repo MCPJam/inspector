@@ -32,7 +32,6 @@ export default defineConfig({
   plugins: [copySandboxProxy()],
   resolve: {
     alias: {
-      "@/sdk": resolve(__dirname, "sdk/src/index.ts"),
       "@/shared": resolve(__dirname, "shared"),
     },
     mainFields: ["module", "jsnext:main", "jsnext"],

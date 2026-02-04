@@ -463,7 +463,7 @@ describe("validators", () => {
 
     it("should return false when tool not found", () => {
       expect(
-        matchToolArgumentWith("subtract", "a", (v) => true, toolCalls)
+        matchToolArgumentWith("subtract", "a", () => true, toolCalls)
       ).toBe(false);
     });
 

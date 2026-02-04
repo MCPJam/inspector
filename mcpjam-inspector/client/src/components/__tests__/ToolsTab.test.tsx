@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ToolsTab } from "../ToolsTab";
-import type { MCPServerConfig } from "@/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk";
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
@@ -130,11 +130,10 @@ describe("ToolsTab", () => {
       render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith(
-          "test-server",
-          undefined,
-          undefined,
-        );
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "test-server",
+          cursor: undefined,
+        });
       });
     });
 
@@ -195,7 +194,7 @@ describe("ToolsTab", () => {
       render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
 
       await waitFor(() => {
-        expect(screen.getByText("Select a tool")).toBeInTheDocument();
+        expect(screen.getByText("No selection")).toBeInTheDocument();
       });
     });
 
@@ -228,7 +227,7 @@ describe("ToolsTab", () => {
       // After selection, the execute button should be visible
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /execute/i }),
+          screen.getByRole("button", { name: /^run/i }),
         ).toBeInTheDocument();
       });
     });
@@ -340,12 +339,12 @@ describe("ToolsTab", () => {
       // Wait for execute button to be available
       await waitFor(() => {
         expect(
-          screen.getByRole("button", { name: /execute/i }),
+          screen.getByRole("button", { name: /^run/i }),
         ).toBeInTheDocument();
       });
 
       // Find and click execute button
-      const executeButton = screen.getByRole("button", { name: /execute/i });
+      const executeButton = screen.getByRole("button", { name: /^run/i });
       fireEvent.click(executeButton);
 
       await waitFor(() => {
@@ -407,11 +406,10 @@ describe("ToolsTab", () => {
       );
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith(
-          "server-1",
-          undefined,
-          undefined,
-        );
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "server-1",
+          cursor: undefined,
+        });
       });
 
       mockListTools.mockResolvedValue({
@@ -423,11 +421,10 @@ describe("ToolsTab", () => {
       rerender(<ToolsTab serverConfig={serverConfig} serverName="server-2" />);
 
       await waitFor(() => {
-        expect(mockListTools).toHaveBeenCalledWith(
-          "server-2",
-          undefined,
-          undefined,
-        );
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "server-2",
+          cursor: undefined,
+        });
       });
     });
   });
@@ -471,7 +468,7 @@ describe("ToolsTab", () => {
       fireEvent.click(screen.getByText("failing-tool"));
 
       await waitFor(() => {
-        const executeButton = screen.getByRole("button", { name: /execute/i });
+        const executeButton = screen.getByRole("button", { name: /^run/i });
         fireEvent.click(executeButton);
       });
 
@@ -490,8 +487,8 @@ describe("ToolsTab", () => {
       render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
 
       // Tools tab should be selected (has active styling)
-      const toolsTabButton = screen.getByRole("button", { name: /^tools$/i });
-      expect(toolsTabButton.className).toContain("border-primary");
+      const toolsTabButton = screen.getByRole("button", { name: /^tools/i });
+      expect(toolsTabButton.className).toContain("text-primary");
     });
 
     it("can switch to saved tab", async () => {
@@ -502,12 +499,12 @@ describe("ToolsTab", () => {
       render(<ToolsTab serverConfig={serverConfig} serverName="test-server" />);
 
       const savedTabButton = screen.getByRole("button", {
-        name: /saved requests/i,
+        name: /^saved/i,
       });
       fireEvent.click(savedTabButton);
 
       // After clicking, saved tab should have active styling
-      expect(savedTabButton.className).toContain("border-primary");
+      expect(savedTabButton.className).toContain("text-primary");
     });
   });
 });

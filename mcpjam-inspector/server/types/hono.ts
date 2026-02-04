@@ -1,4 +1,4 @@
-import type { MCPClientManager } from "@/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 
 // Extend Hono's context with our custom variables
 declare module "hono" {

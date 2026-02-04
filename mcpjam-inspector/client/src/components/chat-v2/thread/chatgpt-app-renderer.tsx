@@ -268,11 +268,13 @@ interface WidgetCspData {
   mode: CspMode;
   connectDomains: string[];
   resourceDomains: string[];
+  frameDomains?: string[];
   headerString?: string;
   /** Widget's actual openai/widgetCSP declaration (null if not declared) */
   widgetDeclared?: {
     connect_domains?: string[];
     resource_domains?: string[];
+    frame_domains?: string[];
   } | null;
 }
 
@@ -302,6 +304,20 @@ function useWidgetFetch(
   const [storeError, setStoreError] = useState<string | null>(null);
   const [prevCspMode, setPrevCspMode] = useState(cspMode);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
+
+  // Use refs for values consumed inside the async storeWidgetData function.
+  // These change reference (but not value) on every re-render during text
+  // streaming because the AI SDK recreates message/part objects for each chunk.
+  // Without refs, the effect would cancel and re-run on every text chunk,
+  // racing with the in-flight store request.
+  const resolvedToolInputRef = useRef(resolvedToolInput);
+  resolvedToolInputRef.current = resolvedToolInput;
+  const resolvedToolOutputRef = useRef(resolvedToolOutput);
+  resolvedToolOutputRef.current = resolvedToolOutput;
+  const toolResponseMetadataRef = useRef(toolResponseMetadata);
+  toolResponseMetadataRef.current = toolResponseMetadata;
+  const onCspConfigReceivedRef = useRef(onCspConfigReceived);
+  onCspConfigReceivedRef.current = onCspConfigReceived;
 
   // Reset widget URL when CSP mode changes to trigger reload
   useEffect(() => {
@@ -347,9 +363,9 @@ function useWidgetFetch(
             body: JSON.stringify({
               serverId,
               uri: outputTemplate,
-              toolInput: resolvedToolInput,
-              toolOutput: resolvedToolOutput,
-              toolResponseMetadata,
+              toolInput: resolvedToolInputRef.current,
+              toolOutput: resolvedToolOutputRef.current,
+              toolResponseMetadata: toolResponseMetadataRef.current,
               toolId: resolvedToolCallId,
               toolName,
               theme: themeMode,
@@ -376,11 +392,12 @@ function useWidgetFetch(
           const data = await htmlResponse.json();
 
           // Update CSP info in widget debug store
-          if (data.csp && onCspConfigReceived) {
-            onCspConfigReceived({
+          if (data.csp && onCspConfigReceivedRef.current) {
+            onCspConfigReceivedRef.current({
               mode: data.csp.mode,
               connectDomains: data.csp.connectDomains,
               resourceDomains: data.csp.resourceDomains,
+              frameDomains: data.csp.frameDomains,
               headerString: data.csp.headerString,
               widgetDeclared: data.csp.widgetDeclared,
             });
@@ -422,16 +439,12 @@ function useWidgetFetch(
     outputTemplate,
     toolName,
     serverId,
-    resolvedToolInput,
-    resolvedToolOutput,
-    toolResponseMetadata,
     themeMode,
     locale,
     cspMode,
     deviceType,
     capabilities,
     safeAreaInsets,
-    onCspConfigReceived,
   ]);
 
   return {

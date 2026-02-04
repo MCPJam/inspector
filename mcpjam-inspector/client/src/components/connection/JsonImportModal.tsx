@@ -2,15 +2,14 @@ import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Textarea } from "../ui/textarea";
 import { Label } from "../ui/label";
 import { Card } from "../ui/card";
-import { Alert, AlertDescription } from "../ui/alert";
-import { Upload, AlertCircle, CheckCircle } from "lucide-react";
+import { Upload } from "lucide-react";
 import { parseJsonConfig, validateJsonConfig } from "@/lib/json-config-parser";
 import { ServerFormData } from "@/shared/types.js";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { JsonEditor } from "../ui/json-editor";
 
 interface JsonImportModalProps {
   isOpen: boolean;
@@ -44,24 +43,38 @@ export function JsonImportModal({
     reader.onload = (e) => {
       const content = e.target?.result as string;
       setJsonContent(content);
-      validateJson(content);
+      // Validate the config format
+      if (content.trim()) {
+        const result = validateJsonConfig(content);
+        setValidationResult(result);
+      }
     };
     reader.readAsText(file);
   };
 
-  const validateJson = (content: string) => {
+  const handleJsonChange = (content: string) => {
+    setJsonContent(content);
+    // Validate the JSON config format (not just JSON syntax)
     if (!content.trim()) {
       setValidationResult(null);
       return;
     }
-
     const result = validateJsonConfig(content);
     setValidationResult(result);
   };
 
-  const handleJsonChange = (content: string) => {
-    setJsonContent(content);
-    validateJson(content);
+  const handleValidationError = (error: string | null) => {
+    // If there's a JSON syntax error, show it
+    if (error) {
+      setValidationResult({ success: false, error });
+    }
+    // If JSON is valid, validate the config format
+    else if (jsonContent.trim()) {
+      const result = validateJsonConfig(jsonContent);
+      setValidationResult(result);
+    } else {
+      setValidationResult(null);
+    }
   };
 
   const handleImport = async () => {
@@ -97,28 +110,6 @@ export function JsonImportModal({
     setValidationResult(null);
     setIsImporting(false);
     onClose();
-  };
-
-  const getValidationIcon = () => {
-    if (!validationResult) return null;
-    return validationResult.success ? (
-      <CheckCircle className="h-4 w-4 text-green-500" />
-    ) : (
-      <AlertCircle className="h-4 w-4 text-red-500" />
-    );
-  };
-
-  const getValidationMessage = () => {
-    if (!validationResult) return null;
-    return validationResult.success ? (
-      <span className="text-green-600 dark:text-green-400">
-        Valid JSON config
-      </span>
-    ) : (
-      <span className="text-red-600 dark:text-red-400">
-        {validationResult.error}
-      </span>
-    );
   };
 
   return (
@@ -157,20 +148,15 @@ export function JsonImportModal({
 
           {/* JSON Input Section */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm font-medium">JSON Configuration</Label>
-              {validationResult && (
-                <div className="flex items-center gap-2 text-sm">
-                  {getValidationIcon()}
-                  {getValidationMessage()}
-                </div>
-              )}
-            </div>
-            <Textarea
-              value={jsonContent}
-              onChange={(e) => handleJsonChange(e.target.value)}
-              placeholder="Paste your JSON configuration here or upload a file..."
-              className="min-h-[200px] font-mono text-sm"
+            <Label className="text-sm font-medium">JSON Configuration</Label>
+            <JsonEditor
+              rawContent={jsonContent}
+              onRawChange={handleJsonChange}
+              mode="edit"
+              showModeToggle={false}
+              showToolbar={true}
+              height="200px"
+              onValidationError={handleValidationError}
             />
           </div>
 
@@ -194,14 +180,6 @@ export function JsonImportModal({
               </pre>
             </div>
           </Card>
-
-          {/* Validation Alert */}
-          {validationResult && !validationResult.success && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{validationResult.error}</AlertDescription>
-            </Alert>
-          )}
         </div>
 
         {/* Action Buttons */}

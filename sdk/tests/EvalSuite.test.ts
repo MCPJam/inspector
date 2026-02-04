@@ -10,9 +10,17 @@ function createMockPromptResult(options: {
   tokens?: number;
   latency?: { e2eMs: number; llmMs: number; mcpMs: number };
   error?: string;
+  prompt?: string;
 }): PromptResult {
+  const prompt = options.prompt ?? "Test prompt";
+  const text = options.text ?? "Test response";
   return PromptResult.from({
-    text: options.text ?? "Test response",
+    prompt,
+    messages: [
+      { role: "user", content: prompt },
+      { role: "assistant", content: text },
+    ],
+    text,
     toolCalls: (options.toolsCalled ?? []).map((name) => ({
       toolName: name,
       arguments: {},
@@ -44,7 +52,7 @@ function createMockAgent(
       },
       getPromptHistory: () => [...promptHistory],
       withOptions: () => createAgent(),
-    } as TestAgent;
+    } as unknown as TestAgent;
   };
   return createAgent();
 }

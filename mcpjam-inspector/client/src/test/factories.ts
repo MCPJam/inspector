@@ -7,7 +7,7 @@ import type {
   Workspace,
   ConnectionStatus,
 } from "@/state/app-types";
-import type { MCPServerConfig } from "@/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk";
 
 // Counter for generating unique IDs
 let idCounter = 0;

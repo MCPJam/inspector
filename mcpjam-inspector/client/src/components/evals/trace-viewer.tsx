@@ -13,6 +13,7 @@ import { getProviderLogo } from "@/lib/provider-logos";
 import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
 import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
 import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps-renderer";
+import { JsonEditor } from "@/components/ui/json-editor";
 
 interface ContentPart {
   type: string;
@@ -152,9 +153,7 @@ export function TraceViewer({
       </div>
 
       {viewMode === "raw" ? (
-        <pre className="overflow-auto whitespace-pre-wrap break-words text-xs rounded-md border border-border/30 bg-muted/20 p-3">
-          {JSON.stringify(trace, null, 2)}
-        </pre>
+        <JsonEditor viewOnly value={trace} />
       ) : (
         <div className="space-y-6">
           {groupedMessages.map((group, idx) => {
@@ -360,9 +359,7 @@ function TracePart({ part }: { part: ContentPart }) {
       <div className="text-xs font-semibold text-muted-foreground mb-1">
         Unknown part type: {part.type}
       </div>
-      <pre className="text-xs whitespace-pre-wrap break-words">
-        {JSON.stringify(part, null, 2)}
-      </pre>
+      <JsonEditor viewOnly value={part} />
     </div>
   );
 }
@@ -472,9 +469,7 @@ function CombinedToolPart({
               <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
                 Input
               </div>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-border/30 bg-muted/20 p-2 text-[11px] leading-relaxed">
-                {JSON.stringify(toolCall!.input, null, 2)}
-              </pre>
+              <JsonEditor viewOnly value={toolCall!.input} />
             </div>
           )}
 
@@ -483,17 +478,27 @@ function CombinedToolPart({
               <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
                 {isError ? "Error" : "Result"}
               </div>
-              <pre
-                className={`whitespace-pre-wrap break-words rounded-md border p-2 text-[11px] leading-relaxed ${
-                  isError
-                    ? "border-destructive/40 bg-destructive/10 text-destructive"
-                    : "border-border/30 bg-muted/20"
-                }`}
-              >
-                {typeof displayOutput === "string"
-                  ? displayOutput
-                  : JSON.stringify(displayOutput, null, 2)}
-              </pre>
+              {typeof displayOutput === "string" ? (
+                <pre
+                  className={`whitespace-pre-wrap break-words rounded-md border p-2 text-[11px] leading-relaxed ${
+                    isError
+                      ? "border-destructive/40 bg-destructive/10 text-destructive"
+                      : "border-border/30 bg-muted/20"
+                  }`}
+                >
+                  {displayOutput}
+                </pre>
+              ) : (
+                <div
+                  className={
+                    isError
+                      ? "[&_.rounded-lg]:border-destructive/40 [&_.rounded-lg]:bg-destructive/10 [&_.rounded-lg]:text-destructive"
+                      : ""
+                  }
+                >
+                  <JsonEditor viewOnly value={displayOutput} />
+                </div>
+              )}
             </div>
           )}
 

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { MCPServerConfig } from "@/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk";
 import "../../types/hono"; // Type extensions
 import { rpcLogBus, type RpcLogEvent } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
@@ -41,8 +41,7 @@ servers.get("/status/:serverId", async (c) => {
   try {
     serverId = c.req.param("serverId");
     const mcpClientManager = c.mcpClientManager;
-    const status =
-      mcpClientManager.getConnectionStatusByAttemptingPing(serverId);
+    const status = mcpClientManager.pingServer(serverId);
 
     return c.json({
       success: true,
@@ -166,7 +165,7 @@ servers.post("/reconnect", async (c) => {
     ) {
       const urlValue = normalizedConfig.url as unknown;
       if (typeof urlValue === "string") {
-        normalizedConfig.url = new URL(urlValue);
+        normalizedConfig.url = urlValue;
       } else if (urlValue instanceof URL) {
         // already normalized
       } else if (
@@ -175,7 +174,9 @@ servers.post("/reconnect", async (c) => {
         "href" in (urlValue as Record<string, unknown>) &&
         typeof (urlValue as { href?: unknown }).href === "string"
       ) {
-        normalizedConfig.url = new URL((urlValue as { href: string }).href);
+        normalizedConfig.url = new URL(
+          (urlValue as { href: string }).href,
+        ).toString();
       }
     }
 
@@ -192,7 +193,7 @@ servers.post("/reconnect", async (c) => {
 
     // Enforce HTTPS in hosted mode
     if (HOSTED_MODE && normalizedConfig.url) {
-      if (normalizedConfig.url.protocol !== "https:") {
+      if (new URL(normalizedConfig.url).protocol !== "https:") {
         return c.json(
           {
             success: false,
@@ -207,8 +208,7 @@ servers.post("/reconnect", async (c) => {
     await mcpClientManager.disconnectServer(serverId);
     await mcpClientManager.connectToServer(serverId, normalizedConfig);
 
-    const status =
-      mcpClientManager.getConnectionStatusByAttemptingPing(serverId);
+    const status = mcpClientManager.getConnectionStatus(serverId);
     const message =
       status === "connected"
         ? `Reconnected to server: ${serverId}`

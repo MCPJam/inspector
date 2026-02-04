@@ -1,0 +1,528 @@
+---
+title: "MCPClientManager"
+description: "API reference for MCPClientManager"
+icon: "book"
+---
+
+The `MCPClientManager` class manages connections to one or more MCP servers and provides methods to interact with their tools, resources, and prompts.
+
+## Import
+
+```typescript
+import { MCPClientManager } from "@mcpjam/sdk";
+```
+
+## Constructor
+
+```typescript
+new MCPClientManager(servers: ServerConfig)
+```
+
+### Parameters
+
+<ParamField path="servers" type="Record<string, StdioServerConfig | HttpServerConfig>" required>
+  A map of server IDs to their configurations.
+</ParamField>
+
+### Server Configuration Types
+
+#### StdioServerConfig
+
+For subprocess-based MCP servers.
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `command` | `string` | Yes | The command to run (e.g., `"node"`, `"python"`, `"npx"`) |
+| `args` | `string[]` | No | Command arguments |
+| `env` | `Record<string, string>` | No | Environment variables for the subprocess |
+
+```typescript
+{
+  myServer: {
+    command: "node",
+    args: ["./server.js", "--port", "3000"],
+    env: {
+      API_KEY: process.env.API_KEY,
+      DEBUG: "true",
+    },
+  },
+}
+```
+
+#### HttpServerConfig
+
+For remote MCP servers via SSE or Streamable HTTP.
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `url` | `string` | Yes | The server URL (e.g., `"https://mcp.example.com/sse"`) |
+| `requestInit` | `RequestInit` | No | Fetch options including headers for authentication |
+
+```typescript
+{
+  remoteServer: {
+    url: "https://mcp.asana.com/sse",
+    requestInit: {
+      headers: {
+        Authorization: "Bearer YOUR_TOKEN",
+        "X-Custom-Header": "value",
+      },
+    },
+  },
+}
+```
+
+### Example
+
+```typescript
+const manager = new MCPClientManager({
+  // STDIO server
+  local: {
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-everything"],
+  },
+  // HTTP server
+  remote: {
+    url: "https://mcp.example.com/sse",
+    requestInit: {
+      headers: { Authorization: "Bearer token" },
+    },
+  },
+});
+```
+
+---
+
+## Methods
+
+### connectToServer()
+
+Establishes a connection to a configured server.
+
+```typescript
+connectToServer(serverId: string): Promise<void>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID from the constructor config |
+
+#### Returns
+
+`Promise<void>` - Resolves when connected, rejects on failure.
+
+#### Example
+
+```typescript
+await manager.connectToServer("myServer");
+```
+
+#### Throws
+
+- Error if `serverId` is not in the configuration
+- Error if connection fails (network, subprocess spawn, etc.)
+
+---
+
+### disconnectServer()
+
+Closes the connection to a server and cleans up resources.
+
+```typescript
+disconnectServer(serverId: string): Promise<void>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID to disconnect |
+
+#### Returns
+
+`Promise<void>`
+
+#### Example
+
+```typescript
+await manager.disconnectServer("myServer");
+```
+
+---
+
+### pingServer()
+
+Sends a ping to check if a server is responsive.
+
+```typescript
+pingServer(serverId: string): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID to ping |
+
+#### Returns
+
+`void` - This method is synchronous and does not return a value.
+
+#### Throws
+
+- Error if the server is not connected
+- Error if the ping fails
+
+#### Example
+
+```typescript
+try {
+  manager.pingServer("myServer");
+  console.log("Server is responsive");
+} catch (error) {
+  console.warn("Server not responding:", error.message);
+}
+```
+
+---
+
+### listTools()
+
+Returns all tools available on a server.
+
+```typescript
+listTools(serverId: string): Promise<Tool[]>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+
+#### Returns
+
+`Promise<Tool[]>` - Array of tool definitions.
+
+#### Tool Object
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Tool identifier |
+| `description` | `string` | Human-readable description |
+| `inputSchema` | `object` | JSON Schema for tool arguments |
+
+#### Example
+
+```typescript
+const tools = await manager.listTools("myServer");
+
+for (const tool of tools) {
+  console.log(`${tool.name}: ${tool.description}`);
+}
+```
+
+---
+
+### executeTool()
+
+Executes a tool and returns the result.
+
+```typescript
+executeTool(
+  serverId: string,
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<unknown>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+| `toolName` | `string` | Name of the tool to execute |
+| `args` | `Record<string, unknown>` | Arguments to pass to the tool |
+
+#### Returns
+
+`Promise<unknown>` - The tool's return value (type depends on the tool).
+
+#### Example
+
+```typescript
+const result = await manager.executeTool("myServer", "add", {
+  a: 5,
+  b: 3,
+});
+console.log(result); // 8
+```
+
+#### Throws
+
+- Error if tool doesn't exist
+- Error if arguments are invalid
+- Error if tool execution fails
+
+---
+
+### listResources()
+
+Returns all resources available on a server.
+
+```typescript
+listResources(serverId: string): Promise<Resource[]>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+
+#### Returns
+
+`Promise<Resource[]>` - Array of resource definitions.
+
+#### Resource Object
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Resource identifier |
+| `uri` | `string` | Resource URI |
+| `description` | `string` | Human-readable description |
+| `mimeType` | `string` | Content type |
+
+#### Example
+
+```typescript
+const resources = await manager.listResources("myServer");
+
+for (const resource of resources) {
+  console.log(`${resource.name}: ${resource.uri}`);
+}
+```
+
+---
+
+### readResource()
+
+Reads the content of a resource.
+
+```typescript
+readResource(
+  serverId: string,
+  params: { uri: string }
+): Promise<ResourceContent>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+| `params.uri` | `string` | The resource URI to read |
+
+#### Returns
+
+`Promise<ResourceContent>` - The resource content.
+
+#### Example
+
+```typescript
+const content = await manager.readResource("myServer", {
+  uri: "file://config.json",
+});
+console.log(content);
+```
+
+---
+
+### listPrompts()
+
+Returns all prompts available on a server.
+
+```typescript
+listPrompts(serverId: string): Promise<Prompt[]>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+
+#### Returns
+
+`Promise<Prompt[]>` - Array of prompt definitions.
+
+#### Prompt Object
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Prompt identifier |
+| `description` | `string` | Human-readable description |
+| `arguments` | `PromptArgument[]` | Expected arguments |
+
+#### Example
+
+```typescript
+const prompts = await manager.listPrompts("myServer");
+
+for (const prompt of prompts) {
+  console.log(`${prompt.name}: ${prompt.description}`);
+}
+```
+
+---
+
+### getPrompt()
+
+Gets a prompt with optional arguments.
+
+```typescript
+getPrompt(
+  serverId: string,
+  params: { name: string; arguments?: Record<string, string> }
+): Promise<PromptResult>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+| `params.name` | `string` | The prompt name |
+| `params.arguments` | `Record<string, string>` | Optional prompt arguments |
+
+#### Returns
+
+`Promise<PromptResult>` - The prompt content with messages.
+
+#### Example
+
+```typescript
+const prompt = await manager.getPrompt("myServer", {
+  name: "summarize",
+  arguments: { length: "short" },
+});
+console.log(prompt.messages);
+```
+
+---
+
+### getTools()
+
+Returns all tools from specified servers or all connected servers.
+
+```typescript
+getTools(serverIds?: string[]): Promise<Tool[]>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverIds` | `string[]` | Optional. Array of server IDs to fetch tools from. If omitted, returns tools from all connected servers. |
+
+#### Returns
+
+`Promise<Tool[]>` - Array of tool definitions from all specified servers.
+
+#### Tool Object
+
+Each tool in the returned array includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `string` | Tool identifier |
+| `description` | `string` | Human-readable description |
+| `inputSchema` | `object` | JSON Schema for tool arguments |
+| `execute` | `function` | Function to execute the tool with arguments |
+
+#### Example
+
+```typescript
+// Tools from specific servers
+const tools = await manager.getTools(["myServer", "anotherServer"]);
+
+// Tools from all connected servers
+const allTools = await manager.getTools();
+
+for (const tool of allTools) {
+  console.log(`${tool.name}: ${tool.description}`);
+}
+
+// Use with TestAgent
+const agent = new TestAgent({
+  tools: await manager.getTools(),
+  model: "anthropic/claude-sonnet-4-20250514",
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+const result = await agent.prompt("Add 2 and 3");
+console.log(result.getText());
+```
+
+<Note>
+Tools with `visibility: ["app"]` are automatically filtered out by `TestAgent` per MCP specification. These tools are callable by apps but should not be exposed to the AI model.
+</Note>
+
+---
+
+## Complete Example
+
+```typescript
+import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+
+async function main() {
+  const manager = new MCPClientManager({
+    math: {
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-everything"],
+    },
+    asana: {
+      url: "https://mcp.asana.com/sse",
+      requestInit: {
+        headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}` },
+      },
+    },
+  });
+
+  try {
+    // Connect
+    await manager.connectToServer("math");
+    await manager.connectToServer("asana");
+
+    // Direct tool execution
+    const sum = await manager.executeTool("math", "add", { a: 10, b: 5 });
+    console.log("Sum:", sum);
+
+    // List capabilities
+    const mathTools = await manager.listTools("math");
+    const asanaTools = await manager.listTools("asana");
+    console.log("Math tools:", mathTools.length);
+    console.log("Asana tools:", asanaTools.length);
+
+    // Create agent with all tools
+    const agent = new TestAgent({
+      tools: await manager.getTools(),
+      model: "anthropic/claude-sonnet-4-20250514",
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+
+    const result = await agent.prompt("Add 2 and 3");
+    console.log(result.getText());
+  } finally {
+    await manager.disconnectServer("math");
+    await manager.disconnectServer("asana");
+  }
+}
+```
+
+## Related
+
+- [Connecting to Servers](/sdk/concepts/connecting-servers) - Conceptual guide
+- [TestAgent Reference](/sdk/reference/test-agent) - Use tools with LLMs

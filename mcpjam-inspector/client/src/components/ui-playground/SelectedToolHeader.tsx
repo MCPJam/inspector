@@ -5,7 +5,7 @@
  * and optional protocol selector for tools supporting both OpenAI SDK and MCP Apps
  */
 
-import { X } from "lucide-react";
+import { X, Save } from "lucide-react";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -16,6 +16,10 @@ interface SelectedToolHeaderProps {
   toolName: string;
   onExpand: () => void;
   onClear: () => void;
+  // Optional description shown below tool name
+  description?: string;
+  // Optional save action
+  onSave?: () => void;
   // Protocol selector (optional)
   showProtocolSelector?: boolean;
 }
@@ -24,6 +28,8 @@ export function SelectedToolHeader({
   toolName,
   onExpand,
   onClear,
+  description,
+  onSave,
   showProtocolSelector = false,
 }: SelectedToolHeaderProps) {
   const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
@@ -33,16 +39,38 @@ export function SelectedToolHeader({
   return (
     <div className="border-b border-border bg-muted/30 flex-shrink-0">
       {/* Tool name header */}
-      <div className="px-3 py-2 flex items-center gap-2">
-        <button
-          onClick={onExpand}
-          className="flex-1 min-w-0 hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 transition-colors text-left"
-          title="Click to change tool"
-        >
-          <code className="text-xs font-mono font-medium text-foreground truncate block">
-            {toolName}
-          </code>
-        </button>
+      <div className="px-3 py-2 flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <button
+            onClick={onExpand}
+            className="hover:bg-muted/50 rounded px-1.5 py-0.5 -mx-1.5 transition-colors text-left"
+            title="Click to change tool"
+          >
+            <code className="text-xs font-mono font-medium text-foreground truncate block">
+              {toolName}
+            </code>
+          </button>
+          {description && (
+            <p className="text-xs text-muted-foreground leading-relaxed mt-1">
+              {description}
+            </p>
+          )}
+        </div>
+        {onSave && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground flex-shrink-0"
+                onClick={onSave}
+              >
+                <Save className="h-3 w-3" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Save request</TooltipContent>
+          </Tooltip>
+        )}
         <Button
           variant="ghost"
           size="sm"

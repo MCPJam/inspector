@@ -78,6 +78,7 @@ export function createServer(options: ServerFactoryOptions = {}): McpServer {
       return {
         content: [
           { type: "text", text: `Loaded cocktail "${cocktail.name}".` },
+          { type: "text", text: `Cocktail recipe details: ${JSON.stringify(cocktail.instructions)}.` },
         ],
         structuredContent: { cocktail, viewer },
       };

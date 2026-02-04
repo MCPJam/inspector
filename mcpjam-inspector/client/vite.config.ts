@@ -36,7 +36,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@/shared": path.resolve(clientDir, "../shared"),
-      "@/sdk": path.resolve(clientDir, "../sdk/src/index.ts"),
       "@": path.resolve(clientDir, "./src"),
       // Force React resolution to prevent conflicts with @mcp-ui/client
       react: path.resolve(clientDir, "../node_modules/react"),

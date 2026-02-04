@@ -68,7 +68,7 @@ export function createMockUseAppState(
 
     // Computed values
     workspaceServers: appState.servers,
-    connectedServerConfigs: {},
+    connectedOrConnectingServerConfigs: {},
     selectedServerEntry: undefined,
     selectedMCPConfig: undefined,
     selectedMCPConfigs: [],
@@ -173,7 +173,7 @@ export const storePresets = {
     return createMockUseAppState({
       appState: createMockAppStateWithServers([server]),
       workspaceServers: servers,
-      connectedServerConfigs: servers,
+      connectedOrConnectingServerConfigs: servers,
       selectedServer: server.name,
       selectedServerEntry: server,
       selectedMCPConfig: server.config,
@@ -208,7 +208,7 @@ export const storePresets = {
     return createMockUseAppState({
       appState: createMockAppStateWithServers(servers),
       workspaceServers: serversMap,
-      connectedServerConfigs: connectedMap,
+      connectedOrConnectingServerConfigs: connectedMap,
       activeWorkspace: workspace,
     });
   },

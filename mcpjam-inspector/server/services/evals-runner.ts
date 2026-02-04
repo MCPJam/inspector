@@ -10,7 +10,7 @@ import {
   type EvaluationResult,
   type UsageTotals,
 } from "./evals/types";
-import type { MCPClientManager } from "@/sdk";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import { createLlmModel } from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
 import {
@@ -19,7 +19,7 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import zodToJsonSchema from "zod-to-json-schema";
+import { z } from "zod";
 import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
@@ -534,7 +534,7 @@ const runIterationViaBackend = async ({
         >;
       } else if (typeof schema === "object" && "safeParse" in (schema as any)) {
         try {
-          serializedSchema = zodToJsonSchema(schema) as Record<string, unknown>;
+          serializedSchema = z.toJSONSchema(schema) as Record<string, unknown>;
         } catch {
           serializedSchema = undefined;
         }

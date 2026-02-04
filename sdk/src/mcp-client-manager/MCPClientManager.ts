@@ -1185,6 +1185,7 @@ export class MCPClientManager {
     if (!capabilities.elicitation) {
       capabilities.elicitation = {};
     }
+    // Add extensions here
     return capabilities;
   }
 

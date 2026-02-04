@@ -3,7 +3,7 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
-import { Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
@@ -16,6 +16,7 @@ export interface ActiveServerSelectorProps {
   onServerChange: (server: string) => void;
   onMultiServerToggle: (server: string) => void;
   onConnect: (formData: ServerFormData) => void;
+  onReconnect?: (serverName: string) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyOpenAIAppsServers?: boolean; // Only show servers that have OpenAI apps tools
   openAiAppOrMcpAppsServers?: Set<string>; // Set of server names that have OpenAI apps or MCP apps
@@ -61,6 +62,7 @@ export function ActiveServerSelector({
   onServerChange,
   onMultiServerToggle,
   onConnect,
+  onReconnect,
   showOnlyOAuthServers = false,
   showOnlyOpenAIAppsServers = false,
   openAiAppOrMcpAppsServers,
@@ -204,9 +206,18 @@ export function ActiveServerSelector({
             return (
               <button
                 key={name}
-                onClick={() => handleServerClick(name)}
+                onClick={(e) => {
+                  // Check if click originated from reconnect button
+                  // Using Element to cover SVG elements too
+                  if (
+                    (e.target as Element).closest("[data-reconnect-button]")
+                  ) {
+                    return;
+                  }
+                  handleServerClick(name);
+                }}
                 className={cn(
-                  "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer",
+                  "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer outline-none focus-visible:bg-accent focus-visible:text-accent-foreground",
                   "hover:bg-accent hover:text-accent-foreground",
                   isSelected
                     ? "bg-muted text-foreground"
@@ -238,6 +249,24 @@ export function ActiveServerSelector({
                 <div className="text-xs opacity-70">
                   {serverConfig.config.command ? "STDIO" : "HTTP"}
                 </div>
+                {onReconnect && (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    data-reconnect-button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.nativeEvent.stopImmediatePropagation();
+                      // Also prevent default to avoid double actions if standard button behavior applies
+                      e.preventDefault();
+                      onReconnect(name);
+                    }}
+                    className="ml-auto p-1 rounded-md hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors"
+                    title="Reconnect"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                  </div>
+                )}
               </button>
             );
           })}

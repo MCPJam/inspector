@@ -3,8 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
-import { ResourceTemplatesTab } from "./components/ResourceTemplatesTab";
 import { PromptsTab } from "./components/PromptsTab";
+import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
@@ -14,6 +14,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
 import { ProfileTab } from "./components/ProfileTab";
+import { OrganizationsTab } from "./components/OrganizationsTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
@@ -49,6 +50,9 @@ import type { ActiveServerSelectorProps } from "./components/ActiveServerSelecto
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [activeOrganizationId, setActiveOrganizationId] = useState<
+    string | undefined
+  >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [openAiAppOrMcpAppsServers, setOpenAiAppOrMcpAppsServers] = useState<
     Set<string>
@@ -96,7 +100,7 @@ export default function App() {
     isLoading,
     isLoadingRemoteWorkspaces,
     workspaceServers,
-    connectedServerConfigs,
+    connectedOrConnectingServerConfigs,
     selectedMCPConfig,
     handleConnect,
     handleDisconnect,
@@ -118,23 +122,32 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
-  // Create a stable key for connected servers to avoid infinite loops
-  // (connectedServerConfigs is a new object reference on every render)
+  // Create a stable key that only tracks fully "connected" servers (not "connecting")
+  // so the effect re-fires when servers finish connecting (e.g., after reconnect)
   const connectedServerNamesKey = useMemo(
-    () => Object.keys(connectedServerConfigs).sort().join(","),
-    [connectedServerConfigs],
+    () =>
+      Object.entries(connectedOrConnectingServerConfigs)
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([name]) => name)
+        .sort()
+        .join(","),
+    [connectedOrConnectingServerConfigs],
   );
 
   // Check which connected servers have OpenAI apps tools
   useEffect(() => {
     const checkOpenAiAppOrMcpAppsServers = async () => {
-      const connectedServerNames = Object.keys(connectedServerConfigs);
+      const connectedServerNames = Object.entries(
+        connectedOrConnectingServerConfigs,
+      )
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([name]) => name);
       const serversWithOpenAiAppOrMcpApps = new Set<string>();
 
       await Promise.all(
         connectedServerNames.map(async (serverName) => {
           try {
-            const toolsData = await listTools(serverName);
+            const toolsData = await listTools({ serverId: serverName });
             if (
               isOpenAIApp(toolsData) ||
               isMCPApp(toolsData) ||
@@ -162,8 +175,20 @@ export default function App() {
     const applyHash = () => {
       const hash = (window.location.hash || "#servers").replace("#", "");
 
-      // Extract the top-level tab from subroutes (e.g., "/evals/suite/123" -> "evals")
-      const topLevelTab = hash.startsWith("/") ? hash.split("/")[1] : hash;
+      // Remove leading slash before splitting to avoid empty first element
+      const trimmedHash = hash.startsWith("/") ? hash.slice(1) : hash;
+      const hashParts = trimmedHash.split("/");
+
+      // Extract the top-level tab (e.g., "evals/suite/123" -> "evals")
+      const topLevelTab = hashParts[0];
+
+      // Handle organizations/:orgId route
+      if (hashParts[0] === "organizations" && hashParts[1]) {
+        setActiveOrganizationId(hashParts[1]);
+      } else {
+        setActiveOrganizationId(undefined);
+      }
+
       const normalizedTab =
         topLevelTab === "registry" ? "servers" : topLevelTab;
 
@@ -217,7 +242,6 @@ export default function App() {
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
-    activeTab === "resource-templates" ||
     activeTab === "prompts" ||
     activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
@@ -232,10 +256,11 @@ export default function App() {
           serverConfigs:
             activeTab === "oauth-flow"
               ? appState.servers
-              : connectedServerConfigs,
+              : connectedOrConnectingServerConfigs,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
+          onReconnect: handleReconnect,
           isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
@@ -248,7 +273,11 @@ export default function App() {
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
-      <MCPSidebar onNavigate={handleNavigate} activeTab={activeTab} />
+      <MCPSidebar
+        onNavigate={handleNavigate}
+        activeTab={activeTab}
+        servers={workspaceServers}
+      />
       <SidebarInset className="flex flex-col min-h-0">
         <Header
           workspaces={workspaces}
@@ -266,7 +295,7 @@ export default function App() {
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
-              connectedServerConfigs={workspaceServers}
+              connectedOrConnectingServerConfigs={workspaceServers}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
@@ -287,27 +316,30 @@ export default function App() {
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "resources" && (
-            <ResourcesTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
-          )}
-
-          {activeTab === "resource-templates" && (
-            <ResourceTemplatesTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <ResourcesTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
 
           {activeTab === "prompts" && (
-            <PromptsTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
+            <div className="h-full overflow-hidden">
+              <PromptsTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            </div>
           )}
 
-          <div className={activeTab === "tasks" ? "h-full" : "hidden"}>
+          {activeTab === "skills" && <SkillsTab />}
+
+          <div
+            className={
+              activeTab === "tasks" ? "h-full overflow-hidden" : "hidden"
+            }
+          >
             <TasksTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
@@ -335,7 +367,9 @@ export default function App() {
           )}
           {activeTab === "chat-v2" && (
             <ChatTabV2
-              connectedServerConfigs={connectedServerConfigs}
+              connectedOrConnectingServerConfigs={
+                connectedOrConnectingServerConfigs
+              }
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
             />
@@ -349,6 +383,9 @@ export default function App() {
           )}
           {activeTab === "settings" && <SettingsTab />}
           {activeTab === "profile" && <ProfileTab />}
+          {activeTab === "organizations" && (
+            <OrganizationsTab organizationId={activeOrganizationId} />
+          )}
         </div>
       </SidebarInset>
     </SidebarProvider>
