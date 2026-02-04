@@ -90,12 +90,15 @@ export function PartSwitch({
   >();
 
   if (isToolApprovalRequest(part)) {
-    // The AI SDK stores approval info directly on the dynamic-tool part
-    const dynamicPart = part as DynamicToolUIPart;
-    const approvalId = (dynamicPart as any).approval?.id;
-    const toolName = dynamicPart.toolName;
-    const toolCallId = dynamicPart.toolCallId;
-    const input = dynamicPart.input as Record<string, unknown> | undefined;
+    // The AI SDK stores approval info on the tool part itself. This works for
+    // both dynamic-tool parts and typed tool-{name} parts.
+    const toolPart = part as any;
+    const approvalId = toolPart.approval?.id;
+    const toolName = isDynamicTool(part)
+      ? (part as DynamicToolUIPart).toolName
+      : getToolNameFromType(toolPart.type);
+    const toolCallId = toolPart.toolCallId;
+    const input = toolPart.input as Record<string, unknown> | undefined;
 
     return (
       <ToolApprovalCard

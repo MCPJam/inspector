@@ -61,10 +61,14 @@ export function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
 }
 
 export function isToolApprovalRequest(part: AnyPart): boolean {
-  // The AI SDK stores approval state on the dynamic-tool part itself
-  // (state: "approval-requested") rather than creating a separate part type.
+  // The AI SDK stores approval state on the tool part itself
+  // (state: "approval-requested"). This can appear on both dynamic-tool parts
+  // and typed tool-{name} parts depending on the stream source.
   if (isDynamicTool(part)) {
     return (part as DynamicToolUIPart).state === "approval-requested";
+  }
+  if (isToolPart(part)) {
+    return (part as any).state === "approval-requested";
   }
   return false;
 }

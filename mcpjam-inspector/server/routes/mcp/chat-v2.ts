@@ -103,6 +103,7 @@ chatV2.post("/", async (c) => {
         authHeader: c.req.header("authorization"),
         mcpClientManager,
         selectedServers,
+        requireToolApproval,
       });
     }
 
