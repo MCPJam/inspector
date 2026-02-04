@@ -1,9 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import {
-  Trash2,
-  Pencil,
-  Copy,
-} from "lucide-react";
+import { Trash2, Pencil, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type AnyView } from "@/hooks/useViews";
@@ -126,7 +122,7 @@ export function ViewsListSidebar({
                   onClick={() => onSelectView(view._id)}
                   className={cn(
                     "group flex items-center gap-3 px-4 py-2 cursor-pointer transition-colors",
-                    isSelected ? "bg-accent" : "hover:bg-accent/50"
+                    isSelected ? "bg-accent" : "hover:bg-accent/50",
                   )}
                 >
                   <div className="flex-1 min-w-0 flex items-center gap-2">
@@ -142,7 +138,7 @@ export function ViewsListSidebar({
                         disabled={isSavingName}
                         className={cn(
                           "flex-1 px-1.5 py-0.5 text-sm bg-background border border-input rounded focus:outline-none focus:ring-1 focus:ring-ring",
-                          isSavingName && "opacity-50"
+                          isSavingName && "opacity-50",
                         )}
                       />
                     ) : (
@@ -151,7 +147,7 @@ export function ViewsListSidebar({
                           onClick={(e) => handleStartEditing(view, e)}
                           className={cn(
                             "truncate text-sm cursor-text",
-                            isSelected ? "font-medium" : "font-normal"
+                            isSelected ? "font-medium" : "font-normal",
                           )}
                           title="Click to rename"
                         >
@@ -167,7 +163,9 @@ export function ViewsListSidebar({
                   <div
                     className={cn(
                       "flex items-center gap-0.5 shrink-0 transition-opacity",
-                      isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                      isSelected
+                        ? "opacity-100"
+                        : "opacity-0 group-hover:opacity-100",
                     )}
                   >
                     <Button

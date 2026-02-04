@@ -96,8 +96,14 @@ export function PartSwitch({
   const currentServerName = appState.selectedServer ?? "unknown";
 
   // Get existing view names for duplicate handling
-  const { sortedViews } = useViewQueries({ isAuthenticated, workspaceId: convexWorkspaceId });
-  const existingViewNames = useMemo(() => new Set(sortedViews.map(v => v.name)), [sortedViews]);
+  const { sortedViews } = useViewQueries({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+  const existingViewNames = useMemo(
+    () => new Set(sortedViews.map((v) => v.name)),
+    [sortedViews],
+  );
 
   // Instant save hook
   const { saveViewInstant, isSaving } = useSaveView({
@@ -108,11 +114,12 @@ export function PartSwitch({
   });
 
   // Get widget debug info for the current tool
-  const toolCallId = isToolPart(part) || isDynamicTool(part)
-    ? ((part as any).toolCallId as string | undefined)
-    : undefined;
+  const toolCallId =
+    isToolPart(part) || isDynamicTool(part)
+      ? ((part as any).toolCallId as string | undefined)
+      : undefined;
   const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined
+    toolCallId ? s.widgets.get(toolCallId) : undefined,
   );
 
   // Create save view handler for a specific tool (instant save)
@@ -126,7 +133,7 @@ export function PartSwitch({
       uiType: UIType,
       resourceUri?: string,
       outputTemplate?: string,
-      toolMetadata?: Record<string, unknown>
+      toolMetadata?: Record<string, unknown>,
     ) => {
       return async () => {
         const data: ToolDataForSave = {
@@ -154,7 +161,7 @@ export function PartSwitch({
         await saveViewInstant(data);
       };
     },
-    [toolCallId, widgetDebugInfo, saveViewInstant]
+    [toolCallId, widgetDebugInfo, saveViewInstant],
   );
 
   if (isToolPart(part) || isDynamicTool(part)) {
@@ -191,17 +198,21 @@ export function PartSwitch({
     // Use rawOutput as fallback if output is undefined
     const outputToSave = toolInfo.output ?? toolInfo.rawOutput;
     // OpenAI outputTemplate is stored under "openai/outputTemplate" key
-    const outputTemplate = partToolMeta?.["openai/outputTemplate"] as string | undefined;
+    const outputTemplate = partToolMeta?.["openai/outputTemplate"] as
+      | string
+      | undefined;
     const handleSaveView = createSaveViewHandler(
       toolInfo.toolName,
       toolInfo.input,
       outputToSave,
       toolInfo.errorText,
-      toolInfo.toolState === "output-error" ? "output-error" : "output-available",
+      toolInfo.toolState === "output-error"
+        ? "output-error"
+        : "output-available",
       uiType || UIType.MCP_APPS,
       uiResourceUri ?? undefined,
       outputTemplate,
-      partToolMeta as Record<string, unknown> | undefined
+      partToolMeta as Record<string, unknown> | undefined,
     );
 
     if (uiResource) {

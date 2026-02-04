@@ -201,7 +201,8 @@ export function DisplayContextHeader({
   const timeZone = globals.timeZone;
 
   // Show ChatGPT Apps controls when: no protocol selected (default) or openai-apps
-  const showChatGPTControls = protocol === null || protocol === UIType.OPENAI_SDK;
+  const showChatGPTControls =
+    protocol === null || protocol === UIType.OPENAI_SDK;
   // Show MCP Apps controls when mcp-apps protocol is selected
   const showMCPAppsControls = protocol === UIType.MCP_APPS;
 
@@ -401,9 +402,8 @@ export function DisplayContextHeader({
                       <Shield className="h-3.5 w-3.5" />
                       <span>
                         {
-                          CSP_MODE_OPTIONS.find(
-                            (o) => o.mode === activeCspMode,
-                          )?.label
+                          CSP_MODE_OPTIONS.find((o) => o.mode === activeCspMode)
+                            ?.label
                         }
                       </span>
                     </Button>

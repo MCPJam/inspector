@@ -133,7 +133,7 @@ export default function App() {
       workspaces,
       activeWorkspaceId,
     }),
-    [appState, workspaces, activeWorkspaceId]
+    [appState, workspaces, activeWorkspaceId],
   );
 
   // Get the Convex workspace ID from the active workspace

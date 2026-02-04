@@ -2,8 +2,14 @@ import { useEffect, useMemo } from "react";
 import { type AnyView } from "@/hooks/useViews";
 import { type ConnectionStatus } from "@/state/app-types";
 import { ViewPreview } from "./ViewPreview";
-import { DisplayContextHeader, PRESET_DEVICE_CONFIGS } from "@/components/shared/DisplayContextHeader";
-import { useUIPlaygroundStore, type DeviceType } from "@/stores/ui-playground-store";
+import {
+  DisplayContextHeader,
+  PRESET_DEVICE_CONFIGS,
+} from "@/components/shared/DisplayContextHeader";
+import {
+  useUIPlaygroundStore,
+  type DeviceType,
+} from "@/stores/ui-playground-store";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 interface ViewDetailPanelProps {
@@ -36,13 +42,17 @@ export function ViewDetailPanel({
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
 
   // Store actions for initializing state
-  const setPlaygroundActive = useUIPlaygroundStore((s) => s.setPlaygroundActive);
+  const setPlaygroundActive = useUIPlaygroundStore(
+    (s) => s.setPlaygroundActive,
+  );
   const setDeviceType = useUIPlaygroundStore((s) => s.setDeviceType);
   const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
   const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
   const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
   const setSafeAreaInsets = useUIPlaygroundStore((s) => s.setSafeAreaInsets);
-  const setSelectedProtocol = useUIPlaygroundStore((s) => s.setSelectedProtocol);
+  const setSelectedProtocol = useUIPlaygroundStore(
+    (s) => s.setSelectedProtocol,
+  );
 
   // Compute device config for frame dimensions
   const deviceConfig = useMemo(() => {
@@ -63,7 +73,8 @@ export function ViewDetailPanel({
 
   // Set the selected protocol based on the view
   useEffect(() => {
-    const protocol = view.protocol === "mcp-apps" ? UIType.MCP_APPS : UIType.OPENAI_SDK;
+    const protocol =
+      view.protocol === "mcp-apps" ? UIType.MCP_APPS : UIType.OPENAI_SDK;
     setSelectedProtocol(protocol);
   }, [view.protocol, setSelectedProtocol]);
 
@@ -102,7 +113,8 @@ export function ViewDetailPanel({
   ]);
 
   // Determine protocol for DisplayContextHeader
-  const protocol = view.protocol === "mcp-apps" ? UIType.MCP_APPS : UIType.OPENAI_SDK;
+  const protocol =
+    view.protocol === "mcp-apps" ? UIType.MCP_APPS : UIType.OPENAI_SDK;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">

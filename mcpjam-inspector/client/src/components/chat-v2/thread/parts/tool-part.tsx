@@ -314,7 +314,11 @@ export function ToolPart({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {isSaving ? "Saving..." : canSaveView ? "Save as View" : (saveDisabledReason || "No output to save")}
+                  {isSaving
+                    ? "Saving..."
+                    : canSaveView
+                      ? "Save as View"
+                      : saveDisabledReason || "No output to save"}
                 </TooltipContent>
               </Tooltip>
             </>

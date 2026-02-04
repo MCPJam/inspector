@@ -12,12 +12,7 @@
  */
 
 import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
-import {
-  ArrowDown,
-  Braces,
-  Loader2,
-  Trash2,
-} from "lucide-react";
+import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
@@ -155,7 +150,8 @@ export function PlaygroundMain({
   onDisplayModeChange,
   locale: _locale = "en-US",
   onLocaleChange: _onLocaleChange,
-  timeZone: _timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  timeZone: _timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    "UTC",
   onTimeZoneChange: _onTimeZoneChange,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
@@ -408,7 +404,8 @@ export function PlaygroundMain({
 
   // Compact mode for smaller devices or narrow custom viewports
   const isCompact = useMemo(() => {
-    if (storeDeviceType === "mobile" || storeDeviceType === "tablet") return true;
+    if (storeDeviceType === "mobile" || storeDeviceType === "tablet")
+      return true;
     if (storeDeviceType === "custom" && customViewport.width < 500) return true;
     return false;
   }, [storeDeviceType, customViewport.width]);
@@ -589,10 +586,7 @@ export function PlaygroundMain({
       {/* Device frame header */}
       <div className="relative flex items-center justify-center px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
         {/* All controls centered */}
-        <DisplayContextHeader
-          protocol={selectedProtocol}
-          showThemeToggle
-        />
+        <DisplayContextHeader protocol={selectedProtocol} showThemeToggle />
 
         {/* Right actions - absolutely positioned */}
         {!isThreadEmpty && (

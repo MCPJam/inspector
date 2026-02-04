@@ -57,7 +57,10 @@ interface UseSaveViewOptions {
 }
 
 // Generate a unique view name by appending (2), (3), etc. if needed
-function generateUniqueViewName(baseName: string, existingNames: Set<string>): string {
+function generateUniqueViewName(
+  baseName: string,
+  existingNames: Set<string>,
+): string {
   if (!existingNames.has(baseName)) return baseName;
   let suffix = 2;
   while (existingNames.has(`${baseName} (${suffix})`)) suffix++;
@@ -112,14 +115,14 @@ export function useSaveView({
 
       return serverId;
     },
-    [serversByName, workspaceId, createServer]
+    [serversByName, workspaceId, createServer],
   );
 
   // Upload output blob to Convex storage
   const uploadOutputBlob = useCallback(
     async (
       output: unknown,
-      protocol: "mcp-apps" | "openai-apps"
+      protocol: "mcp-apps" | "openai-apps",
     ): Promise<string> => {
       // Generate upload URL based on protocol
       const uploadUrl =
@@ -145,12 +148,15 @@ export function useSaveView({
       const result = await response.json();
       return result.storageId;
     },
-    [generateMcpUploadUrl, generateOpenaiUploadUrl]
+    [generateMcpUploadUrl, generateOpenaiUploadUrl],
   );
 
   // Upload widget HTML blob to Convex storage (for offline rendering)
   const uploadWidgetHtmlBlob = useCallback(
-    async (html: string, protocol: "mcp-apps" | "openai-apps"): Promise<string> => {
+    async (
+      html: string,
+      protocol: "mcp-apps" | "openai-apps",
+    ): Promise<string> => {
       // Both MCP and OpenAI apps now support widget HTML caching
       const uploadUrl =
         protocol === "mcp-apps"
@@ -175,7 +181,7 @@ export function useSaveView({
       const result = await response.json();
       return result.storageId;
     },
-    [generateMcpUploadUrl, generateOpenaiUploadUrl]
+    [generateMcpUploadUrl, generateOpenaiUploadUrl],
   );
 
   // Save view
@@ -202,12 +208,18 @@ export function useSaveView({
         const serverId = await getOrCreateServerId(serverName);
 
         // Upload output blob
-        const toolOutputBlobId = await uploadOutputBlob(toolData.output, protocol);
+        const toolOutputBlobId = await uploadOutputBlob(
+          toolData.output,
+          protocol,
+        );
 
         // Upload widget HTML blob (for offline rendering - both MCP and OpenAI apps)
         let widgetHtmlBlobId: string | undefined;
         if (toolData.widgetHtml) {
-          widgetHtmlBlobId = await uploadWidgetHtmlBlob(toolData.widgetHtml, protocol);
+          widgetHtmlBlobId = await uploadWidgetHtmlBlob(
+            toolData.widgetHtml,
+            protocol,
+          );
         }
 
         // Prepare base args
@@ -246,7 +258,9 @@ export function useSaveView({
           // MCP-specific save
           viewId = await createMcpView({
             ...baseArgs,
-            resourceUri: toolData.resourceUri || `mcp://${serverName}/${toolData.toolName}`,
+            resourceUri:
+              toolData.resourceUri ||
+              `mcp://${serverName}/${toolData.toolName}`,
             toolsMetadata: toolData.toolsMetadata,
             widgetCsp: filteredWidgetCsp,
             widgetPermissions: toolData.widgetPermissions,
@@ -283,16 +297,22 @@ export function useSaveView({
       uploadWidgetHtmlBlob,
       createMcpView,
       createOpenaiView,
-    ]
+    ],
   );
 
   // Instant save: uses tool name as view name with automatic duplicate handling
   const saveViewInstant = useCallback(
     async (toolData: ToolDataForSave) => {
-      const uniqueName = generateUniqueViewName(toolData.toolName, existingViewNames);
-      return saveView(toolData, { name: uniqueName, defaultContext: currentDisplayContext });
+      const uniqueName = generateUniqueViewName(
+        toolData.toolName,
+        existingViewNames,
+      );
+      return saveView(toolData, {
+        name: uniqueName,
+        defaultContext: currentDisplayContext,
+      });
     },
-    [saveView, existingViewNames, currentDisplayContext]
+    [saveView, existingViewNames, currentDisplayContext],
   );
 
   return {

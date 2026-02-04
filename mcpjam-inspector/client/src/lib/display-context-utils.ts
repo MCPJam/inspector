@@ -31,7 +31,7 @@ export function useCurrentDisplayContext(): DisplayContext {
  */
 export function areDisplayContextsEqual(
   a: DisplayContext | undefined,
-  b: DisplayContext | undefined
+  b: DisplayContext | undefined,
 ): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }

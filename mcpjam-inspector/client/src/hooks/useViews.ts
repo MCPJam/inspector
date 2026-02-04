@@ -92,7 +92,7 @@ export function useViewQueries({
 
   const views = useQuery(
     "views:listAllByWorkspace" as any,
-    enableQuery ? ({ workspaceId } as any) : "skip"
+    enableQuery ? ({ workspaceId } as any) : "skip",
   ) as AnyView[] | undefined;
 
   const isLoading = enableQuery && views === undefined;
@@ -128,10 +128,13 @@ export function useViewQueries({
 
   // Group views by protocol
   const viewsByProtocol = useMemo(() => {
-    if (!views) return { mcp: [] as McpAppView[], openai: [] as OpenaiAppView[] };
+    if (!views)
+      return { mcp: [] as McpAppView[], openai: [] as OpenaiAppView[] };
     return {
       mcp: views.filter((v): v is McpAppView => v.protocol === "mcp-apps"),
-      openai: views.filter((v): v is OpenaiAppView => v.protocol === "openai-apps"),
+      openai: views.filter(
+        (v): v is OpenaiAppView => v.protocol === "openai-apps",
+      ),
     };
   }, [views]);
 
@@ -152,13 +155,17 @@ export function useViewMutations() {
   const createMcpView = useMutation("mcpAppViews:create" as any);
   const updateMcpView = useMutation("mcpAppViews:update" as any);
   const removeMcpView = useMutation("mcpAppViews:remove" as any);
-  const generateMcpUploadUrl = useMutation("mcpAppViews:generateUploadUrl" as any);
+  const generateMcpUploadUrl = useMutation(
+    "mcpAppViews:generateUploadUrl" as any,
+  );
 
   // OpenAI mutations
   const createOpenaiView = useMutation("openaiAppViews:create" as any);
   const updateOpenaiView = useMutation("openaiAppViews:update" as any);
   const removeOpenaiView = useMutation("openaiAppViews:remove" as any);
-  const generateOpenaiUploadUrl = useMutation("openaiAppViews:generateUploadUrl" as any);
+  const generateOpenaiUploadUrl = useMutation(
+    "openaiAppViews:generateUploadUrl" as any,
+  );
 
   return {
     // MCP
@@ -186,13 +193,15 @@ export function useWorkspaceServers({
 
   const servers = useQuery(
     "servers:getWorkspaceServers" as any,
-    enableQuery ? ({ workspaceId } as any) : "skip"
-  ) as Array<{
-    _id: string;
-    name: string;
-    workspaceId: string;
-    transportType: "stdio" | "http";
-  }> | undefined;
+    enableQuery ? ({ workspaceId } as any) : "skip",
+  ) as
+    | Array<{
+        _id: string;
+        name: string;
+        workspaceId: string;
+        transportType: "stdio" | "http";
+      }>
+    | undefined;
 
   const isLoading = enableQuery && servers === undefined;
 

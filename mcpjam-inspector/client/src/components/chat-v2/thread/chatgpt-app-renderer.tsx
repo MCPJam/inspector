@@ -338,12 +338,14 @@ function useWidgetFetch(
 
   // Serialize data for stable comparison (avoids re-running effect on reference changes)
   const serializedData = useMemo(
-    () => JSON.stringify({ input: resolvedToolInput, output: resolvedToolOutput }),
-    [resolvedToolInput, resolvedToolOutput]
+    () =>
+      JSON.stringify({ input: resolvedToolInput, output: resolvedToolOutput }),
+    [resolvedToolInput, resolvedToolOutput],
   );
 
   // Debounce serializedData to avoid rapid reloads when typing fast in the editor
-  const [debouncedSerializedData, setDebouncedSerializedData] = useState(serializedData);
+  const [debouncedSerializedData, setDebouncedSerializedData] =
+    useState(serializedData);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -389,10 +391,11 @@ function useWidgetFetch(
     // Check if widgetUrl is current (matches expected URL based on mode)
     // In cached mode: widgetUrl should equal cachedWidgetHtmlUrl
     // In live mode: widgetUrl is a widget-content endpoint URL
-    const isWidgetUrlCurrent = widgetUrl && (
-      (canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
-      (!canUseCachedHtml && widgetUrl.includes('/api/apps/chatgpt/widget-content/'))
-    );
+    const isWidgetUrlCurrent =
+      widgetUrl &&
+      ((canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
+        (!canUseCachedHtml &&
+          widgetUrl.includes("/api/apps/chatgpt/widget-content/")));
 
     if (
       toolState !== "output-available" ||
@@ -512,7 +515,10 @@ function useWidgetFetch(
               onWidgetHtmlCaptured(resolvedToolCallId, html);
             }
           } catch (captureErr) {
-            console.warn("Failed to capture widget HTML for caching:", captureErr);
+            console.warn(
+              "Failed to capture widget HTML for caching:",
+              captureErr,
+            );
           }
         }
 

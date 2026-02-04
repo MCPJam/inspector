@@ -8,14 +8,21 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { useViewQueries, useViewMutations, useWorkspaceServers, type AnyView } from "@/hooks/useViews";
+import {
+  useViewQueries,
+  useViewMutations,
+  useWorkspaceServers,
+  type AnyView,
+} from "@/hooks/useViews";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ViewsListSidebar } from "./views/ViewsListSidebar";
 import { ViewDetailPanel } from "./views/ViewDetailPanel";
 import { ViewEditorPanel } from "./views/ViewEditorPanel";
 import { executeToolApi } from "@/lib/apis/mcp-tools-api";
-import { useCurrentDisplayContext, areDisplayContextsEqual } from "@/lib/display-context-utils";
-import { useUIPlaygroundStore, type DeviceType } from "@/stores/ui-playground-store";
+import {
+  useCurrentDisplayContext,
+  areDisplayContextsEqual,
+} from "@/lib/display-context-utils";
 
 interface ViewsTabProps {
   selectedServer?: string;
@@ -33,7 +40,9 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   const [selectedViewId, setSelectedViewId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [deletingViewId, setDeletingViewId] = useState<string | null>(null);
-  const [duplicatingViewId, setDuplicatingViewId] = useState<string | null>(null);
+  const [duplicatingViewId, setDuplicatingViewId] = useState<string | null>(
+    null,
+  );
 
   // Live editing state for toolInput/toolOutput
   const [liveToolInput, setLiveToolInput] = useState<unknown>(null);
@@ -46,21 +55,11 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Get current display context from UI Playground store
   const currentDisplayContext = useCurrentDisplayContext();
 
-  // Store actions for resetting display context
-  const setDeviceType = useUIPlaygroundStore((s) => s.setDeviceType);
-  const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
-  const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
-  const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
-  const setSafeAreaInsets = useUIPlaygroundStore((s) => s.setSafeAreaInsets);
-
   // Track the view ID we loaded output for to avoid stale data
   const loadedToolOutputForViewId = useRef<string | null>(null);
 
   // Fetch views
-  const {
-    sortedViews,
-    isLoading: isViewsLoading,
-  } = useViewQueries({
+  const { sortedViews, isLoading: isViewsLoading } = useViewQueries({
     isAuthenticated,
     workspaceId,
   });
@@ -72,7 +71,9 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   });
 
   // Get the server ID from the selected server name
-  const selectedServerId = selectedServer ? serversByName.get(selectedServer) : undefined;
+  const selectedServerId = selectedServer
+    ? serversByName.get(selectedServer)
+    : undefined;
 
   // Filter views by selected server (via header tabs)
   const filteredViews = useMemo(() => {
@@ -86,7 +87,9 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Clear selection when selected server changes and selected view doesn't belong to filtered set
   useEffect(() => {
     if (selectedViewId && selectedServerId) {
-      const viewStillExists = filteredViews.some((v) => v._id === selectedViewId);
+      const viewStillExists = filteredViews.some(
+        (v) => v._id === selectedViewId,
+      );
       if (!viewStillExists) {
         setSelectedViewId(null);
         setIsEditing(false);
@@ -100,10 +103,13 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   }, [selectedServerId, selectedViewId, filteredViews]);
 
   // Get connection status for a specific server - use appState.servers which has runtime state
-  const getServerConnectionStatus = useCallback((serverName: string | undefined) => {
-    if (!serverName) return undefined;
-    return appState.servers[serverName]?.connectionStatus;
-  }, [appState.servers]);
+  const getServerConnectionStatus = useCallback(
+    (serverName: string | undefined) => {
+      if (!serverName) return undefined;
+      return appState.servers[serverName]?.connectionStatus;
+    },
+    [appState.servers],
+  );
 
   // Mutations
   const {
@@ -182,28 +188,31 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   }, []);
 
   // Handle delete
-  const handleDeleteView = useCallback(async (view: AnyView) => {
-    setDeletingViewId(view._id);
-    try {
-      if (view.protocol === "mcp-apps") {
-        await removeMcpView({ viewId: view._id });
-      } else {
-        await removeOpenaiView({ viewId: view._id });
-      }
+  const handleDeleteView = useCallback(
+    async (view: AnyView) => {
+      setDeletingViewId(view._id);
+      try {
+        if (view.protocol === "mcp-apps") {
+          await removeMcpView({ viewId: view._id });
+        } else {
+          await removeOpenaiView({ viewId: view._id });
+        }
 
-      toast.success(`View "${view.name}" deleted`);
+        toast.success(`View "${view.name}" deleted`);
 
-      // Clear selection if deleted view was selected
-      if (selectedViewId === view._id) {
-        setSelectedViewId(null);
+        // Clear selection if deleted view was selected
+        if (selectedViewId === view._id) {
+          setSelectedViewId(null);
+        }
+      } catch (error) {
+        console.error("Failed to delete view:", error);
+        toast.error("Failed to delete view");
+      } finally {
+        setDeletingViewId(null);
       }
-    } catch (error) {
-      console.error("Failed to delete view:", error);
-      toast.error("Failed to delete view");
-    } finally {
-      setDeletingViewId(null);
-    }
-  }, [selectedViewId, removeMcpView, removeOpenaiView]);
+    },
+    [selectedViewId, removeMcpView, removeOpenaiView],
+  );
 
   // Handle edit
   const handleEditView = useCallback((view: AnyView) => {
@@ -214,140 +223,157 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   }, []);
 
   // Handle rename
-  const handleRenameView = useCallback(async (view: AnyView, newName: string) => {
-    try {
-      const updates = {
-        viewId: view._id,
-        name: newName,
-      };
+  const handleRenameView = useCallback(
+    async (view: AnyView, newName: string) => {
+      try {
+        const updates = {
+          viewId: view._id,
+          name: newName,
+        };
 
-      if (view.protocol === "mcp-apps") {
-        await updateMcpView(updates);
-      } else {
-        await updateOpenaiView(updates);
+        if (view.protocol === "mcp-apps") {
+          await updateMcpView(updates);
+        } else {
+          await updateOpenaiView(updates);
+        }
+
+        toast.success(`View renamed to "${newName}"`);
+      } catch (error) {
+        console.error("Failed to rename view:", error);
+        toast.error("Failed to rename view");
+        throw error; // Re-throw so the sidebar knows to keep editing mode
       }
-
-      toast.success(`View renamed to "${newName}"`);
-    } catch (error) {
-      console.error("Failed to rename view:", error);
-      toast.error("Failed to rename view");
-      throw error; // Re-throw so the sidebar knows to keep editing mode
-    }
-  }, [updateMcpView, updateOpenaiView]);
+    },
+    [updateMcpView, updateOpenaiView],
+  );
 
   // Handle duplicate
-  const handleDuplicateView = useCallback(async (view: AnyView) => {
-    if (!workspaceId) return;
+  const handleDuplicateView = useCallback(
+    async (view: AnyView) => {
+      if (!workspaceId) return;
 
-    setDuplicatingViewId(view._id);
-    try {
-      // Fetch the toolOutput blob if it exists
-      let toolOutputBlobId: string | undefined;
-      if (view.toolOutputUrl) {
-        // Fetch the original toolOutput
-        const response = await fetch(view.toolOutputUrl);
-        if (response.ok) {
-          const data = await response.json();
-          // Upload as a new blob
-          const uploadUrl =
-            view.protocol === "mcp-apps"
-              ? await generateMcpUploadUrl()
-              : await generateOpenaiUploadUrl();
+      setDuplicatingViewId(view._id);
+      try {
+        // Fetch the toolOutput blob if it exists
+        let toolOutputBlobId: string | undefined;
+        if (view.toolOutputUrl) {
+          // Fetch the original toolOutput
+          const response = await fetch(view.toolOutputUrl);
+          if (response.ok) {
+            const data = await response.json();
+            // Upload as a new blob
+            const uploadUrl =
+              view.protocol === "mcp-apps"
+                ? await generateMcpUploadUrl()
+                : await generateOpenaiUploadUrl();
 
-          const uploadResponse = await fetch(uploadUrl, {
-            method: "POST",
-            body: JSON.stringify(data),
-            headers: { "Content-Type": "application/json" },
-          });
+            const uploadResponse = await fetch(uploadUrl, {
+              method: "POST",
+              body: JSON.stringify(data),
+              headers: { "Content-Type": "application/json" },
+            });
 
-          if (uploadResponse.ok) {
-            const { storageId } = await uploadResponse.json();
-            toolOutputBlobId = storageId;
+            if (uploadResponse.ok) {
+              const { storageId } = await uploadResponse.json();
+              toolOutputBlobId = storageId;
+            }
           }
         }
-      }
 
-      // Copy widget HTML blob if it exists
-      let widgetHtmlBlobId: string | undefined;
-      if (view.widgetHtmlUrl) {
-        const response = await fetch(view.widgetHtmlUrl);
-        if (response.ok) {
-          const htmlContent = await response.text();
-          const uploadUrl =
-            view.protocol === "mcp-apps"
-              ? await generateMcpUploadUrl()
-              : await generateOpenaiUploadUrl();
+        // Copy widget HTML blob if it exists
+        let widgetHtmlBlobId: string | undefined;
+        if (view.widgetHtmlUrl) {
+          const response = await fetch(view.widgetHtmlUrl);
+          if (response.ok) {
+            const htmlContent = await response.text();
+            const uploadUrl =
+              view.protocol === "mcp-apps"
+                ? await generateMcpUploadUrl()
+                : await generateOpenaiUploadUrl();
 
-          const uploadResponse = await fetch(uploadUrl, {
-            method: "POST",
-            body: htmlContent,
-            headers: { "Content-Type": "text/html" },
-          });
+            const uploadResponse = await fetch(uploadUrl, {
+              method: "POST",
+              body: htmlContent,
+              headers: { "Content-Type": "text/html" },
+            });
 
-          if (uploadResponse.ok) {
-            const { storageId } = await uploadResponse.json();
-            widgetHtmlBlobId = storageId;
+            if (uploadResponse.ok) {
+              const { storageId } = await uploadResponse.json();
+              widgetHtmlBlobId = storageId;
+            }
           }
         }
+
+        // Create the duplicate view
+        const baseName = view.name.replace(/ \(copy( \d+)?\)$/, "");
+        const existingCopies = filteredViews.filter(
+          (v) =>
+            v.name.startsWith(baseName) && v.name.match(/ \(copy( \d+)?\)$/),
+        );
+        const copyNumber = existingCopies.length + 1;
+        const newName =
+          copyNumber === 1
+            ? `${baseName} (copy)`
+            : `${baseName} (copy ${copyNumber})`;
+
+        if (view.protocol === "mcp-apps") {
+          await createMcpView({
+            workspaceId,
+            serverId: view.serverId,
+            name: newName,
+            description: view.description,
+            resourceUri: (view as any).resourceUri,
+            toolName: view.toolName,
+            toolState: view.toolState,
+            toolInput: view.toolInput,
+            toolOutputBlobId,
+            widgetHtmlBlobId,
+            toolErrorText: view.toolErrorText,
+            toolMetadata: view.toolMetadata,
+            prefersBorder: view.prefersBorder,
+            tags: view.tags,
+            category: view.category,
+            defaultContext: view.defaultContext,
+          });
+        } else {
+          await createOpenaiView({
+            workspaceId,
+            serverId: view.serverId,
+            name: newName,
+            description: view.description,
+            outputTemplate: (view as any).outputTemplate,
+            toolName: view.toolName,
+            toolState: view.toolState,
+            toolInput: view.toolInput,
+            toolOutputBlobId,
+            widgetHtmlBlobId,
+            toolErrorText: view.toolErrorText,
+            toolMetadata: view.toolMetadata,
+            prefersBorder: view.prefersBorder,
+            tags: view.tags,
+            category: view.category,
+            defaultContext: view.defaultContext,
+            serverInfo: (view as any).serverInfo,
+          });
+        }
+
+        toast.success(`View duplicated as "${newName}"`);
+      } catch (error) {
+        console.error("Failed to duplicate view:", error);
+        toast.error("Failed to duplicate view");
+      } finally {
+        setDuplicatingViewId(null);
       }
-
-      // Create the duplicate view
-      const baseName = view.name.replace(/ \(copy( \d+)?\)$/, "");
-      const existingCopies = filteredViews.filter((v) =>
-        v.name.startsWith(baseName) && v.name.match(/ \(copy( \d+)?\)$/)
-      );
-      const copyNumber = existingCopies.length + 1;
-      const newName = copyNumber === 1 ? `${baseName} (copy)` : `${baseName} (copy ${copyNumber})`;
-
-      if (view.protocol === "mcp-apps") {
-        await createMcpView({
-          workspaceId,
-          serverId: view.serverId,
-          name: newName,
-          description: view.description,
-          resourceUri: (view as any).resourceUri,
-          toolName: view.toolName,
-          toolState: view.toolState,
-          toolInput: view.toolInput,
-          toolOutputBlobId,
-          widgetHtmlBlobId,
-          toolErrorText: view.toolErrorText,
-          toolMetadata: view.toolMetadata,
-          prefersBorder: view.prefersBorder,
-          tags: view.tags,
-          category: view.category,
-          defaultContext: view.defaultContext,
-        });
-      } else {
-        await createOpenaiView({
-          workspaceId,
-          serverId: view.serverId,
-          name: newName,
-          description: view.description,
-          outputTemplate: (view as any).outputTemplate,
-          toolName: view.toolName,
-          toolState: view.toolState,
-          toolInput: view.toolInput,
-          toolOutputBlobId,
-          widgetHtmlBlobId,
-          toolErrorText: view.toolErrorText,
-          toolMetadata: view.toolMetadata,
-          prefersBorder: view.prefersBorder,
-          tags: view.tags,
-          category: view.category,
-          defaultContext: view.defaultContext,
-          serverInfo: (view as any).serverInfo,
-        });
-      }
-
-      toast.success(`View duplicated as "${newName}"`);
-    } catch (error) {
-      console.error("Failed to duplicate view:", error);
-      toast.error("Failed to duplicate view");
-    } finally {
-      setDuplicatingViewId(null);
-    }
-  }, [workspaceId, filteredViews, createMcpView, createOpenaiView, generateMcpUploadUrl, generateOpenaiUploadUrl]);
+    },
+    [
+      workspaceId,
+      filteredViews,
+      createMcpView,
+      createOpenaiView,
+      generateMcpUploadUrl,
+      generateOpenaiUploadUrl,
+    ],
+  );
 
   // Handle live data changes from editor (for real-time preview)
   const handleEditorDataChange = useCallback(
@@ -355,48 +381,8 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       setLiveToolInput(data.toolInput);
       setLiveToolOutput(data.toolOutput);
     },
-    []
+    [],
   );
-
-  // Handle reset from editor
-  const handleEditorReset = useCallback(() => {
-    if (selectedView) {
-      // Reset tool data
-      setLiveToolInput(selectedView.toolInput);
-      setLiveToolOutput(originalToolOutput);
-
-      // Reset display context to saved values
-      const ctx = selectedView.defaultContext;
-      if (ctx) {
-        if (ctx.deviceType) {
-          setDeviceType(ctx.deviceType as DeviceType);
-        }
-        if (ctx.viewport) {
-          setCustomViewport(ctx.viewport);
-        }
-        if (ctx.locale) {
-          updateGlobal("locale", ctx.locale);
-        }
-        if (ctx.timeZone) {
-          updateGlobal("timeZone", ctx.timeZone);
-        }
-        if (ctx.capabilities) {
-          setCapabilities(ctx.capabilities);
-        }
-        if (ctx.safeAreaInsets) {
-          setSafeAreaInsets(ctx.safeAreaInsets);
-        }
-      }
-    }
-  }, [
-    selectedView,
-    originalToolOutput,
-    setDeviceType,
-    setCustomViewport,
-    updateGlobal,
-    setCapabilities,
-    setSafeAreaInsets,
-  ]);
 
   // Check if there are unsaved changes in the live editor
   const hasLiveUnsavedChanges = useMemo(() => {
@@ -408,11 +394,17 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       JSON.stringify(liveToolOutput) !== JSON.stringify(originalToolOutput);
     const contextChanged = !areDisplayContextsEqual(
       currentDisplayContext,
-      selectedView.defaultContext
+      selectedView.defaultContext,
     );
 
     return toolInputChanged || toolOutputChanged || contextChanged;
-  }, [selectedView, liveToolInput, liveToolOutput, originalToolOutput, currentDisplayContext]);
+  }, [
+    selectedView,
+    liveToolInput,
+    liveToolOutput,
+    originalToolOutput,
+    currentDisplayContext,
+  ]);
 
   // Handle save from editor (with blob upload if toolOutput changed)
   const handleEditorSave = useCallback(async () => {
@@ -424,7 +416,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         JSON.stringify(liveToolOutput) !== JSON.stringify(originalToolOutput);
       const contextChanged = !areDisplayContextsEqual(
         currentDisplayContext,
-        selectedView.defaultContext
+        selectedView.defaultContext,
       );
 
       let toolOutputBlobId: string | undefined;
@@ -507,7 +499,11 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
     try {
       const params = (liveToolInput ?? {}) as Record<string, unknown>;
-      const response = await executeToolApi(selectedServer, selectedView.toolName, params);
+      const response = await executeToolApi(
+        selectedServer,
+        selectedView.toolName,
+        params,
+      );
 
       if ("error" in response) {
         toast.error(`Execution failed: ${response.error}`);
@@ -625,7 +621,6 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               isSaving={isSaving}
               onSave={handleEditorSave}
               hasUnsavedChanges={hasLiveUnsavedChanges}
-              onReset={handleEditorReset}
               serverConnectionStatus={getServerConnectionStatus(selectedServer)}
               isRunning={isRunning}
               onRun={handleRun}
@@ -660,14 +655,18 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
                   <Layers className="h-10 w-10 text-muted-foreground" />
                 </div>
                 <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  {hasFilteredViews ? "Select a view" : !selectedServer ? "Select a server" : "No views for this server"}
+                  {hasFilteredViews
+                    ? "Select a view"
+                    : !selectedServer
+                      ? "Select a server"
+                      : "No views for this server"}
                 </h2>
                 <p className="text-sm text-muted-foreground mb-6">
                   {hasFilteredViews
                     ? "Choose a view from the list to see its details and preview."
                     : !selectedServer
-                    ? "Select a server from the tabs above to view its saved views."
-                    : "This server has no saved views yet. Save tool executions from the Chat tab to create reusable views."}
+                      ? "Select a server from the tabs above to view its saved views."
+                      : "This server has no saved views yet. Save tool executions from the Chat tab to create reusable views."}
                 </p>
               </div>
             </div>
@@ -675,7 +674,9 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
             <ViewDetailPanel
               view={selectedView}
               serverName={serversById.get(selectedView.serverId)}
-              serverConnectionStatus={getServerConnectionStatus(serversById.get(selectedView.serverId))}
+              serverConnectionStatus={getServerConnectionStatus(
+                serversById.get(selectedView.serverId),
+              )}
               toolInputOverride={liveToolInput}
               toolOutputOverride={liveToolOutput}
               isEditing={isEditing}

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Save, Loader2, RotateCcw, ArrowLeft, Play } from "lucide-react";
+import { Save, Loader2, ArrowLeft, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { type AnyView } from "@/hooks/useViews";
@@ -26,8 +26,6 @@ interface ViewEditorPanelProps {
   onSave?: () => Promise<void>;
   /** Whether there are unsaved changes */
   hasUnsavedChanges?: boolean;
-  /** Reset handler (provided by parent) */
-  onReset?: () => void;
   /** Server connection status for showing Run button */
   serverConnectionStatus?: ConnectionStatus;
   /** Whether tool execution is in progress */
@@ -45,7 +43,6 @@ export function ViewEditorPanel({
   isSaving = false,
   onSave,
   hasUnsavedChanges = false,
-  onReset,
   serverConnectionStatus,
   isRunning = false,
   onRun,
@@ -76,17 +73,8 @@ export function ViewEditorPanel({
         });
       }
     },
-    [onDataChange]
+    [onDataChange],
   );
-
-  const handleReset = useCallback(() => {
-    // Reset to original values
-    setEditorModel({
-      toolInput: view.toolInput,
-      toolOutput: initialToolOutput ?? null,
-    });
-    onReset?.();
-  }, [view.toolInput, initialToolOutput, onReset]);
 
   const handleSave = useCallback(async () => {
     if (!hasUnsavedChanges || !onSave) return;
@@ -107,9 +95,6 @@ export function ViewEditorPanel({
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <span className="text-sm font-medium text-muted-foreground">
-              Editor
-            </span>
           </div>
         </div>
         <div className="flex-1 flex items-center justify-center">
@@ -132,20 +117,8 @@ export function ViewEditorPanel({
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <span className="text-sm font-medium text-muted-foreground">
-            Editor
-          </span>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleReset}
-            disabled={!hasUnsavedChanges || isSaving || isRunning}
-          >
-            <RotateCcw className="h-4 w-4 mr-1" />
-            Reset
-          </Button>
           {serverConnectionStatus === "connected" && onRun && (
             <Button
               variant="outline"

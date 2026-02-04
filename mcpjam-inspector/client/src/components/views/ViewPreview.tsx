@@ -40,8 +40,10 @@ export function ViewPreview({
   const isServerOffline = serverConnectionStatus !== "connected";
 
   // Use override values if provided, otherwise use loaded/view data
-  const effectiveToolInput = toolInputOverride !== undefined ? toolInputOverride : view.toolInput;
-  const effectiveToolOutput = toolOutputOverride !== undefined ? toolOutputOverride : outputData;
+  const effectiveToolInput =
+    toolInputOverride !== undefined ? toolInputOverride : view.toolInput;
+  const effectiveToolOutput =
+    toolOutputOverride !== undefined ? toolOutputOverride : outputData;
 
   // Load output blob when view changes (only if no override provided)
   useEffect(() => {
@@ -102,7 +104,7 @@ export function ViewPreview({
   // Generate a stable tool call ID for the preview
   const previewToolCallId = useMemo(
     () => `view-preview-${view._id}`,
-    [view._id]
+    [view._id],
   );
 
   // In view mode, we use the server name (the renderer expects the server name, not the Convex ID)
@@ -130,7 +132,8 @@ export function ViewPreview({
     return (
       <div className="flex items-center justify-center p-8 text-destructive">
         <AlertCircle className="h-5 w-5 mr-2" />
-        Server not found. The server that created this view may have been deleted.
+        Server not found. The server that created this view may have been
+        deleted.
       </div>
     );
   }
@@ -150,8 +153,14 @@ export function ViewPreview({
           toolOutput={effectiveToolOutput}
           toolErrorText={view.toolErrorText}
           resourceUri={mcpViewData.resourceUri}
-          toolMetadata={view.toolMetadata as Record<string, unknown> | undefined}
-          toolsMetadata={mcpViewData.toolsMetadata as Record<string, Record<string, unknown>> | undefined}
+          toolMetadata={
+            view.toolMetadata as Record<string, unknown> | undefined
+          }
+          toolsMetadata={
+            mcpViewData.toolsMetadata as
+              | Record<string, Record<string, unknown>>
+              | undefined
+          }
           onSendFollowUp={handleSendFollowUp}
           onCallTool={handleCallTool}
           onWidgetStateChange={handleWidgetStateChange}
@@ -170,7 +179,9 @@ export function ViewPreview({
   if (view.protocol === "openai-apps") {
     const openaiView = view as OpenaiAppView;
     // Get outputTemplate from view or from toolMetadata (fallback for legacy views)
-    const existingMetadata = view.toolMetadata as Record<string, unknown> | undefined;
+    const existingMetadata = view.toolMetadata as
+      | Record<string, unknown>
+      | undefined;
     const effectiveOutputTemplate =
       openaiView.outputTemplate ||
       (existingMetadata?.["openai/outputTemplate"] as string | undefined) ||
@@ -179,7 +190,9 @@ export function ViewPreview({
     // (it extracts outputTemplate from toolMetadata["openai/outputTemplate"])
     const mergedToolMetadata = {
       ...existingMetadata,
-      ...(effectiveOutputTemplate ? { "openai/outputTemplate": effectiveOutputTemplate } : {}),
+      ...(effectiveOutputTemplate
+        ? { "openai/outputTemplate": effectiveOutputTemplate }
+        : {}),
     };
     return (
       <ChatGPTAppRenderer
@@ -187,7 +200,9 @@ export function ViewPreview({
         toolCallId={previewToolCallId}
         toolName={view.toolName}
         toolState={view.toolState}
-        toolInput={effectiveToolInput as Record<string, unknown> | null | undefined}
+        toolInput={
+          effectiveToolInput as Record<string, unknown> | null | undefined
+        }
         toolOutput={effectiveToolOutput}
         toolMetadata={mergedToolMetadata}
         onSendFollowUp={handleSendFollowUp}
