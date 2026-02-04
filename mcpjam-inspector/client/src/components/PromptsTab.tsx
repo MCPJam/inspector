@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -126,7 +126,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
     );
   };
 
-  const buildParameters = (): Record<string, string> => {
+  const buildParameters = useCallback((): Record<string, string> => {
     const params: Record<string, string> = {};
     formFields.forEach((field) => {
       if (
@@ -153,28 +153,35 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
       }
     });
     return params;
-  };
+  }, [formFields]);
 
   // Get prompt - can be called with explicit promptName for auto-run on selection
-  const getPrompt = async (promptName?: string, params?: Record<string, string>) => {
-    const targetPrompt = promptName ?? selectedPrompt;
-    if (!targetPrompt || !serverName) return;
+  const getPrompt = useCallback(
+    async (promptName?: string, params?: Record<string, string>) => {
+      const targetPrompt = promptName ?? selectedPrompt;
+      if (!targetPrompt || !serverName) return;
 
-    setLoading(true);
-    setError("");
+      setLoading(true);
+      setError("");
 
-    try {
-      const resolvedParams = params ?? buildParameters();
-      const data = await getPromptApi(serverName, targetPrompt, resolvedParams);
-      setPromptContent(data.content);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : `Error getting prompt: ${err}`;
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      try {
+        const resolvedParams = params ?? buildParameters();
+        const data = await getPromptApi(
+          serverName,
+          targetPrompt,
+          resolvedParams,
+        );
+        setPromptContent(data.content);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : `Error getting prompt: ${err}`;
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [selectedPrompt, serverName, buildParameters],
+  );
 
   const promptNames = prompts.map((prompt) => prompt.name);
 
@@ -205,7 +212,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedPrompt, loading]);
+  }, [selectedPrompt, loading, getPrompt]);
 
   if (!serverConfig || !serverName) {
     return (

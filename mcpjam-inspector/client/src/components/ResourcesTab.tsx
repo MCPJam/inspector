@@ -1,14 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
-import {
-  FolderOpen,
-  File,
-  RefreshCw,
-  ChevronRight,
-  Eye,
-  PanelLeftClose,
-} from "lucide-react";
+import { FolderOpen, File, RefreshCw, Eye, PanelLeftClose } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
@@ -21,7 +14,7 @@ import {
   listResources,
   readResource as readResourceApi,
 } from "@/lib/apis/mcp-resources-api";
-import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
+import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { ResourceTemplatesTab } from "./ResourceTemplatesTab";
 
 interface ResourcesTabProps {
@@ -44,23 +37,31 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  // Templates count (for tab bar display)
+  const [templatesCount, setTemplatesCount] = useState(0);
+  const templatesRefreshRef = useRef<(() => void) | null>(null);
+
   // Panel state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  // Derived data
-  const selectedResourceData = useMemo(() => {
-    return (
-      resources.find((resource) => resource.uri === selectedResource) ?? null
-    );
-  }, [resources, selectedResource]);
-
-  // Fetch resources on mount
+  // Fetch resources and templates count on mount
   useEffect(() => {
     if (serverConfig && serverName) {
       fetchResources();
+      fetchTemplatesCount();
     }
   }, [serverConfig, serverName]);
+
+  const fetchTemplatesCount = async () => {
+    if (!serverName) return;
+    try {
+      const templates = await listResourceTemplates(serverName);
+      setTemplatesCount(templates.length);
+    } catch {
+      // Ignore errors for count
+    }
+  };
 
   const fetchResources = async (cursor?: string, append = false) => {
     if (!serverName) return;
@@ -189,42 +190,61 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
     );
   }
 
-  const tabs = [
-    { id: "resources" as const, label: "Resources" },
-    { id: "templates" as const, label: "Resource Templates" },
-  ];
-
-  const tabClassName = (isActive: boolean) =>
-    `px-4 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer ${
-      isActive
-        ? "border-primary text-primary"
-        : "border-transparent text-muted-foreground hover:text-foreground"
-    }`;
-
   const sidebarContent = (
     <div className="h-full flex flex-col border-r border-border bg-background">
-      {/* App Builder-style Header */}
+      {/* Header with tabs and actions */}
       <div className="border-b border-border flex-shrink-0">
         <div className="px-2 py-1.5 flex items-center gap-2">
-          {/* Title */}
+          {/* Tabs */}
           <div className="flex items-center gap-1.5">
-            <span className="px-3 py-1.5 rounded-md text-xs font-medium bg-primary/10 text-primary">
+            <button
+              onClick={() => setActiveTab("resources")}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "resources"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
               Resources
               <span className="ml-1 text-[10px] font-mono opacity-70">
                 {resources.length}
               </span>
-            </span>
+            </button>
+            <button
+              onClick={() => setActiveTab("templates")}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "templates"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Templates
+              <span className="ml-1 text-[10px] font-mono opacity-70">
+                {templatesCount}
+              </span>
+            </button>
           </div>
 
-          {/* Secondary actions */}
-          <div className="flex items-center gap-0.5 text-muted-foreground/80">
+          {/* Action buttons */}
+          <div className="ml-auto flex items-center gap-0.5">
             <Button
-              onClick={() => fetchResources()}
+              onClick={() => {
+                if (activeTab === "resources") {
+                  fetchResources();
+                } else {
+                  templatesRefreshRef.current?.();
+                  fetchTemplatesCount();
+                }
+              }}
               variant="ghost"
               size="sm"
               disabled={fetchingResources}
               className="h-7 w-7 p-0"
-              title="Refresh resources"
+              title={
+                activeTab === "resources"
+                  ? "Refresh resources"
+                  : "Refresh templates"
+              }
             >
               <RefreshCw
                 className={`h-3.5 w-3.5 ${fetchingResources ? "animate-spin" : ""}`}
@@ -243,89 +263,72 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         </div>
       </div>
 
-      {/* Content area - show detail view when resource is selected */}
-      {selectedResource && selectedResourceData ? (
-        <div className="flex-1 flex flex-col min-h-0">
-          <SelectedToolHeader
-            toolName={selectedResourceData.name || selectedResource}
-            description={selectedResourceData.description}
-            onExpand={() => setSelectedResource("")}
-            onClear={() => setSelectedResource("")}
-          />
-        </div>
-      ) : (
-        /* Resources List */
-        <div className="flex-1 overflow-hidden">
-          <ScrollArea className="h-full">
-            <div className="p-2 pb-16">
-              {fetchingResources ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
-                    <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
-                  </div>
-                  <p className="text-xs text-muted-foreground font-semibold mb-1">
-                    Loading resources...
-                  </p>
+      {/* Content - Resources or Templates list */}
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full">
+          <div className="p-2 pb-16">
+            {fetchingResources ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center mb-3">
+                  <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin" />
                 </div>
-              ) : resources.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-sm text-muted-foreground">
-                    No resources available
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <div className="space-y-1">
-                    {resources.map((resource) => (
-                      <div
-                        key={resource.uri}
-                        className={`cursor-pointer transition-all duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
-                          selectedResource === resource.uri
-                            ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
-                            : "hover:shadow-sm"
-                        }`}
-                        onClick={() => {
-                          setSelectedResource(resource.uri);
-                          readResource(resource.uri);
-                        }}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
-                              <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
-                                {resource.name}
-                              </code>
-                            </div>
-                            {resource.description && (
-                              <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
-                                {resource.description}
-                              </p>
-                            )}
-                          </div>
-                          <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0 mt-1" />
-                        </div>
+                <p className="text-xs text-muted-foreground font-semibold mb-1">
+                  Loading resources...
+                </p>
+              </div>
+            ) : resources.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="text-sm text-muted-foreground">
+                  No resources available
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1">
+                  {resources.map((resource) => (
+                    <div
+                      key={resource.uri}
+                      className={`cursor-pointer transition-shadow duration-200 hover:bg-muted/30 dark:hover:bg-muted/50 p-3 rounded-md mx-2 ${
+                        selectedResource === resource.uri
+                          ? "bg-muted/50 dark:bg-muted/50 shadow-sm border border-border ring-1 ring-ring/20"
+                          : "hover:shadow-sm"
+                      }`}
+                      onClick={() => {
+                        setSelectedResource(resource.uri);
+                        readResource(resource.uri);
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <File className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                        <code className="font-mono text-xs font-medium text-foreground bg-muted px-1.5 py-0.5 rounded border border-border truncate">
+                          {resource.name}
+                        </code>
                       </div>
-                    ))}
+                      {resource.description && (
+                        <p className="text-xs mt-2 line-clamp-2 leading-relaxed text-muted-foreground">
+                          {resource.description}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div ref={sentinelRef} className="h-4" />
+                {loadingMore && (
+                  <div className="flex items-center justify-center py-3 text-xs text-muted-foreground gap-2">
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    <span>Loading more resources…</span>
                   </div>
-                  <div ref={sentinelRef} className="h-4" />
-                  {loadingMore && (
-                    <div className="flex items-center justify-center py-3 text-xs text-muted-foreground gap-2">
-                      <RefreshCw className="h-3 w-3 animate-spin" />
-                      <span>Loading more resources…</span>
-                    </div>
-                  )}
-                  {!nextCursor && resources.length > 0 && !loadingMore && (
-                    <div className="text-center py-3 text-xs text-muted-foreground">
-                      No more resources
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
-      )}
+                )}
+                {!nextCursor && resources.length > 0 && !loadingMore && (
+                  <div className="text-center py-3 text-xs text-muted-foreground">
+                    No more resources
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   );
 
@@ -335,6 +338,17 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
         <div className="p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
             {error}
+          </div>
+        </div>
+      ) : loading ? (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mx-auto mb-3">
+              <RefreshCw className="h-5 w-5 text-muted-foreground animate-spin" />
+            </div>
+            <p className="text-xs font-semibold text-foreground mb-1">
+              Loading resource...
+            </p>
           </div>
         </div>
       ) : resourceContent ? (
@@ -365,12 +379,10 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
               <Eye className="h-5 w-5 text-muted-foreground" />
             </div>
             <p className="text-xs font-semibold text-foreground mb-1">
-              {selectedResource ? "Response" : "No selection"}
+              No selection
             </p>
             <p className="text-xs text-muted-foreground font-medium">
-              {selectedResource
-                ? "Loading..."
-                : "Select a resource from the sidebar"}
+              Select a resource from the sidebar
             </p>
           </div>
         </div>
@@ -379,38 +391,26 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   );
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Tab bar */}
-      <div className="border-b border-border flex-shrink-0">
-        <div className="flex">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={tabClassName(activeTab === tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {activeTab === "templates" ? (
-        <ResourceTemplatesTab
-          serverConfig={serverConfig}
-          serverName={serverName}
-        />
-      ) : (
-        <ThreePanelLayout
-          id="resources"
-          sidebar={sidebarContent}
-          content={centerContent}
-          sidebarVisible={isSidebarVisible}
-          onSidebarVisibilityChange={setIsSidebarVisible}
-          sidebarTooltip="Show resources sidebar"
-          serverName={serverName}
-        />
-      )}
-    </div>
+    <ThreePanelLayout
+      id="resources"
+      sidebar={sidebarContent}
+      content={
+        activeTab === "templates" ? (
+          <ResourceTemplatesTab
+            serverConfig={serverConfig}
+            serverName={serverName}
+            onRegisterRefresh={(refresh) => {
+              templatesRefreshRef.current = refresh;
+            }}
+          />
+        ) : (
+          centerContent
+        )
+      }
+      sidebarVisible={isSidebarVisible}
+      onSidebarVisibilityChange={setIsSidebarVisible}
+      sidebarTooltip="Show resources sidebar"
+      serverName={serverName}
+    />
   );
 }
