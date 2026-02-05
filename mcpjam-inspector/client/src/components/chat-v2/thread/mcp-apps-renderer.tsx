@@ -105,6 +105,10 @@ interface MCPAppsRendererProps {
   ) => void;
   /** Callback when app declares its supported display modes during ui/initialize */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
+  /** Whether the server is offline (for using cached content) */
+  isOffline?: boolean;
+  /** URL to cached widget HTML for offline rendering */
+  cachedWidgetHtmlUrl?: string;
 }
 
 class LoggingTransport implements Transport {
@@ -189,6 +193,8 @@ export function MCPAppsRenderer({
   onExitFullscreen,
   onModelContextUpdate,
   onAppSupportedDisplayModesChange,
+  isOffline,
+  cachedWidgetHtmlUrl,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -321,6 +327,12 @@ export function MCPAppsRenderer({
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
 
+  // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
+  useEffect(() => {
+    setWidgetHtml(null);
+    setLoadedCspMode(null);
+  }, [cachedWidgetHtmlUrl]);
+
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const lastToolInputRef = useRef<string | null>(null);
@@ -363,6 +375,32 @@ export function MCPAppsRenderer({
 
     const fetchWidgetHtml = async () => {
       try {
+        // Use cached widget HTML whenever available (faster and works offline)
+        if (cachedWidgetHtmlUrl) {
+          const cachedResponse = await fetch(cachedWidgetHtmlUrl);
+          if (!cachedResponse.ok) {
+            throw new Error(
+              `Failed to fetch cached widget HTML: ${cachedResponse.statusText}`,
+            );
+          }
+          const html = await cachedResponse.text();
+          setWidgetHtml(html);
+          // In offline mode, we use permissive CSP since we can't verify the original settings
+          setWidgetPermissive(true);
+          setPrefersBorder(true);
+          setLoadedCspMode(cspMode);
+          return;
+        }
+
+        // If server is offline and no cached HTML, show helpful error
+        if (isOffline) {
+          setLoadError(
+            "Server is offline and this view was saved without cached HTML. " +
+              "Connect the server and re-save the view to enable offline rendering.",
+          );
+          return;
+        }
+
         // Store widget data first (same pattern as openai.ts)
         const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
           method: "POST",
@@ -422,6 +460,9 @@ export function MCPAppsRenderer({
         setPrefersBorder(prefersBorder ?? true);
         setLoadedCspMode(cspMode);
 
+        // Store widget HTML in debug store for save view feature
+        setWidgetHtmlStore(toolCallId, html);
+
         // Update the widget debug store with CSP and permissions info
         if (csp || permissions || !permissive) {
           setWidgetCspStore(toolCallId, {
@@ -458,6 +499,8 @@ export function MCPAppsRenderer({
     resourceUri,
     toolName,
     cspMode,
+    isOffline,
+    cachedWidgetHtmlUrl,
   ]);
 
   // UI logging
@@ -472,6 +515,7 @@ export function MCPAppsRenderer({
   const setWidgetModelContext = useWidgetDebugStore(
     (s) => s.setWidgetModelContext,
   );
+  const setWidgetHtmlStore = useWidgetDebugStore((s) => s.setWidgetHtml);
 
   // Clear CSP violations when CSP mode changes (stale data from previous mode)
   useEffect(() => {

@@ -125,6 +125,10 @@ interface ChatGPTAppRendererProps {
   onDisplayModeChange?: (mode: DisplayMode) => void;
   onRequestFullscreen?: (toolCallId: string) => void;
   onExitFullscreen?: (toolCallId: string) => void;
+  /** Whether the server is offline (for Views tab offline rendering) */
+  isOffline?: boolean;
+  /** Cached widget HTML URL for offline rendering */
+  cachedWidgetHtmlUrl?: string;
 }
 
 // ============================================================================
@@ -295,6 +299,9 @@ function useWidgetFetch(
   capabilities: { hover: boolean; touch: boolean },
   safeAreaInsets: { top: number; bottom: number; left: number; right: number },
   onCspConfigReceived?: (csp: WidgetCspData) => void,
+  isOffline?: boolean,
+  cachedWidgetHtmlUrl?: string,
+  onWidgetHtmlCaptured?: (toolCallId: string, html: string) => void,
 ) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
@@ -305,6 +312,36 @@ function useWidgetFetch(
   const [storeError, setStoreError] = useState<string | null>(null);
   const [prevCspMode, setPrevCspMode] = useState(cspMode);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
+  // Track if we should skip cached HTML (for live editing after initial load)
+  const [skipCachedHtml, setSkipCachedHtml] = useState(false);
+  // Track serialized data to detect changes
+  const prevDataRef = useRef<string | null>(null);
+  // Track the tool call ID to detect view switches (more stable than URL)
+  const prevToolCallIdRef = useRef<string | null>(null);
+
+  // Reset widget URL when switching to a different view (detected by toolCallId change)
+  // We use toolCallId instead of cachedWidgetHtmlUrl because URLs can change after save
+  // even for the same view, which would incorrectly reset the live editing state
+  useEffect(() => {
+    if (
+      prevToolCallIdRef.current !== null &&
+      prevToolCallIdRef.current !== resolvedToolCallId
+    ) {
+      // Actually switching to a different view - reset everything
+      setWidgetUrl(null);
+      setSkipCachedHtml(false);
+      prevDataRef.current = null;
+    }
+    prevToolCallIdRef.current = resolvedToolCallId;
+  }, [resolvedToolCallId]);
+
+  // Reset widget URL when cachedWidgetHtmlUrl changes but only if not in live editing mode
+  // This handles the case where a different cached HTML is available for the same view
+  useEffect(() => {
+    if (!skipCachedHtml) {
+      setWidgetUrl(null);
+    }
+  }, [cachedWidgetHtmlUrl, skipCachedHtml]);
 
   // Use refs for values consumed inside the async storeWidgetData function.
   // These change reference (but not value) on every re-render during text
@@ -328,20 +365,82 @@ function useWidgetFetch(
     }
   }, [cspMode, prevCspMode, widgetUrl]);
 
+  // Serialize data for stable comparison (avoids re-running effect on reference changes)
+  const serializedData = useMemo(
+    () =>
+      JSON.stringify({ input: resolvedToolInput, output: resolvedToolOutput }),
+    [resolvedToolInput, resolvedToolOutput],
+  );
+
+  // Debounce serializedData to avoid rapid reloads when typing fast in the editor
+  const [debouncedSerializedData, setDebouncedSerializedData] =
+    useState(serializedData);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSerializedData(serializedData);
+    }, 300); // 300ms debounce delay
+
+    return () => clearTimeout(timer);
+  }, [serializedData]);
+
+  // Detect data changes for live editing - trigger reload when toolInput/toolOutput changes
+  useEffect(() => {
+    if (toolState !== "output-available") return;
+
+    // Skip initial load
+    if (prevDataRef.current === null) {
+      prevDataRef.current = debouncedSerializedData;
+      return;
+    }
+
+    // If data changed after initial load, trigger a fresh fetch (skip cached HTML)
+    if (prevDataRef.current !== debouncedSerializedData) {
+      prevDataRef.current = debouncedSerializedData;
+      // Only trigger reload if we have server connectivity (outputTemplate + toolName)
+      if (outputTemplate && toolName && !isOffline) {
+        setSkipCachedHtml(true);
+        setWidgetUrl(null);
+      }
+    }
+  }, [toolState, debouncedSerializedData, outputTemplate, toolName, isOffline]);
+
   useEffect(() => {
     let isCancelled = false;
+
+    // Determine if we can proceed:
+    // - Need output-available state
+    // - Don't re-fetch if we already have a URL that matches current inputs
+    // - Need either outputTemplate (for live fetch) OR cachedWidgetHtmlUrl (for offline)
+    // - Need toolName for live fetch (but not required for cached)
+    // - skipCachedHtml disables cached HTML for live editing
+    const canUseCachedHtml = !!cachedWidgetHtmlUrl && !skipCachedHtml;
+    const canUseLiveFetch = !!outputTemplate && !!toolName;
+
+    // Check if widgetUrl is current (matches expected URL based on mode)
+    // In cached mode: widgetUrl should equal cachedWidgetHtmlUrl
+    // In live mode: widgetUrl is a widget-content endpoint URL
+    const isWidgetUrlCurrent =
+      widgetUrl &&
+      ((canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
+        (!canUseCachedHtml &&
+          widgetUrl.includes("/api/apps/chatgpt/widget-content/")));
+
     if (
       toolState !== "output-available" ||
-      widgetUrl ||
-      !outputTemplate ||
-      !toolName
+      isWidgetUrlCurrent ||
+      (!canUseCachedHtml && !canUseLiveFetch)
     ) {
-      if (!outputTemplate) {
+      // If we already have a widget URL, make sure loading state is cleared
+      if (widgetUrl) {
+        setIsStoringWidget(false);
+      }
+      if (!canUseCachedHtml && !outputTemplate) {
         setWidgetUrl(null);
         setStoreError(null);
         setIsStoringWidget(false);
       }
-      if (!toolName && outputTemplate) {
+      if (!toolName && outputTemplate && !canUseCachedHtml) {
         setWidgetUrl(null);
         setStoreError("Tool name is required");
         setIsStoringWidget(false);
@@ -353,6 +452,27 @@ function useWidgetFetch(
       setIsStoringWidget(true);
       setStoreError(null);
       try {
+        // Try cached HTML first if available (for offline Views tab rendering)
+        // Pass the Convex storage URL directly - it's publicly accessible and
+        // the sandbox proxy can fetch it (unlike blob URLs which are origin-specific)
+        // Skip cached HTML when doing live editing (skipCachedHtml is true)
+        if (cachedWidgetHtmlUrl && !skipCachedHtml) {
+          if (!isCancelled) {
+            setWidgetUrl(cachedWidgetHtmlUrl);
+            setIsStoringWidget(false);
+          }
+          return;
+        }
+
+        // If offline and no cached HTML, show error
+        if (isOffline) {
+          if (!isCancelled) {
+            setStoreError("Server offline and no cached widget HTML available");
+            setIsStoringWidget(false);
+          }
+          return;
+        }
+
         // Host-controlled values per SDK spec
         const userLocation = await getUserLocation(); // Coarse IP-based location
 
@@ -414,11 +534,31 @@ function useWidgetFetch(
           setPrefersBorder(data.prefersBorder ?? true);
         }
 
+        // Fetch and cache the widget HTML for later saving
+        const widgetContentUrl = `/api/apps/chatgpt/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
+        if (onWidgetHtmlCaptured) {
+          try {
+            const contentResponse = await fetch(widgetContentUrl);
+            if (contentResponse.ok) {
+              const html = await contentResponse.text();
+              onWidgetHtmlCaptured(resolvedToolCallId, html);
+            }
+          } catch (captureErr) {
+            console.warn(
+              "Failed to capture widget HTML for caching:",
+              captureErr,
+            );
+          }
+        }
+
         // Set the widget URL with CSP mode query param
         // Use /widget-content directly so CSP headers are applied by the browser
-        setWidgetUrl(
-          `/api/apps/chatgpt/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`,
-        );
+        setWidgetUrl(widgetContentUrl);
+
+        // NOTE: We intentionally do NOT reset skipCachedHtml here.
+        // Once in "live mode" (skipCachedHtml = true), we stay in live mode until
+        // the user switches views (which triggers the reset effect via cachedWidgetHtmlUrl change).
+        // This prevents live previews from reverting to stale cached HTML during view editing.
       } catch (err) {
         if (isCancelled) return;
         console.error("Error storing widget data:", err);
@@ -440,12 +580,19 @@ function useWidgetFetch(
     outputTemplate,
     toolName,
     serverId,
+    // Note: resolvedToolInput, resolvedToolOutput, toolResponseMetadata, and onCspConfigReceived
+    // are accessed via refs to avoid re-running this effect on reference changes.
+    // The data change detection effect handles triggering re-fetches when data changes.
     themeMode,
     locale,
     cspMode,
     deviceType,
     capabilities,
     safeAreaInsets,
+    isOffline,
+    cachedWidgetHtmlUrl,
+    onWidgetHtmlCaptured,
+    skipCachedHtml,
   ]);
 
   return {
@@ -485,6 +632,8 @@ export function ChatGPTAppRenderer({
   onDisplayModeChange,
   onRequestFullscreen,
   onExitFullscreen,
+  isOffline,
+  cachedWidgetHtmlUrl,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
@@ -599,6 +748,7 @@ export function ChatGPTAppRenderer({
     ? playgroundSafeAreaInsets
     : DEFAULT_SAFE_AREA_INSETS;
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
+  const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
 
   // Mobile playground mode detection
   const isMobilePlaygroundMode = isPlaygroundActive && deviceType === "mobile";
@@ -612,6 +762,14 @@ export function ChatGPTAppRenderer({
       setWidgetCsp(resolvedToolCallId, csp);
     },
     [resolvedToolCallId, setWidgetCsp],
+  );
+
+  // Callback to capture widget HTML for offline rendering cache
+  const handleWidgetHtmlCaptured = useCallback(
+    (toolCallId: string, html: string) => {
+      setWidgetHtml(toolCallId, html);
+    },
+    [setWidgetHtml],
   );
 
   const isFullscreen = effectiveDisplayMode === "fullscreen";
@@ -642,6 +800,9 @@ export function ChatGPTAppRenderer({
     capabilities,
     safeAreaInsets,
     handleCspConfigReceived,
+    isOffline,
+    cachedWidgetHtmlUrl,
+    handleWidgetHtmlCaptured,
   );
 
   const applyMeasuredHeight = useCallback(
@@ -1177,9 +1338,19 @@ export function ChatGPTAppRenderer({
           device: { type: deviceType },
           capabilities,
         },
+        toolInput: resolvedToolInput,
+        toolOutput: resolvedToolOutput,
       },
     });
-  }, [themeMode, locale, deviceType, capabilities, safeAreaInsets]);
+  }, [
+    themeMode,
+    locale,
+    deviceType,
+    capabilities,
+    safeAreaInsets,
+    resolvedToolInput,
+    resolvedToolOutput,
+  ]);
 
   // Reset modal sandbox state when modal closes
   useEffect(() => {
@@ -1216,6 +1387,9 @@ export function ChatGPTAppRenderer({
         device: { type: deviceType },
         capabilities,
       },
+      // Keep tool data in sync for live editing, including offline cached views.
+      toolInput: resolvedToolInput,
+      toolOutput: resolvedToolOutput,
     };
     if (typeof maxHeight === "number" && Number.isFinite(maxHeight))
       globals.maxHeight = maxHeight;
@@ -1229,6 +1403,8 @@ export function ChatGPTAppRenderer({
     deviceType,
     capabilities,
     safeAreaInsets,
+    resolvedToolInput,
+    resolvedToolOutput,
     isReady,
     modalOpen,
     postToWidget,
@@ -1286,7 +1462,8 @@ export function ChatGPTAppRenderer({
           : invokedText || "Tool completed successfully."}
       </div>
     );
-  if (!outputTemplate) {
+  // Only show "unable to render" if we have no outputTemplate AND no cached HTML
+  if (!outputTemplate && !cachedWidgetHtmlUrl) {
     if (toolState !== "output-available")
       return (
         <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">

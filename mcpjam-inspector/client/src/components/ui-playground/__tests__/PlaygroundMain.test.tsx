@@ -299,6 +299,7 @@ vi.mock("@/lib/theme-utils", () => ({
 
 // Mock UI Playground store
 const mockUIPlaygroundStore = {
+  deviceType: "mobile",
   customViewport: { width: 375, height: 667 },
   setCustomViewport: vi.fn(),
   setPlaygroundActive: vi.fn(),
@@ -318,6 +319,16 @@ vi.mock("@/stores/ui-playground-store", () => ({
     mobile: { width: 375, height: 667 },
     tablet: { width: 768, height: 1024 },
     desktop: { width: 1280, height: 800 },
+  },
+}));
+
+// Mock DisplayContextHeader which exports PRESET_DEVICE_CONFIGS
+vi.mock("@/components/shared/DisplayContextHeader", () => ({
+  DisplayContextHeader: () => <div data-testid="display-context-header" />,
+  PRESET_DEVICE_CONFIGS: {
+    mobile: { width: 375, height: 667, label: "Phone", icon: () => null },
+    tablet: { width: 768, height: 1024, label: "Tablet", icon: () => null },
+    desktop: { width: 1280, height: 800, label: "Desktop", icon: () => null },
   },
 }));
 
@@ -379,9 +390,8 @@ describe("PlaygroundMain", () => {
     it("renders device controls", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Device controls should be visible (multiple "Phone" elements due to popover)
-      const phoneElements = screen.getAllByText("Phone");
-      expect(phoneElements.length).toBeGreaterThan(0);
+      // Device controls are rendered by DisplayContextHeader (mocked)
+      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
     });
 
     it("renders theme toggle button", () => {
@@ -577,38 +587,25 @@ describe("PlaygroundMain", () => {
     it("renders with default mobile device type", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Multiple "Phone" elements due to popover showing both trigger and content
-      const phoneElements = screen.getAllByText("Phone");
-      expect(phoneElements.length).toBeGreaterThan(0);
+      // Device controls are rendered by DisplayContextHeader (mocked)
+      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
     });
 
-    it("calls onDeviceTypeChange when device is changed", () => {
-      const onDeviceTypeChange = vi.fn();
+    it("renders with device frame using mobile dimensions", () => {
+      render(<PlaygroundMain {...defaultProps} />);
 
-      render(
-        <PlaygroundMain
-          {...defaultProps}
-          deviceType="mobile"
-          onDeviceTypeChange={onDeviceTypeChange}
-        />,
-      );
-
-      // Click on first device selector element
-      const phoneElements = screen.getAllByText("Phone");
-      fireEvent.click(phoneElements[0]);
-
-      // This would trigger the popover, actual selection test
-      // would require more complex interaction
+      // The device frame container should have mobile dimensions from PRESET_DEVICE_CONFIGS
+      const deviceFrame = document.querySelector('[style*="width: 375px"]');
+      expect(deviceFrame).toBeInTheDocument();
     });
   });
 
   describe("locale", () => {
-    it("shows locale selector", () => {
+    it("shows display context header for locale controls", () => {
       render(<PlaygroundMain {...defaultProps} locale="en-US" />);
 
-      // Multiple "en-US" elements due to popover showing both trigger and content
-      const localeElements = screen.getAllByText("en-US");
-      expect(localeElements.length).toBeGreaterThan(0);
+      // Locale controls are rendered by DisplayContextHeader (mocked)
+      expect(screen.getByTestId("display-context-header")).toBeInTheDocument();
     });
   });
 

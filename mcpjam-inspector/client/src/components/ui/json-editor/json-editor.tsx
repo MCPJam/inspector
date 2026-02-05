@@ -39,6 +39,8 @@ export function JsonEditor({
   onCollapseChange,
   collapseStringsAfterLength,
   viewOnly = false,
+  toolbarLeftContent,
+  toolbarRightContent,
 }: JsonEditorProps) {
   // Determine if we're in raw mode (string content) vs parsed mode
   const isRawMode = rawContent !== undefined;
@@ -161,7 +163,7 @@ export function JsonEditor({
     <ErrorBoundary fallback={<JsonEditorErrorFallback />}>
       <div
         className={cn(
-          "flex flex-col rounded-lg border border-border bg-background overflow-hidden",
+          "flex flex-col rounded-lg bg-background overflow-hidden",
           isMaximized && "rounded-none",
           className,
         )}
@@ -184,6 +186,8 @@ export function JsonEditor({
             onToggleMaximize={toggleMaximize}
             allowMaximize={allowMaximize}
             isValid={editor.isValid}
+            leftContent={toolbarLeftContent}
+            rightContent={toolbarRightContent}
           />
         )}
 
