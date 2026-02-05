@@ -142,16 +142,18 @@ export function ViewDetailPanel({
             maxHeight: "100%",
           }}
         >
-          <ViewPreview
-            view={view}
-            displayMode="inline"
-            serverName={serverName}
-            serverConnectionStatus={serverConnectionStatus}
-            toolInputOverride={toolInputOverride}
-            toolOutputOverride={toolOutputOverride}
-            isLoadingOverride={isLoadingOverride}
-            toolOutputErrorOverride={toolOutputErrorOverride}
-          />
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <ViewPreview
+              view={view}
+              displayMode="inline"
+              serverName={serverName}
+              serverConnectionStatus={serverConnectionStatus}
+              toolInputOverride={toolInputOverride}
+              toolOutputOverride={toolOutputOverride}
+              isLoadingOverride={isLoadingOverride}
+              toolOutputErrorOverride={toolOutputErrorOverride}
+            />
+          </div>
         </div>
       </div>
     </div>
