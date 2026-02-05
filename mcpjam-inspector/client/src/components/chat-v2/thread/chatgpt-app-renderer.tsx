@@ -1337,9 +1337,19 @@ export function ChatGPTAppRenderer({
           device: { type: deviceType },
           capabilities,
         },
+        toolInput: resolvedToolInput,
+        toolOutput: resolvedToolOutput,
       },
     });
-  }, [themeMode, locale, deviceType, capabilities, safeAreaInsets]);
+  }, [
+    themeMode,
+    locale,
+    deviceType,
+    capabilities,
+    safeAreaInsets,
+    resolvedToolInput,
+    resolvedToolOutput,
+  ]);
 
   // Reset modal sandbox state when modal closes
   useEffect(() => {
@@ -1376,6 +1386,9 @@ export function ChatGPTAppRenderer({
         device: { type: deviceType },
         capabilities,
       },
+      // Keep tool data in sync for live editing, including offline cached views.
+      toolInput: resolvedToolInput,
+      toolOutput: resolvedToolOutput,
     };
     if (typeof maxHeight === "number" && Number.isFinite(maxHeight))
       globals.maxHeight = maxHeight;
@@ -1389,6 +1402,8 @@ export function ChatGPTAppRenderer({
     deviceType,
     capabilities,
     safeAreaInsets,
+    resolvedToolInput,
+    resolvedToolOutput,
     isReady,
     modalOpen,
     postToWidget,
