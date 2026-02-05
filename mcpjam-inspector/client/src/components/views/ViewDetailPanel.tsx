@@ -21,6 +21,10 @@ interface ViewDetailPanelProps {
   toolInputOverride?: unknown;
   /** Override toolOutput from parent for live editing */
   toolOutputOverride?: unknown;
+  /** Override loading state from parent for live editing */
+  isLoadingOverride?: boolean;
+  /** Override toolOutput error from parent for live editing */
+  toolOutputErrorOverride?: string | null;
   /** Whether the view is being edited - controls header visibility */
   isEditing?: boolean;
 }
@@ -35,6 +39,8 @@ export function ViewDetailPanel({
   serverConnectionStatus,
   toolInputOverride,
   toolOutputOverride,
+  isLoadingOverride,
+  toolOutputErrorOverride,
   isEditing = false,
 }: ViewDetailPanelProps) {
   // Store state for device frame
@@ -143,6 +149,8 @@ export function ViewDetailPanel({
             serverConnectionStatus={serverConnectionStatus}
             toolInputOverride={toolInputOverride}
             toolOutputOverride={toolOutputOverride}
+            isLoadingOverride={isLoadingOverride}
+            toolOutputErrorOverride={toolOutputErrorOverride}
           />
         </div>
       </div>

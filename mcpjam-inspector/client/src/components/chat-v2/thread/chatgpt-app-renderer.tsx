@@ -315,12 +315,29 @@ function useWidgetFetch(
   const [skipCachedHtml, setSkipCachedHtml] = useState(false);
   // Track serialized data to detect changes
   const prevDataRef = useRef<string | null>(null);
+  // Track the tool call ID to detect view switches (more stable than URL)
+  const prevToolCallIdRef = useRef<string | null>(null);
 
-  // Reset widget URL when cachedWidgetHtmlUrl changes (e.g., different view selected)
+  // Reset widget URL when switching to a different view (detected by toolCallId change)
+  // We use toolCallId instead of cachedWidgetHtmlUrl because URLs can change after save
+  // even for the same view, which would incorrectly reset the live editing state
   useEffect(() => {
-    setWidgetUrl(null);
-    setSkipCachedHtml(false);
-  }, [cachedWidgetHtmlUrl]);
+    if (prevToolCallIdRef.current !== null && prevToolCallIdRef.current !== resolvedToolCallId) {
+      // Actually switching to a different view - reset everything
+      setWidgetUrl(null);
+      setSkipCachedHtml(false);
+      prevDataRef.current = null;
+    }
+    prevToolCallIdRef.current = resolvedToolCallId;
+  }, [resolvedToolCallId]);
+
+  // Reset widget URL when cachedWidgetHtmlUrl changes but only if not in live editing mode
+  // This handles the case where a different cached HTML is available for the same view
+  useEffect(() => {
+    if (!skipCachedHtml) {
+      setWidgetUrl(null);
+    }
+  }, [cachedWidgetHtmlUrl, skipCachedHtml]);
 
   // Use refs for values consumed inside the async storeWidgetData function.
   // These change reference (but not value) on every re-render during text

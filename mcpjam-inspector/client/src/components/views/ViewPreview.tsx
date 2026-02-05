@@ -21,6 +21,10 @@ interface ViewPreviewProps {
   toolInputOverride?: unknown;
   /** Override toolOutput from parent for live editing */
   toolOutputOverride?: unknown;
+  /** Override loading state from parent for live editing */
+  isLoadingOverride?: boolean;
+  /** Override toolOutput error from parent for live editing */
+  toolOutputErrorOverride?: string | null;
 }
 
 export function ViewPreview({
@@ -31,6 +35,8 @@ export function ViewPreview({
   serverConnectionStatus,
   toolInputOverride,
   toolOutputOverride,
+  isLoadingOverride,
+  toolOutputErrorOverride,
 }: ViewPreviewProps) {
   const [outputData, setOutputData] = useState<unknown | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,6 +50,10 @@ export function ViewPreview({
     toolInputOverride !== undefined ? toolInputOverride : view.toolInput;
   const effectiveToolOutput =
     toolOutputOverride !== undefined ? toolOutputOverride : outputData;
+  const effectiveIsLoading =
+    isLoadingOverride !== undefined ? isLoadingOverride : isLoading;
+  const effectiveError =
+    toolOutputErrorOverride !== undefined ? toolOutputErrorOverride : error;
 
   // Load output blob when view changes (only if no override provided)
   useEffect(() => {
@@ -110,7 +120,7 @@ export function ViewPreview({
   // In view mode, we use the server name (the renderer expects the server name, not the Convex ID)
   // This will be validated before rendering below
 
-  if (isLoading) {
+  if (effectiveIsLoading) {
     return (
       <div className="flex items-center justify-center p-8 text-muted-foreground">
         <Loader2 className="h-6 w-6 animate-spin mr-2" />
@@ -119,11 +129,11 @@ export function ViewPreview({
     );
   }
 
-  if (error || !effectiveToolOutput) {
+  if (!effectiveToolOutput) {
     return (
       <div className="flex items-center justify-center p-8 text-destructive">
         <AlertCircle className="h-5 w-5 mr-2" />
-        {error || "No output data available"}
+        {effectiveError || "No output data available"}
       </div>
     );
   }

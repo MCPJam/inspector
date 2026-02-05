@@ -23,6 +23,7 @@ import {
   useCurrentDisplayContext,
   areDisplayContextsEqual,
 } from "@/lib/display-context-utils";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 interface ViewsTabProps {
   selectedServer?: string;
@@ -48,12 +49,16 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   const [liveToolInput, setLiveToolInput] = useState<unknown>(null);
   const [liveToolOutput, setLiveToolOutput] = useState<unknown>(null);
   const [originalToolOutput, setOriginalToolOutput] = useState<unknown>(null);
+  const [toolOutputError, setToolOutputError] = useState<string | null>(null);
   const [isLoadingToolOutput, setIsLoadingToolOutput] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
 
   // Get current display context from UI Playground store
   const currentDisplayContext = useCurrentDisplayContext();
+
+  // Get widgets map from debug store for saving (keyed by preview tool call ID)
+  const widgetsMap = useWidgetDebugStore((s) => s.widgets);
 
   // Track the view ID we loaded output for to avoid stale data
   const loadedToolOutputForViewId = useRef<string | null>(null);
@@ -97,6 +102,8 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         setLiveToolInput(null);
         setLiveToolOutput(null);
         setOriginalToolOutput(null);
+        setToolOutputError(null);
+        setIsLoadingToolOutput(false);
         loadedToolOutputForViewId.current = null;
       }
     }
@@ -136,6 +143,8 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       setLiveToolInput(null);
       setLiveToolOutput(null);
       setOriginalToolOutput(null);
+      setToolOutputError(null);
+      setIsLoadingToolOutput(false);
       loadedToolOutputForViewId.current = null;
       return;
     }
@@ -145,39 +154,61 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       return;
     }
 
+    const viewId = selectedView._id;
+    const controller = new AbortController();
+    let isActive = true;
+
+    // SYNCHRONOUSLY reset live state BEFORE async load to prevent stale data from old view
+    // This ensures the UI immediately reflects the new view's data (or loading state)
+    setLiveToolInput(selectedView.toolInput);
+    setLiveToolOutput(null);
+    setOriginalToolOutput(null);
+    setToolOutputError(null);
+    // Set loading state immediately if there's a URL to fetch
+    const hasOutputToLoad = !!selectedView.toolOutputUrl;
+    setIsLoadingToolOutput(hasOutputToLoad);
+
     async function loadToolOutput() {
       if (!selectedView?.toolOutputUrl) {
-        setLiveToolInput(selectedView?.toolInput ?? null);
-        setLiveToolOutput(null);
-        setOriginalToolOutput(null);
-        loadedToolOutputForViewId.current = selectedView?._id ?? null;
-        setIsLoadingToolOutput(false);
+        // No blob to load - toolInput already set above
+        loadedToolOutputForViewId.current = viewId;
         return;
       }
-
-      setIsLoadingToolOutput(true);
       try {
-        const response = await fetch(selectedView.toolOutputUrl);
+        const response = await fetch(selectedView.toolOutputUrl, {
+          signal: controller.signal,
+        });
         if (!response.ok) {
           throw new Error(`Failed to fetch output: ${response.status}`);
         }
         const data = await response.json();
-        setLiveToolInput(selectedView.toolInput);
+        if (!isActive) return;
         setLiveToolOutput(data);
         setOriginalToolOutput(data);
-        loadedToolOutputForViewId.current = selectedView._id;
+        loadedToolOutputForViewId.current = viewId;
       } catch (err) {
+        if (!isActive) return;
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
         console.error("Failed to load toolOutput:", err);
-        setLiveToolInput(selectedView.toolInput);
-        setLiveToolOutput(null);
-        setOriginalToolOutput(null);
-        loadedToolOutputForViewId.current = selectedView._id;
+        // Keep liveToolOutput as null on error
+        setToolOutputError(
+          err instanceof Error ? err.message : "Failed to load output",
+        );
+        loadedToolOutputForViewId.current = viewId;
       } finally {
-        setIsLoadingToolOutput(false);
+        if (isActive) {
+          setIsLoadingToolOutput(false);
+        }
       }
     }
 
     loadToolOutput();
+    return () => {
+      isActive = false;
+      controller.abort();
+    };
   }, [selectedView]);
 
   // Handle view selection
@@ -420,6 +451,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       );
 
       let toolOutputBlobId: string | undefined;
+      let widgetHtmlBlobId: string | undefined;
 
       if (toolOutputChanged && liveToolOutput !== null) {
         // Upload new toolOutput as JSON blob
@@ -442,7 +474,31 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         toolOutputBlobId = storageId;
       }
 
-      // Update view with toolInput and optionally new toolOutputBlobId
+      // Get the current widget HTML from the debug store (captured by the renderer)
+      const previewToolCallId = `view-preview-${selectedView._id}`;
+      const widgetHtml = widgetsMap.get(previewToolCallId)?.widgetHtml;
+      if (widgetHtml) {
+        // Upload new widget HTML blob
+        const uploadUrl =
+          selectedView.protocol === "mcp-apps"
+            ? await generateMcpUploadUrl()
+            : await generateOpenaiUploadUrl();
+
+        const response = await fetch(uploadUrl, {
+          method: "POST",
+          body: widgetHtml,
+          headers: { "Content-Type": "text/html" },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to upload widget HTML: ${response.status}`);
+        }
+
+        const { storageId } = await response.json();
+        widgetHtmlBlobId = storageId;
+      }
+
+      // Update view with toolInput and optionally new toolOutputBlobId/widgetHtmlBlobId
       const updates: Record<string, unknown> = {
         viewId: selectedView._id,
         toolInput: liveToolInput,
@@ -450,6 +506,10 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
       if (toolOutputBlobId) {
         updates.toolOutputBlobId = toolOutputBlobId;
+      }
+
+      if (widgetHtmlBlobId) {
+        updates.widgetHtmlBlobId = widgetHtmlBlobId;
       }
 
       if (contextChanged) {
@@ -483,6 +543,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     generateOpenaiUploadUrl,
     updateMcpView,
     updateOpenaiView,
+    widgetsMap,
   ]);
 
   // Handle running the tool with current input
@@ -679,6 +740,8 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
                 serversById.get(selectedView.serverId),
               )}
               toolInputOverride={liveToolInput}
+              isLoadingOverride={isLoadingToolOutput}
+              toolOutputErrorOverride={toolOutputError}
               toolOutputOverride={liveToolOutput}
               isEditing={isEditing}
             />
