@@ -120,7 +120,7 @@ describe("ToolPart approval expansion", () => {
       await user.click(headerButton);
     }
 
-    await user.click(screen.getByRole("button", { name: /approve/i }));
+    await user.click(screen.getByRole("button", { name: /^approve$/i }));
 
     rerender(<ToolPart part={basePart as any} uiType="mcp-apps" />);
 
