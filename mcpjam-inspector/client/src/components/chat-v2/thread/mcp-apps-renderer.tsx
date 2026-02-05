@@ -62,7 +62,8 @@ type ToolState =
   | "input-streaming"
   | "input-available"
   | "output-available"
-  | "output-error";
+  | "output-error"
+  | "output-denied";
 
 // CSP and permissions metadata types are now imported from SDK
 
@@ -1038,6 +1039,15 @@ export function MCPAppsRenderer({
       sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
     );
   };
+
+  // Denied state
+  if (toolState === "output-denied") {
+    return (
+      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+        Tool execution was denied.
+      </div>
+    );
+  }
 
   // Loading states
   if (toolState !== "output-available") {

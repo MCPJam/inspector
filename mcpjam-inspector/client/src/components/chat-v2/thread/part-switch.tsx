@@ -122,7 +122,8 @@ export function PartSwitch({
     ) {
       if (
         toolInfo.toolState !== "output-available" &&
-        toolInfo.toolState !== "approval-requested"
+        toolInfo.toolState !== "approval-requested" &&
+        toolInfo.toolState !== "output-denied"
       ) {
         return (
           <>
