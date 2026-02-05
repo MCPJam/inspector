@@ -67,12 +67,9 @@ function useViewportHighlight(
 
   // Create debounced highlight function once
   useEffect(() => {
-    debouncedHighlightRef.current = debounce(
-      (visibleContent: string) => {
-        setHighlightedHtml(highlightJson(visibleContent));
-      },
-      HIGHLIGHT_DEBOUNCE_MS,
-    );
+    debouncedHighlightRef.current = debounce((visibleContent: string) => {
+      setHighlightedHtml(highlightJson(visibleContent));
+    }, HIGHLIGHT_DEBOUNCE_MS);
   }, []);
 
   useEffect(() => {
@@ -418,7 +415,9 @@ export function JsonEditorEdit({
             >
               {/* Padding to maintain scroll position */}
               <div style={{ height: paddingTop }} aria-hidden="true" />
-              <div dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }} />
+              <div
+                dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }}
+              />
               <div style={{ height: paddingBottom }} aria-hidden="true" />
             </pre>
 
