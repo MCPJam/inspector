@@ -436,30 +436,37 @@ export function ChatInput({
                 <TooltipTrigger asChild>
                   <Button
                     type="button"
-                    variant="ghost"
-                    size="icon"
+                    variant={requireToolApproval ? "secondary" : "ghost"}
+                    size={compact ? "icon" : "sm"}
                     onClick={() =>
                       onRequireToolApprovalChange(!requireToolApproval)
                     }
                     className={cn(
-                      "h-8 w-8",
+                      compact
+                        ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
+                        : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer",
                       requireToolApproval &&
                         "bg-success/10 hover:bg-success/15",
                     )}
                   >
                     <ShieldCheck
                       className={cn(
-                        "h-4 w-4",
+                        compact ? "h-4 w-4" : "h-2 w-2 mr-1 flex-shrink-0",
                         requireToolApproval && "text-success",
                       )}
                     />
+                    {!compact && (
+                      <span className="text-[10px] font-medium">Tool Approval</span>
+                    )}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>
-                  {requireToolApproval
-                    ? "Turn off tool approval"
-                    : "Require approval before tools run"}
-                </TooltipContent>
+                {compact && (
+                  <TooltipContent>
+                    {requireToolApproval
+                      ? "Turn off tool approval"
+                      : "Require approval before tools run"}
+                  </TooltipContent>
+                )}
               </Tooltip>
             )}
             {onXrayModeChange && (
