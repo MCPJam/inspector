@@ -130,7 +130,7 @@ export function ViewEditorPanel({
         handleCancelEditingName();
       }
     },
-    [handleSaveName, handleCancelEditingName]
+    [handleSaveName, handleCancelEditingName],
   );
 
   // Update only toolOutput when liveToolOutput changes from parent (e.g., after Run)

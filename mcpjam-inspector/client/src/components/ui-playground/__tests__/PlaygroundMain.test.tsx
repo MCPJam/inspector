@@ -595,9 +595,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       // The device frame container should have mobile dimensions from PRESET_DEVICE_CONFIGS
-      const deviceFrame = document.querySelector(
-        '[style*="width: 375px"]',
-      );
+      const deviceFrame = document.querySelector('[style*="width: 375px"]');
       expect(deviceFrame).toBeInTheDocument();
     });
   });

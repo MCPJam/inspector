@@ -322,7 +322,10 @@ function useWidgetFetch(
   // We use toolCallId instead of cachedWidgetHtmlUrl because URLs can change after save
   // even for the same view, which would incorrectly reset the live editing state
   useEffect(() => {
-    if (prevToolCallIdRef.current !== null && prevToolCallIdRef.current !== resolvedToolCallId) {
+    if (
+      prevToolCallIdRef.current !== null &&
+      prevToolCallIdRef.current !== resolvedToolCallId
+    ) {
       // Actually switching to a different view - reset everything
       setWidgetUrl(null);
       setSkipCachedHtml(false);
