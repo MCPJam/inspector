@@ -155,6 +155,7 @@ export function ViewPreview({
     return (
       <div className="relative">
         <MCPAppsRenderer
+          key={previewToolCallId}
           serverId={serverName}
           toolCallId={previewToolCallId}
           toolName={view.toolName}
@@ -206,6 +207,7 @@ export function ViewPreview({
     };
     return (
       <ChatGPTAppRenderer
+        key={previewToolCallId}
         serverId={serverName}
         toolCallId={previewToolCallId}
         toolName={view.toolName}
