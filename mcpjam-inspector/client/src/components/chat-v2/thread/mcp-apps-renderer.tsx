@@ -1096,9 +1096,7 @@ export function MCPAppsRenderer({
     height: isFullscreen ? "100%" : "400px",
     width: "100%",
     maxWidth: "100%",
-    transition: isFullscreen
-      ? undefined
-      : "height 300ms ease-out",
+    transition: isFullscreen ? undefined : "height 300ms ease-out",
   };
 
   return (

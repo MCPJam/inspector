@@ -585,9 +585,9 @@ Host                    Sandbox Proxy              Guest UI
 
 ### Guest UI → Host Notifications
 
-| Message                         | Description                            |
-| ------------------------------- | -------------------------------------- |
-| `ui/notifications/initialized`  | Guest UI is ready                      |
+| Message                         | Description                              |
+| ------------------------------- | ---------------------------------------- |
+| `ui/notifications/initialized`  | Guest UI is ready                        |
 | `ui/notifications/size-changed` | Content height changed (for auto-resize) |
 
 ---
