@@ -76,10 +76,7 @@ export function PartSwitch({
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
-  onToolApprovalResponse?: (options: {
-    id: string;
-    approved: boolean;
-  }) => void;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   messageParts?: AnyPart[];
 }) {
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<

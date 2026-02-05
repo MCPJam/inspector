@@ -53,10 +53,7 @@ export function MessageView({
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
-  onToolApprovalResponse?: (options: {
-    id: string;
-    approved: boolean;
-  }) => void;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);

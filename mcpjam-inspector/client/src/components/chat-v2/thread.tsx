@@ -32,10 +32,7 @@ interface ThreadProps {
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
   selectedProtocolOverrideIfBothExists?: UIType;
-  onToolApprovalResponse?: (options: {
-    id: string;
-    approved: boolean;
-  }) => void;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
 }
 
 export function Thread({
