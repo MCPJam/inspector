@@ -109,6 +109,7 @@ function DraggableServerCard({
     transform: CSS.Transform.toString(transform),
     transition,
     zIndex: isDragging ? 50 : undefined,
+    opacity: isDragging ? 0 : undefined,
   };
 
   return (
@@ -117,7 +118,7 @@ function DraggableServerCard({
       style={style}
       {...attributes}
       {...listeners}
-      className="h-full w-full cursor-grab active:cursor-grabbing"
+      className="cursor-grab active:cursor-grabbing"
     >
       <ServerConnectionCard
         server={item.server}
@@ -147,6 +148,7 @@ interface ServersTabProps {
   onRemove: (serverName: string) => void;
   onReorder: (orderedNames: string[]) => void;
   isLoadingWorkspaces?: boolean;
+  savedServerOrder?: string[];
 }
 
 export function ServersTab({
@@ -158,6 +160,7 @@ export function ServersTab({
   onRemove,
   onReorder,
   isLoadingWorkspaces,
+  savedServerOrder,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
@@ -205,17 +208,40 @@ export function ServersTab({
   const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
 
   const defaultOrderedNames = useMemo(() => {
+    const allNames = Object.keys(connectedOrConnectingServerConfigs);
+
+    if (savedServerOrder && savedServerOrder.length > 0) {
+      // Use saved order, filtering to only servers that still exist
+      const existing = savedServerOrder.filter((name) =>
+        allNames.includes(name),
+      );
+      // Append any new servers not in the saved order
+      const newServers = allNames
+        .filter((name) => !existing.includes(name))
+        .sort((a, b) => {
+          const orderA =
+            connectedOrConnectingServerConfigs[a].order ??
+            Number.MAX_SAFE_INTEGER;
+          const orderB =
+            connectedOrConnectingServerConfigs[b].order ??
+            Number.MAX_SAFE_INTEGER;
+          if (orderA !== orderB) return orderA - orderB;
+          return a.localeCompare(b);
+        });
+      return [...existing, ...newServers];
+    }
+
+    // Fallback: sort by order field, then alphabetically
     return Object.entries(connectedOrConnectingServerConfigs)
       .map(([name, server]) => ({ name, order: server.order }))
       .sort((a, b) => {
-        // Sort by order field if present, otherwise by name
         const orderA = a.order ?? Number.MAX_SAFE_INTEGER;
         const orderB = b.order ?? Number.MAX_SAFE_INTEGER;
         if (orderA !== orderB) return orderA - orderB;
         return a.name.localeCompare(b.name);
       })
       .map((s) => s.name);
-  }, [connectedOrConnectingServerConfigs]);
+  }, [connectedOrConnectingServerConfigs, savedServerOrder]);
 
   // Keep a local ordering so drag-and-drop works even when the upstream source of truth
   // (e.g. Convex workspaces) does not immediately reflect ordering updates.
@@ -226,10 +252,10 @@ export function ServersTab({
     setOrderedServerNames((prev) => {
       if (prev.length === 0) return defaultOrderedNames;
 
-      const next = prev.filter((name) =>
-        defaultOrderedNames.includes(name),
+      const next = prev.filter((name) => defaultOrderedNames.includes(name));
+      const missing = defaultOrderedNames.filter(
+        (name) => !next.includes(name),
       );
-      const missing = defaultOrderedNames.filter((name) => !next.includes(name));
       return missing.length > 0 ? [...next, ...missing] : next;
     });
   }, [defaultOrderedNames.join("|")]);
@@ -244,7 +270,7 @@ export function ServersTab({
   }, [orderedServerNames, connectedOrConnectingServerConfigs]);
 
   const activeServer = activeId
-    ? connectedOrConnectingServerConfigs[activeId] ?? null
+    ? (connectedOrConnectingServerConfigs[activeId] ?? null)
     : null;
 
   // dnd-kit sensors for drag-and-drop
@@ -265,7 +291,9 @@ export function ServersTab({
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      const oldIndex = orderedServerNames.findIndex((name) => name === active.id);
+      const oldIndex = orderedServerNames.findIndex(
+        (name) => name === active.id,
+      );
       const newIndex = orderedServerNames.findIndex((name) => name === over.id);
       if (oldIndex !== -1 && newIndex !== -1) {
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
@@ -610,7 +638,7 @@ export function ServersTab({
               items={orderedServerNames}
               strategy={rectSortingStrategy}
             >
-              <div className="grid grid-cols-2 auto-rows-[240px] gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
                 {orderedServers.map((item) => (
                   <DraggableServerCard
                     key={item.name}
@@ -626,7 +654,7 @@ export function ServersTab({
             </SortableContext>
             <DragOverlay dropAnimation={null}>
               {activeId ? (
-                <div className="cursor-grabbing h-60">
+                <div className="cursor-grabbing">
                   {activeServer ? (
                     <ServerConnectionCard
                       server={activeServer}
@@ -714,9 +742,9 @@ export function ServersTab({
 
   const renderLoadingContent = () => (
     <div className="flex-1 p-6">
-      <div className="grid grid-cols-2 auto-rows-[240px] gap-6">
-        <Skeleton className="h-full w-full rounded-lg" />
-        <Skeleton className="h-full w-full rounded-lg" />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <Skeleton className="h-48 w-full rounded-lg" />
+        <Skeleton className="h-48 w-full rounded-lg" />
       </div>
     </div>
   );

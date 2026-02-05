@@ -41,6 +41,10 @@ import {
 import type { ServerFormData } from "@/shared/types.js";
 import { toMCPConfig } from "@/state/server-helpers";
 import {
+  saveServerOrder,
+  deleteWorkspaceOrder,
+} from "@/state/server-order-storage";
+import {
   handleOAuthCallback,
   getStoredTokens,
   clearOAuthData,
@@ -451,6 +455,9 @@ export function useAppState() {
         lastConnectionTime:
           runtimeState?.lastConnectionTime || server.lastConnectionTime,
         retryCount: runtimeState?.retryCount || 0,
+        // Preserve drag-and-drop order from runtime state (localStorage) when
+        // the workspace source (e.g. Convex) doesn't carry it yet.
+        order: server.order ?? runtimeState?.order,
       };
     }
 
@@ -525,6 +532,7 @@ export function useAppState() {
               ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
               : undefined,
             clientId: serverEntry.oauthFlowProfile?.clientId,
+            order: serverEntry.order,
           });
         } else {
           // Create new server
@@ -544,6 +552,7 @@ export function useAppState() {
               ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
               : undefined,
             clientId: serverEntry.oauthFlowProfile?.clientId,
+            order: serverEntry.order,
           });
         }
       } catch (error) {
@@ -1432,8 +1441,39 @@ export function useAppState() {
   const handleReorderServers = useCallback(
     (orderedNames: string[]) => {
       dispatch({ type: "REORDER_SERVERS", orderedNames });
+
+      // Persist order to localStorage for instant restore on refresh
+      saveServerOrder(effectiveActiveWorkspaceId, orderedNames);
+
+      // Sync updated order to Convex for authenticated users
+      if (isAuthenticated && !useLocalFallback && activeWorkspaceServersFlat) {
+        orderedNames.forEach((name, index) => {
+          const remoteServer = activeWorkspaceServersFlat.find(
+            (s) => s.name === name,
+          );
+          if (remoteServer) {
+            convexUpdateServer({
+              serverId: remoteServer._id,
+              order: index,
+            }).catch((err: unknown) =>
+              logger.warn("Failed to sync server order to Convex", {
+                serverName: name,
+                err,
+              }),
+            );
+          }
+        });
+      }
     },
-    [dispatch],
+    [
+      dispatch,
+      effectiveActiveWorkspaceId,
+      isAuthenticated,
+      useLocalFallback,
+      activeWorkspaceServersFlat,
+      convexUpdateServer,
+      logger,
+    ],
   );
 
   const handleReconnect = useCallback(
@@ -1851,6 +1891,8 @@ export function useAppState() {
         dispatch({ type: "DELETE_WORKSPACE", workspaceId });
         toast.success("Workspace deleted");
       }
+
+      deleteWorkspaceOrder(workspaceId);
     },
     [
       effectiveActiveWorkspaceId,
@@ -1901,6 +1943,8 @@ export function useAppState() {
         // Then delete the workspace from local state (don't touch Convex - removeMember already handled it)
         dispatch({ type: "DELETE_WORKSPACE", workspaceId });
       }
+
+      deleteWorkspaceOrder(workspaceId);
     },
     [effectiveWorkspaces, appState.servers, handleDisconnect, isAuthenticated],
   );
