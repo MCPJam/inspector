@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Save, Loader2, ArrowLeft, Play } from "lucide-react";
+import { Save, Loader2, ArrowLeft, Play, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { type AnyView } from "@/hooks/useViews";
 import { type ConnectionStatus } from "@/state/app-types";
@@ -34,6 +35,8 @@ interface ViewEditorPanelProps {
   isRunning?: boolean;
   /** Run handler to execute the tool with current input */
   onRun?: () => Promise<void>;
+  /** Rename handler */
+  onRename?: (newName: string) => Promise<void>;
 }
 
 export function ViewEditorPanel({
@@ -49,12 +52,19 @@ export function ViewEditorPanel({
   serverConnectionStatus,
   isRunning = false,
   onRun,
+  onRename,
 }: ViewEditorPanelProps) {
   // Editor model contains only toolInput and toolOutput
   const [editorModel, setEditorModel] = useState<EditorModel>({
     toolInput: view.toolInput,
     toolOutput: initialToolOutput ?? null,
   });
+
+  // Name editing state
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState(view.name);
+  const [isRenameSaving, setIsRenameSaving] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Track the previous liveToolOutput to detect external updates (e.g., from Run)
   const prevLiveToolOutputRef = useRef(liveToolOutput);
@@ -66,6 +76,62 @@ export function ViewEditorPanel({
       toolOutput: initialToolOutput ?? null,
     });
   }, [view._id, initialToolOutput]);
+
+  // Reset edited name when view changes
+  useEffect(() => {
+    setEditedName(view.name);
+    setIsEditingName(false);
+  }, [view._id, view.name]);
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (isEditingName && nameInputRef.current) {
+      nameInputRef.current.focus();
+      nameInputRef.current.select();
+    }
+  }, [isEditingName]);
+
+  const handleStartEditingName = useCallback(() => {
+    if (onRename) {
+      setEditedName(view.name);
+      setIsEditingName(true);
+    }
+  }, [onRename, view.name]);
+
+  const handleCancelEditingName = useCallback(() => {
+    setEditedName(view.name);
+    setIsEditingName(false);
+  }, [view.name]);
+
+  const handleSaveName = useCallback(async () => {
+    const trimmedName = editedName.trim();
+    if (!trimmedName || trimmedName === view.name || !onRename) {
+      handleCancelEditingName();
+      return;
+    }
+
+    setIsRenameSaving(true);
+    try {
+      await onRename(trimmedName);
+      setIsEditingName(false);
+    } catch {
+      // Keep editing mode on error (parent will show toast)
+    } finally {
+      setIsRenameSaving(false);
+    }
+  }, [editedName, view.name, onRename, handleCancelEditingName]);
+
+  const handleNameKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        handleSaveName();
+      } else if (e.key === "Escape") {
+        handleCancelEditingName();
+      }
+    },
+    [handleSaveName, handleCancelEditingName]
+  );
 
   // Update only toolOutput when liveToolOutput changes from parent (e.g., after Run)
   // This preserves the user's toolInput edits while showing the new output
@@ -99,6 +165,36 @@ export function ViewEditorPanel({
     await onSave();
   }, [hasUnsavedChanges, onSave]);
 
+  // Render the editable name component
+  const renderNameEditor = () => {
+    if (isEditingName) {
+      return (
+        <Input
+          ref={nameInputRef}
+          value={editedName}
+          onChange={(e) => setEditedName(e.target.value)}
+          onKeyDown={handleNameKeyDown}
+          onBlur={handleSaveName}
+          disabled={isRenameSaving}
+          className="h-7 w-48 text-sm font-medium"
+        />
+      );
+    }
+
+    return (
+      <button
+        onClick={handleStartEditingName}
+        disabled={!onRename}
+        className="flex items-center gap-1.5 group font-medium text-sm truncate hover:text-foreground/80 disabled:cursor-default"
+      >
+        <span className="truncate">{view.name}</span>
+        {onRename && (
+          <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50 transition-opacity" />
+        )}
+      </button>
+    );
+  };
+
   // Show loading state while toolOutput is loading
   if (isLoadingToolOutput) {
     return (
@@ -113,7 +209,7 @@ export function ViewEditorPanel({
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <span className="font-medium text-sm truncate">{view.name}</span>
+            {renderNameEditor()}
           </div>
         </div>
         <div className="flex-1 flex items-center justify-center">
@@ -136,7 +232,7 @@ export function ViewEditorPanel({
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <span className="font-medium text-sm truncate">{view.name}</span>
+          {renderNameEditor()}
         </div>
         <div className="flex items-center gap-2">
           {serverConnectionStatus === "connected" && onRun && (

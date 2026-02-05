@@ -686,6 +686,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               serverConnectionStatus={getServerConnectionStatus(selectedServer)}
               isRunning={isRunning}
               onRun={handleRun}
+              onRename={(newName) => handleRenameView(selectedView, newName)}
             />
           ) : (
             <ViewsListSidebar
