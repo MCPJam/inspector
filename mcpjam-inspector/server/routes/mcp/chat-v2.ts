@@ -53,13 +53,16 @@ chatV2.post("/", async (c) => {
       await getSkillToolsAndPrompt();
 
     // Apply needsApproval to skill tools when the flag is set
-    if (requireToolApproval) {
-      for (const tool of Object.values(skillTools)) {
-        (tool as any).needsApproval = true;
-      }
-    }
+    const finalSkillTools = requireToolApproval
+      ? Object.fromEntries(
+          Object.entries(skillTools).map(([name, t]) => [
+            name,
+            { ...t, needsApproval: true },
+          ]),
+        )
+      : skillTools;
 
-    const allTools = { ...mcpTools, ...skillTools };
+    const allTools = { ...mcpTools, ...finalSkillTools };
 
     // Build enhanced system prompt
     const enhancedSystemPrompt = systemPrompt

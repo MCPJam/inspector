@@ -18,6 +18,8 @@ import type {
   TextPart,
   ToolCallPart,
   ToolModelMessage,
+  AssistantModelMessage,
+  ToolResultPart,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -88,22 +90,23 @@ function scrubMessagesForBackend(
   selectedServers?: string[],
 ): ModelMessage[] {
   // First strip approval-specific parts that Convex/OpenRouter doesn't understand
-  const stripped = messages.map((msg) => {
-    if (!msg || !Array.isArray((msg as any).content)) return msg;
-
+  const stripped: ModelMessage[] = messages.map((msg) => {
     if (msg.role === "assistant") {
-      const filtered = (msg as any).content.filter(
-        (part: any) => part?.type !== "tool-approval-request",
+      const assistantMsg = msg as AssistantModelMessage;
+      if (!Array.isArray(assistantMsg.content)) return msg;
+      const filtered = assistantMsg.content.filter(
+        (part) => part.type !== "tool-approval-request",
       );
-      if (filtered.length === (msg as any).content.length) return msg;
+      if (filtered.length === assistantMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
     }
 
     if (msg.role === "tool") {
-      const filtered = (msg as any).content.filter(
-        (part: any) => part?.type !== "tool-approval-response",
+      const toolMsg = msg as ToolModelMessage;
+      const filtered = toolMsg.content.filter(
+        (part) => part.type !== "tool-approval-response",
       );
-      if (filtered.length === (msg as any).content.length) return msg;
+      if (filtered.length === toolMsg.content.length) return msg;
       return { ...msg, content: filtered } as ModelMessage;
     }
 
@@ -205,7 +208,7 @@ async function processStream(
               type: "tool-approval-request",
               approvalId: generateToolCallId(),
               toolCallId,
-            } as unknown as UIMessageChunk);
+            });
           }
           break;
         }
@@ -246,13 +249,12 @@ function emitToolResults(
     if (msg?.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
       for (const part of toolMsg.content) {
-        if (part?.type === "tool-result") {
-          const resultPart = part as any;
+        if (part.type === "tool-result") {
           writer.write({
             type: "tool-output-available",
-            toolCallId: resultPart.toolCallId,
+            toolCallId: part.toolCallId,
             // Prefer full result (with _meta/structuredContent) for UI
-            output: resultPart.result ?? resultPart.output,
+            output: (part as any).result ?? part.output,
           });
         }
       }
@@ -275,8 +277,8 @@ function emitInheritedToolCalls(
     if (msg?.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
       for (const part of toolMsg.content) {
-        if (part?.type === "tool-result") {
-          existingResultIds.add((part as any).toolCallId);
+        if (part.type === "tool-result") {
+          existingResultIds.add(part.toolCallId);
         }
       }
     }
@@ -285,11 +287,12 @@ function emitInheritedToolCalls(
   // Emit for inherited tool calls (before this step) that don't have results
   for (let i = 0; i < beforeStepLength; i++) {
     const msg = messageHistory[i];
-    if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
-      for (const part of (msg as any).content) {
+    if (msg?.role === "assistant") {
+      const assistantMsg = msg as AssistantModelMessage;
+      if (!Array.isArray(assistantMsg.content)) continue;
+      for (const part of assistantMsg.content) {
         if (
-          typeof part !== "string" &&
-          part?.type === "tool-call" &&
+          part.type === "tool-call" &&
           !existingResultIds.has(part.toolCallId)
         ) {
           writer.write({
@@ -320,12 +323,14 @@ async function handlePendingApprovals(
   const approvalIdToToolCallId = new Map<string, string>();
   const toolCallIdToToolName = new Map<string, string>();
   for (const msg of messageHistory) {
-    if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
-      for (const part of (msg as any).content) {
-        if (part?.type === "tool-approval-request" && part.approvalId) {
+    if (msg?.role === "assistant") {
+      const assistantMsg = msg as AssistantModelMessage;
+      if (!Array.isArray(assistantMsg.content)) continue;
+      for (const part of assistantMsg.content) {
+        if (part.type === "tool-approval-request" && part.approvalId) {
           approvalIdToToolCallId.set(part.approvalId, part.toolCallId);
         }
-        if (part?.type === "tool-call" && part.toolCallId) {
+        if (part.type === "tool-call" && part.toolCallId) {
           toolCallIdToToolName.set(part.toolCallId, part.toolName);
         }
       }
@@ -339,9 +344,10 @@ async function handlePendingApprovals(
   const deniedToolCallIds = new Set<string>();
 
   for (const msg of messageHistory) {
-    if (msg?.role === "tool" && Array.isArray((msg as any).content)) {
-      for (const part of (msg as any).content) {
-        if (part?.type === "tool-approval-response" && part.approvalId) {
+    if (msg?.role === "tool") {
+      const toolMsg = msg as ToolModelMessage;
+      for (const part of toolMsg.content) {
+        if (part.type === "tool-approval-response" && part.approvalId) {
           const toolCallId = approvalIdToToolCallId.get(part.approvalId);
           if (!toolCallId) continue;
 
@@ -362,10 +368,11 @@ async function handlePendingApprovals(
   // Collect existing tool-result IDs once to avoid re-processing approvals
   const existingResultIds = new Set<string>();
   for (const msg of messageHistory) {
-    if (msg?.role === "tool" && Array.isArray((msg as any).content)) {
-      for (const part of (msg as any).content) {
-        if (part?.type === "tool-result") {
-          existingResultIds.add((part as any).toolCallId);
+    if (msg?.role === "tool") {
+      const toolMsg = msg as ToolModelMessage;
+      for (const part of toolMsg.content) {
+        if (part.type === "tool-result") {
+          existingResultIds.add(part.toolCallId);
         }
       }
     }
@@ -378,19 +385,14 @@ async function handlePendingApprovals(
   // NOTE: convertToModelMessages does NOT produce tool-results for denied tools
   // because the client-side state is 'approval-responded', not 'output-denied'.
   if (deniedToolCallIds.size > 0) {
-    const deniedResultParts: Array<{
-      type: "tool-result";
-      toolCallId: string;
-      toolName: string;
-      output: { type: "error-text"; value: string };
-    }> = [];
+    const deniedResultParts: ToolResultPart[] = [];
 
     for (const toolCallId of deniedToolCallIds) {
       if (existingResultIds.has(toolCallId)) continue;
       writer.write({
         type: "tool-output-denied",
         toolCallId,
-      } as unknown as UIMessageChunk);
+      });
 
       deniedResultParts.push({
         type: "tool-result",

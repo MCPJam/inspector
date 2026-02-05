@@ -90,7 +90,7 @@ export function PartSwitch({
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
     const toolInfo = getToolInfo(toolPart);
 
-    const approvalId = (toolPart as any).approval?.id as string | undefined;
+    const approvalId = toolPart.approval?.id;
     const approvalProps = approvalId
       ? {
           approvalId,
