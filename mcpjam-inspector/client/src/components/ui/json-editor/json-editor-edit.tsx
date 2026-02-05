@@ -1,7 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { debounce } from "@/lib/chat-utils";
 import type { CursorPosition } from "./types";
 import { highlightJson } from "./json-syntax-highlighter";
 import { JsonHighlighter } from "./json-highlighter";
@@ -9,7 +8,6 @@ import { JsonHighlighter } from "./json-highlighter";
 // Constants for virtualization and viewport highlighting
 const LINE_HEIGHT = 20; // 20px per line (leading-5)
 const VIEWPORT_BUFFER_LINES = 30; // Buffer lines above/below viewport for highlighting
-const HIGHLIGHT_DEBOUNCE_MS = 150; // Debounce delay for syntax highlighting
 const EDITOR_VERTICAL_PADDING = 12; // p-3 top/bottom padding
 
 interface JsonEditorEditProps {
@@ -38,18 +36,8 @@ function getCursorPosition(textarea: HTMLTextAreaElement): CursorPosition {
 }
 
 /**
- * Escape HTML special characters for safe display
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-/**
  * Hook for viewport-based highlighting.
- * Shows text immediately (using themed base color), then applies syntax highlighting after debounce.
+ * Keeps syntax highlighting stable while typing by rendering highlighted HTML immediately.
  */
 function useViewportHighlight(
   content: string,
@@ -61,24 +49,11 @@ function useViewportHighlight(
   const [paddingTop, setPaddingTop] = useState(0);
   const [paddingBottom, setPaddingBottom] = useState(0);
 
-  const debouncedHighlightRef = useRef<ReturnType<typeof debounce> | null>(
-    null,
-  );
-  const isFirstRender = useRef(true);
-
-  // Create debounced highlight function once
-  useEffect(() => {
-    debouncedHighlightRef.current = debounce((visibleContent: string) => {
-      setHighlightedHtml(highlightJson(visibleContent));
-    }, HIGHLIGHT_DEBOUNCE_MS);
-  }, []);
-
   useEffect(() => {
     if (!enabled) {
       setHighlightedHtml("");
       setPaddingTop(0);
       setPaddingBottom(0);
-      isFirstRender.current = true;
       return;
     }
 
@@ -103,16 +78,7 @@ function useViewportHighlight(
     setPaddingTop(startLine * LINE_HEIGHT);
     setPaddingBottom(Math.max(0, totalLines - endLine - 1) * LINE_HEIGHT);
 
-    if (isFirstRender.current) {
-      // Synchronous highlight on first render
-      setHighlightedHtml(highlightJson(visibleContent));
-      isFirstRender.current = false;
-    } else {
-      // Show escaped text immediately (inherits muted color from parent pre)
-      // Then apply full syntax highlighting after debounce
-      setHighlightedHtml(escapeHtml(visibleContent));
-      debouncedHighlightRef.current?.(visibleContent);
-    }
+    setHighlightedHtml(highlightJson(visibleContent));
   }, [content, scrollTop, viewportHeight, enabled]);
 
   return { highlightedHtml, paddingTop, paddingBottom };
