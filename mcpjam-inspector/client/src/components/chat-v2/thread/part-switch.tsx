@@ -326,11 +326,11 @@ export function PartSwitch({
             onExitFullscreen={onExitFullscreen}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
-            {...approvalProps}
             onSaveView={handleSaveView}
             canSaveView={canSaveView}
             saveDisabledReason={saveDisabledReason}
             isSaving={isSaving}
+            {...approvalProps}
           />
           <ChatGPTAppRenderer
             serverId={serverId}
@@ -396,11 +396,11 @@ export function PartSwitch({
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
             appSupportedDisplayModes={appSupportedDisplayModes}
-            {...approvalProps}
             onSaveView={handleSaveView}
             canSaveView={canSaveView}
             saveDisabledReason={saveDisabledReason}
             isSaving={isSaving}
+            {...approvalProps}
           />
           <MCPAppsRenderer
             serverId={serverId}
