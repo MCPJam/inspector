@@ -227,9 +227,16 @@ export function JsonEditorEdit({
     return useViewportBasedHighlighting
       ? viewportHighlightedHtml
       : highlightJson(content);
-  }, [content, readOnly, useViewportBasedHighlighting, viewportHighlightedHtml]);
+  }, [
+    content,
+    readOnly,
+    useViewportBasedHighlighting,
+    viewportHighlightedHtml,
+  ]);
   const paddingTop = useViewportBasedHighlighting ? viewportPaddingTop : 0;
-  const paddingBottom = useViewportBasedHighlighting ? viewportPaddingBottom : 0;
+  const paddingBottom = useViewportBasedHighlighting
+    ? viewportPaddingBottom
+    : 0;
 
   // Sync scroll between textarea, line numbers, and highlight overlay
   const handleScroll = useCallback(() => {
@@ -463,7 +470,8 @@ export function JsonEditorEdit({
         >
           {lineNumberVirtualizer.getVirtualItems().map((virtualRow) => {
             const lineNum = virtualRow.index + 1;
-            const lineHeight = lineLayouts[virtualRow.index]?.height ?? LINE_HEIGHT;
+            const lineHeight =
+              lineLayouts[virtualRow.index]?.height ?? LINE_HEIGHT;
             return (
               <div
                 key={virtualRow.index}
@@ -511,7 +519,9 @@ export function JsonEditorEdit({
               ref={highlightRef}
               className={cn(
                 "absolute inset-0 p-3 text-xs leading-5 overflow-hidden",
-                lineWrapEnabled ? "whitespace-pre-wrap break-words" : "whitespace-pre",
+                lineWrapEnabled
+                  ? "whitespace-pre-wrap break-words"
+                  : "whitespace-pre",
                 "pointer-events-none m-0",
                 "text-muted-foreground", // Base color for unhighlighted text during typing
               )}
