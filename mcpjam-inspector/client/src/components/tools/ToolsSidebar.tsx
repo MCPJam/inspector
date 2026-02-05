@@ -227,82 +227,90 @@ export function ToolsSidebar({
         <div className="flex-1 flex flex-col min-h-0">
           <SelectedToolHeader
             toolName={selectedToolName}
-            description={selectedTool?.description}
             onExpand={() => onSelectTool("")}
             onClear={() => onSelectTool("")}
           />
 
-          <ScrollArea className="flex-1">
-            <ParametersForm
-              fields={formFields}
-              onFieldChange={onFieldChange}
-              onToggleField={onToggleField ?? (() => {})}
-              onExecute={onExecute}
-            />
+          <div className="flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+              {selectedTool?.description && (
+                <div className="px-3 py-2 border-b border-border">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {selectedTool.description}
+                  </p>
+                </div>
+              )}
+              <ParametersForm
+                fields={formFields}
+                onFieldChange={onFieldChange}
+                onToggleField={onToggleField ?? (() => {})}
+                onExecute={onExecute}
+              />
 
-            {/* Task execution options */}
-            {serverSupportsTaskToolCalls && (
-              <div className="px-3 py-3 border-t border-border">
-                {taskRequired ? (
-                  <div className="flex items-center gap-2">
-                    <span className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
-                      <Clock className="h-3 w-3" />
-                      <span>Task required</span>
-                    </span>
-                    {onTaskTtlChange && (
-                      <div className="flex items-center gap-1 ml-auto">
-                        <Input
-                          type="number"
-                          min={0}
-                          defaultValue={taskTtl ?? 0}
-                          onBlur={(e) =>
-                            onTaskTtlChange(parseInt(e.target.value) || 0)
+              {/* Task execution options */}
+              {serverSupportsTaskToolCalls && (
+                <div className="px-3 py-3 border-t border-border">
+                  {taskRequired ? (
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                        <Clock className="h-3 w-3" />
+                        <span>Task required</span>
+                      </span>
+                      {onTaskTtlChange && (
+                        <div className="flex items-center gap-1 ml-auto">
+                          <Input
+                            type="number"
+                            min={0}
+                            defaultValue={taskTtl ?? 0}
+                            onBlur={(e) =>
+                              onTaskTtlChange(parseInt(e.target.value) || 0)
+                            }
+                            className="w-16 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            title="TTL in milliseconds"
+                          />
+                          <span className="text-[10px] text-muted-foreground">
+                            ms
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : onExecuteAsTaskChange ? (
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={executeAsTask ?? false}
+                          onChange={(e) =>
+                            onExecuteAsTaskChange(e.target.checked)
                           }
-                          className="w-16 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          title="TTL in milliseconds"
+                          className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
                         />
-                        <span className="text-[10px] text-muted-foreground">
-                          ms
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ) : onExecuteAsTaskChange ? (
-                  <div className="flex items-center gap-2">
-                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={executeAsTask ?? false}
-                        onChange={(e) =>
-                          onExecuteAsTaskChange(e.target.checked)
-                        }
-                        className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
-                      />
-                      <Clock className="h-3 w-3" />
-                      <span>Execute as task</span>
-                    </label>
-                    {executeAsTask && onTaskTtlChange && (
-                      <div className="flex items-center gap-1 ml-auto">
-                        <Input
-                          type="number"
-                          min={0}
-                          defaultValue={taskTtl ?? 0}
-                          onBlur={(e) =>
-                            onTaskTtlChange(parseInt(e.target.value) || 0)
-                          }
-                          className="w-16 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          title="TTL in milliseconds"
-                        />
-                        <span className="text-[10px] text-muted-foreground">
-                          ms
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </ScrollArea>
+                        <Clock className="h-3 w-3" />
+                        <span>Execute as task</span>
+                      </label>
+                      {executeAsTask && onTaskTtlChange && (
+                        <div className="flex items-center gap-1 ml-auto">
+                          <Input
+                            type="number"
+                            min={0}
+                            defaultValue={taskTtl ?? 0}
+                            onBlur={(e) =>
+                              onTaskTtlChange(parseInt(e.target.value) || 0)
+                            }
+                            className="w-16 h-6 text-[10px] px-1.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            title="TTL in milliseconds"
+                          />
+                          <span className="text-[10px] text-muted-foreground">
+                            ms
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </ScrollArea>
+          </div>
         </div>
       ) : (
         // Tool list or saved requests view
