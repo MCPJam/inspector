@@ -12,6 +12,7 @@ import {
 } from "@dnd-kit/core";
 import {
   SortableContext,
+  arrayMove,
   rectSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
@@ -68,13 +69,6 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { formatJsonConfig } from "@/lib/json-config-parser";
 import { Skeleton } from "./ui/skeleton";
 import { HOSTED_MODE } from "@/lib/config";
-
-function arrayMove<T>(array: T[], from: number, to: number): T[] {
-  const newArray = [...array];
-  const [removed] = newArray.splice(from, 1);
-  newArray.splice(to, 0, removed);
-  return newArray;
-}
 
 interface DraggableServerCardProps {
   item: { name: string; server: ServerWithName };
