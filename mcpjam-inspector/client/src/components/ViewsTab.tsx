@@ -652,7 +652,13 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     } finally {
       setIsRunning(false);
     }
-  }, [selectedView, liveToolInput, selectedServer, getServerConnectionStatus, posthog]);
+  }, [
+    selectedView,
+    liveToolInput,
+    selectedServer,
+    getServerConnectionStatus,
+    posthog,
+  ]);
 
   // Handler to go back to views list
   const handleBackToList = useCallback(() => {
