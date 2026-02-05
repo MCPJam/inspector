@@ -258,7 +258,7 @@ export function MCPSidebar({
             <Button
               size="sm"
               onClick={restartAndInstall}
-              className="w-full bg-[#cf7345] hover:bg-[#b8623a] text-white h-7 text-xs font-medium rounded-md"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
             >
               Update
             </Button>
