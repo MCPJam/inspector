@@ -288,7 +288,7 @@ export function ToolPart({
               </span>
             </>
           )}
-          {onSaveView && (
+          {onSaveView && uiType && uiType !== UIType.MCP_UI && (
             <>
               {hasWidgetDebug && <div className="h-4 w-px bg-border/40" />}
               <Tooltip>
