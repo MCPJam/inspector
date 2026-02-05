@@ -73,6 +73,7 @@ export interface OpenaiAppView extends ViewBase {
   protocol: "openai-apps";
   outputTemplate: string;
   serverInfo?: ServerInfo;
+  widgetState?: unknown;
   /** URL to cached widget HTML for offline rendering */
   widgetHtmlUrl?: string | null;
 }

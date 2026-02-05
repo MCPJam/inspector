@@ -637,6 +637,17 @@ const clampNumber = (value: unknown): number | null => {
             window.openai.toolInput = globals.toolInput;
           if (globals.toolOutput !== undefined)
             window.openai.toolOutput = globals.toolOutput;
+          if (globals.widgetState !== undefined) {
+            window.openai.widgetState = globals.widgetState;
+            try {
+              localStorage.setItem(
+                widgetStateKey,
+                JSON.stringify(globals.widgetState),
+              );
+            } catch (err) {
+              // no-op
+            }
+          }
         }
         try {
           window.dispatchEvent(

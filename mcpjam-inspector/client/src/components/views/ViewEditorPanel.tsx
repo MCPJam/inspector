@@ -6,10 +6,11 @@ import { InlineEditableText } from "@/components/ui/inline-editable-text";
 import { type AnyView } from "@/hooks/useViews";
 import { type ConnectionStatus } from "@/state/app-types";
 
-/** The editor model - only toolInput and toolOutput */
+/** The editor model for Views JSON editing */
 interface EditorModel {
   toolInput: unknown;
   toolOutput: unknown;
+  widgetState?: unknown;
 }
 
 interface ViewEditorPanelProps {
@@ -19,10 +20,18 @@ interface ViewEditorPanelProps {
   initialToolOutput?: unknown;
   /** Live toolOutput that updates when Run executes */
   liveToolOutput?: unknown;
+  /** Initial widgetState from saved view (OpenAI views only) */
+  initialWidgetState?: unknown;
+  /** Live widgetState that updates when JSON editor changes */
+  liveWidgetState?: unknown;
   /** Whether toolOutput is still loading */
   isLoadingToolOutput?: boolean;
   /** Callback when editor data changes */
-  onDataChange?: (data: { toolInput: unknown; toolOutput: unknown }) => void;
+  onDataChange?: (data: {
+    toolInput: unknown;
+    toolOutput: unknown;
+    widgetState?: unknown;
+  }) => void;
   /** Whether save is in progress */
   isSaving?: boolean;
   /** Save handler (provided by parent) */
@@ -44,6 +53,8 @@ export function ViewEditorPanel({
   onBack,
   initialToolOutput,
   liveToolOutput,
+  initialWidgetState,
+  liveWidgetState,
   isLoadingToolOutput,
   onDataChange,
   isSaving = false,
@@ -54,22 +65,51 @@ export function ViewEditorPanel({
   onRun,
   onRename,
 }: ViewEditorPanelProps) {
-  // Editor model contains only toolInput and toolOutput
-  const [editorModel, setEditorModel] = useState<EditorModel>({
-    toolInput: view.toolInput,
-    toolOutput: initialToolOutput ?? null,
-  });
+  const createEditorModel = useCallback(
+    (
+      toolInput: unknown,
+      toolOutput: unknown,
+      widgetState: unknown,
+    ): EditorModel => {
+      const base = {
+        toolInput,
+        toolOutput,
+      };
+
+      if (view.protocol === "openai-apps") {
+        return {
+          ...base,
+          widgetState: widgetState ?? null,
+        };
+      }
+
+      return base;
+    },
+    [view.protocol],
+  );
+
+  const [editorModel, setEditorModel] = useState<EditorModel>(() =>
+    createEditorModel(
+      view.toolInput,
+      initialToolOutput ?? null,
+      initialWidgetState ?? null,
+    ),
+  );
 
   // Track the previous liveToolOutput to detect external updates (e.g., from Run)
   const prevLiveToolOutputRef = useRef(liveToolOutput);
+  const prevLiveWidgetStateRef = useRef(liveWidgetState);
 
   // Update editor model when view changes or initialToolOutput loads
   useEffect(() => {
-    setEditorModel({
-      toolInput: view.toolInput,
-      toolOutput: initialToolOutput ?? null,
-    });
-  }, [view._id, initialToolOutput]);
+    setEditorModel(
+      createEditorModel(
+        view.toolInput,
+        initialToolOutput ?? null,
+        initialWidgetState ?? null,
+      ),
+    );
+  }, [view._id, initialToolOutput, initialWidgetState, createEditorModel]);
 
   // Update only toolOutput when liveToolOutput changes from parent (e.g., after Run)
   // This preserves the user's toolInput edits while showing the new output
@@ -83,19 +123,52 @@ export function ViewEditorPanel({
     }
   }, [liveToolOutput]);
 
+  // Keep widgetState in sync when parent updates it (OpenAI views only)
+  useEffect(() => {
+    if (view.protocol !== "openai-apps") return;
+    if (liveWidgetState !== prevLiveWidgetStateRef.current) {
+      prevLiveWidgetStateRef.current = liveWidgetState;
+      setEditorModel((prev) => ({
+        ...prev,
+        widgetState: liveWidgetState ?? null,
+      }));
+    }
+  }, [view.protocol, liveWidgetState]);
+
   const handleChange = useCallback(
     (newValue: unknown) => {
       if (newValue && typeof newValue === "object") {
         const model = newValue as EditorModel;
-        setEditorModel(model);
+        const nextModel: EditorModel =
+          view.protocol === "openai-apps"
+            ? {
+                toolInput: model.toolInput,
+                toolOutput: model.toolOutput,
+                widgetState:
+                  "widgetState" in model ? model.widgetState : null,
+              }
+            : {
+                toolInput: model.toolInput,
+                toolOutput: model.toolOutput,
+              };
+
+        setEditorModel(nextModel);
         // Notify parent of data change for live preview
-        onDataChange?.({
-          toolInput: model.toolInput,
-          toolOutput: model.toolOutput,
-        });
+        if (view.protocol === "openai-apps") {
+          onDataChange?.({
+            toolInput: nextModel.toolInput,
+            toolOutput: nextModel.toolOutput,
+            widgetState: nextModel.widgetState,
+          });
+        } else {
+          onDataChange?.({
+            toolInput: nextModel.toolInput,
+            toolOutput: nextModel.toolOutput,
+          });
+        }
       }
     },
-    [onDataChange],
+    [onDataChange, view.protocol],
   );
 
   const handleSave = useCallback(async () => {
