@@ -83,7 +83,8 @@ export function ToolPart({
   const needsApproval = state === "approval-requested" && !!approvalId;
   const [approvalVisualState, setApprovalVisualState] =
     useState<ApprovalVisualState>("pending");
-  const isDenied = approvalVisualState === "denied" || state === "output-denied";
+  const isDenied =
+    approvalVisualState === "denied" || state === "output-denied";
   const hideAppControls = isDenied || needsApproval;
   const [userExpanded, setUserExpanded] = useState(false);
   const isExpanded = needsApproval || userExpanded;

@@ -456,7 +456,9 @@ export function ChatInput({
                       )}
                     />
                     {!compact && (
-                      <span className="text-[10px] font-medium">Tool Approval</span>
+                      <span className="text-[10px] font-medium">
+                        Tool Approval
+                      </span>
                     )}
                   </Button>
                 </TooltipTrigger>
