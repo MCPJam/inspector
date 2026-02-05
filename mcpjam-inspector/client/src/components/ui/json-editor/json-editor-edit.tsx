@@ -1,8 +1,15 @@
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
+import { debounce } from "@/lib/chat-utils";
 import type { CursorPosition } from "./types";
 import { highlightJson } from "./json-syntax-highlighter";
 import { JsonHighlighter } from "./json-highlighter";
+
+// Constants for virtualization and viewport highlighting
+const LINE_HEIGHT = 20; // 20px per line (leading-5)
+const VIEWPORT_BUFFER_LINES = 30; // Buffer lines above/below viewport for highlighting
+const HIGHLIGHT_DEBOUNCE_MS = 150; // Debounce delay for syntax highlighting
 
 interface JsonEditorEditProps {
   content: string;
@@ -19,11 +26,6 @@ interface JsonEditorEditProps {
   collapseStringsAfterLength?: number;
 }
 
-function getLineNumbers(content: string): number[] {
-  const lines = content.split("\n");
-  return Array.from({ length: lines.length }, (_, i) => i + 1);
-}
-
 function getCursorPosition(textarea: HTMLTextAreaElement): CursorPosition {
   const text = textarea.value;
   const selectionStart = textarea.selectionStart;
@@ -32,6 +34,87 @@ function getCursorPosition(textarea: HTMLTextAreaElement): CursorPosition {
   const line = lines.length;
   const column = lines[lines.length - 1].length + 1;
   return { line, column };
+}
+
+/**
+ * Escape HTML special characters for safe display
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Hook for viewport-based highlighting.
+ * Shows text immediately (using themed base color), then applies syntax highlighting after debounce.
+ */
+function useViewportHighlight(
+  content: string,
+  scrollTop: number,
+  viewportHeight: number,
+  enabled: boolean,
+): { highlightedHtml: string; paddingTop: number; paddingBottom: number } {
+  const [highlightedHtml, setHighlightedHtml] = useState("");
+  const [paddingTop, setPaddingTop] = useState(0);
+  const [paddingBottom, setPaddingBottom] = useState(0);
+
+  const debouncedHighlightRef = useRef<ReturnType<typeof debounce> | null>(
+    null,
+  );
+  const isFirstRender = useRef(true);
+
+  // Create debounced highlight function once
+  useEffect(() => {
+    debouncedHighlightRef.current = debounce((visibleContent: string) => {
+      setHighlightedHtml(highlightJson(visibleContent));
+    }, HIGHLIGHT_DEBOUNCE_MS);
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) {
+      setHighlightedHtml("");
+      setPaddingTop(0);
+      setPaddingBottom(0);
+      isFirstRender.current = true;
+      return;
+    }
+
+    const lines = content.split("\n");
+    const totalLines = lines.length;
+
+    // Calculate visible line range
+    const firstVisibleLine = Math.floor(scrollTop / LINE_HEIGHT);
+    const visibleLineCount = Math.ceil(viewportHeight / LINE_HEIGHT);
+    const lastVisibleLine = firstVisibleLine + visibleLineCount;
+
+    // Add buffer
+    const startLine = Math.max(0, firstVisibleLine - VIEWPORT_BUFFER_LINES);
+    const endLine = Math.min(
+      totalLines - 1,
+      lastVisibleLine + VIEWPORT_BUFFER_LINES,
+    );
+
+    const visibleContent = lines.slice(startLine, endLine + 1).join("\n");
+
+    // Always update padding immediately for smooth scrolling
+    setPaddingTop(startLine * LINE_HEIGHT);
+    setPaddingBottom(Math.max(0, totalLines - endLine - 1) * LINE_HEIGHT);
+
+    if (isFirstRender.current) {
+      // Synchronous highlight on first render
+      setHighlightedHtml(highlightJson(visibleContent));
+      isFirstRender.current = false;
+    } else {
+      // Show escaped text immediately (inherits muted color from parent pre)
+      // Then apply full syntax highlighting after debounce
+      setHighlightedHtml(escapeHtml(visibleContent));
+      debouncedHighlightRef.current?.(visibleContent);
+    }
+  }, [content, scrollTop, viewportHeight, enabled]);
+
+  return { highlightedHtml, paddingTop, paddingBottom };
 }
 
 export function JsonEditorEdit({
@@ -55,26 +138,41 @@ export function JsonEditorEdit({
 
   const [isFocused, setIsFocused] = useState(false);
   const [activeLine, setActiveLine] = useState(1);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(400);
 
-  const lineNumbers = getLineNumbers(content);
+  const lineCount = useMemo(() => content.split("\n").length, [content]);
 
-  // Memoize highlighted content (only for edit mode)
-  const highlightedContent = useMemo(
-    () => (readOnly ? "" : highlightJson(content)),
-    [content, readOnly],
+  // Phase 2: Virtualized line numbers
+  const lineNumberVirtualizer = useVirtualizer({
+    count: lineCount,
+    getScrollElement: () => lineNumbersRef.current,
+    estimateSize: () => LINE_HEIGHT,
+    overscan: 20,
+  });
+
+  // Phase 3: Viewport-based highlighting
+  const { highlightedHtml, paddingTop, paddingBottom } = useViewportHighlight(
+    content,
+    scrollTop,
+    viewportHeight,
+    !readOnly,
   );
 
   // Sync scroll between textarea, line numbers, and highlight overlay
   const handleScroll = useCallback(() => {
     if (textareaRef.current) {
-      const scrollTop = textareaRef.current.scrollTop;
+      const currentScrollTop = textareaRef.current.scrollTop;
       const scrollLeft = textareaRef.current.scrollLeft;
 
+      // Update scroll state for viewport highlighting
+      setScrollTop(currentScrollTop);
+
       if (lineNumbersRef.current) {
-        lineNumbersRef.current.scrollTop = scrollTop;
+        lineNumbersRef.current.scrollTop = currentScrollTop;
       }
       if (highlightRef.current) {
-        highlightRef.current.scrollTop = scrollTop;
+        highlightRef.current.scrollTop = currentScrollTop;
         highlightRef.current.scrollLeft = scrollLeft;
       }
     }
@@ -205,6 +303,19 @@ export function JsonEditorEdit({
     }
   }, [readOnly]);
 
+  // Track viewport height for viewport-based highlighting
+  useEffect(() => {
+    const updateViewportHeight = () => {
+      if (containerRef.current) {
+        setViewportHeight(containerRef.current.clientHeight);
+      }
+    };
+
+    updateViewportHeight();
+    window.addEventListener("resize", updateViewportHeight);
+    return () => window.removeEventListener("resize", updateViewportHeight);
+  }, []);
+
   const containerStyle: React.CSSProperties = {
     height: height ?? "auto",
     maxHeight: maxHeight ?? "none",
@@ -230,38 +341,44 @@ export function JsonEditorEdit({
       ref={containerRef}
       className={cn(
         "group relative flex w-full overflow-hidden bg-muted/30",
-        "transition-all duration-200",
-        !readOnly && isFocused && "ring-2 ring-ring/50",
         !isValid && "border-destructive",
-        !isValid && !readOnly && isFocused && "ring-destructive/30",
         className,
       )}
       style={containerStyle}
     >
-      {/* Line numbers */}
+      {/* Line numbers - virtualized for performance */}
       <div
         ref={lineNumbersRef}
         className="flex-shrink-0 h-full overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
         style={{ width: "3rem" }}
       >
         <div
-          className="py-3 pr-2 text-xs text-muted-foreground leading-5 min-h-full"
-          style={fontStyle}
+          className="py-3 pr-2 text-xs text-muted-foreground leading-5 relative"
+          style={{
+            ...fontStyle,
+            height: `${lineNumberVirtualizer.getTotalSize()}px`,
+          }}
         >
-          {lineNumbers.map((num) => (
-            <div
-              key={num}
-              className={cn(
-                "leading-5 h-5 transition-colors duration-150",
-                !readOnly &&
-                  num === activeLine &&
-                  isFocused &&
-                  "text-foreground font-medium",
-              )}
-            >
-              {num}
-            </div>
-          ))}
+          {lineNumberVirtualizer.getVirtualItems().map((virtualRow) => {
+            const lineNum = virtualRow.index + 1;
+            return (
+              <div
+                key={virtualRow.index}
+                className={cn(
+                  "leading-5 h-5 transition-colors duration-150 absolute left-0 right-0 pr-2",
+                  !readOnly &&
+                    lineNum === activeLine &&
+                    isFocused &&
+                    "text-foreground font-medium",
+                )}
+                style={{
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                {lineNum}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -285,17 +402,24 @@ export function JsonEditorEdit({
           </pre>
         ) : (
           <>
-            {/* Syntax highlighted overlay (behind textarea) */}
+            {/* Syntax highlighted overlay (behind textarea) - viewport-based for performance */}
             <pre
               ref={highlightRef}
               className={cn(
                 "absolute inset-0 p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto",
                 "pointer-events-none m-0",
+                "text-muted-foreground", // Base color for unhighlighted text during typing
               )}
               style={fontStyle}
               aria-hidden="true"
-              dangerouslySetInnerHTML={{ __html: highlightedContent + "\n" }}
-            />
+            >
+              {/* Padding to maintain scroll position */}
+              <div style={{ height: paddingTop }} aria-hidden="true" />
+              <div
+                dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }}
+              />
+              <div style={{ height: paddingBottom }} aria-hidden="true" />
+            </pre>
 
             {/* Active line highlight (only in edit mode) */}
             {isFocused && (

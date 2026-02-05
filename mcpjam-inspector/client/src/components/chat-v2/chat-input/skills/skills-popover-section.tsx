@@ -8,7 +8,7 @@ import { SquareSlash, Loader2 } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import { listSkills, getSkill } from "@/lib/apis/mcp-skills-api";
 import type { SkillListItem, SkillResult } from "./skill-types";
-import posthog from "posthog-js";
+import { usePostHog } from "posthog-js/react";
 
 interface SkillsPopoverSectionProps {
   onSkillSelected: (skillResult: SkillResult) => void;
@@ -29,6 +29,7 @@ export function SkillsPopoverSection({
   actionTrigger,
   onOpenUploadDialog,
 }: SkillsPopoverSectionProps) {
+  const posthog = usePostHog();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [loadingSkillName, setLoadingSkillName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);

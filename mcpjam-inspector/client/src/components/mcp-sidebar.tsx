@@ -9,11 +9,12 @@ import {
   FlaskConical,
   Workflow,
   Anvil,
+  Layers,
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
 } from "lucide-react";
-import posthog from "posthog-js";
+import { usePostHog } from "posthog-js/react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -60,6 +61,11 @@ const navigationSections = [
         title: "App Builder",
         url: "#app-builder",
         icon: Anvil,
+      },
+      {
+        title: "Views",
+        url: "#views",
+        icon: Layers,
       },
       {
         title: "Test Cases",
@@ -145,6 +151,7 @@ export function MCPSidebar({
   servers = {},
   ...props
 }: MCPSidebarProps) {
+  const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const [toolsDataMap, setToolsDataMap] = useState<
     Record<string, ListToolsResultWithMetadata | null>

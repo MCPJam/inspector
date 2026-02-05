@@ -633,6 +633,10 @@ const clampNumber = (value: unknown): number | null => {
           if (globals.userAgent !== undefined)
             window.openai.userAgent = globals.userAgent;
           if (globals.view !== undefined) window.openai.view = globals.view;
+          if (globals.toolInput !== undefined)
+            window.openai.toolInput = globals.toolInput;
+          if (globals.toolOutput !== undefined)
+            window.openai.toolOutput = globals.toolOutput;
         }
         try {
           window.dispatchEvent(

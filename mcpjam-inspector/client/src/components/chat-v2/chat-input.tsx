@@ -40,6 +40,7 @@ import {
 import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp-prompt-result-card";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
+import { usePostHog } from "posthog-js/react";
 
 interface ChatInputProps {
   value: string;
@@ -130,6 +131,7 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
 }: ChatInputProps) {
+  const posthog = usePostHog();
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -478,7 +480,12 @@ export function ChatInput({
                     type="button"
                     variant={xrayMode ? "secondary" : "ghost"}
                     size={compact ? "icon" : "sm"}
-                    onClick={() => onXrayModeChange(!xrayMode)}
+                    onClick={() => {
+                      if (!xrayMode) {
+                        posthog.capture("xray_opened");
+                      }
+                      onXrayModeChange(!xrayMode);
+                    }}
                     className={
                       compact
                         ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"

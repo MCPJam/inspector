@@ -1,3 +1,4 @@
+import { type ReactNode, useState } from "react";
 import {
   Eye,
   Pencil,
@@ -16,7 +17,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
 import type { JsonEditorMode } from "./types";
 import { SegmentedControl } from "./segmented-control";
 
@@ -36,6 +36,10 @@ interface JsonEditorToolbarProps {
   allowMaximize?: boolean;
   isValid?: boolean;
   className?: string;
+  /** Custom content to render on the left side of the toolbar */
+  leftContent?: ReactNode;
+  /** Custom content to render on the right side (after built-in actions) */
+  rightContent?: ReactNode;
 }
 
 const modeOptions = [
@@ -63,6 +67,8 @@ export function JsonEditorToolbar({
   allowMaximize = false,
   isValid = true,
   className,
+  leftContent,
+  rightContent,
 }: JsonEditorToolbarProps) {
   const [copied, setCopied] = useState(false);
 
@@ -75,12 +81,13 @@ export function JsonEditorToolbar({
   return (
     <div
       className={cn(
-        "flex items-center justify-between p-2 border-b border-border",
+        "flex items-center justify-between px-3 py-1.5 bg-muted/30",
         className,
       )}
     >
-      {/* Mode toggle */}
-      <div className="flex items-center gap-1">
+      {/* Left side: custom content or mode toggle */}
+      <div className="flex items-center gap-2">
+        {leftContent}
         {showModeToggle && !readOnly && onModeChange && (
           <SegmentedControl
             options={modeOptions}
@@ -90,7 +97,7 @@ export function JsonEditorToolbar({
         )}
       </div>
 
-      {/* Actions */}
+      {/* Right side: actions + custom content */}
       <div className="flex items-center gap-1">
         {mode === "edit" && (
           <>
@@ -195,6 +202,13 @@ export function JsonEditorToolbar({
                 <p>{isMaximized ? "Exit fullscreen" : "Fullscreen"}</p>
               </TooltipContent>
             </Tooltip>
+          </>
+        )}
+
+        {rightContent && (
+          <>
+            <div className="w-px h-4 bg-border mx-1" />
+            {rightContent}
           </>
         )}
       </div>

@@ -17,7 +17,7 @@ import {
   Code,
   Eye,
 } from "lucide-react";
-import posthog from "posthog-js";
+import { usePostHog } from "posthog-js/react";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -47,6 +47,7 @@ import { SkillsFileTree } from "./skills/SkillsFileTree";
 import { SkillFileViewer } from "./skills/SkillFileViewer";
 
 export function SkillsTab() {
+  const posthog = usePostHog();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [selectedSkillName, setSelectedSkillName] = useState<string>("");
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);

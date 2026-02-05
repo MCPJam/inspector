@@ -93,6 +93,8 @@ export interface WidgetDebugInfo {
     structuredContent?: Record<string, unknown>;
     updatedAt: number;
   } | null;
+  /** Cached widget HTML for offline rendering */
+  widgetHtml?: string;
 }
 
 interface WidgetDebugStore {
@@ -142,6 +144,9 @@ interface WidgetDebugStore {
       structuredContent?: Record<string, unknown>;
     } | null,
   ) => void;
+
+  // Set widget HTML for offline rendering cache
+  setWidgetHtml: (toolCallId: string, html: string) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -165,6 +170,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
             displayMode: "inline",
           },
         csp: existing?.csp, // Preserve CSP violations across updates
+        widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
+        modelContext: existing?.modelContext, // Preserve model context across updates
         updatedAt: Date.now(),
       });
       return { widgets };
@@ -293,6 +300,27 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
               updatedAt: Date.now(),
             }
           : null,
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  setWidgetHtml: (toolCallId, html) => {
+    set((state) => {
+      const widgets = new Map(state.widgets);
+      const existing = widgets.get(toolCallId);
+      // Create a default entry if one doesn't exist (fixes race condition where
+      // setWidgetHtml is called before setWidgetDebugInfo initializes the entry)
+      widgets.set(toolCallId, {
+        toolCallId,
+        toolName: existing?.toolName ?? "unknown",
+        protocol: existing?.protocol ?? "mcp-apps",
+        widgetState: existing?.widgetState ?? null,
+        globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
+        csp: existing?.csp,
+        modelContext: existing?.modelContext,
+        widgetHtml: html,
         updatedAt: Date.now(),
       });
       return { widgets };

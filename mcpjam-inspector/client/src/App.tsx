@@ -8,6 +8,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
+import { ViewsTab } from "./components/ViewsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
@@ -47,6 +48,7 @@ import {
   isOpenAIAppAndMCPApp,
 } from "./lib/mcp-ui/mcp-apps-utils";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
+import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -122,6 +124,45 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
+
+  // Create effective app state that uses the correct workspaces (Convex when authenticated)
+  const effectiveAppState = useMemo(
+    () => ({
+      ...appState,
+      workspaces,
+      activeWorkspaceId,
+    }),
+    [appState, workspaces, activeWorkspaceId],
+  );
+
+  // Get the Convex workspace ID from the active workspace
+  const activeWorkspace = workspaces[activeWorkspaceId];
+  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+
+  // Fetch views for the workspace to determine which servers have saved views
+  const { viewsByServer } = useViewQueries({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+
+  // Fetch workspace servers to map server IDs to names
+  const { serversById } = useWorkspaceServers({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+
+  // Compute the set of server names that have saved views
+  const serversWithViews = useMemo(() => {
+    const serverNames = new Set<string>();
+    for (const serverId of viewsByServer.keys()) {
+      const serverName = serversById.get(serverId);
+      if (serverName) {
+        serverNames.add(serverName);
+      }
+    }
+    return serverNames;
+  }, [viewsByServer, serversById]);
+
   // Create a stable key that only tracks fully "connected" servers (not "connecting")
   // so the effect re-fires when servers finish connecting (e.g., after reconnect)
   const connectedServerNamesKey = useMemo(
@@ -248,13 +289,14 @@ export default function App() {
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
     activeTab === "app-builder" ||
-    activeTab === "evals";
+    activeTab === "evals" ||
+    activeTab === "views";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
           serverConfigs:
-            activeTab === "oauth-flow"
+            activeTab === "oauth-flow" || activeTab === "views"
               ? appState.servers
               : connectedOrConnectingServerConfigs,
           selectedServer: appState.selectedServer,
@@ -267,6 +309,8 @@ export default function App() {
           showOnlyOAuthServers: activeTab === "oauth-flow",
           showOnlyOpenAIAppsServers: activeTab === "app-builder",
           openAiAppOrMcpAppsServers: openAiAppOrMcpAppsServers,
+          showOnlyServersWithViews: activeTab === "views",
+          serversWithViews: serversWithViews,
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
         }
       : undefined;
@@ -314,6 +358,9 @@ export default function App() {
           )}
           {activeTab === "evals" && (
             <EvalsTab selectedServer={appState.selectedServer} />
+          )}
+          {activeTab === "views" && (
+            <ViewsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "resources" && (
             <div className="h-full overflow-hidden">
@@ -396,7 +443,7 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
-      <AppStateProvider appState={appState}>
+      <AppStateProvider appState={effectiveAppState}>
         <Toaster />
         {appContent}
       </AppStateProvider>

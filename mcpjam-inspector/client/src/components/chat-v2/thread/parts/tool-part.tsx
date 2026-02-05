@@ -4,6 +4,8 @@ import {
   Check,
   ChevronDown,
   Database,
+  Layers,
+  Loader2,
   Maximize2,
   MessageCircle,
   PictureInPicture2,
@@ -52,6 +54,10 @@ export function ToolPart({
   approvalId,
   onApprove,
   onDeny,
+  onSaveView,
+  canSaveView,
+  saveDisabledReason,
+  isSaving,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   uiType?: UIType | null;
@@ -68,6 +74,14 @@ export function ToolPart({
   approvalId?: string;
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
+  /** Callback to save this tool execution as a view */
+  onSaveView?: () => void;
+  /** Whether the save view button should be enabled */
+  canSaveView?: boolean;
+  /** Reason why save is disabled (for tooltip) */
+  saveDisabledReason?: string;
+  /** Whether the view is currently being saved */
+  isSaving?: boolean;
 }) {
   const label = isDynamicTool(part)
     ? part.toolName
@@ -322,6 +336,41 @@ export function ToolPart({
                   </Tooltip>
                 ))}
               </span>
+            </>
+          )}
+          {onSaveView && uiType && uiType !== UIType.MCP_UI && (
+            <>
+              {hasWidgetDebug && <div className="h-4 w-px bg-border/40" />}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={!canSaveView || isSaving}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSaveView();
+                    }}
+                    className={`p-1 rounded transition-colors ${
+                      canSaveView && !isSaving
+                        ? "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                        : "text-muted-foreground/30 cursor-not-allowed"
+                    }`}
+                  >
+                    {isSaving ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Layers className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {isSaving
+                    ? "Saving..."
+                    : canSaveView
+                      ? "Save as View"
+                      : saveDisabledReason || "No output to save"}
+                </TooltipContent>
+              </Tooltip>
             </>
           )}
           {toolState && StatusIcon && (

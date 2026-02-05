@@ -125,22 +125,42 @@ if (isInIframe) {
               padding: "2rem",
               textAlign: "center",
               fontFamily: "system-ui",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: "100vh",
             }}
           >
-            <h1 style={{ color: "#dc2626" }}>Authentication Error</h1>
-            <p>Failed to establish secure session. Please refresh the page.</p>
+            <img
+              src="/mcp_jam.svg"
+              alt="MCPJam Logo"
+              style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
+            />
+            <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
+              Authentication Error
+            </h1>
+            <p style={{ marginBottom: "0.25rem" }}>
+              Failed to establish secure session.
+            </p>
             <p style={{ color: "#666", fontSize: "0.875rem" }}>
               If accessing via network, use localhost instead.
             </p>
             <button
               onClick={() => location.reload()}
               style={{
-                marginTop: "1rem",
-                padding: "0.5rem 1rem",
+                marginTop: "1.5rem",
+                padding: "0.75rem 1.5rem",
                 cursor: "pointer",
+                backgroundColor: "#18181b",
+                color: "#fff",
+                border: "none",
+                borderRadius: "0.5rem",
+                fontSize: "1rem",
+                fontWeight: 500,
               }}
             >
-              Refresh
+              Restart App
             </button>
           </div>
         </StrictMode>,
