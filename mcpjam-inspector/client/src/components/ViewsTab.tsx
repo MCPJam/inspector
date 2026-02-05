@@ -170,7 +170,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     setLiveToolOutput(null);
     setLiveWidgetState(
       selectedView.protocol === "openai-apps"
-        ? selectedView.widgetState ?? null
+        ? (selectedView.widgetState ?? null)
         : null,
     );
     setOriginalToolOutput(null);
@@ -494,7 +494,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     );
     const selectedWidgetState =
       selectedView.protocol === "openai-apps"
-        ? selectedView.widgetState ?? null
+        ? (selectedView.widgetState ?? null)
         : null;
     const widgetStateChanged =
       selectedView.protocol === "openai-apps" &&
@@ -530,7 +530,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       );
       const selectedWidgetState =
         selectedView.protocol === "openai-apps"
-          ? selectedView.widgetState ?? null
+          ? (selectedView.widgetState ?? null)
           : null;
       const widgetStateChanged =
         selectedView.protocol === "openai-apps" &&
