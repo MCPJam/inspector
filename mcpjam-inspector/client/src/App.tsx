@@ -19,6 +19,7 @@ import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
+import { loadServerOrder } from "./state/server-order-storage";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
@@ -123,6 +124,12 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
+
+  const savedServerOrder = useMemo(
+    () => loadServerOrder(activeWorkspaceId),
+    [activeWorkspaceId],
+  );
+
   // Create a stable key that only tracks fully "connected" servers (not "connecting")
   // so the effect re-fires when servers finish connecting (e.g., after reconnect)
   const connectedServerNamesKey = useMemo(
@@ -304,6 +311,7 @@ export default function App() {
               onRemove={handleRemoveServer}
               onReorder={handleReorderServers}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+              savedServerOrder={savedServerOrder}
             />
           )}
           {activeTab === "tools" && (
