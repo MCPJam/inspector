@@ -48,7 +48,7 @@ function escapeHtml(text: string): string {
 
 /**
  * Hook for viewport-based highlighting.
- * Shows text immediately (unhighlighted), then applies syntax highlighting after debounce.
+ * Shows text immediately (using themed base color), then applies syntax highlighting after debounce.
  */
 function useViewportHighlight(
   content: string,
@@ -63,6 +63,7 @@ function useViewportHighlight(
   const debouncedHighlightRef = useRef<ReturnType<typeof debounce> | null>(
     null,
   );
+  const isFirstRender = useRef(true);
 
   // Create debounced highlight function once
   useEffect(() => {
@@ -79,6 +80,7 @@ function useViewportHighlight(
       setHighlightedHtml("");
       setPaddingTop(0);
       setPaddingBottom(0);
+      isFirstRender.current = true;
       return;
     }
 
@@ -99,13 +101,20 @@ function useViewportHighlight(
 
     const visibleContent = lines.slice(startLine, endLine + 1).join("\n");
 
-    // Immediately show unhighlighted text so user sees their keystrokes
-    setHighlightedHtml(escapeHtml(visibleContent));
+    // Always update padding immediately for smooth scrolling
     setPaddingTop(startLine * LINE_HEIGHT);
     setPaddingBottom(Math.max(0, totalLines - endLine - 1) * LINE_HEIGHT);
 
-    // Then apply syntax highlighting after debounce
-    debouncedHighlightRef.current?.(visibleContent);
+    if (isFirstRender.current) {
+      // Synchronous highlight on first render
+      setHighlightedHtml(highlightJson(visibleContent));
+      isFirstRender.current = false;
+    } else {
+      // Show escaped text immediately (inherits muted color from parent pre)
+      // Then apply full syntax highlighting after debounce
+      setHighlightedHtml(escapeHtml(visibleContent));
+      debouncedHighlightRef.current?.(visibleContent);
+    }
   }, [content, scrollTop, viewportHeight, enabled]);
 
   return { highlightedHtml, paddingTop, paddingBottom };
@@ -405,6 +414,7 @@ export function JsonEditorEdit({
               className={cn(
                 "absolute inset-0 p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto",
                 "pointer-events-none m-0",
+                "text-muted-foreground", // Base color for unhighlighted text during typing
               )}
               style={fontStyle}
               aria-hidden="true"

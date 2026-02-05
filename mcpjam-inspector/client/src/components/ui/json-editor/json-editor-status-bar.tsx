@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle } from "lucide-react";
+import { XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -44,18 +44,13 @@ export function JsonEditorStatusBar({
 
       {/* Right side: validation status */}
       <div className="flex items-center gap-2">
-        {isValid ? (
-          <span className="flex items-center gap-1 text-success transition-colors duration-300">
-            <CheckCircle className="h-3 w-3" />
-            Valid JSON
-          </span>
-        ) : (
+        {!isValid && (
           <Tooltip>
             <TooltipTrigger asChild>
               <span
                 className={cn(
-                  "flex items-center gap-1 text-destructive max-w-[300px] cursor-default",
-                  "transition-colors duration-300 json-status-error",
+                  "inline-flex items-center gap-1 max-w-[300px] cursor-default",
+                  "text-destructive transition-colors duration-300 json-status-error",
                 )}
               >
                 <XCircle className="h-3 w-3 flex-shrink-0" />
