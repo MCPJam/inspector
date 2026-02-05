@@ -197,8 +197,8 @@ export function ServerConnectionCard({
 
   return (
     <TooltipProvider>
-      <Card className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 px-2 py-2">
-        <div className="p-3 space-y-2">
+      <Card className="border border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/50 hover:shadow-md hover:bg-card/70 transition-all duration-200 px-2 py-2 h-full">
+        <div className="p-3 h-full flex flex-col gap-2">
           {/* Header Row - Split Left/Right */}
           <div className="flex items-start justify-between gap-4">
             {/* Left Side: Icon + Name/Transport/Version */}
@@ -369,10 +369,10 @@ export function ServerConnectionCard({
 
           {/* Command/URL Display */}
           <div
-            className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 break-all relative group"
+            className="font-mono text-xs text-muted-foreground bg-muted/30 p-2 rounded border border-border/30 relative group"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="pr-8">{commandDisplay}</div>
+            <div className="pr-8 break-all line-clamp-2">{commandDisplay}</div>
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -388,105 +388,107 @@ export function ServerConnectionCard({
             </button>
           </div>
 
-          {/* Server Info and Tunnel URL Row */}
-          {(hasInitInfo || serverTunnelUrl) && (
-            <div className="flex items-center justify-between gap-4">
-              {hasInitInfo && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsInfoModalOpen(true);
-                  }}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                >
-                  <span>{"View server info"}</span>
-                  {(isOpenAIAppServer || isOpenAIAppAndMCPAppServer) && (
-                    <img
-                      src="/openai_logo.png"
-                      alt="OpenAI App"
-                      className="h-4 w-4 flex-shrink-0"
-                      title="OpenAI App"
-                    />
-                  )}
-                  {(isMCPAppServer || isOpenAIAppAndMCPAppServer) && (
-                    <img
-                      src="/mcp.svg"
-                      alt="MCP App"
-                      className="h-4 w-4 flex-shrink-0 dark:invert"
-                      title="MCP App"
-                    />
-                  )}
-                </button>
-              )}
-              {serverTunnelUrl && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    copyToClipboard(serverTunnelUrl, "tunnel");
-                  }}
-                  className="flex items-center gap-1.5 text-xs text-primary hover:underline cursor-pointer"
-                >
-                  {copiedField === "tunnel" ? (
-                    <>
-                      <Check className="h-3 w-3" />
-                      <span>Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Cable className="h-3 w-3" />
-                      <span>Copy Tunnel Url</span>
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Error Alert for Failed Connections */}
-          {server.connectionStatus === "failed" && server.lastError && (
-            <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 p-2 rounded border border-red-200 dark:border-red-800/30">
-              <div className="break-all">
-                {isErrorExpanded
-                  ? server.lastError
-                  : server.lastError.length > 100
-                    ? `${server.lastError.substring(0, 100)}...`
-                    : server.lastError}
+          <div className="mt-auto flex flex-col gap-2">
+            {/* Server Info and Tunnel URL Row */}
+            {(hasInitInfo || serverTunnelUrl) && (
+              <div className="flex items-center justify-between gap-4">
+                {hasInitInfo && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsInfoModalOpen(true);
+                    }}
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    <span>{"View server info"}</span>
+                    {(isOpenAIAppServer || isOpenAIAppAndMCPAppServer) && (
+                      <img
+                        src="/openai_logo.png"
+                        alt="OpenAI App"
+                        className="h-4 w-4 flex-shrink-0"
+                        title="OpenAI App"
+                      />
+                    )}
+                    {(isMCPAppServer || isOpenAIAppAndMCPAppServer) && (
+                      <img
+                        src="/mcp.svg"
+                        alt="MCP App"
+                        className="h-4 w-4 flex-shrink-0 dark:invert"
+                        title="MCP App"
+                      />
+                    )}
+                  </button>
+                )}
+                {serverTunnelUrl && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(serverTunnelUrl, "tunnel");
+                    }}
+                    className="flex items-center gap-1.5 text-xs text-primary hover:underline cursor-pointer"
+                  >
+                    {copiedField === "tunnel" ? (
+                      <>
+                        <Check className="h-3 w-3" />
+                        <span>Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cable className="h-3 w-3" />
+                        <span>Copy Tunnel Url</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
-              {server.lastError.length > 100 && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsErrorExpanded(!isErrorExpanded);
-                  }}
-                  className="text-red-500/70 hover:text-red-500 mt-1 underline text-xs cursor-pointer"
-                >
-                  {isErrorExpanded ? "Show less" : "Show more"}
-                </button>
-              )}
-              {server.retryCount > 0 && (
-                <div className="text-red-500/70 mt-1">
-                  {server.retryCount} retry attempt
-                  {server.retryCount !== 1 ? "s" : ""}
-                </div>
-              )}
-            </div>
-          )}
+            )}
 
-          {server.connectionStatus === "failed" && (
-            <div className="text-muted-foreground text-xs">
-              Having trouble?{" "}
-              <a
-                href="https://docs.mcpjam.com/troubleshooting/common-errors"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline inline-flex items-center gap-1"
-                onClick={(e) => e.stopPropagation()}
-              >
-                Check out our troubleshooting page
-                <ExternalLink className="h-3 w-3" />
-              </a>
-            </div>
-          )}
+            {/* Error Alert for Failed Connections */}
+            {server.connectionStatus === "failed" && server.lastError && (
+              <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 p-2 rounded border border-red-200 dark:border-red-800/30">
+                <div className="break-all">
+                  {isErrorExpanded
+                    ? server.lastError
+                    : server.lastError.length > 100
+                      ? `${server.lastError.substring(0, 100)}...`
+                      : server.lastError}
+                </div>
+                {server.lastError.length > 100 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsErrorExpanded(!isErrorExpanded);
+                    }}
+                    className="text-red-500/70 hover:text-red-500 mt-1 underline text-xs cursor-pointer"
+                  >
+                    {isErrorExpanded ? "Show less" : "Show more"}
+                  </button>
+                )}
+                {server.retryCount > 0 && (
+                  <div className="text-red-500/70 mt-1">
+                    {server.retryCount} retry attempt
+                    {server.retryCount !== 1 ? "s" : ""}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {server.connectionStatus === "failed" && (
+              <div className="text-muted-foreground text-xs">
+                Having trouble?{" "}
+                <a
+                  href="https://docs.mcpjam.com/troubleshooting/common-errors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline inline-flex items-center gap-1"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  Check out our troubleshooting page
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            )}
+          </div>
         </div>
       </Card>
       <ServerInfoModal

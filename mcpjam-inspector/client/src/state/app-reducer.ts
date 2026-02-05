@@ -347,19 +347,23 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       if (!activeWorkspace) return state;
 
-      // Update order field for each server based on position in orderedNames array
-      const updatedServers: AppState["servers"] = {};
+      // Update order field for each server based on position in orderedNames array.
+      // Preserve existing entries rather than replacing the entire map, since `state.servers`
+      // also contains runtime state (connection status, init info, etc).
+      const updatedServers: AppState["servers"] = { ...state.servers };
       action.orderedNames.forEach((name, index) => {
-        const server = state.servers[name];
+        const server = updatedServers[name];
         if (server) {
           updatedServers[name] = { ...server, order: index };
         }
       });
 
-      // Also update workspace servers
-      const updatedWorkspaceServers: Record<string, ServerWithName> = {};
+      // Also update workspace servers (preserve any servers not currently in the view).
+      const updatedWorkspaceServers: Record<string, ServerWithName> = {
+        ...activeWorkspace.servers,
+      };
       action.orderedNames.forEach((name, index) => {
-        const server = activeWorkspace.servers[name];
+        const server = updatedWorkspaceServers[name];
         if (server) {
           updatedWorkspaceServers[name] = { ...server, order: index };
         }
