@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import posthog from "posthog-js";
+import { usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   Dialog,
@@ -48,6 +48,7 @@ export function ShareWorkspaceDialog({
   onWorkspaceShared,
   onLeaveWorkspace,
 }: ShareWorkspaceDialogProps) {
+  const posthog = usePostHog();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
