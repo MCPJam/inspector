@@ -201,7 +201,7 @@ async function processStream(
             input: chunk.input ?? {},
           });
           hasToolCalls = true;
-          writer.write(chunk);
+          writer.write({ ...chunk, toolCallId });
 
           if (requireToolApproval) {
             writer.write({
