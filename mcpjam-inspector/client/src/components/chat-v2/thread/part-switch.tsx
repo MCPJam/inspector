@@ -3,6 +3,8 @@ import { ToolUIPart, DynamicToolUIPart, UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
+import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps-renderer";
@@ -86,6 +88,7 @@ export function PartSwitch({
 
   // Get auth and app state for saving views
   const { isAuthenticated } = useConvexAuth();
+  const posthog = usePostHog();
   const appState = useSharedAppState();
 
   // Get the Convex workspace ID (sharedWorkspaceId) from the active workspace
@@ -146,6 +149,12 @@ export function PartSwitch({
       toolMetadata?: Record<string, unknown>,
     ) => {
       return async () => {
+        posthog.capture("save_as_view_clicked", {
+          location: "chat_tool_result",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+        });
+
         const data: ToolDataForSave = {
           uiType,
           toolName,
@@ -171,7 +180,7 @@ export function PartSwitch({
         await saveViewInstant(data);
       };
     },
-    [toolCallId, widgetDebugInfo, saveViewInstant],
+    [toolCallId, widgetDebugInfo, saveViewInstant, posthog],
   );
 
   if (isToolPart(part) || isDynamicTool(part)) {

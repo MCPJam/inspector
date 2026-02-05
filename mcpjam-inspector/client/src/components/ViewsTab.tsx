@@ -1,7 +1,9 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useConvexAuth } from "convex/react";
+import { usePostHog } from "posthog-js/react";
 import { Layers } from "lucide-react";
 import { toast } from "sonner";
+import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   ResizablePanelGroup,
@@ -31,6 +33,7 @@ interface ViewsTabProps {
 
 export function ViewsTab({ selectedServer }: ViewsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const posthog = usePostHog();
   const appState = useSharedAppState();
 
   // Get the Convex workspace ID from the active workspace
@@ -211,12 +214,30 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     };
   }, [selectedView]);
 
+  // Track views tab viewed
+  useEffect(() => {
+    posthog.capture("views_tab_viewed", {
+      location: "views_tab",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  }, [posthog]);
+
   // Handle view selection
-  const handleSelectView = useCallback((viewId: string) => {
-    setSelectedViewId(viewId);
-    // Reset loaded flag to trigger reload
-    loadedToolOutputForViewId.current = null;
-  }, []);
+  const handleSelectView = useCallback(
+    (viewId: string) => {
+      setSelectedViewId(viewId);
+      // Reset loaded flag to trigger reload
+      loadedToolOutputForViewId.current = null;
+
+      posthog.capture("view_selected", {
+        location: "views_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
+    },
+    [posthog],
+  );
 
   // Handle delete
   const handleDeleteView = useCallback(
@@ -231,6 +252,12 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
         toast.success(`View "${view.name}" deleted`);
 
+        posthog.capture("view_deleted", {
+          location: "views_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+        });
+
         // Clear selection if deleted view was selected
         if (selectedViewId === view._id) {
           setSelectedViewId(null);
@@ -242,16 +269,25 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         setDeletingViewId(null);
       }
     },
-    [selectedViewId, removeMcpView, removeOpenaiView],
+    [selectedViewId, removeMcpView, removeOpenaiView, posthog],
   );
 
   // Handle edit
-  const handleEditView = useCallback((view: AnyView) => {
-    setSelectedViewId(view._id);
-    setIsEditing(true);
-    // Reset loaded flag to trigger reload
-    loadedToolOutputForViewId.current = null;
-  }, []);
+  const handleEditView = useCallback(
+    (view: AnyView) => {
+      setSelectedViewId(view._id);
+      setIsEditing(true);
+      // Reset loaded flag to trigger reload
+      loadedToolOutputForViewId.current = null;
+
+      posthog.capture("view_edit_started", {
+        location: "views_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
+    },
+    [posthog],
+  );
 
   // Handle rename
   const handleRenameView = useCallback(
@@ -269,13 +305,19 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         }
 
         toast.success(`View renamed to "${newName}"`);
+
+        posthog.capture("view_renamed", {
+          location: "views_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+        });
       } catch (error) {
         console.error("Failed to rename view:", error);
         toast.error("Failed to rename view");
         throw error; // Re-throw so the sidebar knows to keep editing mode
       }
     },
-    [updateMcpView, updateOpenaiView],
+    [updateMcpView, updateOpenaiView, posthog],
   );
 
   // Handle duplicate
@@ -389,6 +431,12 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         }
 
         toast.success(`View duplicated as "${newName}"`);
+
+        posthog.capture("view_duplicated", {
+          location: "views_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+        });
       } catch (error) {
         console.error("Failed to duplicate view:", error);
         toast.error("Failed to duplicate view");
@@ -403,6 +451,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       createOpenaiView,
       generateMcpUploadUrl,
       generateOpenaiUploadUrl,
+      posthog,
     ],
   );
 
@@ -526,6 +575,12 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       setOriginalToolOutput(liveToolOutput);
 
       toast.success("View saved successfully");
+
+      posthog.capture("view_saved", {
+        location: "views_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
     } catch (error) {
       console.error("Failed to save view:", error);
       toast.error("Failed to save view");
@@ -544,6 +599,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     updateMcpView,
     updateOpenaiView,
     widgetsMap,
+    posthog,
   ]);
 
   // Handle running the tool with current input
@@ -584,13 +640,19 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       // Success - update liveToolOutput with new result
       setLiveToolOutput(response.result);
       toast.success("Tool executed successfully");
+
+      posthog.capture("view_tool_executed", {
+        location: "views_tab",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Execution failed";
       toast.error(msg);
     } finally {
       setIsRunning(false);
     }
-  }, [selectedView, liveToolInput, selectedServer, getServerConnectionStatus]);
+  }, [selectedView, liveToolInput, selectedServer, getServerConnectionStatus, posthog]);
 
   // Handler to go back to views list
   const handleBackToList = useCallback(() => {
