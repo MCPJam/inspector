@@ -144,8 +144,7 @@ export function ViewEditorPanel({
             ? {
                 toolInput: model.toolInput,
                 toolOutput: model.toolOutput,
-                widgetState:
-                  "widgetState" in model ? model.widgetState : null,
+                widgetState: "widgetState" in model ? model.widgetState : null,
               }
             : {
                 toolInput: model.toolInput,
