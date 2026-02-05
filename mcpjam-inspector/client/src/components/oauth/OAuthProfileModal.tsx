@@ -72,14 +72,6 @@ const describeRegistrationStrategy = (strategy: string): string => {
   return "Pre-registered";
 };
 
-const getHostFromUrl = (url: string): string => {
-  try {
-    return new URL(url).host || url;
-  } catch {
-    return url;
-  }
-};
-
 export function OAuthProfileModal({
   open,
   onOpenChange,

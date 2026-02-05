@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -68,6 +68,7 @@
     "@openrouter/ai-sdk-provider": "^2.0.2",
     "ai": "^6.0.50",
     "ollama-ai-provider-v2": "^1.5.2",
+    "posthog-node": "^5.24.10",
     "zod": "^4.1.12"
   },
   "engines": {

@@ -24,6 +24,7 @@ import { parseTemplate } from "url-template";
 interface ResourceTemplatesTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  onRegisterRefresh?: (refresh: () => void) => void;
 }
 
 // RFC 6570 compliant URI template parameter extraction
@@ -66,6 +67,7 @@ function buildUriFromTemplate(
 export function ResourceTemplatesTab({
   serverConfig,
   serverName,
+  onRegisterRefresh,
 }: ResourceTemplatesTabProps) {
   const [templates, setTemplates] = useState<MCPResourceTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("");
@@ -105,6 +107,11 @@ export function ResourceTemplatesTab({
       fetchTemplates();
     }
   }, [serverConfig, serverName]);
+
+  // Register refresh function for parent component
+  useEffect(() => {
+    onRegisterRefresh?.(fetchTemplates);
+  }, [onRegisterRefresh, fetchTemplates]);
 
   const fetchTemplates = async () => {
     if (!serverName) return;
@@ -230,29 +237,6 @@ export function ResourceTemplatesTab({
             {/* Left Panel - Templates List */}
             <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
               <div className="h-full flex flex-col border-r border-border bg-background">
-                {/* Header */}
-                <div className="flex items-center justify-between px-4 py-4 border-b border-border bg-background">
-                  <div className="flex items-center gap-3">
-                    <FileCode className="h-3 w-3 text-muted-foreground" />
-                    <h2 className="text-xs font-semibold text-foreground">
-                      Resource Templates
-                    </h2>
-                    <Badge variant="secondary" className="text-xs font-mono">
-                      {templates.length}
-                    </Badge>
-                  </div>
-                  <Button
-                    onClick={fetchTemplates}
-                    variant="ghost"
-                    size="sm"
-                    disabled={fetchingTemplates}
-                  >
-                    <RefreshCw
-                      className={`h-3 w-3 ${fetchingTemplates ? "animate-spin" : ""} cursor-pointer`}
-                    />
-                  </Button>
-                </div>
-
                 {/* Templates List */}
                 <div className="flex-1 overflow-hidden">
                   <ScrollArea className="h-full">
