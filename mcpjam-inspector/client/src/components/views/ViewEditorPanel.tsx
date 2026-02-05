@@ -199,13 +199,13 @@ export function ViewEditorPanel({
   if (isLoadingToolOutput) {
     return (
       <div className="flex flex-col h-full overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-muted/30">
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={onBack}
-              className="h-8 w-8 p-0"
+              className="h-7 w-7 p-0"
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
@@ -219,64 +219,70 @@ export function ViewEditorPanel({
     );
   }
 
+  // Left toolbar content: back button + name
+  const toolbarLeftContent = (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onBack}
+        className="h-7 w-7 p-0"
+      >
+        <ArrowLeft className="h-4 w-4" />
+      </Button>
+      {renderNameEditor()}
+    </div>
+  );
+
+  // Right toolbar content: Run + Save buttons
+  const toolbarRightContent = (
+    <div className="flex items-center gap-2">
+      {serverConnectionStatus === "connected" && onRun && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRun}
+          disabled={isRunning || isSaving}
+          className="h-7 px-2 text-xs"
+        >
+          {isRunning ? (
+            <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+          ) : (
+            <Play className="h-3.5 w-3.5 mr-1" />
+          )}
+          Run
+        </Button>
+      )}
+      <Button
+        size="sm"
+        onClick={handleSave}
+        disabled={!hasUnsavedChanges || isSaving || isRunning}
+        className="h-7 px-2 text-xs"
+      >
+        {isSaving ? (
+          <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+        ) : (
+          <Save className="h-3.5 w-3.5 mr-1" />
+        )}
+        Save
+      </Button>
+    </div>
+  );
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onBack}
-            className="h-8 w-8 p-0"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          {renderNameEditor()}
-        </div>
-        <div className="flex items-center gap-2">
-          {serverConnectionStatus === "connected" && onRun && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onRun}
-              disabled={isRunning || isSaving}
-            >
-              {isRunning ? (
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-              ) : (
-                <Play className="h-4 w-4 mr-1" />
-              )}
-              Run
-            </Button>
-          )}
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={!hasUnsavedChanges || isSaving || isRunning}
-          >
-            {isSaving ? (
-              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4 mr-1" />
-            )}
-            Save
-          </Button>
-        </div>
-      </div>
-
-      {/* JSON Editor */}
-      <div className="flex-1 overflow-hidden">
-        <JsonEditor
-          value={editorModel}
-          onChange={handleChange}
-          mode="edit"
-          showToolbar={true}
-          showModeToggle={false}
-          allowMaximize={true}
-          height="100%"
-        />
-      </div>
+      {/* JSON Editor with unified toolbar */}
+      <JsonEditor
+        value={editorModel}
+        onChange={handleChange}
+        mode="edit"
+        showToolbar={true}
+        showModeToggle={false}
+        allowMaximize={true}
+        height="100%"
+        toolbarLeftContent={toolbarLeftContent}
+        toolbarRightContent={toolbarRightContent}
+      />
     </div>
   );
 }

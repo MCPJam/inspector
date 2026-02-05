@@ -344,10 +344,7 @@ export function JsonEditorEdit({
       ref={containerRef}
       className={cn(
         "group relative flex w-full overflow-hidden bg-muted/30",
-        "transition-all duration-200",
-        !readOnly && isFocused && "ring-2 ring-ring/50",
         !isValid && "border-destructive",
-        !isValid && !readOnly && isFocused && "ring-destructive/30",
         className,
       )}
       style={containerStyle}

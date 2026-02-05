@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 export type JsonEditorMode = "view" | "edit";
 
 export interface JsonEditorProps {
@@ -31,6 +33,10 @@ export interface JsonEditorProps {
 
   // View-only mode: renders just the view without toolbar or edit capabilities
   viewOnly?: boolean;
+
+  // Custom toolbar content
+  toolbarLeftContent?: ReactNode;
+  toolbarRightContent?: ReactNode;
 }
 
 export interface CursorPosition {
