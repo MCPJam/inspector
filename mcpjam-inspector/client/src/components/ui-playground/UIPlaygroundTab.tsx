@@ -58,6 +58,7 @@ export function UIPlaygroundTab({
     displayMode,
     globals,
     isSidebarVisible,
+    selectedProtocol,
     setTools,
     setSelectedTool,
     setFormFields,
@@ -181,20 +182,20 @@ export function UIPlaygroundTab({
       const tool = tools[selectedTool];
       const uiType = detectUiTypeFromTool(tool);
       if (uiType === UIType.OPENAI_SDK_AND_MCP_APPS) {
-        setSelectedProtocol(UIType.OPENAI_SDK);
+        // Tool supports both protocols - only set default if no stored preference
+        const validProtocols = [UIType.MCP_APPS, UIType.OPENAI_SDK];
+        if (!selectedProtocol || !validProtocols.includes(selectedProtocol)) {
+          setSelectedProtocol(UIType.OPENAI_SDK);
+        }
       } else {
         setSelectedProtocol(uiType);
       }
       return;
     }
 
-    // No tool selected - detect predominant protocol from all tools
-    const toolMetaEntries = Object.values(toolsMetadata);
-    if (toolMetaEntries.length === 0) {
-      setSelectedProtocol(null);
-      return;
-    }
-  }, [selectedTool, toolsMetadata, setSelectedProtocol]);
+    // No tool selected - keep the stored protocol preference
+    // Don't reset to null here as it would clear the persisted user preference
+  }, [selectedTool, tools, setSelectedProtocol, selectedProtocol]);
 
   // Get invoking message from tool metadata
   const invokingMessage = useMemo(() => {

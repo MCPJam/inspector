@@ -183,6 +183,7 @@ const getInitialGlobals = (): PlaygroundGlobals => ({
 const STORAGE_KEY_SIDEBAR = "mcpjam-ui-playground-sidebar-visible";
 const STORAGE_KEY_CUSTOM_VIEWPORT = "mcpjam-ui-playground-custom-viewport";
 const STORAGE_KEY_DEVICE_TYPE = "mcpjam-ui-playground-device-type";
+const STORAGE_KEY_SELECTED_PROTOCOL = "mcpjam-ui-playground-selected-protocol";
 
 const getStoredVisibility = (key: string, defaultValue: boolean): boolean => {
   if (typeof window === "undefined") return defaultValue;
@@ -206,6 +207,18 @@ const getStoredDeviceType = (): DeviceType => {
     return stored as DeviceType;
   }
   return "desktop";
+};
+
+const getStoredSelectedProtocol = (): UIType | null => {
+  if (typeof window === "undefined") return null;
+  const stored = localStorage.getItem(STORAGE_KEY_SELECTED_PROTOCOL);
+  if (
+    stored &&
+    [UIType.MCP_APPS, UIType.OPENAI_SDK].includes(stored as UIType)
+  ) {
+    return stored as UIType;
+  }
+  return null;
 };
 
 /** Get default capabilities based on device type */
@@ -244,7 +257,7 @@ const initialState = {
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
   cspMode: "permissive" as CspMode,
   mcpAppsCspMode: "widget-declared" as CspMode,
-  selectedProtocol: null as UIType | null,
+  selectedProtocol: getStoredSelectedProtocol(),
   capabilities: getDefaultCapabilities("desktop"),
   safeAreaPreset: "none" as SafeAreaPreset,
   safeAreaInsets: SAFE_AREA_PRESETS["none"],
@@ -265,7 +278,6 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
       widgetUrl: null,
       widgetState: null,
       isWidgetTool: false,
-      selectedProtocol: null, // Reset protocol on tool change, will be set by UIPlaygroundTab
     }),
 
   setFormFields: (formFields) => set({ formFields }),
@@ -357,7 +369,12 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
 
   setMcpAppsCspMode: (mode) => set({ mcpAppsCspMode: mode }),
 
-  setSelectedProtocol: (protocol) => set({ selectedProtocol: protocol }),
+  setSelectedProtocol: (protocol) => {
+    if (protocol) {
+      localStorage.setItem(STORAGE_KEY_SELECTED_PROTOCOL, protocol);
+    }
+    return set({ selectedProtocol: protocol });
+  },
 
   setCapabilities: (newCapabilities) =>
     set((state) => ({
@@ -407,6 +424,8 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
         deviceType: storedDeviceType,
         customViewport: getStoredCustomViewport(),
         capabilities: getDefaultCapabilities(storedDeviceType),
+        // Preserve selected protocol from localStorage
+        selectedProtocol: getStoredSelectedProtocol(),
       };
     }),
 }));
