@@ -1,5 +1,10 @@
 import { CheckCircle, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { CursorPosition } from "./types";
 
 interface JsonEditorStatusBarProps {
@@ -45,16 +50,24 @@ export function JsonEditorStatusBar({
             Valid JSON
           </span>
         ) : (
-          <span
-            className={cn(
-              "flex items-center gap-1 text-destructive max-w-[300px] truncate",
-              "transition-colors duration-300 json-status-error",
-            )}
-            title={validationError ?? "Invalid JSON"}
-          >
-            <XCircle className="h-3 w-3 flex-shrink-0" />
-            {validationError ?? "Invalid JSON"}
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  "flex items-center gap-1 text-destructive max-w-[300px] cursor-default",
+                  "transition-colors duration-300 json-status-error",
+                )}
+              >
+                <XCircle className="h-3 w-3 flex-shrink-0" />
+                <span className="truncate">
+                  {validationError ?? "Invalid JSON"}
+                </span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-none text-center">
+              {validationError ?? "Invalid JSON"}
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
     </div>
