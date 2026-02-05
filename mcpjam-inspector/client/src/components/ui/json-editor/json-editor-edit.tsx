@@ -383,7 +383,7 @@ export function JsonEditorEdit({
       </div>
 
       {/* Editor area with overlay */}
-      <div className="relative flex-1 min-w-0 h-full overflow-auto">
+      <div className="relative flex-1 min-w-0 h-full overflow-hidden">
         {readOnly ? (
           /* Read-only mode: Use JsonHighlighter with per-value copy */
           <pre
@@ -406,7 +406,7 @@ export function JsonEditorEdit({
             <pre
               ref={highlightRef}
               className={cn(
-                "absolute inset-0 p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto",
+                "absolute inset-0 p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-hidden",
                 "pointer-events-none m-0",
                 "text-muted-foreground", // Base color for unhighlighted text during typing
               )}
