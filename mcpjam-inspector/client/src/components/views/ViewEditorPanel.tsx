@@ -196,6 +196,7 @@ export function ViewEditorPanel({
         mode="edit"
         showToolbar={true}
         showModeToggle={false}
+        wrapLongLinesInEdit={true}
         allowMaximize={true}
         height="100%"
         toolbarLeftContent={toolbarLeftContent}

@@ -53,6 +53,7 @@ export function JsonEditor({
   collapseStringsAfterLength,
   viewOnly = false,
   autoFormatOnEdit = true,
+  wrapLongLinesInEdit = false,
   toolbarLeftContent,
   toolbarRightContent,
 }: JsonEditorProps) {
@@ -248,6 +249,7 @@ export function JsonEditor({
               isValid={editor.isValid}
               height="100%"
               maxHeight={isMaximized ? undefined : maxHeight}
+              wrapLongLinesInEdit={wrapLongLinesInEdit}
             />
           )}
         </div>

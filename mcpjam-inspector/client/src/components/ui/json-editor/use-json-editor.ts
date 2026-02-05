@@ -39,6 +39,14 @@ function parseJson(content: string): { value: unknown; error: string | null } {
   }
 }
 
+function serializeParsedValue(value: unknown): string | null {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
 export function useJsonEditor({
   initialValue,
   initialContent: initialContentProp,
@@ -51,11 +59,16 @@ export function useJsonEditor({
     initialContentProp !== undefined
       ? initialContentProp
       : stringifyValue(initialValue);
+  const initialParsed = parseJson(initialContentFromProps);
   const [content, setContentInternal] = useState(initialContentFromProps);
   const contentRef = useRef(initialContentFromProps);
+  const lastEmittedParsedValueRef = useRef<string | null>(
+    initialParsed.error === null
+      ? serializeParsedValue(initialParsed.value)
+      : null,
+  );
   const [validationError, setValidationError] = useState<string | null>(() => {
-    const { error } = parseJson(initialContentFromProps);
-    return error;
+    return initialParsed.error;
   });
   const [cursorPosition, setCursorPosition] = useState<CursorPosition>(
     getDefaultCursorPosition,
@@ -102,22 +115,42 @@ export function useJsonEditor({
     ];
     historyIndexRef.current = 0;
     validateContent(newContent);
+    const parsed = parseJson(newContent);
+    lastEmittedParsedValueRef.current =
+      parsed.error === null ? serializeParsedValue(parsed.value) : null;
   }, [initialValue, initialContentProp, validateContent]);
 
   const notifyChangeCallbacks = useCallback(
     (newContent: string, parsedValue?: unknown, error?: string | null) => {
       onRawChange?.(newContent);
 
+      const emitOnChangeIfNeeded = (value: unknown) => {
+        const serialized = serializeParsedValue(value);
+
+        // Fallback for unexpected non-serializable values
+        if (serialized === null) {
+          onChange?.(value);
+          return;
+        }
+
+        if (serialized === lastEmittedParsedValueRef.current) {
+          return;
+        }
+
+        lastEmittedParsedValueRef.current = serialized;
+        onChange?.(value);
+      };
+
       if (error === undefined) {
         const result = parseJson(newContent);
         if (result.error === null) {
-          onChange?.(result.value);
+          emitOnChangeIfNeeded(result.value);
         }
         return;
       }
 
       if (error === null) {
-        onChange?.(parsedValue);
+        emitOnChangeIfNeeded(parsedValue);
       }
     },
     [onChange, onRawChange],

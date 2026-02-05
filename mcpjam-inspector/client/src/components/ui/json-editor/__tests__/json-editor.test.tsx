@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { JsonEditor } from "../json-editor";
 
 describe("JsonEditor", () => {
@@ -84,6 +84,35 @@ describe("JsonEditor", () => {
       await waitFor(() => {
         expect(onRawChange).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  describe("wrapLongLinesInEdit", () => {
+    it("enables soft wrapping in edit mode when configured", () => {
+      render(
+        <JsonEditor
+          rawContent='{"text":"long long long long long long"}'
+          mode="edit"
+          showToolbar={false}
+          wrapLongLinesInEdit={true}
+        />,
+      );
+
+      const textarea = screen.getByRole("textbox");
+      expect(textarea.getAttribute("wrap")).toBe("soft");
+    });
+
+    it("keeps wrapping disabled by default", () => {
+      render(
+        <JsonEditor
+          rawContent='{"text":"long long long long long long"}'
+          mode="edit"
+          showToolbar={false}
+        />,
+      );
+
+      const textarea = screen.getByRole("textbox");
+      expect(textarea.getAttribute("wrap")).toBe("off");
     });
   });
 });

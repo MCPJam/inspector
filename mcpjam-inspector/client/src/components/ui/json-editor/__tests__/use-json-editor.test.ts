@@ -134,6 +134,47 @@ describe("useJsonEditor", () => {
 
       expect(onRawChange).toHaveBeenCalledWith('{"valid": true}');
     });
+
+    it("does not call onChange for whitespace-only valid edits", () => {
+      const onChange = vi.fn();
+      const onRawChange = vi.fn();
+      const { result } = renderHook(() =>
+        useJsonEditor({
+          initialContent: '{"unchanged": true}',
+          onChange,
+          onRawChange,
+        }),
+      );
+
+      act(() => {
+        result.current.setContent('{\n  "unchanged": true\n}\n');
+      });
+
+      expect(onRawChange).toHaveBeenCalledWith('{\n  "unchanged": true\n}\n');
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("still calls onChange when parsed JSON changes after whitespace edits", () => {
+      const onChange = vi.fn();
+      const { result } = renderHook(() =>
+        useJsonEditor({
+          initialContent: '{"count": 1}',
+          onChange,
+        }),
+      );
+
+      act(() => {
+        result.current.setContent('{\n  "count": 1\n}\n');
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+
+      act(() => {
+        result.current.setContent('{\n  "count": 2\n}\n');
+      });
+
+      expect(onChange).toHaveBeenCalledWith({ count: 2 });
+    });
   });
 
   describe("validation", () => {
