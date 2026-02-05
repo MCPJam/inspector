@@ -128,6 +128,8 @@ interface ChatGPTAppRendererProps {
   isOffline?: boolean;
   /** Cached widget HTML URL for offline rendering */
   cachedWidgetHtmlUrl?: string;
+  /** Optional initial widget state (used by view previews/editor) */
+  initialWidgetState?: unknown;
 }
 
 // ============================================================================
@@ -633,6 +635,7 @@ export function ChatGPTAppRenderer({
   onExitFullscreen,
   isOffline,
   cachedWidgetHtmlUrl,
+  initialWidgetState,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
@@ -878,7 +881,7 @@ export function ChatGPTAppRenderer({
     setWidgetDebugInfo(resolvedToolCallId, {
       toolName,
       protocol: "openai-apps",
-      widgetState: null,
+      widgetState: initialWidgetState ?? null,
       globals: {
         theme: themeMode,
         displayMode: effectiveDisplayMode,
@@ -902,6 +905,7 @@ export function ChatGPTAppRenderer({
     deviceType,
     capabilities,
     safeAreaInsets,
+    initialWidgetState,
   ]);
 
   useEffect(() => {
@@ -1325,21 +1329,25 @@ export function ChatGPTAppRenderer({
     setModalSandboxReady(true);
     // Widget state is loaded from localStorage by widget-runtime initialization
     // Push current globals
+    const globals: Record<string, unknown> = {
+      theme: themeMode,
+      displayMode: "inline",
+      maxHeight: null,
+      locale,
+      safeArea: { insets: safeAreaInsets },
+      userAgent: {
+        device: { type: deviceType },
+        capabilities,
+      },
+      toolInput: resolvedToolInput,
+      toolOutput: resolvedToolOutput,
+    };
+    if (initialWidgetState !== undefined) {
+      globals.widgetState = initialWidgetState;
+    }
     modalSandboxRef.current?.postMessage({
       type: "openai:set_globals",
-      globals: {
-        theme: themeMode,
-        displayMode: "inline",
-        maxHeight: null,
-        locale,
-        safeArea: { insets: safeAreaInsets },
-        userAgent: {
-          device: { type: deviceType },
-          capabilities,
-        },
-        toolInput: resolvedToolInput,
-        toolOutput: resolvedToolOutput,
-      },
+      globals,
     });
   }, [
     themeMode,
@@ -1349,6 +1357,7 @@ export function ChatGPTAppRenderer({
     safeAreaInsets,
     resolvedToolInput,
     resolvedToolOutput,
+    initialWidgetState,
   ]);
 
   // Reset modal sandbox state when modal closes
@@ -1390,6 +1399,9 @@ export function ChatGPTAppRenderer({
       toolInput: resolvedToolInput,
       toolOutput: resolvedToolOutput,
     };
+    if (initialWidgetState !== undefined) {
+      globals.widgetState = initialWidgetState;
+    }
     if (typeof maxHeight === "number" && Number.isFinite(maxHeight))
       globals.maxHeight = maxHeight;
     postToWidget({ type: "openai:set_globals", globals });
@@ -1404,6 +1416,7 @@ export function ChatGPTAppRenderer({
     safeAreaInsets,
     resolvedToolInput,
     resolvedToolOutput,
+    initialWidgetState,
     isReady,
     modalOpen,
     postToWidget,

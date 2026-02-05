@@ -21,6 +21,8 @@ interface ViewPreviewProps {
   toolInputOverride?: unknown;
   /** Override toolOutput from parent for live editing */
   toolOutputOverride?: unknown;
+  /** Override widgetState from parent for live editing (OpenAI views) */
+  widgetStateOverride?: unknown;
   /** Override loading state from parent for live editing */
   isLoadingOverride?: boolean;
   /** Override toolOutput error from parent for live editing */
@@ -35,6 +37,7 @@ export function ViewPreview({
   serverConnectionStatus,
   toolInputOverride,
   toolOutputOverride,
+  widgetStateOverride,
   isLoadingOverride,
   toolOutputErrorOverride,
 }: ViewPreviewProps) {
@@ -189,6 +192,10 @@ export function ViewPreview({
 
   if (view.protocol === "openai-apps") {
     const openaiView = view as OpenaiAppView;
+    const effectiveWidgetState =
+      widgetStateOverride !== undefined
+        ? widgetStateOverride
+        : openaiView.widgetState;
     // Get outputTemplate from view or from toolMetadata (fallback for legacy views)
     const existingMetadata = view.toolMetadata as
       | Record<string, unknown>
@@ -221,6 +228,7 @@ export function ViewPreview({
         onCallTool={handleCallTool}
         onWidgetStateChange={handleWidgetStateChange}
         serverInfo={openaiView.serverInfo}
+        initialWidgetState={effectiveWidgetState}
         displayMode={displayMode}
         onDisplayModeChange={onDisplayModeChange}
         pipWidgetId={null}

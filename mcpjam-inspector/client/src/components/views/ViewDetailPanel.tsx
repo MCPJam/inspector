@@ -21,6 +21,8 @@ interface ViewDetailPanelProps {
   toolInputOverride?: unknown;
   /** Override toolOutput from parent for live editing */
   toolOutputOverride?: unknown;
+  /** Override widgetState from parent for live editing (OpenAI views) */
+  widgetStateOverride?: unknown;
   /** Override loading state from parent for live editing */
   isLoadingOverride?: boolean;
   /** Override toolOutput error from parent for live editing */
@@ -39,6 +41,7 @@ export function ViewDetailPanel({
   serverConnectionStatus,
   toolInputOverride,
   toolOutputOverride,
+  widgetStateOverride,
   isLoadingOverride,
   toolOutputErrorOverride,
   isEditing = false,
@@ -150,6 +153,7 @@ export function ViewDetailPanel({
               serverConnectionStatus={serverConnectionStatus}
               toolInputOverride={toolInputOverride}
               toolOutputOverride={toolOutputOverride}
+              widgetStateOverride={widgetStateOverride}
               isLoadingOverride={isLoadingOverride}
               toolOutputErrorOverride={toolOutputErrorOverride}
             />

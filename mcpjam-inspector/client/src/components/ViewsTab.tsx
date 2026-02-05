@@ -51,6 +51,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Live editing state for toolInput/toolOutput
   const [liveToolInput, setLiveToolInput] = useState<unknown>(null);
   const [liveToolOutput, setLiveToolOutput] = useState<unknown>(null);
+  const [liveWidgetState, setLiveWidgetState] = useState<unknown>(null);
   const [originalToolOutput, setOriginalToolOutput] = useState<unknown>(null);
   const [toolOutputError, setToolOutputError] = useState<string | null>(null);
   const [isLoadingToolOutput, setIsLoadingToolOutput] = useState(false);
@@ -104,6 +105,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         // Reset live editing state
         setLiveToolInput(null);
         setLiveToolOutput(null);
+        setLiveWidgetState(null);
         setOriginalToolOutput(null);
         setToolOutputError(null);
         setIsLoadingToolOutput(false);
@@ -145,6 +147,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       // Reset live state when no view selected
       setLiveToolInput(null);
       setLiveToolOutput(null);
+      setLiveWidgetState(null);
       setOriginalToolOutput(null);
       setToolOutputError(null);
       setIsLoadingToolOutput(false);
@@ -165,6 +168,11 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     // This ensures the UI immediately reflects the new view's data (or loading state)
     setLiveToolInput(selectedView.toolInput);
     setLiveToolOutput(null);
+    setLiveWidgetState(
+      selectedView.protocol === "openai-apps"
+        ? selectedView.widgetState ?? null
+        : null,
+    );
     setOriginalToolOutput(null);
     setToolOutputError(null);
     // Set loading state immediately if there's a URL to fetch
@@ -427,6 +435,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
             category: view.category,
             defaultContext: view.defaultContext,
             serverInfo: (view as any).serverInfo,
+            widgetState: view.widgetState,
           });
         }
 
@@ -457,9 +466,16 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
   // Handle live data changes from editor (for real-time preview)
   const handleEditorDataChange = useCallback(
-    (data: { toolInput: unknown; toolOutput: unknown }) => {
+    (data: {
+      toolInput: unknown;
+      toolOutput: unknown;
+      widgetState?: unknown;
+    }) => {
       setLiveToolInput(data.toolInput);
       setLiveToolOutput(data.toolOutput);
+      if ("widgetState" in data) {
+        setLiveWidgetState(data.widgetState);
+      }
     },
     [],
   );
@@ -476,12 +492,26 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       currentDisplayContext,
       selectedView.defaultContext,
     );
+    const selectedWidgetState =
+      selectedView.protocol === "openai-apps"
+        ? selectedView.widgetState ?? null
+        : null;
+    const widgetStateChanged =
+      selectedView.protocol === "openai-apps" &&
+      JSON.stringify(liveWidgetState ?? null) !==
+        JSON.stringify(selectedWidgetState);
 
-    return toolInputChanged || toolOutputChanged || contextChanged;
+    return (
+      toolInputChanged ||
+      toolOutputChanged ||
+      contextChanged ||
+      widgetStateChanged
+    );
   }, [
     selectedView,
     liveToolInput,
     liveToolOutput,
+    liveWidgetState,
     originalToolOutput,
     currentDisplayContext,
   ]);
@@ -498,6 +528,14 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         currentDisplayContext,
         selectedView.defaultContext,
       );
+      const selectedWidgetState =
+        selectedView.protocol === "openai-apps"
+          ? selectedView.widgetState ?? null
+          : null;
+      const widgetStateChanged =
+        selectedView.protocol === "openai-apps" &&
+        JSON.stringify(liveWidgetState ?? null) !==
+          JSON.stringify(selectedWidgetState);
 
       let toolOutputBlobId: string | undefined;
       let widgetHtmlBlobId: string | undefined;
@@ -525,7 +563,8 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
       // Get the current widget HTML from the debug store (captured by the renderer)
       const previewToolCallId = `view-preview-${selectedView._id}`;
-      const widgetHtml = widgetsMap.get(previewToolCallId)?.widgetHtml;
+      const previewWidgetDebugInfo = widgetsMap.get(previewToolCallId);
+      const widgetHtml = previewWidgetDebugInfo?.widgetHtml;
       if (widgetHtml) {
         // Upload new widget HTML blob
         const uploadUrl =
@@ -565,6 +604,14 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         updates.defaultContext = currentDisplayContext;
       }
 
+      if (selectedView.protocol === "openai-apps") {
+        if (widgetStateChanged) {
+          updates.widgetState = liveWidgetState ?? null;
+        } else if (previewWidgetDebugInfo !== undefined) {
+          updates.widgetState = previewWidgetDebugInfo.widgetState;
+        }
+      }
+
       if (selectedView.protocol === "mcp-apps") {
         await updateMcpView(updates);
       } else {
@@ -592,6 +639,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     hasLiveUnsavedChanges,
     liveToolInput,
     liveToolOutput,
+    liveWidgetState,
     originalToolOutput,
     currentDisplayContext,
     generateMcpUploadUrl,
@@ -667,6 +715,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     // Reset live editing state
     setLiveToolInput(null);
     setLiveToolOutput(null);
+    setLiveWidgetState(null);
     setOriginalToolOutput(null);
     loadedToolOutputForViewId.current = null;
   }, []);
@@ -746,6 +795,16 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               onBack={handleBackToList}
               initialToolOutput={originalToolOutput}
               liveToolOutput={liveToolOutput}
+              initialWidgetState={
+                selectedView.protocol === "openai-apps"
+                  ? selectedView.widgetState
+                  : undefined
+              }
+              liveWidgetState={
+                selectedView.protocol === "openai-apps"
+                  ? liveWidgetState
+                  : undefined
+              }
               isLoadingToolOutput={isLoadingToolOutput}
               onDataChange={handleEditorDataChange}
               isSaving={isSaving}
@@ -812,6 +871,11 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               isLoadingOverride={isLoadingToolOutput}
               toolOutputErrorOverride={toolOutputError}
               toolOutputOverride={liveToolOutput}
+              widgetStateOverride={
+                selectedView.protocol === "openai-apps"
+                  ? liveWidgetState
+                  : undefined
+              }
               isEditing={isEditing}
             />
           )}
