@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+// Update info type
+interface UpdateInfo {
+  version: string;
+  releaseNotes?: string;
+}
+
 // Define the API interface
 interface ElectronAPI {
   // App metadata
@@ -35,6 +41,14 @@ interface ElectronAPI {
     onCallback: (callback: (url: string) => void) => void;
     removeCallback: () => void;
   };
+
+  // Update operations
+  update: {
+    onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
+    removeUpdateReadyListener: () => void;
+    restartAndInstall: () => void;
+    simulateUpdate: () => void; // Dev only - for testing
+  };
 }
 
 // Expose protected methods that allow the renderer process to use
@@ -69,6 +83,22 @@ const electronAPI: ElectronAPI = {
     },
     removeCallback: () => {
       ipcRenderer.removeAllListeners("oauth-callback");
+    },
+  },
+
+  update: {
+    onUpdateReady: (callback: (info: UpdateInfo) => void) => {
+      ipcRenderer.on("update-ready", (_, info: UpdateInfo) => callback(info));
+    },
+    removeUpdateReadyListener: () => {
+      ipcRenderer.removeAllListeners("update-ready");
+    },
+    restartAndInstall: () => {
+      ipcRenderer.send("app:restart-for-update");
+    },
+    simulateUpdate: () => {
+      // Dev only - sends a fake update event for testing
+      ipcRenderer.send("app:simulate-update");
     },
   },
 };

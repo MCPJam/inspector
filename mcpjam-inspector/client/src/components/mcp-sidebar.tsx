@@ -26,6 +26,8 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
+import { useUpdateNotification } from "@/hooks/useUpdateNotification";
+import { Button } from "@/components/ui/button";
 import {
   listTools,
   type ListToolsResultWithMetadata,
@@ -153,6 +155,7 @@ export function MCPSidebar({
 }: MCPSidebarProps) {
   const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const { updateReady, restartAndInstall } = useUpdateNotification();
   const [toolsDataMap, setToolsDataMap] = useState<
     Record<string, ListToolsResultWithMetadata | null>
   >({});
@@ -250,6 +253,17 @@ export function MCPSidebar({
             className="h-4 w-auto"
           />
         </button>
+        {updateReady && (
+          <div className="px-2 pb-2">
+            <Button
+              size="sm"
+              onClick={restartAndInstall}
+              className="w-full bg-[#cf7345] hover:bg-[#b8623a] text-white h-7 text-xs font-medium rounded-md"
+            >
+              Update
+            </Button>
+          </div>
+        )}
       </SidebarHeader>
       <SidebarContent>
         {navigationSections.map((section, sectionIndex) => (

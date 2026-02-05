@@ -1,3 +1,8 @@
+export interface UpdateInfo {
+  version: string;
+  releaseNotes?: string;
+}
+
 export interface ElectronAPI {
   // App metadata
   app: {
@@ -25,6 +30,20 @@ export interface ElectronAPI {
     connect: (config: any) => Promise<any>;
     disconnect: (id: string) => Promise<void>;
     listServers: () => Promise<any[]>;
+  };
+
+  // OAuth operations
+  oauth: {
+    onCallback: (callback: (url: string) => void) => void;
+    removeCallback: () => void;
+  };
+
+  // Update operations
+  update: {
+    onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
+    removeUpdateReadyListener: () => void;
+    restartAndInstall: () => void;
+    simulateUpdate: () => void;
   };
 }
 
