@@ -48,7 +48,7 @@ chatV2.post("/", async (c) => {
     // Get all tools (MCP + skills)
     const mcpTools = await mcpClientManager.getToolsForAiSdk(
       selectedServers,
-      ...(requireToolApproval ? [{ needsApproval: requireToolApproval }] : []),
+      requireToolApproval ? { needsApproval: requireToolApproval } : undefined,
     );
     const { tools: skillTools, systemPromptSection: skillsPromptSection } =
       await getSkillToolsAndPrompt();

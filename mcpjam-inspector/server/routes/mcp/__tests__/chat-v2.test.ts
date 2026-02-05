@@ -163,10 +163,10 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       expect(res.status).toBe(200);
-      expect(manager.getToolsForAiSdk).toHaveBeenCalledWith([
-        "server-1",
-        "server-2",
-      ]);
+      expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+        ["server-1", "server-2"],
+        undefined,
+      );
     });
 
     it("returns streaming response", async () => {
