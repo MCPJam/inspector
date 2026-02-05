@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { ErrorBoundary } from "@/components/evals/ErrorBoundary";
 import { useJsonEditor } from "./use-json-editor";
 import { JsonEditorView } from "./json-editor-view";
@@ -8,6 +9,18 @@ import { JsonEditorEdit } from "./json-editor-edit";
 import { JsonEditorToolbar } from "./json-editor-toolbar";
 import { JsonEditorStatusBar } from "./json-editor-status-bar";
 import type { JsonEditorProps, JsonEditorMode } from "./types";
+
+function stringifyValue(value: unknown): string {
+  if (value === undefined) {
+    return "null";
+  }
+
+  try {
+    return JSON.stringify(value, null, 2) ?? "null";
+  } catch {
+    return "null";
+  }
+}
 
 function JsonEditorErrorFallback() {
   return (
@@ -39,6 +52,7 @@ export function JsonEditor({
   onCollapseChange,
   collapseStringsAfterLength,
   viewOnly = false,
+  autoFormatOnEdit = true,
   toolbarLeftContent,
   toolbarRightContent,
 }: JsonEditorProps) {
@@ -48,38 +62,57 @@ export function JsonEditor({
   // Mode state (controlled or uncontrolled)
   // Always call hooks to preserve hook order even in viewOnly mode
   const [internalMode, setInternalMode] = useState<JsonEditorMode>("view");
-  const mode = controlledMode ?? internalMode;
+  const mode = readOnly ? "view" : (controlledMode ?? internalMode);
   const [isMaximized, setIsMaximized] = useState(false);
 
-  // Track if there are unsaved changes
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const sourceContent = isRawMode ? (rawContent ?? "") : stringifyValue(value);
 
   // Editor hook for edit mode
   const editor = useJsonEditor({
     initialValue: isRawMode ? undefined : value,
     initialContent: isRawMode ? rawContent : undefined,
-    onChange: (newValue) => {
-      setHasUnsavedChanges(true);
-      onChange?.(newValue);
-    },
-    onRawChange: isRawMode
-      ? (content) => {
-          setHasUnsavedChanges(true);
-          onRawChange?.(content);
-        }
-      : undefined,
+    onChange,
+    onRawChange: isRawMode ? onRawChange : undefined,
     onValidationError,
   });
 
-  // Sync editor content when value/rawContent changes externally
+  const hasUnsavedChanges = editor.content !== sourceContent;
+  const previousModeRef = useRef<JsonEditorMode>(mode);
+  const hasMountedRef = useRef(false);
+
   useEffect(() => {
-    if (mode === "view") {
-      setHasUnsavedChanges(false);
+    const previousMode = previousModeRef.current;
+    const isFirstRun = !hasMountedRef.current;
+
+    hasMountedRef.current = true;
+    previousModeRef.current = mode;
+
+    if (viewOnly || readOnly || !autoFormatOnEdit) {
+      return;
     }
-  }, [value, rawContent, mode]);
+
+    const enteredEditMode =
+      mode === "edit" && (isFirstRun || previousMode !== "edit");
+    if (!enteredEditMode || !editor.isValid) {
+      return;
+    }
+
+    editor.format();
+  }, [
+    mode,
+    editor.format,
+    editor.isValid,
+    autoFormatOnEdit,
+    readOnly,
+    viewOnly,
+  ]);
 
   const handleModeChange = useCallback(
     (newMode: JsonEditorMode) => {
+      if (readOnly) {
+        return;
+      }
+
       // Warn before switching from edit to view if there are unsaved changes
       if (mode === "edit" && newMode === "view" && hasUnsavedChanges) {
         if (!editor.isValid) {
@@ -91,23 +124,23 @@ export function JsonEditor({
         }
       }
 
-      setHasUnsavedChanges(false);
       setInternalMode(newMode);
       onModeChange?.(newMode);
     },
-    [mode, hasUnsavedChanges, editor, onModeChange],
+    [mode, hasUnsavedChanges, editor, onModeChange, readOnly],
   );
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     let textToCopy: string;
     if (mode === "edit") {
       textToCopy = editor.content;
     } else if (isRawMode) {
       textToCopy = rawContent ?? "";
     } else {
-      textToCopy = JSON.stringify(value, null, 2);
+      textToCopy = stringifyValue(value);
     }
-    navigator.clipboard.writeText(textToCopy);
+
+    return copyToClipboard(textToCopy);
   }, [mode, editor.content, value, isRawMode, rawContent]);
 
   const handleEscape = useCallback(() => {
@@ -118,8 +151,9 @@ export function JsonEditor({
       if (!confirmed) return;
     }
     editor.reset();
-    handleModeChange("view");
-  }, [hasUnsavedChanges, editor, handleModeChange]);
+    setInternalMode("view");
+    onModeChange?.("view");
+  }, [hasUnsavedChanges, editor, onModeChange]);
 
   const toggleMaximize = useCallback(() => {
     setIsMaximized((prev) => !prev);

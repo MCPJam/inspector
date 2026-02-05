@@ -34,6 +34,9 @@ export interface JsonEditorProps {
   // View-only mode: renders just the view without toolbar or edit capabilities
   viewOnly?: boolean;
 
+  // Automatically format valid JSON when entering edit mode
+  autoFormatOnEdit?: boolean;
+
   // Custom toolbar content
   toolbarLeftContent?: ReactNode;
   toolbarRightContent?: ReactNode;

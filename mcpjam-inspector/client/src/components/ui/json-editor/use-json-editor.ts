@@ -11,12 +11,21 @@ interface HistoryEntry {
 }
 
 const MAX_HISTORY_SIZE = 50;
+const FALLBACK_JSON_CONTENT = "null";
+
+function getDefaultCursorPosition(): CursorPosition {
+  return { line: 1, column: 1 };
+}
 
 function stringifyValue(value: unknown): string {
+  if (value === undefined) {
+    return FALLBACK_JSON_CONTENT;
+  }
+
   try {
-    return JSON.stringify(value, null, 2);
+    return JSON.stringify(value, null, 2) ?? FALLBACK_JSON_CONTENT;
   } catch {
-    return String(value);
+    return FALLBACK_JSON_CONTENT;
   }
 }
 
@@ -38,23 +47,42 @@ export function useJsonEditor({
   onValidationError,
 }: UseJsonEditorOptions): UseJsonEditorReturn {
   // Use raw content if provided, otherwise stringify the value
-  const initialContent =
+  const initialContentFromProps =
     initialContentProp !== undefined
       ? initialContentProp
       : stringifyValue(initialValue);
-  const [content, setContentInternal] = useState(initialContent);
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const [cursorPosition, setCursorPosition] = useState<CursorPosition>({
-    line: 1,
-    column: 1,
+  const [content, setContentInternal] = useState(initialContentFromProps);
+  const contentRef = useRef(initialContentFromProps);
+  const [validationError, setValidationError] = useState<string | null>(() => {
+    const { error } = parseJson(initialContentFromProps);
+    return error;
   });
+  const [cursorPosition, setCursorPosition] = useState<CursorPosition>(
+    getDefaultCursorPosition,
+  );
 
   // History for undo/redo
   const historyRef = useRef<HistoryEntry[]>([
-    { content: initialContent, cursorPosition: { line: 1, column: 1 } },
+    {
+      content: initialContentFromProps,
+      cursorPosition: getDefaultCursorPosition(),
+    },
   ]);
   const historyIndexRef = useRef(0);
-  const isUndoRedoRef = useRef(false);
+
+  const validateContent = useCallback(
+    (text: string) => {
+      const parsed = parseJson(text);
+      setValidationError(parsed.error);
+      onValidationError?.(parsed.error);
+      return parsed;
+    },
+    [onValidationError],
+  );
+
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
 
   // Sync initial value/content when it changes externally
   useEffect(() => {
@@ -62,71 +90,86 @@ export function useJsonEditor({
       initialContentProp !== undefined
         ? initialContentProp
         : stringifyValue(initialValue);
-    if (newContent !== content && !isUndoRedoRef.current) {
-      setContentInternal(newContent);
-      historyRef.current = [
-        { content: newContent, cursorPosition: { line: 1, column: 1 } },
-      ];
-      historyIndexRef.current = 0;
-      // Validate the new content
-      const { error } = parseJson(newContent);
-      setValidationError(error);
-      onValidationError?.(error);
+    if (newContent === contentRef.current) {
+      return;
     }
-  }, [initialValue, initialContentProp]);
 
-  const validate = useCallback(
-    (text: string): boolean => {
-      const { error } = parseJson(text);
-      setValidationError(error);
-      onValidationError?.(error);
-      return error === null;
+    contentRef.current = newContent;
+    setContentInternal(newContent);
+    setCursorPosition(getDefaultCursorPosition());
+    historyRef.current = [
+      { content: newContent, cursorPosition: getDefaultCursorPosition() },
+    ];
+    historyIndexRef.current = 0;
+    validateContent(newContent);
+  }, [initialValue, initialContentProp, validateContent]);
+
+  const notifyChangeCallbacks = useCallback(
+    (newContent: string, parsedValue?: unknown, error?: string | null) => {
+      onRawChange?.(newContent);
+
+      if (error === undefined) {
+        const result = parseJson(newContent);
+        if (result.error === null) {
+          onChange?.(result.value);
+        }
+        return;
+      }
+
+      if (error === null) {
+        onChange?.(parsedValue);
+      }
     },
-    [onValidationError],
+    [onChange, onRawChange],
   );
 
   const setContent = useCallback(
     (newContent: string) => {
-      if (isUndoRedoRef.current) {
-        isUndoRedoRef.current = false;
-        setContentInternal(newContent);
-        validate(newContent);
-        onRawChange?.(newContent);
+      if (newContent === contentRef.current) {
         return;
       }
 
+      contentRef.current = newContent;
       setContentInternal(newContent);
-      validate(newContent);
+      const { value, error } = validateContent(newContent);
 
       // Add to history
       const currentIndex = historyIndexRef.current;
-      const history = historyRef.current;
+      let history = historyRef.current;
 
       // Remove any forward history if we're not at the end
       if (currentIndex < history.length - 1) {
-        historyRef.current = history.slice(0, currentIndex + 1);
+        history = history.slice(0, currentIndex + 1);
       }
 
-      // Add new entry
-      historyRef.current.push({ content: newContent, cursorPosition });
+      const currentEntry = history[history.length - 1];
+
+      if (!currentEntry || currentEntry.content !== newContent) {
+        history = [...history, { content: newContent, cursorPosition }];
+      }
 
       // Trim history if too large
-      if (historyRef.current.length > MAX_HISTORY_SIZE) {
-        historyRef.current = historyRef.current.slice(-MAX_HISTORY_SIZE);
+      if (history.length > MAX_HISTORY_SIZE) {
+        history = history.slice(-MAX_HISTORY_SIZE);
       }
 
-      historyIndexRef.current = historyRef.current.length - 1;
+      historyRef.current = history;
+      historyIndexRef.current = history.length - 1;
 
-      // Notify parent of raw content changes
-      onRawChange?.(newContent);
-
-      // Notify parent of valid parsed value changes
-      const { value, error } = parseJson(newContent);
-      if (error === null && onChange) {
-        onChange(value);
-      }
+      notifyChangeCallbacks(newContent, value, error);
     },
-    [cursorPosition, validate, onChange, onRawChange],
+    [cursorPosition, notifyChangeCallbacks, validateContent],
+  );
+
+  const applyHistoryEntry = useCallback(
+    (entry: HistoryEntry) => {
+      contentRef.current = entry.content;
+      setContentInternal(entry.content);
+      setCursorPosition(entry.cursorPosition);
+      const { value, error } = validateContent(entry.content);
+      notifyChangeCallbacks(entry.content, value, error);
+    },
+    [notifyChangeCallbacks, validateContent],
   );
 
   const undo = useCallback(() => {
@@ -134,28 +177,22 @@ export function useJsonEditor({
     const currentIndex = historyIndexRef.current;
 
     if (currentIndex > 0) {
-      isUndoRedoRef.current = true;
       historyIndexRef.current = currentIndex - 1;
       const entry = history[currentIndex - 1];
-      setContentInternal(entry.content);
-      setCursorPosition(entry.cursorPosition);
-      validate(entry.content);
+      applyHistoryEntry(entry);
     }
-  }, [validate]);
+  }, [applyHistoryEntry]);
 
   const redo = useCallback(() => {
     const history = historyRef.current;
     const currentIndex = historyIndexRef.current;
 
     if (currentIndex < history.length - 1) {
-      isUndoRedoRef.current = true;
       historyIndexRef.current = currentIndex + 1;
       const entry = history[currentIndex + 1];
-      setContentInternal(entry.content);
-      setCursorPosition(entry.cursorPosition);
-      validate(entry.content);
+      applyHistoryEntry(entry);
     }
-  }, [validate]);
+  }, [applyHistoryEntry]);
 
   const format = useCallback(() => {
     const { value, error } = parseJson(content);
@@ -166,15 +203,25 @@ export function useJsonEditor({
   }, [content, setContent]);
 
   const reset = useCallback(() => {
-    const newContent = stringifyValue(initialValue);
+    const newContent =
+      initialContentProp !== undefined
+        ? initialContentProp
+        : stringifyValue(initialValue);
+    contentRef.current = newContent;
     setContentInternal(newContent);
+    setCursorPosition(getDefaultCursorPosition());
     historyRef.current = [
-      { content: newContent, cursorPosition: { line: 1, column: 1 } },
+      { content: newContent, cursorPosition: getDefaultCursorPosition() },
     ];
     historyIndexRef.current = 0;
-    setValidationError(null);
-    onValidationError?.(null);
-  }, [initialValue, onValidationError]);
+    const { value, error } = validateContent(newContent);
+    notifyChangeCallbacks(newContent, value, error);
+  }, [
+    initialValue,
+    initialContentProp,
+    validateContent,
+    notifyChangeCallbacks,
+  ]);
 
   const getParsedValue = useCallback(() => {
     const { value, error } = parseJson(content);

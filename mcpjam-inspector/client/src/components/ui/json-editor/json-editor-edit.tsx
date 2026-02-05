@@ -10,6 +10,7 @@ import { JsonHighlighter } from "./json-highlighter";
 const LINE_HEIGHT = 20; // 20px per line (leading-5)
 const VIEWPORT_BUFFER_LINES = 30; // Buffer lines above/below viewport for highlighting
 const HIGHLIGHT_DEBOUNCE_MS = 150; // Debounce delay for syntax highlighting
+const EDITOR_VERTICAL_PADDING = 12; // p-3 top/bottom padding
 
 interface JsonEditorEditProps {
   content: string;
@@ -389,7 +390,7 @@ export function JsonEditorEdit({
           <pre
             ref={highlightRef}
             className={cn(
-              "p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto m-0 min-h-full",
+              "p-3 text-xs leading-5 whitespace-pre overflow-auto m-0 min-h-full",
               "select-text cursor-text",
             )}
             style={fontStyle}
@@ -406,7 +407,7 @@ export function JsonEditorEdit({
             <pre
               ref={highlightRef}
               className={cn(
-                "absolute inset-0 p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-hidden",
+                "absolute inset-0 p-3 text-xs leading-5 whitespace-pre overflow-hidden",
                 "pointer-events-none m-0",
                 "text-muted-foreground", // Base color for unhighlighted text during typing
               )}
@@ -426,7 +427,11 @@ export function JsonEditorEdit({
               <div
                 className="absolute left-0 right-0 h-5 bg-foreground/[0.03] pointer-events-none transition-transform duration-75"
                 style={{
-                  transform: `translateY(${(activeLine - 1) * 20 + 12}px)`,
+                  transform: `translateY(${
+                    (activeLine - 1) * LINE_HEIGHT -
+                    scrollTop +
+                    EDITOR_VERTICAL_PADDING
+                  }px)`,
                 }}
               />
             )}
@@ -435,6 +440,7 @@ export function JsonEditorEdit({
             <textarea
               ref={textareaRef}
               value={content}
+              wrap="off"
               onChange={(e) => onChange?.(e.target.value)}
               onScroll={handleScroll}
               onSelect={handleSelectionChange}
@@ -449,7 +455,7 @@ export function JsonEditorEdit({
                 "focus:outline-none",
                 "text-transparent caret-foreground",
                 "selection:bg-primary/20",
-                "overflow-auto whitespace-pre-wrap break-all",
+                "overflow-auto whitespace-pre",
               )}
               style={{ ...fontStyle, tabSize: 2 }}
             />
