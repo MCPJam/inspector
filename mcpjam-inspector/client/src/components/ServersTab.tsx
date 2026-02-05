@@ -117,7 +117,7 @@ function DraggableServerCard({
       style={style}
       {...attributes}
       {...listeners}
-      className={`cursor-grab active:cursor-grabbing ${isDragging ? "opacity-50" : ""}`}
+      className="h-full w-full cursor-grab active:cursor-grabbing"
     >
       <ServerConnectionCard
         server={item.server}
@@ -204,18 +204,48 @@ export function ServersTab({
 
   const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
 
-  // Convert servers object to sorted array for drag-and-drop reordering
-  const sortedServers = useMemo(() => {
+  const defaultOrderedNames = useMemo(() => {
     return Object.entries(connectedOrConnectingServerConfigs)
-      .map(([name, server]) => ({ name, server }))
+      .map(([name, server]) => ({ name, order: server.order }))
       .sort((a, b) => {
         // Sort by order field if present, otherwise by name
-        const orderA = a.server.order ?? Number.MAX_SAFE_INTEGER;
-        const orderB = b.server.order ?? Number.MAX_SAFE_INTEGER;
+        const orderA = a.order ?? Number.MAX_SAFE_INTEGER;
+        const orderB = b.order ?? Number.MAX_SAFE_INTEGER;
         if (orderA !== orderB) return orderA - orderB;
         return a.name.localeCompare(b.name);
-      });
+      })
+      .map((s) => s.name);
   }, [connectedOrConnectingServerConfigs]);
+
+  // Keep a local ordering so drag-and-drop works even when the upstream source of truth
+  // (e.g. Convex workspaces) does not immediately reflect ordering updates.
+  const [orderedServerNames, setOrderedServerNames] = useState<string[]>(
+    () => defaultOrderedNames,
+  );
+  useEffect(() => {
+    setOrderedServerNames((prev) => {
+      if (prev.length === 0) return defaultOrderedNames;
+
+      const next = prev.filter((name) =>
+        defaultOrderedNames.includes(name),
+      );
+      const missing = defaultOrderedNames.filter((name) => !next.includes(name));
+      return missing.length > 0 ? [...next, ...missing] : next;
+    });
+  }, [defaultOrderedNames.join("|")]);
+
+  const orderedServers = useMemo(() => {
+    return orderedServerNames
+      .map((name) => {
+        const server = connectedOrConnectingServerConfigs[name];
+        return server ? { name, server } : null;
+      })
+      .filter(Boolean) as Array<{ name: string; server: ServerWithName }>;
+  }, [orderedServerNames, connectedOrConnectingServerConfigs]);
+
+  const activeServer = activeId
+    ? connectedOrConnectingServerConfigs[activeId] ?? null
+    : null;
 
   // dnd-kit sensors for drag-and-drop
   // Require 8px movement before activating drag to allow button clicks inside cards
@@ -235,10 +265,13 @@ export function ServersTab({
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      const oldIndex = sortedServers.findIndex((s) => s.name === active.id);
-      const newIndex = sortedServers.findIndex((s) => s.name === over.id);
-      const newOrder = arrayMove(sortedServers, oldIndex, newIndex);
-      onReorder(newOrder.map((s) => s.name));
+      const oldIndex = orderedServerNames.findIndex((name) => name === active.id);
+      const newIndex = orderedServerNames.findIndex((name) => name === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
+        setOrderedServerNames(newOrder);
+        onReorder(newOrder);
+      }
     }
     setActiveId(null);
   };
@@ -571,13 +604,14 @@ export function ServersTab({
             collisionDetection={closestCenter}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
+            onDragCancel={() => setActiveId(null)}
           >
             <SortableContext
-              items={sortedServers.map((s) => s.name)}
+              items={orderedServerNames}
               strategy={rectSortingStrategy}
             >
-              <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
-                {sortedServers.map((item) => (
+              <div className="grid grid-cols-2 auto-rows-[240px] gap-6">
+                {orderedServers.map((item) => (
                   <DraggableServerCard
                     key={item.name}
                     item={item}
@@ -590,17 +624,19 @@ export function ServersTab({
                 ))}
               </div>
             </SortableContext>
-            <DragOverlay>
+            <DragOverlay dropAnimation={null}>
               {activeId ? (
-                <div className="cursor-grabbing opacity-90">
-                  <ServerConnectionCard
-                    server={sortedServers.find((s) => s.name === activeId)!.server}
-                    onDisconnect={() => {}}
-                    onReconnect={() => {}}
-                    onEdit={() => {}}
-                    onRemove={() => {}}
-                    sharedTunnelUrl={tunnelUrl}
-                  />
+                <div className="cursor-grabbing h-60">
+                  {activeServer ? (
+                    <ServerConnectionCard
+                      server={activeServer}
+                      onDisconnect={() => {}}
+                      onReconnect={() => {}}
+                      onEdit={() => {}}
+                      onRemove={() => {}}
+                      sharedTunnelUrl={tunnelUrl}
+                    />
+                  ) : null}
                 </div>
               ) : null}
             </DragOverlay>
@@ -678,9 +714,9 @@ export function ServersTab({
 
   const renderLoadingContent = () => (
     <div className="flex-1 p-6">
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <Skeleton className="h-48 w-full rounded-lg" />
-        <Skeleton className="h-48 w-full rounded-lg" />
+      <div className="grid grid-cols-2 auto-rows-[240px] gap-6">
+        <Skeleton className="h-full w-full rounded-lg" />
+        <Skeleton className="h-full w-full rounded-lg" />
       </div>
     </div>
   );
