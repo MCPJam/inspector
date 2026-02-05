@@ -558,9 +558,10 @@ export function ToolPart({
                 className="h-7 px-3 text-xs border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400"
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (!approvalId) return;
                   setApprovalVisualState("approved");
                   setUserExpanded(false);
-                  onApprove?.(approvalId!);
+                  onApprove?.(approvalId);
                 }}
               >
                 <Check className="h-3 w-3 mr-1" />
@@ -573,9 +574,10 @@ export function ToolPart({
                 className="h-7 px-3 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (!approvalId) return;
                   setApprovalVisualState("denied");
                   setUserExpanded(false);
-                  onDeny?.(approvalId!);
+                  onDeny?.(approvalId);
                 }}
               >
                 <X className="h-3 w-3 mr-1" />
