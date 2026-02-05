@@ -616,6 +616,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               view={selectedView}
               onBack={handleBackToList}
               initialToolOutput={originalToolOutput}
+              liveToolOutput={liveToolOutput}
               isLoadingToolOutput={isLoadingToolOutput}
               onDataChange={handleEditorDataChange}
               isSaving={isSaving}

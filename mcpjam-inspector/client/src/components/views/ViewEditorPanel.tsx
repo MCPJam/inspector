@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Save, Loader2, ArrowLeft, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/ui/json-editor";
@@ -16,6 +16,8 @@ interface ViewEditorPanelProps {
   onBack: () => void;
   /** Initial toolOutput loaded from blob (provided by parent) */
   initialToolOutput?: unknown;
+  /** Live toolOutput that updates when Run executes */
+  liveToolOutput?: unknown;
   /** Whether toolOutput is still loading */
   isLoadingToolOutput?: boolean;
   /** Callback when editor data changes */
@@ -38,6 +40,7 @@ export function ViewEditorPanel({
   view,
   onBack,
   initialToolOutput,
+  liveToolOutput,
   isLoadingToolOutput,
   onDataChange,
   isSaving = false,
@@ -53,6 +56,9 @@ export function ViewEditorPanel({
     toolOutput: initialToolOutput ?? null,
   });
 
+  // Track the previous liveToolOutput to detect external updates (e.g., from Run)
+  const prevLiveToolOutputRef = useRef(liveToolOutput);
+
   // Update editor model when view changes or initialToolOutput loads
   useEffect(() => {
     setEditorModel({
@@ -60,6 +66,18 @@ export function ViewEditorPanel({
       toolOutput: initialToolOutput ?? null,
     });
   }, [view._id, initialToolOutput]);
+
+  // Update only toolOutput when liveToolOutput changes from parent (e.g., after Run)
+  // This preserves the user's toolInput edits while showing the new output
+  useEffect(() => {
+    if (liveToolOutput !== prevLiveToolOutputRef.current) {
+      prevLiveToolOutputRef.current = liveToolOutput;
+      setEditorModel((prev) => ({
+        ...prev,
+        toolOutput: liveToolOutput ?? null,
+      }));
+    }
+  }, [liveToolOutput]);
 
   const handleChange = useCallback(
     (newValue: unknown) => {
@@ -95,6 +113,7 @@ export function ViewEditorPanel({
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
+            <span className="font-medium text-sm truncate">{view.name}</span>
           </div>
         </div>
         <div className="flex-1 flex items-center justify-center">
@@ -117,6 +136,7 @@ export function ViewEditorPanel({
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
+          <span className="font-medium text-sm truncate">{view.name}</span>
         </div>
         <div className="flex items-center gap-2">
           {serverConnectionStatus === "connected" && onRun && (
