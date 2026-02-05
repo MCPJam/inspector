@@ -359,6 +359,20 @@ async function handlePendingApprovals(
     return false;
   }
 
+  // Collect existing tool-result IDs once to avoid re-processing approvals
+  const existingResultIds = new Set<string>();
+  for (const msg of messageHistory) {
+    if (msg?.role === "tool" && Array.isArray((msg as any).content)) {
+      for (const part of (msg as any).content) {
+        if (part?.type === "tool-result") {
+          existingResultIds.add((part as any).toolCallId);
+        }
+      }
+    }
+  }
+
+  let didHandle = false;
+
   // Emit denied tool notifications to the client and add tool-result entries
   // to messageHistory so the LLM knows which tools were denied.
   // NOTE: convertToModelMessages does NOT produce tool-results for denied tools
@@ -372,6 +386,7 @@ async function handlePendingApprovals(
     }> = [];
 
     for (const toolCallId of deniedToolCallIds) {
+      if (existingResultIds.has(toolCallId)) continue;
       writer.write({
         type: "tool-output-denied",
         toolCallId,
@@ -388,24 +403,16 @@ async function handlePendingApprovals(
       });
     }
 
-    messageHistory.push({
-      role: "tool",
-      content: deniedResultParts,
-    } as ModelMessage);
-  }
-
-  // Execute approved tools: collect tool calls that were approved but don't have results yet
-  const existingResultIds = new Set<string>();
-  for (const msg of messageHistory) {
-    if (msg?.role === "tool" && Array.isArray((msg as any).content)) {
-      for (const part of (msg as any).content) {
-        if (part?.type === "tool-result") {
-          existingResultIds.add((part as any).toolCallId);
-        }
-      }
+    if (deniedResultParts.length > 0) {
+      messageHistory.push({
+        role: "tool",
+        content: deniedResultParts,
+      } as ModelMessage);
+      didHandle = true;
     }
   }
 
+  // Execute approved tools: collect tool calls that were approved but don't have results yet
   const needsExecution = [...approvedToolCallIds].some(
     (id) => !existingResultIds.has(id),
   );
@@ -418,9 +425,10 @@ async function handlePendingApprovals(
 
     const newMessages = messageHistory.slice(beforeExecLength);
     emitToolResults(writer, newMessages);
+    didHandle = true;
   }
 
-  return true;
+  return didHandle;
 }
 
 /**
