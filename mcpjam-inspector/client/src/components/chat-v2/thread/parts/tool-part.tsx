@@ -83,6 +83,8 @@ export function ToolPart({
   const needsApproval = state === "approval-requested" && !!approvalId;
   const [approvalVisualState, setApprovalVisualState] =
     useState<ApprovalVisualState>("pending");
+  const isDenied = approvalVisualState === "denied" || state === "output-denied";
+  const hideAppControls = isDenied || needsApproval;
   const [userExpanded, setUserExpanded] = useState(false);
   const isExpanded = needsApproval || userExpanded;
   const [activeDebugTab, setActiveDebugTab] = useState<
@@ -104,7 +106,8 @@ export function ToolPart({
   const showDisplayModeControls =
     displayMode !== undefined &&
     onDisplayModeChange !== undefined &&
-    hasWidgetDebug;
+    hasWidgetDebug &&
+    !hideAppControls;
 
   const displayModeOptions: {
     mode: DisplayMode;
@@ -277,7 +280,7 @@ export function ToolPart({
               </div>
             </span>
           )}
-          {hasWidgetDebug && (
+          {hasWidgetDebug && !hideAppControls && (
             <>
               {showDisplayModeControls && hasWidgetDebug && (
                 <div className="h-4 w-px bg-border/40" />
