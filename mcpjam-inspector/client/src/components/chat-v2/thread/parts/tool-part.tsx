@@ -187,9 +187,9 @@ export function ToolPart({
       className={cn(
         "rounded-lg border text-xs",
         needsApproval && approvalVisualState === "pending"
-          ? "border-amber-500/40 bg-amber-500/5"
+          ? "border-pending/40 bg-pending/5"
           : needsApproval && approvalVisualState === "approved"
-            ? "border-emerald-500/40 bg-emerald-500/5"
+            ? "border-success/40 bg-success/5"
             : needsApproval && approvalVisualState === "denied"
               ? "border-destructive/40 bg-destructive/5"
               : "border-border/50 bg-background/70",
@@ -215,12 +215,12 @@ export function ToolPart({
             </span>
           </span>
           {needsApproval && approvalVisualState === "pending" && (
-            <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+            <span className="text-[11px] font-medium text-pending-foreground dark:text-pending">
               Approve tool call?
             </span>
           )}
           {needsApproval && approvalVisualState === "approved" && (
-            <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            <span className="flex items-center gap-1 text-[11px] font-medium text-success dark:text-success">
               <ShieldCheck className="h-3.5 w-3.5" />
               Approved
             </span>
@@ -555,7 +555,7 @@ export function ToolPart({
                 type="button"
                 size="sm"
                 variant="outline"
-                className="h-7 px-3 text-xs border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400"
+                className="h-7 px-3 text-xs border-success/40 text-success hover:bg-success/10"
                 onClick={(e) => {
                   e.stopPropagation();
                   if (!approvalId) return;

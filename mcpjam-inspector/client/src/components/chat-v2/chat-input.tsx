@@ -436,14 +436,14 @@ export function ChatInput({
                 <TooltipTrigger asChild>
                   <Button
                     type="button"
-                    variant={requireToolApproval ? "secondary" : "ghost"}
+                    variant="ghost"
                     size="icon"
                     onClick={() =>
                       onRequireToolApprovalChange(!requireToolApproval)
                     }
-                    className="h-8 w-8"
+                    className={cn("h-8 w-8", requireToolApproval && "bg-success/10 hover:bg-success/15")}
                   >
-                    <ShieldCheck className="h-4 w-4" />
+                    <ShieldCheck className={cn("h-4 w-4", requireToolApproval && "text-success")} />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
