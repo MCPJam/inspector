@@ -441,15 +441,24 @@ export function ChatInput({
                     onClick={() =>
                       onRequireToolApprovalChange(!requireToolApproval)
                     }
-                    className={cn("h-8 w-8", requireToolApproval && "bg-success/10 hover:bg-success/15")}
+                    className={cn(
+                      "h-8 w-8",
+                      requireToolApproval &&
+                        "bg-success/10 hover:bg-success/15",
+                    )}
                   >
-                    <ShieldCheck className={cn("h-4 w-4", requireToolApproval && "text-success")} />
+                    <ShieldCheck
+                      className={cn(
+                        "h-4 w-4",
+                        requireToolApproval && "text-success",
+                      )}
+                    />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
                   {requireToolApproval
-                    ? "Require tool approval (on)"
-                    : "Auto-approve tools"}
+                    ? "Turn off tool approval"
+                    : "Require approval before tools run"}
                 </TooltipContent>
               </Tooltip>
             )}
