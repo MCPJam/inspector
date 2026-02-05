@@ -40,7 +40,7 @@ import {
 import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp-prompt-result-card";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
-import posthog from "posthog-js";
+import { usePostHog } from "posthog-js/react";
 
 interface ChatInputProps {
   value: string;
@@ -126,6 +126,7 @@ export function ChatInput({
   xrayMode = false,
   onXrayModeChange,
 }: ChatInputProps) {
+  const posthog = usePostHog();
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);

@@ -20,7 +20,7 @@ import {
   getXRayPayload,
   type XRayPayloadResponse,
 } from "@/lib/apis/mcp-xray-api";
-import posthog from "posthog-js";
+import { usePostHog } from "posthog-js/react";
 
 interface XRaySnapshotViewProps {
   systemPrompt: string | undefined;
@@ -42,6 +42,7 @@ export function XRaySnapshotView({
   selectedServers,
   onClose,
 }: XRaySnapshotViewProps) {
+  const posthog = usePostHog();
   const [payload, setPayload] = useState<XRayPayloadResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
