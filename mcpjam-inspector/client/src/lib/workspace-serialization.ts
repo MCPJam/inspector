@@ -10,6 +10,7 @@ export function serializeServersForSharing(
       name: server.name,
       enabled: server.enabled,
       useOAuth: server.useOAuth,
+      order: server.order,
     };
 
     if (server.config) {
@@ -119,6 +120,7 @@ export function deserializeServersFromConvex(
       retryCount: 0,
       enabled: serverData.enabled ?? false,
       useOAuth: serverData.useOAuth ?? false,
+      order: serverData.order,
     };
 
     // Handle oauthFlowProfile from legacy nested structure

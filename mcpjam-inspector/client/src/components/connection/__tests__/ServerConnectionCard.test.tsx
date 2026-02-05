@@ -283,6 +283,19 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("View server info")).toBeInTheDocument();
     });
+
+    it("shows view server info button when disconnected with init info", () => {
+      const server = createServer({
+        connectionStatus: "disconnected",
+        initializationInfo: {
+          serverCapabilities: { tools: {} },
+          protocolVersion: "2024-11-05",
+        },
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(screen.getByText("View server info")).toBeInTheDocument();
+    });
   });
 
   describe("tunnel URL", () => {
