@@ -12,6 +12,7 @@ interface JsonEditorStatusBarProps {
   isValid: boolean;
   validationError?: string | null;
   characterCount: number;
+  performanceModeMessage?: string;
   className?: string;
 }
 
@@ -20,6 +21,7 @@ export function JsonEditorStatusBar({
   isValid,
   validationError,
   characterCount,
+  performanceModeMessage,
   className,
 }: JsonEditorStatusBarProps) {
   return (
@@ -44,6 +46,9 @@ export function JsonEditorStatusBar({
 
       {/* Right side: validation status */}
       <div className="flex items-center gap-2">
+        {performanceModeMessage && (
+          <span className="text-muted-foreground">{performanceModeMessage}</span>
+        )}
         {!isValid && (
           <Tooltip>
             <TooltipTrigger asChild>

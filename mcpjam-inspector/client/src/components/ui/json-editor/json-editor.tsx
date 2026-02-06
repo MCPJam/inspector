@@ -8,7 +8,11 @@ import { JsonEditorView } from "./json-editor-view";
 import { JsonEditorEdit } from "./json-editor-edit";
 import { JsonEditorToolbar } from "./json-editor-toolbar";
 import { JsonEditorStatusBar } from "./json-editor-status-bar";
-import type { JsonEditorProps, JsonEditorMode } from "./types";
+import {
+  DEFAULT_LARGE_EDIT_THRESHOLD_CHARS,
+  type JsonEditorProps,
+  type JsonEditorMode,
+} from "./types";
 
 function stringifyValue(value: unknown): string {
   if (value === undefined) {
@@ -46,6 +50,9 @@ export function JsonEditor({
   maxHeight,
   className,
   onValidationError,
+  largeEditThresholdChars = DEFAULT_LARGE_EDIT_THRESHOLD_CHARS,
+  onRegisterFlushPendingValidation,
+  onDirtyChange,
   collapsible = false,
   defaultExpandDepth,
   collapsedPaths,
@@ -75,9 +82,11 @@ export function JsonEditor({
     onChange,
     onRawChange: isRawMode ? onRawChange : undefined,
     onValidationError,
+    largeEditThresholdChars,
   });
 
   const hasUnsavedChanges = editor.content !== sourceContent;
+  const isLargeEditMode = mode === "edit" && editor.isLargeEditMode;
   const previousModeRef = useRef<JsonEditorMode>(mode);
   const hasMountedRef = useRef(false);
 
@@ -88,7 +97,7 @@ export function JsonEditor({
     hasMountedRef.current = true;
     previousModeRef.current = mode;
 
-    if (viewOnly || readOnly || !autoFormatOnEdit) {
+    if (viewOnly || readOnly || !autoFormatOnEdit || isLargeEditMode) {
       return;
     }
 
@@ -106,7 +115,16 @@ export function JsonEditor({
     autoFormatOnEdit,
     readOnly,
     viewOnly,
+    isLargeEditMode,
   ]);
+
+  useEffect(() => {
+    onRegisterFlushPendingValidation?.(editor.flushPendingValidation);
+  }, [editor.flushPendingValidation, onRegisterFlushPendingValidation]);
+
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onDirtyChange]);
 
   const handleModeChange = useCallback(
     (newMode: JsonEditorMode) => {
@@ -116,7 +134,8 @@ export function JsonEditor({
 
       // Warn before switching from edit to view if there are unsaved changes
       if (mode === "edit" && newMode === "view" && hasUnsavedChanges) {
-        if (!editor.isValid) {
+        const isValid = editor.flushPendingValidation();
+        if (!isValid) {
           const confirmed = window.confirm(
             "The JSON is invalid. Switching to view mode will lose your changes. Continue?",
           );
@@ -221,6 +240,7 @@ export function JsonEditor({
             onToggleMaximize={toggleMaximize}
             allowMaximize={allowMaximize}
             isValid={editor.isValid}
+            isLargeEditMode={isLargeEditMode}
             leftContent={toolbarLeftContent}
             rightContent={toolbarRightContent}
           />
@@ -250,6 +270,13 @@ export function JsonEditor({
               height="100%"
               maxHeight={isMaximized ? undefined : maxHeight}
               wrapLongLinesInEdit={wrapLongLinesInEdit}
+              disableSyntaxHighlighting={isLargeEditMode}
+              showLineNumbers={!isLargeEditMode}
+              showActiveLineHighlight={!isLargeEditMode}
+              useNativeUndoRedo={isLargeEditMode}
+              onBlurValidate={
+                isLargeEditMode ? editor.flushPendingValidation : undefined
+              }
             />
           )}
         </div>
@@ -261,6 +288,11 @@ export function JsonEditor({
             isValid={editor.isValid}
             validationError={editor.validationError}
             characterCount={editor.content.length}
+            performanceModeMessage={
+              isLargeEditMode
+                ? "Performance mode active · validation runs on blur/save/run"
+                : undefined
+            }
           />
         )}
       </div>

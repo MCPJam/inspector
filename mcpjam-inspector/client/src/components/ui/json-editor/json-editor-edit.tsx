@@ -26,6 +26,11 @@ interface JsonEditorEditProps {
   maxHeight?: string | number;
   collapseStringsAfterLength?: number;
   wrapLongLinesInEdit?: boolean;
+  disableSyntaxHighlighting?: boolean;
+  showLineNumbers?: boolean;
+  showActiveLineHighlight?: boolean;
+  useNativeUndoRedo?: boolean;
+  onBlurValidate?: () => void;
 }
 
 interface LineLayout {
@@ -161,6 +166,11 @@ export function JsonEditorEdit({
   maxHeight,
   collapseStringsAfterLength,
   wrapLongLinesInEdit = false,
+  disableSyntaxHighlighting = false,
+  showLineNumbers = true,
+  showActiveLineHighlight = true,
+  useNativeUndoRedo = false,
+  onBlurValidate,
 }: JsonEditorEditProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
@@ -175,17 +185,28 @@ export function JsonEditorEdit({
     DEFAULT_CHARS_PER_VISUAL_LINE,
   );
   const lineWrapEnabled = wrapLongLinesInEdit && !readOnly;
-  const lines = useMemo(() => content.split("\n"), [content]);
-  const lineLayouts = useMemo(
-    () => buildLineLayouts(lines, lineWrapEnabled, charsPerVisualLine),
-    [charsPerVisualLine, lineWrapEnabled, lines],
+  const shouldComputeLineLayout =
+    showLineNumbers || (showActiveLineHighlight && !disableSyntaxHighlighting);
+  const lines = useMemo(
+    () => (shouldComputeLineLayout ? content.split("\n") : []),
+    [content, shouldComputeLineLayout],
   );
-  const lineCount = lines.length;
+  const lineLayouts = useMemo(
+    () =>
+      shouldComputeLineLayout
+        ? buildLineLayouts(lines, lineWrapEnabled, charsPerVisualLine)
+        : [],
+    [charsPerVisualLine, lineWrapEnabled, lines, shouldComputeLineLayout],
+  );
+  const lineCount = shouldComputeLineLayout ? lines.length : 1;
   const activeLineIndex = Math.min(Math.max(activeLine - 1, 0), lineCount - 1);
   const activeLineLayout = lineLayouts[activeLineIndex];
   const activeLineTop = activeLineLayout?.top ?? 0;
   const activeLineHeight = activeLineLayout?.height ?? LINE_HEIGHT;
   const useViewportBasedHighlighting = !readOnly && !lineWrapEnabled;
+  const shouldShowHighlighting = !disableSyntaxHighlighting;
+  const useViewportHighlighting =
+    useViewportBasedHighlighting && shouldShowHighlighting;
   const activeHighlightOffset =
     activeLineTop - scrollTop + EDITOR_VERTICAL_PADDING;
 
@@ -202,7 +223,7 @@ export function JsonEditorEdit({
 
   // Phase 2: Virtualized line numbers
   const lineNumberVirtualizer = useVirtualizer({
-    count: lineCount,
+    count: showLineNumbers ? lineCount : 0,
     getScrollElement: () => lineNumbersRef.current,
     estimateSize: (index) => lineLayouts[index]?.height ?? LINE_HEIGHT,
     overscan: 20,
@@ -217,24 +238,25 @@ export function JsonEditorEdit({
     content,
     scrollTop,
     viewportHeight,
-    useViewportBasedHighlighting,
+    useViewportHighlighting,
   );
   const highlightedHtml = useMemo(() => {
-    if (readOnly) {
+    if (readOnly || !shouldShowHighlighting) {
       return "";
     }
 
-    return useViewportBasedHighlighting
+    return useViewportHighlighting
       ? viewportHighlightedHtml
       : highlightJson(content);
   }, [
     content,
     readOnly,
-    useViewportBasedHighlighting,
+    shouldShowHighlighting,
+    useViewportHighlighting,
     viewportHighlightedHtml,
   ]);
-  const paddingTop = useViewportBasedHighlighting ? viewportPaddingTop : 0;
-  const paddingBottom = useViewportBasedHighlighting
+  const paddingTop = useViewportHighlighting ? viewportPaddingTop : 0;
+  const paddingBottom = useViewportHighlighting
     ? viewportPaddingBottom
     : 0;
 
@@ -273,7 +295,12 @@ export function JsonEditorEdit({
       const { selectionStart, selectionEnd, value } = textarea;
 
       // Undo: Ctrl/Cmd + Z
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+      if (
+        !useNativeUndoRedo &&
+        (e.ctrlKey || e.metaKey) &&
+        e.key === "z" &&
+        !e.shiftKey
+      ) {
         e.preventDefault();
         onUndo?.();
         return;
@@ -281,8 +308,9 @@ export function JsonEditorEdit({
 
       // Redo: Ctrl/Cmd + Shift + Z or Ctrl + Y
       if (
-        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "z") ||
-        (e.ctrlKey && e.key === "y")
+        !useNativeUndoRedo &&
+        (((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "z") ||
+          (e.ctrlKey && e.key === "y"))
       ) {
         e.preventDefault();
         onRedo?.();
@@ -372,7 +400,7 @@ export function JsonEditorEdit({
         });
       }
     },
-    [onChange, onUndo, onRedo, onEscape],
+    [onChange, onUndo, onRedo, onEscape, useNativeUndoRedo],
   );
 
   // Focus textarea on mount (only in edit mode)
@@ -396,10 +424,14 @@ export function JsonEditorEdit({
   }, []);
 
   useEffect(() => {
+    if (!shouldComputeLineLayout) {
+      return;
+    }
+
     if (activeLine > lineCount) {
       setActiveLine(lineCount);
     }
-  }, [activeLine, lineCount]);
+  }, [activeLine, lineCount, shouldComputeLineLayout]);
 
   useEffect(() => {
     lineNumberVirtualizer.measure();
@@ -455,44 +487,46 @@ export function JsonEditorEdit({
       )}
       style={containerStyle}
     >
-      {/* Line numbers - virtualized for performance */}
-      <div
-        ref={lineNumbersRef}
-        className="flex-shrink-0 h-full overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
-        style={{ width: "3rem" }}
-      >
+      {showLineNumbers && (
         <div
-          className="py-3 pr-2 text-xs text-muted-foreground leading-5 relative"
-          style={{
-            ...fontStyle,
-            height: `${lineNumberVirtualizer.getTotalSize()}px`,
-          }}
+          ref={lineNumbersRef}
+          data-testid="json-editor-line-numbers"
+          className="flex-shrink-0 h-full overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
+          style={{ width: "3rem" }}
         >
-          {lineNumberVirtualizer.getVirtualItems().map((virtualRow) => {
-            const lineNum = virtualRow.index + 1;
-            const lineHeight =
-              lineLayouts[virtualRow.index]?.height ?? LINE_HEIGHT;
-            return (
-              <div
-                key={virtualRow.index}
-                className={cn(
-                  "leading-5 transition-colors duration-150 absolute left-0 right-0 pr-2",
-                  !readOnly &&
-                    lineNum === activeLine &&
-                    isFocused &&
-                    "text-foreground font-medium",
-                )}
-                style={{
-                  transform: `translateY(${virtualRow.start}px)`,
-                  height: `${lineHeight}px`,
-                }}
-              >
-                {lineNum}
-              </div>
-            );
-          })}
+          <div
+            className="py-3 pr-2 text-xs text-muted-foreground leading-5 relative"
+            style={{
+              ...fontStyle,
+              height: `${lineNumberVirtualizer.getTotalSize()}px`,
+            }}
+          >
+            {lineNumberVirtualizer.getVirtualItems().map((virtualRow) => {
+              const lineNum = virtualRow.index + 1;
+              const lineHeight =
+                lineLayouts[virtualRow.index]?.height ?? LINE_HEIGHT;
+              return (
+                <div
+                  key={virtualRow.index}
+                  className={cn(
+                    "leading-5 transition-colors duration-150 absolute left-0 right-0 pr-2",
+                    !readOnly &&
+                      lineNum === activeLine &&
+                      isFocused &&
+                      "text-foreground font-medium",
+                  )}
+                  style={{
+                    transform: `translateY(${virtualRow.start}px)`,
+                    height: `${lineHeight}px`,
+                  }}
+                >
+                  {lineNum}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Editor area with overlay */}
       <div className="relative flex-1 min-w-0 h-full overflow-hidden">
@@ -512,11 +546,39 @@ export function JsonEditorEdit({
               collapseStringsAfterLength={collapseStringsAfterLength}
             />
           </pre>
+        ) : disableSyntaxHighlighting ? (
+          <textarea
+            ref={textareaRef}
+            data-testid="json-editor-plain-textarea"
+            value={content}
+            wrap={lineWrapEnabled ? "soft" : "off"}
+            onChange={(e) => onChange?.(e.target.value)}
+            onScroll={handleScroll}
+            onSelect={handleSelectionChange}
+            onClick={handleSelectionChange}
+            onKeyDown={handleKeyDown}
+            onKeyUp={handleSelectionChange}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => {
+              setIsFocused(false);
+              onBlurValidate?.();
+            }}
+            spellCheck={false}
+            className={cn(
+              "absolute inset-0 z-10 w-full h-full resize-none p-3 text-xs leading-5",
+              "focus:outline-none text-foreground",
+              lineWrapEnabled
+                ? "overflow-auto whitespace-pre-wrap break-words"
+                : "overflow-auto whitespace-pre",
+            )}
+            style={{ ...fontStyle, tabSize: 2 }}
+          />
         ) : (
           <>
             {/* Syntax highlighted overlay (behind textarea) - viewport-based for performance */}
             <pre
               ref={highlightRef}
+              data-testid="json-editor-highlight-overlay"
               className={cn(
                 "absolute inset-0 p-3 text-xs leading-5 overflow-hidden",
                 lineWrapEnabled
@@ -537,7 +599,7 @@ export function JsonEditorEdit({
             </pre>
 
             {/* Active line highlight (only in edit mode) */}
-            {isFocused && (
+            {showActiveLineHighlight && isFocused && (
               <div
                 className="absolute left-0 right-0 bg-foreground/[0.03] pointer-events-none transition-transform duration-75"
                 style={{
@@ -550,6 +612,7 @@ export function JsonEditorEdit({
             {/* Transparent textarea (on top for editing) */}
             <textarea
               ref={textareaRef}
+              data-testid="json-editor-overlay-textarea"
               value={content}
               wrap={lineWrapEnabled ? "soft" : "off"}
               onChange={(e) => onChange?.(e.target.value)}
@@ -559,7 +622,10 @@ export function JsonEditorEdit({
               onKeyDown={handleKeyDown}
               onKeyUp={handleSelectionChange}
               onFocus={() => setIsFocused(true)}
-              onBlur={() => setIsFocused(false)}
+              onBlur={() => {
+                setIsFocused(false);
+                onBlurValidate?.();
+              }}
               spellCheck={false}
               className={cn(
                 "absolute inset-0 z-10 w-full h-full resize-none bg-transparent p-3 text-xs leading-5",

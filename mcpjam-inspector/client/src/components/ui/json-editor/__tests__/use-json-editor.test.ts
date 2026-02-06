@@ -568,4 +568,75 @@ describe("useJsonEditor", () => {
       expect(result.current.content).toBe('{"v": 2}');
     });
   });
+
+  describe("large edit mode behavior", () => {
+    it("defers parse and validation while typing in large mode", () => {
+      const onChange = vi.fn();
+      const onRawChange = vi.fn();
+      const onValidationError = vi.fn();
+      const nextContent = '{"v":2,"pad":"01234567890123456789"}';
+
+      const { result } = renderHook(() =>
+        useJsonEditor({
+          initialContent: '{"v":1}',
+          onChange,
+          onRawChange,
+          onValidationError,
+          largeEditThresholdChars: 10,
+        }),
+      );
+
+      act(() => {
+        result.current.setContent(nextContent);
+      });
+
+      expect(onRawChange).toHaveBeenCalledWith(nextContent);
+      expect(onChange).not.toHaveBeenCalled();
+      expect(result.current.isPendingValidation).toBe(true);
+
+      let isValidAfterFlush = false;
+      act(() => {
+        isValidAfterFlush = result.current.flushPendingValidation();
+      });
+
+      expect(isValidAfterFlush).toBe(true);
+      expect(onChange).toHaveBeenCalledWith({
+        v: 2,
+        pad: "01234567890123456789",
+      });
+      expect(onValidationError).toHaveBeenLastCalledWith(null);
+      expect(result.current.isPendingValidation).toBe(false);
+    });
+
+    it("returns false when flushing invalid pending content", () => {
+      const onChange = vi.fn();
+      const onValidationError = vi.fn();
+
+      const { result } = renderHook(() =>
+        useJsonEditor({
+          initialContent: '{"v":1}',
+          onChange,
+          onValidationError,
+          largeEditThresholdChars: 1,
+        }),
+      );
+
+      act(() => {
+        result.current.setContent('{"v":');
+      });
+
+      expect(result.current.isPendingValidation).toBe(true);
+
+      let isValidAfterFlush = true;
+      act(() => {
+        isValidAfterFlush = result.current.flushPendingValidation();
+      });
+
+      expect(isValidAfterFlush).toBe(false);
+      expect(result.current.isValid).toBe(false);
+      expect(onChange).not.toHaveBeenCalled();
+      expect(onValidationError).toHaveBeenCalled();
+      expect(result.current.isPendingValidation).toBe(false);
+    });
+  });
 });

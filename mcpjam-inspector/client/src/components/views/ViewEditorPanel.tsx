@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Save, Loader2, ArrowLeft, Play } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { InlineEditableText } from "@/components/ui/inline-editable-text";
@@ -65,6 +66,19 @@ export function ViewEditorPanel({
   onRun,
   onRename,
 }: ViewEditorPanelProps) {
+  const [isEditorDirty, setIsEditorDirty] = useState(false);
+  const flushPendingValidationRef = useRef<(() => boolean) | null>(null);
+  const onSaveRef = useRef(onSave);
+  const onRunRef = useRef(onRun);
+
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
+
+  useEffect(() => {
+    onRunRef.current = onRun;
+  }, [onRun]);
+
   const createEditorModel = useCallback(
     (
       toolInput: unknown,
@@ -109,6 +123,7 @@ export function ViewEditorPanel({
         initialWidgetState ?? null,
       ),
     );
+    setIsEditorDirty(false);
   }, [view._id, initialToolOutput, initialWidgetState, createEditorModel]);
 
   // Update only toolOutput when liveToolOutput changes from parent (e.g., after Run)
@@ -171,9 +186,41 @@ export function ViewEditorPanel({
   );
 
   const handleSave = useCallback(async () => {
-    if (!hasUnsavedChanges || !onSave) return;
-    await onSave();
-  }, [hasUnsavedChanges, onSave]);
+    const canSave = hasUnsavedChanges || isEditorDirty;
+    if (!canSave || !onSaveRef.current) return;
+
+    const flush = flushPendingValidationRef.current;
+    if (flush && !flush()) {
+      toast.error("JSON is invalid. Fix errors before saving.");
+      return;
+    }
+
+    // Let parent state updates from flush settle before invoking save callback.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const saveHandler = onSaveRef.current;
+    if (!saveHandler) return;
+    await saveHandler();
+    setIsEditorDirty(false);
+  }, [hasUnsavedChanges, isEditorDirty]);
+
+  const handleRunClick = useCallback(async () => {
+    const runHandler = onRunRef.current;
+    if (!runHandler) return;
+
+    const flush = flushPendingValidationRef.current;
+    if (flush && !flush()) {
+      toast.error("JSON is invalid. Fix errors before running.");
+      return;
+    }
+
+    // Let parent state updates from flush settle before invoking run callback.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const latestRunHandler = onRunRef.current;
+    if (!latestRunHandler) return;
+    await latestRunHandler();
+  }, []);
 
   // Show loading state while toolOutput is loading
   if (isLoadingToolOutput) {
@@ -231,7 +278,7 @@ export function ViewEditorPanel({
         <Button
           variant="outline"
           size="sm"
-          onClick={onRun}
+          onClick={handleRunClick}
           disabled={isRunning || isSaving}
           className="h-7 px-2 text-xs"
         >
@@ -246,7 +293,7 @@ export function ViewEditorPanel({
       <Button
         size="sm"
         onClick={handleSave}
-        disabled={!hasUnsavedChanges || isSaving || isRunning}
+        disabled={!(hasUnsavedChanges || isEditorDirty) || isSaving || isRunning}
         className="h-7 px-2 text-xs"
       >
         {isSaving ? (
@@ -273,6 +320,10 @@ export function ViewEditorPanel({
         height="100%"
         toolbarLeftContent={toolbarLeftContent}
         toolbarRightContent={toolbarRightContent}
+        onRegisterFlushPendingValidation={(flush) => {
+          flushPendingValidationRef.current = flush;
+        }}
+        onDirtyChange={setIsEditorDirty}
       />
     </div>
   );

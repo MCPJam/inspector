@@ -4,6 +4,7 @@ import type {
   UseJsonEditorReturn,
   CursorPosition,
 } from "./types";
+import { DEFAULT_LARGE_EDIT_THRESHOLD_CHARS } from "./types";
 
 interface HistoryEntry {
   content: string;
@@ -53,6 +54,7 @@ export function useJsonEditor({
   onChange,
   onRawChange,
   onValidationError,
+  largeEditThresholdChars = DEFAULT_LARGE_EDIT_THRESHOLD_CHARS,
 }: UseJsonEditorOptions): UseJsonEditorReturn {
   // Use raw content if provided, otherwise stringify the value
   const initialContentFromProps =
@@ -70,6 +72,7 @@ export function useJsonEditor({
   const [validationError, setValidationError] = useState<string | null>(() => {
     return initialParsed.error;
   });
+  const [isPendingValidation, setIsPendingValidation] = useState(false);
   const [cursorPosition, setCursorPosition] = useState<CursorPosition>(
     getDefaultCursorPosition,
   );
@@ -83,14 +86,37 @@ export function useJsonEditor({
   ]);
   const historyIndexRef = useRef(0);
 
-  const validateContent = useCallback(
+  const emitOnChangeIfNeeded = useCallback(
+    (value: unknown) => {
+      const serialized = serializeParsedValue(value);
+
+      // Fallback for unexpected non-serializable values
+      if (serialized === null) {
+        onChange?.(value);
+        return;
+      }
+
+      if (serialized === lastEmittedParsedValueRef.current) {
+        return;
+      }
+
+      lastEmittedParsedValueRef.current = serialized;
+      onChange?.(value);
+    },
+    [onChange],
+  );
+
+  const validateAndEmit = useCallback(
     (text: string) => {
       const parsed = parseJson(text);
       setValidationError(parsed.error);
       onValidationError?.(parsed.error);
+      if (parsed.error === null) {
+        emitOnChangeIfNeeded(parsed.value);
+      }
       return parsed;
     },
-    [onValidationError],
+    [emitOnChangeIfNeeded, onValidationError],
   );
 
   useEffect(() => {
@@ -114,47 +140,12 @@ export function useJsonEditor({
       { content: newContent, cursorPosition: getDefaultCursorPosition() },
     ];
     historyIndexRef.current = 0;
-    validateContent(newContent);
+    validateAndEmit(newContent);
+    setIsPendingValidation(false);
     const parsed = parseJson(newContent);
     lastEmittedParsedValueRef.current =
       parsed.error === null ? serializeParsedValue(parsed.value) : null;
-  }, [initialValue, initialContentProp, validateContent]);
-
-  const notifyChangeCallbacks = useCallback(
-    (newContent: string, parsedValue?: unknown, error?: string | null) => {
-      onRawChange?.(newContent);
-
-      const emitOnChangeIfNeeded = (value: unknown) => {
-        const serialized = serializeParsedValue(value);
-
-        // Fallback for unexpected non-serializable values
-        if (serialized === null) {
-          onChange?.(value);
-          return;
-        }
-
-        if (serialized === lastEmittedParsedValueRef.current) {
-          return;
-        }
-
-        lastEmittedParsedValueRef.current = serialized;
-        onChange?.(value);
-      };
-
-      if (error === undefined) {
-        const result = parseJson(newContent);
-        if (result.error === null) {
-          emitOnChangeIfNeeded(result.value);
-        }
-        return;
-      }
-
-      if (error === null) {
-        emitOnChangeIfNeeded(parsedValue);
-      }
-    },
-    [onChange, onRawChange],
-  );
+  }, [initialValue, initialContentProp, validateAndEmit]);
 
   const setContent = useCallback(
     (newContent: string) => {
@@ -164,7 +155,7 @@ export function useJsonEditor({
 
       contentRef.current = newContent;
       setContentInternal(newContent);
-      const { value, error } = validateContent(newContent);
+      onRawChange?.(newContent);
 
       // Add to history
       const currentIndex = historyIndexRef.current;
@@ -189,9 +180,15 @@ export function useJsonEditor({
       historyRef.current = history;
       historyIndexRef.current = history.length - 1;
 
-      notifyChangeCallbacks(newContent, value, error);
+      if (newContent.length >= largeEditThresholdChars) {
+        setIsPendingValidation(true);
+        return;
+      }
+
+      validateAndEmit(newContent);
+      setIsPendingValidation(false);
     },
-    [cursorPosition, notifyChangeCallbacks, validateContent],
+    [cursorPosition, largeEditThresholdChars, onRawChange, validateAndEmit],
   );
 
   const applyHistoryEntry = useCallback(
@@ -199,10 +196,16 @@ export function useJsonEditor({
       contentRef.current = entry.content;
       setContentInternal(entry.content);
       setCursorPosition(entry.cursorPosition);
-      const { value, error } = validateContent(entry.content);
-      notifyChangeCallbacks(entry.content, value, error);
+      onRawChange?.(entry.content);
+      if (entry.content.length >= largeEditThresholdChars) {
+        setIsPendingValidation(true);
+        return;
+      }
+
+      validateAndEmit(entry.content);
+      setIsPendingValidation(false);
     },
-    [notifyChangeCallbacks, validateContent],
+    [largeEditThresholdChars, onRawChange, validateAndEmit],
   );
 
   const undo = useCallback(() => {
@@ -247,13 +250,14 @@ export function useJsonEditor({
       { content: newContent, cursorPosition: getDefaultCursorPosition() },
     ];
     historyIndexRef.current = 0;
-    const { value, error } = validateContent(newContent);
-    notifyChangeCallbacks(newContent, value, error);
+    onRawChange?.(newContent);
+    validateAndEmit(newContent);
+    setIsPendingValidation(false);
   }, [
     initialValue,
     initialContentProp,
-    validateContent,
-    notifyChangeCallbacks,
+    onRawChange,
+    validateAndEmit,
   ]);
 
   const getParsedValue = useCallback(() => {
@@ -261,8 +265,15 @@ export function useJsonEditor({
     return error === null ? value : undefined;
   }, [content]);
 
+  const flushPendingValidation = useCallback(() => {
+    const { error } = validateAndEmit(contentRef.current);
+    setIsPendingValidation(false);
+    return error === null;
+  }, [validateAndEmit]);
+
   const canUndo = historyIndexRef.current > 0;
   const canRedo = historyIndexRef.current < historyRef.current.length - 1;
+  const isLargeEditMode = content.length >= largeEditThresholdChars;
 
   return {
     content,
@@ -278,5 +289,8 @@ export function useJsonEditor({
     format,
     reset,
     getParsedValue,
+    flushPendingValidation,
+    isPendingValidation,
+    isLargeEditMode,
   };
 }
