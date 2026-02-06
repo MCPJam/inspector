@@ -14,13 +14,17 @@ import { createHonoApp } from "../server/app.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
+import { setupAutoUpdaterEvents } from "./ipc/update/update-listeners.js";
 
 // Configure logging
 log.transports.file.level = "info";
 log.transports.console.level = "debug";
 
-// Enable auto-updater
-updateElectronApp();
+// Enable auto-updater (with custom notification handling)
+updateElectronApp({
+  notifyUser: false, // We'll show our own UI instead of the default dialog
+  logger: log,
+});
 
 // Set app user model ID for Windows
 if (process.platform === "win32") {
@@ -206,6 +210,9 @@ app.whenReady().then(async () => {
 
     // Register IPC listeners
     registerListeners(mainWindow);
+
+    // Setup auto-updater events to notify renderer when update is ready
+    setupAutoUpdaterEvents(mainWindow);
 
     log.info("MCPJam Electron app ready");
   } catch (error) {

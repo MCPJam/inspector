@@ -31,7 +31,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         "/api": {
-          target: "http://localhost:6274", // Server port 6275
+          target: "http://localhost:6274",
           changeOrigin: true,
         },
       },
