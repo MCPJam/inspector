@@ -123,7 +123,9 @@ describe("JsonEditor", () => {
     it("uses minimal textarea rendering for payloads at or above threshold", () => {
       render(<JsonEditor rawContent={largeRawContent} mode="edit" />);
 
-      expect(screen.getByTestId("json-editor-plain-textarea")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("json-editor-plain-textarea"),
+      ).toBeInTheDocument();
       expect(
         screen.queryByTestId("json-editor-highlight-overlay"),
       ).not.toBeInTheDocument();
@@ -141,11 +143,15 @@ describe("JsonEditor", () => {
       expect(
         screen.getByTestId("json-editor-highlight-overlay"),
       ).toBeInTheDocument();
-      expect(screen.getByTestId("json-editor-line-numbers")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("json-editor-line-numbers"),
+      ).toBeInTheDocument();
     });
 
     it("hides undo/redo/format actions only in large mode", () => {
-      const { rerender } = render(<JsonEditor rawContent={largeRawContent} mode="edit" />);
+      const { rerender } = render(
+        <JsonEditor rawContent={largeRawContent} mode="edit" />,
+      );
 
       expect(
         screen.queryByTestId("json-editor-undo-button"),
@@ -167,10 +173,14 @@ describe("JsonEditor", () => {
     });
 
     it("shows performance mode message only in large mode", () => {
-      const { rerender } = render(<JsonEditor rawContent={largeRawContent} mode="edit" />);
+      const { rerender } = render(
+        <JsonEditor rawContent={largeRawContent} mode="edit" />,
+      );
 
       expect(
-        screen.getByText("Performance mode active · validation runs on blur/save/run"),
+        screen.getByText(
+          "Performance mode active · validation runs on blur/save/run",
+        ),
       ).toBeInTheDocument();
 
       rerender(<JsonEditor rawContent={smallRawContent} mode="edit" />);

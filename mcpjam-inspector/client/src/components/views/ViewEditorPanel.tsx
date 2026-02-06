@@ -293,7 +293,9 @@ export function ViewEditorPanel({
       <Button
         size="sm"
         onClick={handleSave}
-        disabled={!(hasUnsavedChanges || isEditorDirty) || isSaving || isRunning}
+        disabled={
+          !(hasUnsavedChanges || isEditorDirty) || isSaving || isRunning
+        }
         className="h-7 px-2 text-xs"
       >
         {isSaving ? (

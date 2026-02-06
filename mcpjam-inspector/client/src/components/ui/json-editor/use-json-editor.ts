@@ -253,12 +253,7 @@ export function useJsonEditor({
     onRawChange?.(newContent);
     validateAndEmit(newContent);
     setIsPendingValidation(false);
-  }, [
-    initialValue,
-    initialContentProp,
-    onRawChange,
-    validateAndEmit,
-  ]);
+  }, [initialValue, initialContentProp, onRawChange, validateAndEmit]);
 
   const getParsedValue = useCallback(() => {
     const { value, error } = parseJson(content);

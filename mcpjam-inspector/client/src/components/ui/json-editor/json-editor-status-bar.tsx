@@ -47,7 +47,9 @@ export function JsonEditorStatusBar({
       {/* Right side: validation status */}
       <div className="flex items-center gap-2">
         {performanceModeMessage && (
-          <span className="text-muted-foreground">{performanceModeMessage}</span>
+          <span className="text-muted-foreground">
+            {performanceModeMessage}
+          </span>
         )}
         {!isValid && (
           <Tooltip>

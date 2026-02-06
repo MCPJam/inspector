@@ -256,9 +256,7 @@ export function JsonEditorEdit({
     viewportHighlightedHtml,
   ]);
   const paddingTop = useViewportHighlighting ? viewportPaddingTop : 0;
-  const paddingBottom = useViewportHighlighting
-    ? viewportPaddingBottom
-    : 0;
+  const paddingBottom = useViewportHighlighting ? viewportPaddingBottom : 0;
 
   // Sync scroll between textarea, line numbers, and highlight overlay
   const handleScroll = useCallback(() => {

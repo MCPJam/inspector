@@ -64,7 +64,9 @@ describe("JsonImportModal", () => {
 
     const textarea = screen.getByTestId("json-editor-input");
     fireEvent.change(textarea, {
-      target: { value: `{"mcpServers":{"x":{"command":"${"a".repeat(9000)}"}}}` },
+      target: {
+        value: `{"mcpServers":{"x":{"command":"${"a".repeat(9000)}"}}}`,
+      },
     });
 
     expect(validateJsonConfig).not.toHaveBeenCalled();
@@ -82,8 +84,8 @@ describe("JsonImportModal", () => {
       target: { value: '{"mcpServers":{"weather":{"command":"node"}}}' },
     });
     fireEvent.blur(textarea);
-    const validateCallCountBeforeImport = (validateJsonConfig as Mock).mock.calls
-      .length;
+    const validateCallCountBeforeImport = (validateJsonConfig as Mock).mock
+      .calls.length;
 
     fireEvent.click(screen.getByRole("button", { name: "Import Servers" }));
 
