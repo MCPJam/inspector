@@ -578,6 +578,8 @@ export function MCPAppsRenderer({
     [themeMode],
   );
 
+  // containerDimensions (maxWidth/maxHeight) was previously sent here but
+  // removed — width is now fully host-controlled.
   const hostContext = useMemo<McpUiHostContext>(
     () => ({
       theme: themeMode,
@@ -790,6 +792,9 @@ export function MCPAppsRenderer({
         console.info(message, data);
       };
 
+      // Width resize handling was removed here — previously this destructured
+      // `width` and applied it to the iframe via `min(${width}px, 100%)`.
+      // Only height-based auto-resize is applied; width is host-controlled.
       bridge.onsizechange = ({ height }) => {
         if (effectiveDisplayModeRef.current !== "inline") return;
         const iframe = sandboxRef.current?.getIframeElement();
@@ -1096,6 +1101,7 @@ export function MCPAppsRenderer({
     height: isFullscreen ? "100%" : "400px",
     width: "100%",
     maxWidth: "100%",
+    // Width transition was previously included here ("width 300ms ease-out").
     transition: isFullscreen ? undefined : "height 300ms ease-out",
   };
 
