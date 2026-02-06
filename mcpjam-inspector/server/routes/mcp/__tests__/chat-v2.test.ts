@@ -368,7 +368,7 @@ describe("POST /api/mcp/chat-v2", () => {
               ],
             },
           ],
-          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
         });
         await lastStreamExecution;
 
@@ -462,7 +462,7 @@ describe("POST /api/mcp/chat-v2", () => {
               ],
             },
           ],
-          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
         });
         await lastStreamExecution;
 
@@ -554,7 +554,7 @@ describe("POST /api/mcp/chat-v2", () => {
               ],
             },
           ],
-          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
         });
         await lastStreamExecution;
 
@@ -678,7 +678,7 @@ describe("POST /api/mcp/chat-v2", () => {
           messages: [
             { role: "user", content: "Search stops Berryessa and Montgomery" },
           ],
-          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
         });
         await lastStreamExecution;
 
@@ -775,7 +775,7 @@ describe("POST /api/mcp/chat-v2", () => {
         await postJson(app, "/api/mcp/chat-v2", {
           // No inherited tool calls - clean message history
           messages: [{ role: "user", content: "Do something" }],
-          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
         });
         await lastStreamExecution;
 

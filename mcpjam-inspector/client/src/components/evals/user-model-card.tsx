@@ -28,6 +28,7 @@ function getProviderDisplayName(provider: string): string {
     moonshotai: "Moonshot AI",
     "z-ai": "Zhipu AI",
     openrouter: "OpenRouter",
+    minimax: "MiniMax",
   };
 
   return providerMap[provider] || provider;

@@ -76,6 +76,8 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "Moonshot AI";
     case "z-ai":
       return "Zhipu AI";
+    case "minimax":
+      return "MiniMax";
     default:
       return provider;
   }
