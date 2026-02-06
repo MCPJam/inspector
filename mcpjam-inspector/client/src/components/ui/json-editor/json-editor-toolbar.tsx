@@ -35,6 +35,7 @@ interface JsonEditorToolbarProps {
   onToggleMaximize?: () => void;
   allowMaximize?: boolean;
   isValid?: boolean;
+  isLargeEditMode?: boolean;
   className?: string;
   /** Custom content to render on the left side of the toolbar */
   leftContent?: ReactNode;
@@ -66,6 +67,7 @@ export function JsonEditorToolbar({
   onToggleMaximize,
   allowMaximize = false,
   isValid = true,
+  isLargeEditMode = false,
   className,
   leftContent,
   rightContent,
@@ -124,13 +126,14 @@ export function JsonEditorToolbar({
 
       {/* Right side: actions + custom content */}
       <div className="flex items-center gap-1">
-        {mode === "edit" && (
+        {mode === "edit" && !isLargeEditMode && (
           <>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   size="sm"
                   variant="ghost"
+                  data-testid="json-editor-undo-button"
                   onClick={onUndo}
                   disabled={!canUndo}
                   className="h-7 w-7 p-0 transition-all duration-200 hover:scale-105"
@@ -148,6 +151,7 @@ export function JsonEditorToolbar({
                 <Button
                   size="sm"
                   variant="ghost"
+                  data-testid="json-editor-redo-button"
                   onClick={onRedo}
                   disabled={!canRedo}
                   className="h-7 w-7 p-0 transition-all duration-200 hover:scale-105"
@@ -167,6 +171,7 @@ export function JsonEditorToolbar({
                 <Button
                   size="sm"
                   variant="ghost"
+                  data-testid="json-editor-format-button"
                   onClick={onFormat}
                   disabled={!isValid}
                   className="h-7 w-7 p-0 transition-all duration-200 hover:scale-105"

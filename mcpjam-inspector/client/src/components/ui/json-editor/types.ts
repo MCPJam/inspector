@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 export type JsonEditorMode = "view" | "edit";
+export const DEFAULT_LARGE_EDIT_THRESHOLD_CHARS = 8192;
 
 export interface JsonEditorProps {
   // Parsed value mode (default)
@@ -21,6 +22,9 @@ export interface JsonEditorProps {
   maxHeight?: string | number;
   className?: string;
   onValidationError?: (error: string | null) => void;
+  largeEditThresholdChars?: number;
+  onRegisterFlushPendingValidation?: (flush: () => boolean) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 
   // Collapsible tree view options (view mode only)
   collapsible?: boolean;
@@ -56,6 +60,7 @@ export interface UseJsonEditorOptions {
   onChange?: (value: unknown) => void;
   onRawChange?: (content: string) => void;
   onValidationError?: (error: string | null) => void;
+  largeEditThresholdChars?: number;
 }
 
 export interface UseJsonEditorReturn {
@@ -72,4 +77,7 @@ export interface UseJsonEditorReturn {
   format: () => void;
   reset: () => void;
   getParsedValue: () => unknown;
+  flushPendingValidation: () => boolean;
+  isPendingValidation: boolean;
+  isLargeEditMode: boolean;
 }

@@ -823,7 +823,6 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               onEditView={handleEditView}
               onDuplicateView={handleDuplicateView}
               onDeleteView={handleDeleteView}
-              onRenameView={handleRenameView}
               deletingViewId={deletingViewId}
               duplicatingViewId={duplicatingViewId}
               isLoading={isViewsLoading}

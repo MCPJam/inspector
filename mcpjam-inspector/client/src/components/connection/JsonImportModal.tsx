@@ -29,6 +29,8 @@ export function JsonImportModal({
   } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const jsonContentRef = useRef("");
+  const flushPendingValidationRef = useRef<(() => boolean) | null>(null);
   const posthog = usePostHog();
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -42,6 +44,7 @@ export function JsonImportModal({
     const reader = new FileReader();
     reader.onload = (e) => {
       const content = e.target?.result as string;
+      jsonContentRef.current = content;
       setJsonContent(content);
       // Validate the config format
       if (content.trim()) {
@@ -53,14 +56,9 @@ export function JsonImportModal({
   };
 
   const handleJsonChange = (content: string) => {
+    jsonContentRef.current = content;
     setJsonContent(content);
-    // Validate the JSON config format (not just JSON syntax)
-    if (!content.trim()) {
-      setValidationResult(null);
-      return;
-    }
-    const result = validateJsonConfig(content);
-    setValidationResult(result);
+    setValidationResult(null);
   };
 
   const handleValidationError = (error: string | null) => {
@@ -69,8 +67,8 @@ export function JsonImportModal({
       setValidationResult({ success: false, error });
     }
     // If JSON is valid, validate the config format
-    else if (jsonContent.trim()) {
-      const result = validateJsonConfig(jsonContent);
+    else if (jsonContentRef.current.trim()) {
+      const result = validateJsonConfig(jsonContentRef.current);
       setValidationResult(result);
     } else {
       setValidationResult(null);
@@ -78,14 +76,22 @@ export function JsonImportModal({
   };
 
   const handleImport = async () => {
-    if (!validationResult?.success) {
+    const flush = flushPendingValidationRef.current;
+    if (flush && !flush()) {
+      toast.error("Please fix JSON syntax errors before importing");
+      return;
+    }
+
+    const latestValidation = validateJsonConfig(jsonContentRef.current);
+    setValidationResult(latestValidation);
+    if (!latestValidation.success) {
       toast.error("Please fix the JSON validation errors before importing");
       return;
     }
 
     setIsImporting(true);
     try {
-      const servers = parseJsonConfig(jsonContent);
+      const servers = parseJsonConfig(jsonContentRef.current);
       if (servers.length === 0) {
         toast.error("No valid servers found in the JSON config");
         return;
@@ -106,6 +112,7 @@ export function JsonImportModal({
   };
 
   const handleClose = () => {
+    jsonContentRef.current = "";
     setJsonContent("");
     setValidationResult(null);
     setIsImporting(false);
@@ -157,6 +164,9 @@ export function JsonImportModal({
               showToolbar={true}
               height="200px"
               onValidationError={handleValidationError}
+              onRegisterFlushPendingValidation={(flush) => {
+                flushPendingValidationRef.current = flush;
+              }}
             />
           </div>
 
