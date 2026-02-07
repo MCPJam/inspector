@@ -99,8 +99,7 @@ export function ToolPart({
     if (
       !hasTrackedSkillLoad.current &&
       !isUserInjected &&
-      isDynamicTool(part) &&
-      part.toolName === "loadSkill" &&
+      label === "loadSkill" &&
       state === "output-available"
     ) {
       hasTrackedSkillLoad.current = true;
@@ -108,7 +107,7 @@ export function ToolPart({
         skill_name: (part as any).input?.name ?? "unknown",
       });
     }
-  }, [state, part, posthog, toolCallId]);
+  }, [state, label, posthog, toolCallId, part]);
   const toolState = getToolStateMeta(state);
   const StatusIcon = toolState?.Icon;
   const themeMode = usePreferencesStore((s) => s.themeMode);
