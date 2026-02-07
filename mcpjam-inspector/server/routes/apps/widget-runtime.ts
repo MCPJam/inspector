@@ -163,99 +163,87 @@ const clampNumber = (value: unknown): number | null => {
     return subjectId;
   };
 
-  const postHeight = (() => {
+  const postResize = (() => {
     let lastHeight = 0;
-    return (height: unknown) => {
-      const numericHeight = Number(height);
-      if (!Number.isFinite(numericHeight) || numericHeight <= 0) return;
-      const roundedHeight = Math.round(numericHeight);
-      if (roundedHeight === lastHeight) return;
-      lastHeight = roundedHeight;
-      window.parent.postMessage(
-        { type: "openai:resize", height: roundedHeight },
-        "*",
-      );
-    };
-  })();
-
-  const postWidth = (() => {
     let lastWidth = 0;
-    return (width: unknown) => {
-      const numericWidth = Number(width);
-      if (!Number.isFinite(numericWidth) || numericWidth <= 0) return;
-      const roundedWidth = Math.round(numericWidth);
-      if (roundedWidth === lastWidth) return;
-      lastWidth = roundedWidth;
+    return (height: number, width: number) => {
+      const rh =
+        Number.isFinite(height) && height > 0 ? Math.round(height) : lastHeight;
+      const rw =
+        Number.isFinite(width) && width > 0 ? Math.round(width) : lastWidth;
+      if (rh === lastHeight && rw === lastWidth) return;
+      lastHeight = rh;
+      lastWidth = rw;
       window.parent.postMessage(
-        { type: "openai:resize", width: roundedWidth },
+        { type: "openai:resize", height: rh, width: rw },
         "*",
       );
     };
   })();
 
-  const measureAndNotifyHeight = () => {
-    try {
-      let contentHeight = 0;
+  const measureHeight = (): number => {
+    let contentHeight = 0;
 
-      if (document.body) {
-        const children = document.body.children;
-        for (let i = 0; i < children.length; i++) {
-          const child = children[i] as HTMLElement;
-          if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
-          const rect = child.getBoundingClientRect();
-          const bottom = rect.top + rect.height + window.scrollY;
-          contentHeight = Math.max(contentHeight, bottom);
-        }
-
-        const bodyStyle = window.getComputedStyle(document.body);
-        contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
-        contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
+    if (document.body) {
+      const children = document.body.children;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i] as HTMLElement;
+        if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
+        const rect = child.getBoundingClientRect();
+        const bottom = rect.top + rect.height + window.scrollY;
+        contentHeight = Math.max(contentHeight, bottom);
       }
 
-      if (contentHeight <= 0) {
-        const docEl = document.documentElement;
-        contentHeight = Math.max(
-          docEl ? docEl.scrollHeight : 0,
-          document.body ? document.body.scrollHeight : 0,
-        );
-      }
-
-      postHeight(Math.ceil(contentHeight));
-    } catch (err) {
-      console.error("[OpenAI Widget] Failed to measure height:", err);
+      const bodyStyle = window.getComputedStyle(document.body);
+      contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
+      contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
     }
+
+    if (contentHeight <= 0) {
+      const docEl = document.documentElement;
+      contentHeight = Math.max(
+        docEl ? docEl.scrollHeight : 0,
+        document.body ? document.body.scrollHeight : 0,
+      );
+    }
+
+    return Math.ceil(contentHeight);
   };
 
-  const measureAndNotifyWidth = () => {
+  const measureWidth = (): number => {
+    let contentWidth = 0;
+
+    if (document.body) {
+      const children = document.body.children;
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i] as HTMLElement;
+        if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
+        const rect = child.getBoundingClientRect();
+        const right = rect.left + rect.width + window.scrollX;
+        contentWidth = Math.max(contentWidth, right);
+      }
+
+      const bodyStyle = window.getComputedStyle(document.body);
+      contentWidth += parseFloat(bodyStyle.marginRight) || 0;
+      contentWidth += parseFloat(bodyStyle.paddingRight) || 0;
+    }
+
+    if (contentWidth <= 0) {
+      const docEl = document.documentElement;
+      contentWidth = Math.max(
+        docEl ? docEl.scrollWidth : 0,
+        document.body ? document.body.scrollWidth : 0,
+      );
+    }
+
+    return Math.ceil(contentWidth);
+  };
+
+  const measureAndNotify = () => {
     try {
-      let contentWidth = 0;
-
-      if (document.body) {
-        const children = document.body.children;
-        for (let i = 0; i < children.length; i++) {
-          const child = children[i] as HTMLElement;
-          if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
-          const rect = child.getBoundingClientRect();
-          const right = rect.left + rect.width + window.scrollX;
-          contentWidth = Math.max(contentWidth, right);
-        }
-
-        const bodyStyle = window.getComputedStyle(document.body);
-        contentWidth += parseFloat(bodyStyle.marginRight) || 0;
-        contentWidth += parseFloat(bodyStyle.paddingRight) || 0;
-      }
-
-      if (contentWidth <= 0) {
-        const docEl = document.documentElement;
-        contentWidth = Math.max(
-          docEl ? docEl.scrollWidth : 0,
-          document.body ? document.body.scrollWidth : 0,
-        );
-      }
-
-      postWidth(Math.ceil(contentWidth));
+      postResize(measureHeight(), measureWidth());
     } catch (err) {
-      console.error("[OpenAI Widget] Failed to measure width:", err);
+      console.error("[OpenAI Widget] Failed to measure dimensions:", err);
     }
   };
 
@@ -267,8 +255,7 @@ const clampNumber = (value: unknown): number | null => {
       scheduled = true;
       requestAnimationFrame(() => {
         scheduled = false;
-        measureAndNotifyHeight();
-        measureAndNotifyWidth();
+        measureAndNotify();
       });
     };
 
@@ -283,10 +270,7 @@ const clampNumber = (value: unknown): number | null => {
     }
 
     window.addEventListener("load", () => {
-      requestAnimationFrame(() => {
-        measureAndNotifyHeight();
-        measureAndNotifyWidth();
-      });
+      requestAnimationFrame(measureAndNotify);
     });
   };
 
@@ -571,7 +555,7 @@ const clampNumber = (value: unknown): number | null => {
     },
 
     notifyIntrinsicHeight(height: unknown) {
-      postHeight(height);
+      postResize(Number(height), measureWidth());
     },
 
     notifyNavigation(direction: "back" | "forward") {
@@ -710,7 +694,7 @@ const clampNumber = (value: unknown): number | null => {
         }
         break;
       case "openai:requestResize":
-        measureAndNotifyHeight();
+        measureAndNotify();
         break;
       case "openai:navigate":
         if (event.data.toolId === toolId) {
@@ -746,9 +730,9 @@ const clampNumber = (value: unknown): number | null => {
             ? detail.size.height
             : null;
       if (height != null) {
-        postHeight(height);
+        postResize(height, measureWidth());
       } else {
-        measureAndNotifyHeight();
+        measureAndNotify();
       }
     } catch (err) {
       console.error("[OpenAI Widget] Failed to process resize event:", err);
