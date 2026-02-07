@@ -640,6 +640,7 @@ export function ChatGPTAppRenderer({
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Get locale from playground store, fallback to navigator.language
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -1226,6 +1227,13 @@ export function ChatGPTAppRenderer({
         });
       }
 
+      if (event.data?.type === "openai:resize") {
+        const w = Number(event.data.width);
+        if (Number.isFinite(w) && w > 0) {
+          modalSandboxRef.current?.setWidth?.(w);
+        }
+      }
+
       if (
         event.data?.type === "openai:setWidgetState" &&
         event.data.toolId === resolvedToolCallId
@@ -1524,7 +1532,7 @@ export function ChatGPTAppRenderer({
   })();
 
   return (
-    <div className={containerClassName}>
+    <div ref={rootRef} className={containerClassName}>
       {/* Contained fullscreen modes: simple floating X button */}
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
@@ -1643,11 +1651,14 @@ export function ChatGPTAppRenderer({
       )}
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
+        <DialogContent
+          className="w-full h-fit max-h-[70vh] flex flex-col"
+          style={{ maxWidth: rootRef.current?.offsetWidth }}
+        >
           <DialogHeader>
             <DialogTitle>{modalTitle}</DialogTitle>
           </DialogHeader>
-          <div className="flex-1 w-full h-full min-h-0 overflow-y-auto">
+          <div className="flex-1 w-full h-full min-h-0 overflow-auto">
             {modalWidgetUrl && (
               <ChatGPTSandboxedIframe
                 ref={modalSandboxRef}
@@ -1655,7 +1666,7 @@ export function ChatGPTAppRenderer({
                 onMessage={handleModalSandboxMessage}
                 onReady={handleModalReady}
                 title={`ChatGPT App Modal: ${modalTitle}`}
-                className="w-full h-full border-0 rounded-md bg-background overflow-hidden"
+                className="min-w-full h-full border-0 rounded-md bg-background overflow-hidden"
               />
             )}
           </div>
