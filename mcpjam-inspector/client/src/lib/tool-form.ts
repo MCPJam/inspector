@@ -238,7 +238,7 @@ export function applyParametersToFields(
   params: Record<string, any>,
 ): FormField[] {
   return fields.map((field) => {
-    if (Object.prototype.hasOwnProperty.call(params, field.name)) {
+    if (Object.hasOwn(params, field.name)) {
       const raw = params[field.name];
       if (field.type === "array" || field.type === "object") {
         return {
