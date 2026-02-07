@@ -640,6 +640,7 @@ export function ChatGPTAppRenderer({
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Get locale from playground store, fallback to navigator.language
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -1524,7 +1525,7 @@ export function ChatGPTAppRenderer({
   })();
 
   return (
-    <div className={containerClassName}>
+    <div ref={rootRef} className={containerClassName}>
       {/* Contained fullscreen modes: simple floating X button */}
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
@@ -1643,7 +1644,10 @@ export function ChatGPTAppRenderer({
       )}
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
+        <DialogContent
+          className="w-full h-fit max-h-[70vh] flex flex-col"
+          style={{ maxWidth: rootRef.current?.offsetWidth }}
+        >
           <DialogHeader>
             <DialogTitle>{modalTitle}</DialogTitle>
           </DialogHeader>
