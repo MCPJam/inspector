@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import { ToolUIPart, DynamicToolUIPart, UITools } from "ai";
+import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { useConvexAuth } from "convex/react";
@@ -58,6 +58,8 @@ export function PartSwitch({
   displayMode,
   onDisplayModeChange,
   selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
+  onToolApprovalResponse,
+  messageParts,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -81,6 +83,8 @@ export function PartSwitch({
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
+  messageParts?: AnyPart[];
 }) {
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
@@ -186,6 +190,16 @@ export function PartSwitch({
   if (isToolPart(part) || isDynamicTool(part)) {
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
     const toolInfo = toolInfoFromPart ?? getToolInfo(toolPart);
+    const approvalId = toolPart.approval?.id;
+    const approvalProps = approvalId
+      ? {
+          approvalId,
+          onApprove: (id: string) =>
+            onToolApprovalResponse?.({ id, approved: true }),
+          onDeny: (id: string) =>
+            onToolApprovalResponse?.({ id, approved: false }),
+        }
+      : {};
     const partToolMeta = toolsMetadata[toolInfo.toolName];
     const uiType = detectUIType(partToolMeta, toolInfo.rawOutput);
     const uiResourceUri = getUIResourceUri(uiType, partToolMeta);
@@ -244,6 +258,7 @@ export function PartSwitch({
             canSaveView={canSaveView}
             saveDisabledReason={saveDisabledReason}
             isSaving={isSaving}
+            {...approvalProps}
           />
           <MCPUIResourcePart
             resource={uiResource.resource}
@@ -257,7 +272,11 @@ export function PartSwitch({
       (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
         selectedProtocolOverrideIfBothExists === UIType.OPENAI_SDK)
     ) {
-      if (toolInfo.toolState !== "output-available") {
+      if (
+        toolInfo.toolState !== "output-available" &&
+        toolInfo.toolState !== "approval-requested" &&
+        toolInfo.toolState !== "output-denied"
+      ) {
         return (
           <>
             <ToolPart
@@ -266,6 +285,7 @@ export function PartSwitch({
               onSaveView={handleSaveView}
               canSaveView={false}
               isSaving={isSaving}
+              {...approvalProps}
             />
             <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
               Waiting for tool to finish executing...
@@ -284,6 +304,7 @@ export function PartSwitch({
               canSaveView={canSaveView}
               saveDisabledReason={saveDisabledReason}
               isSaving={isSaving}
+              {...approvalProps}
             />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
               Failed to load tool server id.
@@ -309,6 +330,7 @@ export function PartSwitch({
             canSaveView={canSaveView}
             saveDisabledReason={saveDisabledReason}
             isSaving={isSaving}
+            {...approvalProps}
           />
           <ChatGPTAppRenderer
             serverId={serverId}
@@ -351,6 +373,7 @@ export function PartSwitch({
               canSaveView={canSaveView}
               saveDisabledReason={saveDisabledReason}
               isSaving={isSaving}
+              {...approvalProps}
             />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
               Failed to load server id or resource uri for MCP App.
@@ -377,6 +400,7 @@ export function PartSwitch({
             canSaveView={canSaveView}
             saveDisabledReason={saveDisabledReason}
             isSaving={isSaving}
+            {...approvalProps}
           />
           <MCPAppsRenderer
             serverId={serverId}
@@ -416,6 +440,7 @@ export function PartSwitch({
         canSaveView={canSaveView}
         saveDisabledReason={saveDisabledReason}
         isSaving={isSaving}
+        {...approvalProps}
       />
     );
   }

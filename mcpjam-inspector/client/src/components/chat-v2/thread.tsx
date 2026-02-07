@@ -32,6 +32,7 @@ interface ThreadProps {
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
   selectedProtocolOverrideIfBothExists?: UIType;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
 }
 
 export function Thread({
@@ -50,6 +51,7 @@ export function Thread({
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
   selectedProtocolOverrideIfBothExists,
+  onToolApprovalResponse,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -121,6 +123,7 @@ export function Thread({
             selectedProtocolOverrideIfBothExists={
               selectedProtocolOverrideIfBothExists
             }
+            onToolApprovalResponse={onToolApprovalResponse}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}

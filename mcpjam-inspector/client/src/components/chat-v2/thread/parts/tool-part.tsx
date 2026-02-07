@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   Box,
+  Check,
   ChevronDown,
   Database,
   Layers,
@@ -9,6 +10,9 @@ import {
   MessageCircle,
   PictureInPicture2,
   Shield,
+  ShieldCheck,
+  ShieldX,
+  X,
 } from "lucide-react";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
@@ -28,8 +32,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { cn } from "@/lib/chat-utils";
+
+type ApprovalVisualState = "pending" | "approved" | "denied";
 
 export function ToolPart({
   part,
@@ -43,6 +51,9 @@ export function ToolPart({
   onRequestPip,
   onExitPip,
   appSupportedDisplayModes,
+  approvalId,
+  onApprove,
+  onDeny,
   onSaveView,
   canSaveView,
   saveDisabledReason,
@@ -60,6 +71,9 @@ export function ToolPart({
   onExitPip?: (toolCallId: string) => void;
   /** Display modes the app declared support for. If undefined, all modes are available. */
   appSupportedDisplayModes?: DisplayMode[];
+  approvalId?: string;
+  onApprove?: (id: string) => void;
+  onDeny?: (id: string) => void;
   /** Callback to save this tool execution as a view */
   onSaveView?: () => void;
   /** Whether the save view button should be enabled */
@@ -80,7 +94,14 @@ export function ToolPart({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const mcpIconClassName =
     themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
-  const [isExpanded, setIsExpanded] = useState(false);
+  const needsApproval = state === "approval-requested" && !!approvalId;
+  const [approvalVisualState, setApprovalVisualState] =
+    useState<ApprovalVisualState>("pending");
+  const isDenied =
+    approvalVisualState === "denied" || state === "output-denied";
+  const hideAppControls = isDenied || needsApproval;
+  const [userExpanded, setUserExpanded] = useState(false);
+  const isExpanded = needsApproval || userExpanded;
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "csp" | "context" | null
   >("data");
@@ -100,7 +121,8 @@ export function ToolPart({
   const showDisplayModeControls =
     displayMode !== undefined &&
     onDisplayModeChange !== undefined &&
-    hasWidgetDebug;
+    hasWidgetDebug &&
+    !hideAppControls;
 
   const displayModeOptions: {
     mode: DisplayMode;
@@ -150,10 +172,10 @@ export function ToolPart({
   const handleDebugClick = (tab: "data" | "state" | "csp" | "context") => {
     if (activeDebugTab === tab) {
       setActiveDebugTab(null);
-      setIsExpanded(false);
+      setUserExpanded(false);
     } else {
       setActiveDebugTab(tab);
-      setIsExpanded(true);
+      setUserExpanded(true);
     }
   };
 
@@ -179,11 +201,22 @@ export function ToolPart({
   };
 
   return (
-    <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
+    <div
+      className={cn(
+        "rounded-lg border text-xs",
+        needsApproval && approvalVisualState === "pending"
+          ? "border-pending/40 bg-pending/5"
+          : needsApproval && approvalVisualState === "approved"
+            ? "border-success/40 bg-success/5"
+            : needsApproval && approvalVisualState === "denied"
+              ? "border-destructive/40 bg-destructive/5"
+              : "border-border/50 bg-background/70",
+      )}
+    >
       <button
         type="button"
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
-        onClick={() => setIsExpanded((prev) => !prev)}
+        onClick={() => setUserExpanded((prev) => !prev)}
         aria-expanded={isExpanded}
       >
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
@@ -199,6 +232,23 @@ export function ToolPart({
               {label}
             </span>
           </span>
+          {needsApproval && approvalVisualState === "pending" && (
+            <span className="text-[11px] font-medium text-pending-foreground dark:text-pending">
+              Approve tool call?
+            </span>
+          )}
+          {needsApproval && approvalVisualState === "approved" && (
+            <span className="flex items-center gap-1 text-[11px] font-medium text-success dark:text-success">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Approved
+            </span>
+          )}
+          {needsApproval && approvalVisualState === "denied" && (
+            <span className="flex items-center gap-1 text-[11px] font-medium text-destructive">
+              <ShieldX className="h-3.5 w-3.5" />
+              Denied
+            </span>
+          )}
         </span>
         <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
           {showDisplayModeControls && (
@@ -245,7 +295,7 @@ export function ToolPart({
               </div>
             </span>
           )}
-          {hasWidgetDebug && (
+          {hasWidgetDebug && !hideAppControls && (
             <>
               {showDisplayModeControls && hasWidgetDebug && (
                 <div className="h-4 w-px bg-border/40" />
@@ -332,11 +382,13 @@ export function ToolPart({
               <span className="sr-only">{toolState.label}</span>
             </span>
           )}
-          <ChevronDown
-            className={`h-4 w-4 transition-transform duration-150 ${
-              isExpanded ? "rotate-180" : ""
-            }`}
-          />
+          {!needsApproval && (
+            <ChevronDown
+              className={`h-4 w-4 transition-transform duration-150 ${
+                isExpanded ? "rotate-180" : ""
+              }`}
+            />
+          )}
         </span>
       </button>
 
@@ -548,6 +600,42 @@ export function ToolPart({
                   No tool details available.
                 </div>
               )}
+            </div>
+          )}
+          {needsApproval && approvalVisualState === "pending" && (
+            <div className="flex items-center gap-2 pt-2 border-t border-border/40 mt-3">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-3 text-xs border-success/40 text-success hover:bg-success/10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!approvalId) return;
+                  setApprovalVisualState("approved");
+                  setUserExpanded(false);
+                  onApprove?.(approvalId);
+                }}
+              >
+                <Check className="h-3 w-3 mr-1" />
+                Approve
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-3 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!approvalId) return;
+                  setApprovalVisualState("denied");
+                  setUserExpanded(false);
+                  onDeny?.(approvalId);
+                }}
+              >
+                <X className="h-3 w-3 mr-1" />
+                Deny
+              </Button>
             </div>
           )}
         </div>

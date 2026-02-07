@@ -224,6 +224,9 @@ export function PlaygroundMain({
     isStreaming,
     disableForAuthentication,
     submitBlocked,
+    requireToolApproval,
+    setRequireToolApproval,
+    addToolApprovalResponse,
   } = useChatSession({
     selectedServers,
     onReset: () => {
@@ -447,6 +450,8 @@ export function PlaygroundMain({
     onChangeFileAttachments: setFileAttachments,
     xrayMode,
     onXrayModeChange: setXrayMode,
+    requireToolApproval,
+    onRequireToolApprovalChange: setRequireToolApproval,
   };
 
   // Check if widget should take over the full container
@@ -515,6 +520,7 @@ export function PlaygroundMain({
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocol ?? undefined
                 }
+                onToolApprovalResponse={addToolApprovalResponse}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (

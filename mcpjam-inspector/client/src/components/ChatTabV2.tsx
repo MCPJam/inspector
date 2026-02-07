@@ -141,6 +141,9 @@ export function ChatTabV2({
     isStreaming,
     disableForAuthentication,
     submitBlocked: baseSubmitBlocked,
+    requireToolApproval,
+    setRequireToolApproval,
+    addToolApprovalResponse,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     onReset: () => {
@@ -511,6 +514,8 @@ export function ChatTabV2({
     onChangeSkillResults: setSkillResults,
     xrayMode,
     onXrayModeChange: setXrayMode,
+    requireToolApproval,
+    onRequireToolApprovalChange: setRequireToolApproval,
   };
 
   const showStarterPrompts =
@@ -630,6 +635,7 @@ export function ChatTabV2({
                       enableFullscreenChatOverlay
                       fullscreenChatPlaceholder={placeholder}
                       fullscreenChatDisabled={inputDisabled}
+                      onToolApprovalResponse={addToolApprovalResponse}
                     />
                   </StickToBottom.Content>
                   <ScrollToBottomButton />

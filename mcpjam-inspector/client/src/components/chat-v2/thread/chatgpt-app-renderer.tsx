@@ -31,6 +31,7 @@ type ToolState =
   | "input-available"
   | "output-available"
   | "output-error"
+  | "output-denied"
   | string;
 
 /**
@@ -1428,6 +1429,15 @@ export function ChatGPTAppRenderer({
   const invokedText = toolMetadata?.["openai/toolInvocation/invoked"] as
     | string
     | undefined;
+
+  // Denied state
+  if (toolState === "output-denied") {
+    return (
+      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+        Tool execution was denied.
+      </div>
+    );
+  }
 
   // Loading/error states
   if (toolState === "input-streaming" || toolState === "input-available") {

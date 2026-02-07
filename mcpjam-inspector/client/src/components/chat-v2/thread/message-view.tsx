@@ -29,6 +29,7 @@ export function MessageView({
   displayMode,
   onDisplayModeChange,
   selectedProtocolOverrideIfBothExists,
+  onToolApprovalResponse,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -52,6 +53,7 @@ export function MessageView({
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -170,6 +172,8 @@ export function MessageView({
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocolOverrideIfBothExists
                 }
+                onToolApprovalResponse={onToolApprovalResponse}
+                messageParts={message.parts}
               />
             ))}
           </div>

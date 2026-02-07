@@ -18,6 +18,8 @@ import type {
   TextPart,
   ToolCallPart,
   ToolModelMessage,
+  AssistantModelMessage,
+  ToolResultPart,
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { MCPClientManager } from "@mcpjam/sdk";
@@ -46,6 +48,7 @@ export interface MCPJamHandlerOptions {
   authHeader?: string;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  requireToolApproval?: boolean;
 }
 
 interface StepContext {
@@ -61,6 +64,7 @@ interface StepContext {
   temperature?: number;
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
+  requireToolApproval?: boolean;
 }
 
 interface StreamResult {
@@ -85,9 +89,33 @@ function scrubMessagesForBackend(
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
 ): ModelMessage[] {
+  // First strip approval-specific parts that Convex/OpenRouter doesn't understand
+  const stripped: ModelMessage[] = messages.map((msg) => {
+    if (msg.role === "assistant") {
+      const assistantMsg = msg as AssistantModelMessage;
+      if (!Array.isArray(assistantMsg.content)) return msg;
+      const filtered = assistantMsg.content.filter(
+        (part) => part.type !== "tool-approval-request",
+      );
+      if (filtered.length === assistantMsg.content.length) return msg;
+      return { ...msg, content: filtered } as ModelMessage;
+    }
+
+    if (msg.role === "tool") {
+      const toolMsg = msg as ToolModelMessage;
+      const filtered = toolMsg.content.filter(
+        (part) => part.type !== "tool-approval-response",
+      );
+      if (filtered.length === toolMsg.content.length) return msg;
+      return { ...msg, content: filtered } as ModelMessage;
+    }
+
+    return msg;
+  });
+
   return scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
-      messages,
+      stripped,
       mcpClientManager,
       selectedServers,
     ),
@@ -103,6 +131,7 @@ function scrubMessagesForBackend(
 async function processStream(
   body: ReadableStream<Uint8Array>,
   writer: StepContext["writer"],
+  requireToolApproval?: boolean,
 ): Promise<StreamResult> {
   const contentParts: Array<TextPart | ToolCallPart> = [];
   let pendingText = "";
@@ -162,16 +191,32 @@ async function processStream(
           writer.write(chunk);
           break;
 
-        case "tool-input-available":
+        case "tool-input-available": {
           flushText();
+          const toolCallId = chunk.toolCallId ?? generateToolCallId();
           contentParts.push({
             type: "tool-call",
-            toolCallId: chunk.toolCallId ?? generateToolCallId(),
+            toolCallId,
             toolName: chunk.toolName,
             input: chunk.input ?? {},
           });
           hasToolCalls = true;
-          writer.write(chunk);
+          writer.write({ ...chunk, toolCallId });
+
+          if (requireToolApproval) {
+            writer.write({
+              type: "tool-approval-request",
+              approvalId: generateToolCallId(),
+              toolCallId,
+            });
+          }
+          break;
+        }
+
+        case "start":
+          // Skip Convex's start chunk — its messageId would override the
+          // SDK's message identity, causing a new assistant message instead
+          // of continuing the existing one.
           break;
 
         case "finish":
@@ -204,13 +249,12 @@ function emitToolResults(
     if (msg?.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
       for (const part of toolMsg.content) {
-        if (part?.type === "tool-result") {
-          const resultPart = part as any;
+        if (part.type === "tool-result") {
           writer.write({
             type: "tool-output-available",
-            toolCallId: resultPart.toolCallId,
+            toolCallId: part.toolCallId,
             // Prefer full result (with _meta/structuredContent) for UI
-            output: resultPart.result ?? resultPart.output,
+            output: (part as any).result ?? part.output,
           });
         }
       }
@@ -233,8 +277,8 @@ function emitInheritedToolCalls(
     if (msg?.role === "tool") {
       const toolMsg = msg as ToolModelMessage;
       for (const part of toolMsg.content) {
-        if (part?.type === "tool-result") {
-          existingResultIds.add((part as any).toolCallId);
+        if (part.type === "tool-result") {
+          existingResultIds.add(part.toolCallId);
         }
       }
     }
@@ -243,11 +287,12 @@ function emitInheritedToolCalls(
   // Emit for inherited tool calls (before this step) that don't have results
   for (let i = 0; i < beforeStepLength; i++) {
     const msg = messageHistory[i];
-    if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
-      for (const part of (msg as any).content) {
+    if (msg?.role === "assistant") {
+      const assistantMsg = msg as AssistantModelMessage;
+      if (!Array.isArray(assistantMsg.content)) continue;
+      for (const part of assistantMsg.content) {
         if (
-          typeof part !== "string" &&
-          part?.type === "tool-call" &&
+          part.type === "tool-call" &&
           !existingResultIds.has(part.toolCallId)
         ) {
           writer.write({
@@ -260,6 +305,132 @@ function emitInheritedToolCalls(
       }
     }
   }
+}
+
+/**
+ * Handle pending tool approvals from the previous request.
+ * When the client responds with approval/denial decisions, this function
+ * processes them: executes approved tools and emits denied notifications.
+ *
+ * Returns true if approvals were found and handled (agentic loop should continue).
+ */
+async function handlePendingApprovals(
+  writer: StepContext["writer"],
+  messageHistory: ModelMessage[],
+  tools: ToolSet,
+): Promise<boolean> {
+  // Build approvalId → toolCallId map and toolCallId → toolName map from assistant messages
+  const approvalIdToToolCallId = new Map<string, string>();
+  const toolCallIdToToolName = new Map<string, string>();
+  for (const msg of messageHistory) {
+    if (msg?.role === "assistant") {
+      const assistantMsg = msg as AssistantModelMessage;
+      if (!Array.isArray(assistantMsg.content)) continue;
+      for (const part of assistantMsg.content) {
+        if (part.type === "tool-approval-request" && part.approvalId) {
+          approvalIdToToolCallId.set(part.approvalId, part.toolCallId);
+        }
+        if (part.type === "tool-call" && part.toolCallId) {
+          toolCallIdToToolName.set(part.toolCallId, part.toolName);
+        }
+      }
+    }
+  }
+
+  if (approvalIdToToolCallId.size === 0) return false;
+
+  // Scan tool messages for approval responses
+  const approvedToolCallIds = new Set<string>();
+  const deniedToolCallIds = new Set<string>();
+
+  for (const msg of messageHistory) {
+    if (msg?.role === "tool") {
+      const toolMsg = msg as ToolModelMessage;
+      for (const part of toolMsg.content) {
+        if (part.type === "tool-approval-response" && part.approvalId) {
+          const toolCallId = approvalIdToToolCallId.get(part.approvalId);
+          if (!toolCallId) continue;
+
+          if (part.approved) {
+            approvedToolCallIds.add(toolCallId);
+          } else {
+            deniedToolCallIds.add(toolCallId);
+          }
+        }
+      }
+    }
+  }
+
+  if (approvedToolCallIds.size === 0 && deniedToolCallIds.size === 0) {
+    return false;
+  }
+
+  // Collect existing tool-result IDs once to avoid re-processing approvals
+  const existingResultIds = new Set<string>();
+  for (const msg of messageHistory) {
+    if (msg?.role === "tool") {
+      const toolMsg = msg as ToolModelMessage;
+      for (const part of toolMsg.content) {
+        if (part.type === "tool-result") {
+          existingResultIds.add(part.toolCallId);
+        }
+      }
+    }
+  }
+
+  let didHandle = false;
+
+  // Emit denied tool notifications to the client and add tool-result entries
+  // to messageHistory so the LLM knows which tools were denied.
+  // NOTE: convertToModelMessages does NOT produce tool-results for denied tools
+  // because the client-side state is 'approval-responded', not 'output-denied'.
+  if (deniedToolCallIds.size > 0) {
+    const deniedResultParts: ToolResultPart[] = [];
+
+    for (const toolCallId of deniedToolCallIds) {
+      if (existingResultIds.has(toolCallId)) continue;
+      writer.write({
+        type: "tool-output-denied",
+        toolCallId,
+      });
+
+      deniedResultParts.push({
+        type: "tool-result",
+        toolCallId,
+        toolName: toolCallIdToToolName.get(toolCallId) ?? "unknown",
+        output: {
+          type: "error-text",
+          value: "Tool execution denied by user.",
+        },
+      });
+    }
+
+    if (deniedResultParts.length > 0) {
+      messageHistory.push({
+        role: "tool",
+        content: deniedResultParts,
+      } as ModelMessage);
+      didHandle = true;
+    }
+  }
+
+  // Execute approved tools: collect tool calls that were approved but don't have results yet
+  const needsExecution = [...approvedToolCallIds].some(
+    (id) => !existingResultIds.has(id),
+  );
+
+  if (needsExecution) {
+    const beforeExecLength = messageHistory.length;
+    await executeToolCallsFromMessages(messageHistory, {
+      tools: tools as Record<string, any>,
+    });
+
+    const newMessages = messageHistory.slice(beforeExecLength);
+    emitToolResults(writer, newMessages);
+    didHandle = true;
+  }
+
+  return didHandle;
 }
 
 /**
@@ -280,6 +451,7 @@ async function processOneStep(
     temperature,
     mcpClientManager,
     selectedServers,
+    requireToolApproval,
   } = ctx;
 
   const beforeStepLength = messageHistory.length;
@@ -314,7 +486,11 @@ async function processOneStep(
   }
 
   // Process the stream
-  const { contentParts, finishChunk } = await processStream(res.body, writer);
+  const { contentParts, finishChunk } = await processStream(
+    res.body,
+    writer,
+    requireToolApproval,
+  );
 
   // Update message history with assistant response
   if (contentParts.length > 0) {
@@ -326,6 +502,15 @@ async function processOneStep(
 
   // Check for unresolved tool calls and execute them
   if (hasUnresolvedToolCalls(messageHistory)) {
+    // When approval is required, don't execute tools — pause and let the client
+    // show the approval UI. The next request will carry approval responses.
+    if (requireToolApproval) {
+      if (finishChunk) {
+        writer.write(finishChunk);
+      }
+      return { shouldContinue: false, didEmitFinish: !!finishChunk };
+    }
+
     // Emit inherited tool calls that need execution
     emitInheritedToolCalls(writer, messageHistory, beforeStepLength);
 
@@ -368,6 +553,7 @@ export async function handleMCPJamFreeChatModel(
     authHeader,
     mcpClientManager,
     selectedServers,
+    requireToolApproval,
   } = options;
 
   const toolDefs = serializeToolsForConvex(tools);
@@ -379,6 +565,20 @@ export async function handleMCPJamFreeChatModel(
       let finishEmitted = false;
 
       try {
+        // Process any pending approval responses from a previous request
+        if (requireToolApproval) {
+          const handled = await handlePendingApprovals(
+            writer,
+            messageHistory,
+            tools,
+          );
+          if (handled) {
+            // Approvals were processed — if there are still unresolved tool
+            // calls (shouldn't happen normally), fall through to the loop.
+            // Otherwise the loop will call Convex with the new tool results.
+          }
+        }
+
         while (steps < MAX_STEPS) {
           const { shouldContinue, didEmitFinish } = await processOneStep({
             writer,
@@ -391,6 +591,7 @@ export async function handleMCPJamFreeChatModel(
             temperature,
             mcpClientManager,
             selectedServers,
+            requireToolApproval,
           });
 
           steps++;

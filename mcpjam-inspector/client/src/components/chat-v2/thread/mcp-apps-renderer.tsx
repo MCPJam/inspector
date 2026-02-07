@@ -20,7 +20,6 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useUIPlaygroundStore,
-  DEVICE_VIEWPORT_CONFIGS,
   type CspMode,
 } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
@@ -62,7 +61,8 @@ type ToolState =
   | "input-streaming"
   | "input-available"
   | "output-available"
-  | "output-error";
+  | "output-error"
+  | "output-denied";
 
 // CSP and permissions metadata types are now imported from SDK
 
@@ -240,9 +240,8 @@ export function MCPAppsRenderer({
     [isPlaygroundActive, playgroundSafeAreaInsets],
   );
 
-  // Get device type and custom viewport from playground store for platform/containerDimensions derivation (SEP-1865)
+  // Get device type from playground store for platform derivation (SEP-1865)
   const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
-  const customViewport = useUIPlaygroundStore((s) => s.customViewport);
 
   // Derive platform from device type per SEP-1865 (web | desktop | mobile)
   const platform = useMemo((): "web" | "desktop" | "mobile" => {
@@ -294,24 +293,6 @@ export function MCPAppsRenderer({
       displayMode,
     ],
   );
-
-  // maxHeight is sent to guest UI as part of containerDimensions (SEP-1865 protocol)
-  // Note: We no longer use this to clamp resize, but apps may use it for layout decisions
-  const maxHeight = useMemo(() => {
-    if (!isPlaygroundActive) return 800;
-    if (playgroundDeviceType === "custom") {
-      return customViewport.height;
-    }
-    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].height;
-  }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
-
-  const maxWidth = useMemo(() => {
-    if (!isPlaygroundActive) return 1200;
-    if (playgroundDeviceType === "custom") {
-      return customViewport.width;
-    }
-    return DEVICE_VIEWPORT_CONFIGS[playgroundDeviceType].width;
-  }, [isPlaygroundActive, playgroundDeviceType, customViewport]);
 
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -552,8 +533,6 @@ export function MCPAppsRenderer({
       globals: {
         theme: themeMode,
         displayMode: effectiveDisplayMode,
-        maxHeight,
-        maxWidth,
         locale,
         timeZone,
         deviceCapabilities,
@@ -566,8 +545,6 @@ export function MCPAppsRenderer({
     setWidgetDebugInfo,
     themeMode,
     effectiveDisplayMode,
-    maxHeight,
-    maxWidth,
     locale,
     timeZone,
     deviceCapabilities,
@@ -579,8 +556,6 @@ export function MCPAppsRenderer({
     setWidgetGlobals(toolCallId, {
       theme: themeMode,
       displayMode: effectiveDisplayMode,
-      maxHeight,
-      maxWidth,
       locale,
       timeZone,
       deviceCapabilities,
@@ -590,8 +565,6 @@ export function MCPAppsRenderer({
     toolCallId,
     themeMode,
     effectiveDisplayMode,
-    maxHeight,
-    maxWidth,
     locale,
     timeZone,
     deviceCapabilities,
@@ -606,15 +579,13 @@ export function MCPAppsRenderer({
     [themeMode],
   );
 
+  // containerDimensions (maxWidth/maxHeight) was previously sent here but
+  // removed — width is now fully host-controlled.
   const hostContext = useMemo<McpUiHostContext>(
     () => ({
       theme: themeMode,
       displayMode: effectiveDisplayMode,
       availableDisplayModes: ["inline", "pip", "fullscreen"],
-      containerDimensions: {
-        maxHeight,
-        maxWidth,
-      },
       locale,
       timeZone,
       platform,
@@ -641,8 +612,6 @@ export function MCPAppsRenderer({
     [
       themeMode,
       effectiveDisplayMode,
-      maxHeight,
-      maxWidth,
       locale,
       timeZone,
       platform,
@@ -824,15 +793,18 @@ export function MCPAppsRenderer({
         console.info(message, data);
       };
 
-      bridge.onsizechange = ({ width, height }) => {
+      // Width resize handling was removed here — previously this destructured
+      // `width` and applied it to the iframe via `min(${width}px, 100%)`.
+      // Only height-based auto-resize is applied; width is host-controlled.
+      bridge.onsizechange = ({ height }) => {
         if (effectiveDisplayModeRef.current !== "inline") return;
         const iframe = sandboxRef.current?.getIframeElement();
-        if (!iframe || (height === undefined && width === undefined)) return;
+        if (!iframe || height === undefined) return;
 
-        // The MCP App has requested a `width` and `height`, but if
+        // The MCP App has requested a `height`, but if
         // `box-sizing: border-box` is applied to the outer iframe element, then we
-        // must add border thickness to `width` and `height` to compute the actual
-        // necessary width and height (in order to prevent a resize feedback loop).
+        // must add border thickness to `height` to compute the actual
+        // necessary height (in order to prevent a resize feedback loop).
         const style = getComputedStyle(iframe);
         const isBorderBox = style.boxSizing === "border-box";
 
@@ -840,20 +812,8 @@ export function MCPAppsRenderer({
         const from: Keyframe = {};
         const to: Keyframe = {};
 
-        let adjustedWidth = width;
         let adjustedHeight = height;
 
-        if (adjustedWidth !== undefined) {
-          if (isBorderBox) {
-            adjustedWidth +=
-              parseFloat(style.borderLeftWidth) +
-              parseFloat(style.borderRightWidth);
-          }
-          // Use width with min(..., 100%) so the iframe can both grow and shrink
-          // dynamically based on widget requests, while respecting container bounds.
-          from.width = `${iframe.offsetWidth}px`;
-          iframe.style.width = to.width = `min(${adjustedWidth}px, 100%)`;
-        }
         if (adjustedHeight !== undefined) {
           if (isBorderBox) {
             adjustedHeight +=
@@ -1083,6 +1043,15 @@ export function MCPAppsRenderer({
     );
   };
 
+  // Denied state
+  if (toolState === "output-denied") {
+    return (
+      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+        Tool execution was denied.
+      </div>
+    );
+  }
+
   // Loading states
   if (toolState !== "output-available") {
     return (
@@ -1129,7 +1098,7 @@ export function MCPAppsRenderer({
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
       }
       return [
-        "fixed top-4 left-1/2 -translate-x-1/2 z-40 w-fit min-w-[300px] max-w-[min(90vw,1200px)] space-y-2",
+        "fixed top-4 left-1/2 -translate-x-1/2 z-40 w-full min-w-[300px] max-w-[min(90vw,1200px)] space-y-2",
         "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
         "shadow-xl border border-border/60 rounded-xl p-3",
       ].join(" ");
@@ -1142,9 +1111,8 @@ export function MCPAppsRenderer({
     height: isFullscreen ? "100%" : "400px",
     width: "100%",
     maxWidth: "100%",
-    transition: isFullscreen
-      ? undefined
-      : "height 300ms ease-out, width 300ms ease-out",
+    // Width transition was previously included here ("width 300ms ease-out").
+    transition: isFullscreen ? undefined : "height 300ms ease-out",
   };
 
   return (
