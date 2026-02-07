@@ -87,7 +87,7 @@ apps.post("/widget/store", async (c) => {
       toolName,
       theme: theme ?? "dark",
       protocol: protocol ?? "mcp-apps",
-      cspMode: cspMode ?? "permissive", // Default to permissive mode
+      cspMode: cspMode ?? "widget-declared", // Default to strict (widget-declared) mode
       timestamp: Date.now(),
     });
 
@@ -128,7 +128,7 @@ apps.get("/widget-content/:toolId", async (c) => {
     const { serverId, resourceUri, cspMode: storedCspMode } = widgetData;
 
     // Use query param override if provided, otherwise use stored mode
-    const effectiveCspMode = cspModeParam ?? storedCspMode ?? "permissive";
+    const effectiveCspMode = cspModeParam ?? storedCspMode ?? "widget-declared";
     const mcpClientManager = c.mcpClientManager;
 
     // REUSE existing mcpClientManager.readResource (same as resources.ts)

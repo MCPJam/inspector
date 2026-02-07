@@ -738,7 +738,7 @@ export function ChatGPTAppRenderer({
   const playgroundSafeAreaInsets = useUIPlaygroundStore(
     (s) => s.safeAreaInsets,
   );
-  const cspMode = isPlaygroundActive ? playgroundCspMode : "permissive";
+  const cspMode = isPlaygroundActive ? playgroundCspMode : "widget-declared";
   // Use playground settings when active, otherwise compute from window
   const deviceType = isPlaygroundActive
     ? playgroundDeviceType
