@@ -178,6 +178,21 @@ const clampNumber = (value: unknown): number | null => {
     };
   })();
 
+  const postWidth = (() => {
+    let lastWidth = 0;
+    return (width: unknown) => {
+      const numericWidth = Number(width);
+      if (!Number.isFinite(numericWidth) || numericWidth <= 0) return;
+      const roundedWidth = Math.round(numericWidth);
+      if (roundedWidth === lastWidth) return;
+      lastWidth = roundedWidth;
+      window.parent.postMessage(
+        { type: "openai:resize", width: roundedWidth },
+        "*",
+      );
+    };
+  })();
+
   const measureAndNotifyHeight = () => {
     try {
       let contentHeight = 0;
@@ -211,6 +226,39 @@ const clampNumber = (value: unknown): number | null => {
     }
   };
 
+  const measureAndNotifyWidth = () => {
+    try {
+      let contentWidth = 0;
+
+      if (document.body) {
+        const children = document.body.children;
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i] as HTMLElement;
+          if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
+          const rect = child.getBoundingClientRect();
+          const right = rect.left + rect.width + window.scrollX;
+          contentWidth = Math.max(contentWidth, right);
+        }
+
+        const bodyStyle = window.getComputedStyle(document.body);
+        contentWidth += parseFloat(bodyStyle.marginRight) || 0;
+        contentWidth += parseFloat(bodyStyle.paddingRight) || 0;
+      }
+
+      if (contentWidth <= 0) {
+        const docEl = document.documentElement;
+        contentWidth = Math.max(
+          docEl ? docEl.scrollWidth : 0,
+          document.body ? document.body.scrollWidth : 0,
+        );
+      }
+
+      postWidth(Math.ceil(contentWidth));
+    } catch (err) {
+      console.error("[OpenAI Widget] Failed to measure width:", err);
+    }
+  };
+
   const setupAutoResize = () => {
     let scheduled = false;
 
@@ -220,6 +268,7 @@ const clampNumber = (value: unknown): number | null => {
       requestAnimationFrame(() => {
         scheduled = false;
         measureAndNotifyHeight();
+        measureAndNotifyWidth();
       });
     };
 
@@ -234,7 +283,10 @@ const clampNumber = (value: unknown): number | null => {
     }
 
     window.addEventListener("load", () => {
-      requestAnimationFrame(measureAndNotifyHeight);
+      requestAnimationFrame(() => {
+        measureAndNotifyHeight();
+        measureAndNotifyWidth();
+      });
     });
   };
 
