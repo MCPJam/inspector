@@ -962,10 +962,12 @@ export function MCPAppsRenderer({
   useEffect(() => {
     if (!isReady || toolState !== "output-available") return;
     const bridge = bridgeRef.current;
-    if (!bridge || lastToolInputRef.current !== null) return;
+    if (!bridge) return;
 
     const resolvedToolInput = toolInput ?? {};
-    lastToolInputRef.current = JSON.stringify(resolvedToolInput);
+    const serialized = JSON.stringify(resolvedToolInput);
+    if (lastToolInputRef.current === serialized) return;
+    lastToolInputRef.current = serialized;
     bridge.sendToolInput({ arguments: resolvedToolInput });
   }, [isReady, toolInput, toolState]);
 
