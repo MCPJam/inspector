@@ -538,8 +538,8 @@ export function ChatTabV2({
               transform: isWidgetFullscreen ? "none" : "translateZ(0)",
             }}
           >
-            {xrayMode ? (
-              // X-Ray mode: show raw JSON view of AI payload
+            {/* X-Ray mode: show raw JSON view of AI payload */}
+            {xrayMode && (
               <StickToBottom
                 className="relative flex flex-1 flex-col min-h-0"
                 resize="smooth"
@@ -566,55 +566,14 @@ export function ChatTabV2({
                   </div>
                 </div>
               </StickToBottom>
-            ) : isThreadEmpty ? (
-              <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
-                <div className="w-full max-w-3xl space-y-6 py-8">
-                  {isAuthLoading ? (
-                    <div className="text-center space-y-4">
-                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                      <p className="text-sm text-muted-foreground">
-                        Loading...
-                      </p>
-                    </div>
-                  ) : showDisabledCallout ? (
-                    <div className="space-y-4">
-                      <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                    </div>
-                  ) : null}
+            )}
 
-                  <div className="space-y-4">
-                    {showStarterPrompts && (
-                      <div className="text-center">
-                        <p className="text-sm text-muted-foreground mb-3">
-                          Try one of these to get started
-                        </p>
-                        <div className="flex flex-wrap justify-center gap-2">
-                          {STARTER_PROMPTS.map((prompt) => (
-                            <button
-                              key={prompt.text}
-                              type="button"
-                              onClick={() => handleStarterPrompt(prompt.text)}
-                              className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
-                            >
-                              {prompt.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {!isAuthLoading && (
-                      <ChatInput
-                        {...sharedChatInputProps}
-                        hasMessages={false}
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
+            {/* Thread: kept mounted (but hidden) during X-Ray to preserve
+                MCPAppsRenderer iframes and bridge connections */}
+            {!isThreadEmpty && (
               <StickToBottom
                 className="relative flex flex-1 flex-col min-h-0 animate-in fade-in duration-300"
+                style={xrayMode ? { display: "none" } : undefined}
                 resize="smooth"
                 initial="smooth"
               >
@@ -662,6 +621,55 @@ export function ChatTabV2({
                   </div>
                 </div>
               </StickToBottom>
+            )}
+
+            {/* Empty state: only shown when thread is empty and not in X-Ray mode */}
+            {!xrayMode && isThreadEmpty && (
+              <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
+                <div className="w-full max-w-3xl space-y-6 py-8">
+                  {isAuthLoading ? (
+                    <div className="text-center space-y-4">
+                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                      <p className="text-sm text-muted-foreground">
+                        Loading...
+                      </p>
+                    </div>
+                  ) : showDisabledCallout ? (
+                    <div className="space-y-4">
+                      <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-4">
+                    {showStarterPrompts && (
+                      <div className="text-center">
+                        <p className="text-sm text-muted-foreground mb-3">
+                          Try one of these to get started
+                        </p>
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {STARTER_PROMPTS.map((prompt) => (
+                            <button
+                              key={prompt.text}
+                              type="button"
+                              onClick={() => handleStarterPrompt(prompt.text)}
+                              className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
+                            >
+                              {prompt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!isAuthLoading && (
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={false}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
             )}
 
             <ElicitationDialog
