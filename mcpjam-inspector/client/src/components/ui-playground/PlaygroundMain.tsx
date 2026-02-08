@@ -637,7 +637,8 @@ export function PlaygroundMain({
             transform: isWidgetFullscreen ? "none" : "translateZ(0)",
           }}
         >
-          {xrayMode ? (
+          {/* X-Ray mode: show raw JSON view of AI payload */}
+          {xrayMode && (
             <StickToBottom
               className="relative flex flex-1 flex-col min-h-0"
               resize="smooth"
@@ -663,9 +664,15 @@ export function PlaygroundMain({
                 </div>
               </div>
             </StickToBottom>
-          ) : (
-            threadContent
           )}
+          {/* Thread: kept mounted (but hidden) during X-Ray to preserve
+              MCPAppsRenderer iframes and bridge connections */}
+          <div
+            className="flex flex-col flex-1 min-h-0"
+            style={xrayMode ? { display: "none" } : undefined}
+          >
+            {threadContent}
+          </div>
         </div>
       </div>
     </div>

@@ -5,7 +5,7 @@
  * Fetches the real enhanced payload from the server to ensure accuracy.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, X, RefreshCw, AlertCircle, ScanSearch } from "lucide-react";
 import { toast } from "sonner";
 import type { UIMessage } from "ai";
@@ -72,13 +72,24 @@ export function XRaySnapshotView({
 
   const hasMessages = messages.length > 0;
 
+  // Debounce fetches — messages changes on every streaming chunk, so without
+  // debouncing we'd fire a POST every ~100ms during streaming.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (hasMessages) {
-      fetchPayload();
-    } else {
+    if (!hasMessages) {
       setLoading(false);
       setPayload(null);
+      return;
     }
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetchPayload();
+    }, 1000);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [messages, systemPrompt, selectedServers, hasMessages]);
 
   // Shared header component
