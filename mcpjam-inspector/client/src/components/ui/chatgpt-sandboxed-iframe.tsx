@@ -204,7 +204,7 @@ export const ChatGPTSandboxedIframe = forwardRef<
   <title>ChatGPT Sandbox Container</title>
   <style>
     html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
-    iframe { border: none; width: 100%; height: 100%; }
+    iframe { border: none; width: 100%; height: 100%; overflow: hidden; }
     .measurement { z-index: -1; position: absolute; width: 100%; height: 100%; top: 0; left: 0; opacity: 0; }
   </style>
 </head>

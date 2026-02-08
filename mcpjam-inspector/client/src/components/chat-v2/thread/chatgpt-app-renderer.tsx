@@ -708,6 +708,7 @@ export function ChatGPTAppRenderer({
   );
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const [contentHeight, setContentHeight] = useState<number>(320);
+  const [contentWidth, setContentWidth] = useState<number | undefined>(undefined);
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -1023,6 +1024,10 @@ export function ChatGPTAppRenderer({
       switch (eventType) {
         case "openai:resize": {
           applyMeasuredHeight(event.data.height);
+          const w = Number(event.data.width);
+          if (Number.isFinite(w) && w > 0) {
+            setContentWidth(Math.ceil(w));
+          }
           break;
         }
         case "openai:setWidgetState": {
@@ -1528,7 +1533,7 @@ export function ChatGPTAppRenderer({
     }
 
     // Inline mode
-    return "mt-3 space-y-2 relative group";
+    return "mt-3 space-y-2 relative group overflow-x-auto";
   })();
 
   return (
@@ -1629,15 +1634,16 @@ export function ChatGPTAppRenderer({
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className={`w-full bg-background overflow-hidden ${
+        className={`w-full bg-background ${
           isFullscreen
             ? "flex-1 border-0 rounded-none"
-            : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
+            : isPip
+              ? `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
+              : `min-w-full overflow-hidden rounded-md ${prefersBorder ? "border border-border/40" : ""}`
         }`}
         style={{
           height: iframeHeight,
-          // Remove max-height in fullscreen to allow flex-1 to control size
-          // In mobile playground mode, PiP should not be constrained by 90vh
+          width: !isFullscreen && !isPip ? contentWidth : undefined,
           maxHeight:
             effectiveDisplayMode === "pip" && !isMobilePlaygroundMode
               ? "90vh"
