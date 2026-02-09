@@ -200,6 +200,7 @@ export function JsonEditorEdit({
   const [scrollLeft, setScrollLeft] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(400);
   const overlayContentRef = useRef<HTMLDivElement>(null);
+  const activeHighlightRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number>(0);
   const [charsPerVisualLine, setCharsPerVisualLine] = useState(
     DEFAULT_CHARS_PER_VISUAL_LINE,
@@ -267,6 +268,8 @@ export function JsonEditorEdit({
   const paddingTop = useViewportBasedHighlighting ? viewportPaddingTop : 0;
   const paddingTopRef = useRef(0);
   paddingTopRef.current = paddingTop;
+  const activeLineTopRef = useRef(0);
+  activeLineTopRef.current = activeLineTop;
 
   // Sync scroll between textarea, line numbers, and highlight overlay
   const handleScroll = useCallback(() => {
@@ -282,6 +285,12 @@ export function JsonEditorEdit({
       if (overlayContentRef.current) {
         overlayContentRef.current.style.transform =
           `translate(${-currentScrollLeft}px, ${paddingTopRef.current - currentScrollTop}px)`;
+      }
+
+      // Keep active line highlight locked to cursor position during scroll
+      if (activeHighlightRef.current) {
+        activeHighlightRef.current.style.transform =
+          `translateY(${activeLineTopRef.current - currentScrollTop + EDITOR_VERTICAL_PADDING}px)`;
       }
 
       // Debounce React state updates to once per animation frame
@@ -584,7 +593,8 @@ export function JsonEditorEdit({
             {/* Active line highlight (only in edit mode) */}
             {isFocused && (
               <div
-                className="absolute left-0 right-0 bg-foreground/[0.03] pointer-events-none transition-transform duration-75"
+                ref={activeHighlightRef}
+                className="absolute left-0 right-0 bg-foreground/[0.03] pointer-events-none"
                 style={{
                   height: `${activeLineHeight}px`,
                   transform: `translateY(${activeHighlightOffset}px)`,
