@@ -47,29 +47,128 @@ function serializeParsedValue(value: unknown): string | null {
   }
 }
 
+export function expandJsonStringsInValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === "object" && parsed !== null) {
+        return expandJsonStringsInValue(parsed);
+      }
+    } catch {
+      // not valid JSON, keep as string
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(expandJsonStringsInValue);
+  if (typeof value === "object" && value !== null) {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value))
+      result[key] = expandJsonStringsInValue(val);
+    return result;
+  }
+  return value;
+}
+
+function collapseJsonStringsInValue(
+  current: unknown,
+  original: unknown,
+): unknown {
+  if (typeof original === "string" && typeof current !== "string") {
+    try {
+      const parsed = JSON.parse(original);
+      if (typeof parsed === "object" && parsed !== null) {
+        return JSON.stringify(current);
+      }
+    } catch {
+      // original wasn't a JSON string, return as-is
+    }
+  }
+  if (
+    typeof current === "object" &&
+    current !== null &&
+    !Array.isArray(current) &&
+    typeof original === "object" &&
+    original !== null &&
+    !Array.isArray(original)
+  ) {
+    const result: Record<string, unknown> = {};
+    const origObj = original as Record<string, unknown>;
+    for (const [key, val] of Object.entries(
+      current as Record<string, unknown>,
+    ))
+      result[key] =
+        key in origObj ? collapseJsonStringsInValue(val, origObj[key]) : val;
+    return result;
+  }
+  if (Array.isArray(current) && Array.isArray(original)) {
+    return current.map((item, i) =>
+      i < original.length
+        ? collapseJsonStringsInValue(item, original[i])
+        : item,
+    );
+  }
+  return current;
+}
+
+function computeDisplayContent(
+  rawContent: string | undefined,
+  value: unknown,
+  expand: boolean,
+): string {
+  if (rawContent !== undefined) return rawContent;
+  return stringifyValue(expand ? expandJsonStringsInValue(value) : value);
+}
+
 export function useJsonEditor({
   initialValue,
   initialContent: initialContentProp,
   onChange,
   onRawChange,
   onValidationError,
+  expandJsonStrings = false,
 }: UseJsonEditorOptions): UseJsonEditorReturn {
-  // Use raw content if provided, otherwise stringify the value
-  const initialContentFromProps =
-    initialContentProp !== undefined
-      ? initialContentProp
-      : stringifyValue(initialValue);
-  const initialParsed = parseJson(initialContentFromProps);
-  const [content, setContentInternal] = useState(initialContentFromProps);
-  const contentRef = useRef(initialContentFromProps);
+  // Lazy first-render initialization — avoids expensive expand+stringify on every render
+  const initRef = useRef<{
+    content: string;
+    lastEmitted: string | null;
+    error: string | null;
+  } | null>(null);
+  if (initRef.current === null) {
+    const content = computeDisplayContent(
+      initialContentProp,
+      initialValue,
+      expandJsonStrings,
+    );
+    const parsed = parseJson(content);
+    let lastEmitted: string | null;
+    if (parsed.error !== null) {
+      lastEmitted = null;
+    } else if (expandJsonStrings) {
+      lastEmitted = serializeParsedValue(
+        collapseJsonStringsInValue(parsed.value, initialValue),
+      );
+    } else {
+      lastEmitted = serializeParsedValue(parsed.value);
+    }
+    initRef.current = {
+      content,
+      lastEmitted,
+      error: parsed.error,
+    };
+  }
+
+  const [content, setContentInternal] = useState(initRef.current.content);
+
+  // Track the original (unexpanded) value for collapsing back on onChange
+  const originalValueRef = useRef(initialValue);
+  const contentRef = useRef(initRef.current.content);
+  const sourceContentRef = useRef(initRef.current.content);
   const lastEmittedParsedValueRef = useRef<string | null>(
-    initialParsed.error === null
-      ? serializeParsedValue(initialParsed.value)
-      : null,
+    initRef.current.lastEmitted,
   );
-  const [validationError, setValidationError] = useState<string | null>(() => {
-    return initialParsed.error;
-  });
+  const [validationError, setValidationError] = useState<string | null>(
+    initRef.current.error,
+  );
   const [cursorPosition, setCursorPosition] = useState<CursorPosition>(
     getDefaultCursorPosition,
   );
@@ -77,7 +176,7 @@ export function useJsonEditor({
   // History for undo/redo
   const historyRef = useRef<HistoryEntry[]>([
     {
-      content: initialContentFromProps,
+      content: initRef.current.content,
       cursorPosition: getDefaultCursorPosition(),
     },
   ]);
@@ -97,12 +196,52 @@ export function useJsonEditor({
     contentRef.current = content;
   }, [content]);
 
-  // Sync initial value/content when it changes externally
+  // Render-time sourceContent update: detect when inputs change and update
+  // sourceContentRef synchronously so the returned value is always current.
+  // Uses round-trip detection to skip expensive expand+stringify during typing.
+  const prevInputsRef = useRef({
+    value: initialValue,
+    content: initialContentProp,
+  });
+  if (
+    initialValue !== prevInputsRef.current.value ||
+    initialContentProp !== prevInputsRef.current.content
+  ) {
+    prevInputsRef.current = {
+      value: initialValue,
+      content: initialContentProp,
+    };
+    if (initialContentProp === undefined && expandJsonStrings) {
+      const incomingSerialized = serializeParsedValue(initialValue);
+      if (
+        incomingSerialized !== null &&
+        incomingSerialized === lastEmittedParsedValueRef.current
+      ) {
+        // Round-trip: parent echoed back our onChange — no expensive computation
+        originalValueRef.current = initialValue;
+        sourceContentRef.current = contentRef.current;
+      } else {
+        // Genuine external change
+        originalValueRef.current = initialValue;
+        sourceContentRef.current = computeDisplayContent(
+          undefined,
+          initialValue,
+          true,
+        );
+      }
+    } else {
+      originalValueRef.current = initialValue;
+      sourceContentRef.current = computeDisplayContent(
+        initialContentProp,
+        initialValue,
+        expandJsonStrings,
+      );
+    }
+  }
+
+  // Sync initial value/content when it changes externally (state updates)
   useEffect(() => {
-    const newContent =
-      initialContentProp !== undefined
-        ? initialContentProp
-        : stringifyValue(initialValue);
+    const newContent = sourceContentRef.current;
     if (newContent === contentRef.current) {
       return;
     }
@@ -115,21 +254,33 @@ export function useJsonEditor({
     ];
     historyIndexRef.current = 0;
     validateContent(newContent);
+    // Compute lastEmitted from collapsed form so dedup works correctly
     const parsed = parseJson(newContent);
-    lastEmittedParsedValueRef.current =
-      parsed.error === null ? serializeParsedValue(parsed.value) : null;
-  }, [initialValue, initialContentProp, validateContent]);
+    if (parsed.error === null && expandJsonStrings) {
+      const collapsed = collapseJsonStringsInValue(
+        parsed.value,
+        initialValue,
+      );
+      lastEmittedParsedValueRef.current = serializeParsedValue(collapsed);
+    } else {
+      lastEmittedParsedValueRef.current =
+        parsed.error === null ? serializeParsedValue(parsed.value) : null;
+    }
+  }, [initialValue, initialContentProp, validateContent, expandJsonStrings]);
 
   const notifyChangeCallbacks = useCallback(
     (newContent: string, parsedValue?: unknown, error?: string | null) => {
       onRawChange?.(newContent);
 
       const emitOnChangeIfNeeded = (value: unknown) => {
-        const serialized = serializeParsedValue(value);
+        const valueToEmit = expandJsonStrings
+          ? collapseJsonStringsInValue(value, originalValueRef.current)
+          : value;
+        const serialized = serializeParsedValue(valueToEmit);
 
         // Fallback for unexpected non-serializable values
         if (serialized === null) {
-          onChange?.(value);
+          onChange?.(valueToEmit);
           return;
         }
 
@@ -138,7 +289,7 @@ export function useJsonEditor({
         }
 
         lastEmittedParsedValueRef.current = serialized;
-        onChange?.(value);
+        onChange?.(valueToEmit);
       };
 
       if (error === undefined) {
@@ -153,7 +304,7 @@ export function useJsonEditor({
         emitOnChangeIfNeeded(parsedValue);
       }
     },
-    [onChange, onRawChange],
+    [onChange, onRawChange, expandJsonStrings],
   );
 
   const setContent = useCallback(
@@ -230,16 +381,22 @@ export function useJsonEditor({
   const format = useCallback(() => {
     const { value, error } = parseJson(content);
     if (error === null) {
-      const formatted = JSON.stringify(value, null, 2);
+      const toFormat = expandJsonStrings
+        ? expandJsonStringsInValue(value)
+        : value;
+      const formatted = JSON.stringify(toFormat, null, 2);
       setContent(formatted);
     }
-  }, [content, setContent]);
+  }, [content, setContent, expandJsonStrings]);
 
   const reset = useCallback(() => {
-    const newContent =
-      initialContentProp !== undefined
-        ? initialContentProp
-        : stringifyValue(initialValue);
+    originalValueRef.current = initialValue;
+    const newContent = computeDisplayContent(
+      initialContentProp,
+      initialValue,
+      expandJsonStrings,
+    );
+    sourceContentRef.current = newContent;
     contentRef.current = newContent;
     setContentInternal(newContent);
     setCursorPosition(getDefaultCursorPosition());
@@ -254,6 +411,7 @@ export function useJsonEditor({
     initialContentProp,
     validateContent,
     notifyChangeCallbacks,
+    expandJsonStrings,
   ]);
 
   const getParsedValue = useCallback(() => {
@@ -278,5 +436,6 @@ export function useJsonEditor({
     format,
     reset,
     getParsedValue,
+    sourceContent: sourceContentRef.current,
   };
 }

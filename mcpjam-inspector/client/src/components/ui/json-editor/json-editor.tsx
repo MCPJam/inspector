@@ -52,6 +52,7 @@ export function JsonEditor({
   onCollapseChange,
   collapseStringsAfterLength,
   viewOnly = false,
+  expandJsonStrings = false,
   autoFormatOnEdit = true,
   wrapLongLinesInEdit = false,
   toolbarLeftContent,
@@ -66,8 +67,6 @@ export function JsonEditor({
   const mode = readOnly ? "view" : (controlledMode ?? internalMode);
   const [isMaximized, setIsMaximized] = useState(false);
 
-  const sourceContent = isRawMode ? (rawContent ?? "") : stringifyValue(value);
-
   // Editor hook for edit mode
   const editor = useJsonEditor({
     initialValue: isRawMode ? undefined : value,
@@ -75,8 +74,10 @@ export function JsonEditor({
     onChange,
     onRawChange: isRawMode ? onRawChange : undefined,
     onValidationError,
+    expandJsonStrings,
   });
 
+  const sourceContent = isRawMode ? (rawContent ?? "") : editor.sourceContent;
   const hasUnsavedChanges = editor.content !== sourceContent;
   const previousModeRef = useRef<JsonEditorMode>(mode);
   const hasMountedRef = useRef(false);

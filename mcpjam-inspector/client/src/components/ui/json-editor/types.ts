@@ -34,6 +34,9 @@ export interface JsonEditorProps {
   // View-only mode: renders just the view without toolbar or edit capabilities
   viewOnly?: boolean;
 
+  // Expand stringified JSON values for display and collapse back on change
+  expandJsonStrings?: boolean;
+
   // Automatically format valid JSON when entering edit mode
   autoFormatOnEdit?: boolean;
 
@@ -56,6 +59,7 @@ export interface UseJsonEditorOptions {
   onChange?: (value: unknown) => void;
   onRawChange?: (content: string) => void;
   onValidationError?: (error: string | null) => void;
+  expandJsonStrings?: boolean;
 }
 
 export interface UseJsonEditorReturn {
@@ -72,4 +76,5 @@ export interface UseJsonEditorReturn {
   format: () => void;
   reset: () => void;
   getParsedValue: () => unknown;
+  sourceContent: string;
 }

@@ -99,34 +99,51 @@ function buildLineLayouts(
 }
 
 /**
- * Hook for viewport-based highlighting.
- * Keeps syntax highlighting stable while typing by rendering highlighted HTML immediately.
+ * Compute viewport-based highlighting.
+ * Only highlights the visible portion + buffer, using lineLayouts for correct
+ * positioning when line wrapping is enabled.
  */
 function useViewportHighlight(
   content: string,
   scrollTop: number,
   viewportHeight: number,
   enabled: boolean,
+  lineLayouts: LineLayout[],
 ): { highlightedHtml: string; paddingTop: number; paddingBottom: number } {
-  const [highlightedHtml, setHighlightedHtml] = useState("");
-  const [paddingTop, setPaddingTop] = useState(0);
-  const [paddingBottom, setPaddingBottom] = useState(0);
-
-  useEffect(() => {
+  return useMemo(() => {
     if (!enabled) {
-      setHighlightedHtml("");
-      setPaddingTop(0);
-      setPaddingBottom(0);
-      return;
+      return { highlightedHtml: "", paddingTop: 0, paddingBottom: 0 };
     }
 
     const lines = content.split("\n");
     const totalLines = lines.length;
 
-    // Calculate visible line range
-    const firstVisibleLine = Math.floor(scrollTop / LINE_HEIGHT);
-    const visibleLineCount = Math.ceil(viewportHeight / LINE_HEIGHT);
-    const lastVisibleLine = firstVisibleLine + visibleLineCount;
+    if (totalLines === 0) {
+      return { highlightedHtml: "", paddingTop: 0, paddingBottom: 0 };
+    }
+
+    // Find first visible line using lineLayouts (binary search)
+    let lo = 0;
+    let hi = totalLines - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const layout = lineLayouts[mid];
+      if (!layout || layout.top + layout.height <= scrollTop) {
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const firstVisibleLine = Math.min(lo, totalLines - 1);
+
+    // Find last visible line
+    const viewBottom = scrollTop + viewportHeight;
+    let lastVisibleLine = firstVisibleLine;
+    for (let i = firstVisibleLine; i < totalLines; i++) {
+      const layout = lineLayouts[i];
+      if (!layout || layout.top >= viewBottom) break;
+      lastVisibleLine = i;
+    }
 
     // Add buffer
     const startLine = Math.max(0, firstVisibleLine - VIEWPORT_BUFFER_LINES);
@@ -137,14 +154,24 @@ function useViewportHighlight(
 
     const visibleContent = lines.slice(startLine, endLine + 1).join("\n");
 
-    // Always update padding immediately for smooth scrolling
-    setPaddingTop(startLine * LINE_HEIGHT);
-    setPaddingBottom(Math.max(0, totalLines - endLine - 1) * LINE_HEIGHT);
+    // Compute padding from lineLayouts
+    const startLayout = lineLayouts[startLine];
+    const endLayout = lineLayouts[endLine];
+    const lastLayout = lineLayouts[totalLines - 1];
+    const totalHeight = lastLayout ? lastLayout.top + lastLayout.height : 0;
 
-    setHighlightedHtml(highlightJson(visibleContent));
-  }, [content, scrollTop, viewportHeight, enabled]);
+    const paddingTop = startLayout?.top ?? 0;
+    const paddingBottom = Math.max(
+      0,
+      totalHeight - (endLayout ? endLayout.top + endLayout.height : 0),
+    );
 
-  return { highlightedHtml, paddingTop, paddingBottom };
+    return {
+      highlightedHtml: highlightJson(visibleContent),
+      paddingTop,
+      paddingBottom,
+    };
+  }, [content, scrollTop, viewportHeight, enabled, lineLayouts]);
 }
 
 export function JsonEditorEdit({
@@ -185,7 +212,8 @@ export function JsonEditorEdit({
   const activeLineLayout = lineLayouts[activeLineIndex];
   const activeLineTop = activeLineLayout?.top ?? 0;
   const activeLineHeight = activeLineLayout?.height ?? LINE_HEIGHT;
-  const useViewportBasedHighlighting = !readOnly && !lineWrapEnabled;
+  // Always use viewport-based highlighting in edit mode (works with wrapping via lineLayouts)
+  const useViewportBasedHighlighting = !readOnly;
   const activeHighlightOffset =
     activeLineTop - scrollTop + EDITOR_VERTICAL_PADDING;
 
@@ -208,7 +236,7 @@ export function JsonEditorEdit({
     overscan: 20,
   });
 
-  // Phase 3: Viewport-based highlighting
+  // Phase 3: Viewport-based highlighting (uses lineLayouts for correct wrapping support)
   const {
     highlightedHtml: viewportHighlightedHtml,
     paddingTop: viewportPaddingTop,
@@ -218,6 +246,7 @@ export function JsonEditorEdit({
     scrollTop,
     viewportHeight,
     useViewportBasedHighlighting,
+    lineLayouts,
   );
   const highlightedHtml = useMemo(() => {
     if (readOnly) {

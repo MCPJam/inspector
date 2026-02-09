@@ -265,6 +265,7 @@ export function ViewEditorPanel({
       <JsonEditor
         value={editorModel}
         onChange={handleChange}
+        expandJsonStrings
         mode="edit"
         showToolbar={true}
         showModeToggle={false}
