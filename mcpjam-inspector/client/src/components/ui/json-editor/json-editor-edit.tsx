@@ -197,7 +197,10 @@ export function JsonEditorEdit({
   const [isFocused, setIsFocused] = useState(false);
   const [activeLine, setActiveLine] = useState(1);
   const [scrollTop, setScrollTop] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(400);
+  const overlayContentRef = useRef<HTMLDivElement>(null);
+  const scrollRafRef = useRef<number>(0);
   const [charsPerVisualLine, setCharsPerVisualLine] = useState(
     DEFAULT_CHARS_PER_VISUAL_LINE,
   );
@@ -240,7 +243,6 @@ export function JsonEditorEdit({
   const {
     highlightedHtml: viewportHighlightedHtml,
     paddingTop: viewportPaddingTop,
-    paddingBottom: viewportPaddingBottom,
   } = useViewportHighlight(
     content,
     scrollTop,
@@ -263,26 +265,31 @@ export function JsonEditorEdit({
     viewportHighlightedHtml,
   ]);
   const paddingTop = useViewportBasedHighlighting ? viewportPaddingTop : 0;
-  const paddingBottom = useViewportBasedHighlighting
-    ? viewportPaddingBottom
-    : 0;
+  const paddingTopRef = useRef(0);
+  paddingTopRef.current = paddingTop;
 
   // Sync scroll between textarea, line numbers, and highlight overlay
   const handleScroll = useCallback(() => {
     if (textareaRef.current) {
       const currentScrollTop = textareaRef.current.scrollTop;
-      const scrollLeft = textareaRef.current.scrollLeft;
-
-      // Update scroll state for viewport highlighting
-      setScrollTop(currentScrollTop);
+      const currentScrollLeft = textareaRef.current.scrollLeft;
 
       if (lineNumbersRef.current) {
         lineNumbersRef.current.scrollTop = currentScrollTop;
       }
-      if (highlightRef.current) {
-        highlightRef.current.scrollTop = currentScrollTop;
-        highlightRef.current.scrollLeft = scrollLeft;
+
+      // Immediate visual sync via transform (prevents flicker)
+      if (overlayContentRef.current) {
+        overlayContentRef.current.style.transform =
+          `translate(${-currentScrollLeft}px, ${paddingTopRef.current - currentScrollTop}px)`;
       }
+
+      // Debounce React state updates to once per animation frame
+      cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = requestAnimationFrame(() => {
+        setScrollTop(currentScrollTop);
+        setScrollLeft(currentScrollLeft);
+      });
     }
   }, []);
 
@@ -425,6 +432,10 @@ export function JsonEditorEdit({
   }, []);
 
   useEffect(() => {
+    return () => cancelAnimationFrame(scrollRafRef.current);
+  }, []);
+
+  useEffect(() => {
     if (activeLine > lineCount) {
       setActiveLine(lineCount);
     }
@@ -557,12 +568,17 @@ export function JsonEditorEdit({
               style={fontStyle}
               aria-hidden="true"
             >
-              {/* Padding to maintain scroll position */}
-              <div style={{ height: paddingTop }} aria-hidden="true" />
               <div
-                dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }}
-              />
-              <div style={{ height: paddingBottom }} aria-hidden="true" />
+                ref={overlayContentRef}
+                style={{
+                  transform: `translate(${-scrollLeft}px, ${paddingTop - scrollTop}px)`,
+                  willChange: "transform",
+                }}
+              >
+                <div
+                  dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }}
+                />
+              </div>
             </pre>
 
             {/* Active line highlight (only in edit mode) */}
