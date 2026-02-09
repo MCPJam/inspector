@@ -93,9 +93,7 @@ function collapseJsonStringsInValue(
   ) {
     const result: Record<string, unknown> = {};
     const origObj = original as Record<string, unknown>;
-    for (const [key, val] of Object.entries(
-      current as Record<string, unknown>,
-    ))
+    for (const [key, val] of Object.entries(current as Record<string, unknown>))
       result[key] =
         key in origObj ? collapseJsonStringsInValue(val, origObj[key]) : val;
     return result;
@@ -257,10 +255,7 @@ export function useJsonEditor({
     // Compute lastEmitted from collapsed form so dedup works correctly
     const parsed = parseJson(newContent);
     if (parsed.error === null && expandJsonStrings) {
-      const collapsed = collapseJsonStringsInValue(
-        parsed.value,
-        initialValue,
-      );
+      const collapsed = collapseJsonStringsInValue(parsed.value, initialValue);
       lastEmittedParsedValueRef.current = serializeParsedValue(collapsed);
     } else {
       lastEmittedParsedValueRef.current =

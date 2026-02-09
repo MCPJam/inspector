@@ -551,9 +551,7 @@ describe("useJsonEditor", () => {
       );
 
       const parsed = JSON.parse(result.current.content);
-      expect(parsed.toolInput.elements).toEqual([
-        { type: "ellipse", x: 10 },
-      ]);
+      expect(parsed.toolInput.elements).toEqual([{ type: "ellipse", x: 10 }]);
     });
 
     it("collapses expanded fields back to strings on onChange", () => {
@@ -623,7 +621,7 @@ describe("useJsonEditor", () => {
 
     it("reset re-expands from original value", () => {
       const initialValue = {
-        items: '[1,2,3]',
+        items: "[1,2,3]",
       };
       const { result } = renderHook(() =>
         useJsonEditor({ initialValue, expandJsonStrings: true }),
@@ -718,7 +716,11 @@ describe("useJsonEditor", () => {
       };
       const { result, rerender } = renderHook(
         ({ value }) =>
-          useJsonEditor({ initialValue: value, onChange, expandJsonStrings: true }),
+          useJsonEditor({
+            initialValue: value,
+            onChange,
+            expandJsonStrings: true,
+          }),
         { initialProps: { value: initialValue as unknown } },
       );
 

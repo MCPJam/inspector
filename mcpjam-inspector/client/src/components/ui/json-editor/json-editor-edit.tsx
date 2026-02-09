@@ -283,14 +283,12 @@ export function JsonEditorEdit({
 
       // Immediate visual sync via transform (prevents flicker)
       if (overlayContentRef.current) {
-        overlayContentRef.current.style.transform =
-          `translate(${-currentScrollLeft}px, ${paddingTopRef.current - currentScrollTop}px)`;
+        overlayContentRef.current.style.transform = `translate(${-currentScrollLeft}px, ${paddingTopRef.current - currentScrollTop}px)`;
       }
 
       // Keep active line highlight locked to cursor position during scroll
       if (activeHighlightRef.current) {
-        activeHighlightRef.current.style.transform =
-          `translateY(${activeLineTopRef.current - currentScrollTop + EDITOR_VERTICAL_PADDING}px)`;
+        activeHighlightRef.current.style.transform = `translateY(${activeLineTopRef.current - currentScrollTop + EDITOR_VERTICAL_PADDING}px)`;
       }
 
       // Debounce React state updates to once per animation frame
