@@ -70,7 +70,7 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "grok-code-fast-1": "xai/grok-code-fast-1",
   "grok-4-fast-non-reasoning": "xai/grok-4-fast-non-reasoning",
   "grok-4-fast-reasoning": "xai/grok-4-fast-reasoning",
-  "x-ai/grok-4-fast": "xai/grok-4-fast",
+  "x-ai/grok-4.1-fast": "xai/grok-4.1-fast",
   "x-ai/grok-code-fast-1": "xai/grok-code-fast-1",
 
   // Moonshot models

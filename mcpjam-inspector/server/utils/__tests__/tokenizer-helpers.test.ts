@@ -84,8 +84,8 @@ describe("mapModelIdToTokenizerBackend", () => {
     });
 
     it("normalizes x-ai prefix to xai", () => {
-      expect(mapModelIdToTokenizerBackend("x-ai/grok-4-fast")).toBe(
-        "xai/grok-4-fast",
+      expect(mapModelIdToTokenizerBackend("x-ai/grok-4.1-fast")).toBe(
+        "xai/grok-4.1-fast",
       );
     });
   });
