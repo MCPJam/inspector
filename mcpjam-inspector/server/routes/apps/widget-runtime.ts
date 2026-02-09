@@ -660,7 +660,10 @@ const clampNumber = (value: unknown): number | null => {
           if (globals.displayMode !== undefined) {
             window.openai.displayMode = globals.displayMode;
             // Enable native scrollbars in fullscreen/PiP; keep hidden-x in inline
-            if (globals.displayMode === "fullscreen" || globals.displayMode === "pip") {
+            if (
+              globals.displayMode === "fullscreen" ||
+              globals.displayMode === "pip"
+            ) {
               document.documentElement.style.overflow = "auto";
             } else {
               document.documentElement.style.overflowX = "hidden";

@@ -641,6 +641,7 @@ export function ChatGPTAppRenderer({
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const inlineWidthRef = useRef<number | undefined>(undefined);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Get locale from playground store, fallback to navigator.language
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -708,7 +709,9 @@ export function ChatGPTAppRenderer({
   );
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const [contentHeight, setContentHeight] = useState<number>(320);
-  const [contentWidth, setContentWidth] = useState<number | undefined>(undefined);
+  const [contentWidth, setContentWidth] = useState<number | undefined>(
+    undefined,
+  );
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -780,6 +783,11 @@ export function ChatGPTAppRenderer({
   const isFullscreen = effectiveDisplayMode === "fullscreen";
   const isPip = effectiveDisplayMode === "pip";
   const allowAutoResize = !isFullscreen && !isPip;
+
+  // Capture inline container width so modals in fullscreen/PiP can use it.
+  if (!isFullscreen && !isPip && rootRef.current) {
+    inlineWidthRef.current = rootRef.current.offsetWidth;
+  }
   const {
     widgetUrl,
     widgetClosed,
@@ -1232,6 +1240,8 @@ export function ChatGPTAppRenderer({
         });
       }
 
+      // Resize modal to match iframe's width so wide content
+      // scrolls horizontally instead of being clipped.
       if (event.data?.type === "openai:resize") {
         const w = Number(event.data.width);
         if (Number.isFinite(w) && w > 0) {
@@ -1657,9 +1667,17 @@ export function ChatGPTAppRenderer({
       )}
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        {/* Safe: modals can only open after widget mounts.
+            Like ChatGPT, display mode can't change while modal is open. */}
         <DialogContent
           className="w-full h-fit max-h-[70vh] flex flex-col"
-          style={{ maxWidth: rootRef.current?.offsetWidth }}
+          // We should have inline width for modals in fullscreen or PiP.
+          style={{
+            maxWidth:
+              isFullscreen || isPip
+                ? inlineWidthRef.current
+                : rootRef.current?.offsetWidth,
+          }}
         >
           <DialogHeader>
             <DialogTitle>{modalTitle}</DialogTitle>
