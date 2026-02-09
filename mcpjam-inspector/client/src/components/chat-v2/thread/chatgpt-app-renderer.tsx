@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
@@ -785,9 +785,11 @@ export function ChatGPTAppRenderer({
   const allowAutoResize = !isFullscreen && !isPip;
 
   // Capture inline container width so modals in fullscreen/PiP can use it.
-  if (!isFullscreen && !isPip && rootRef.current) {
-    inlineWidthRef.current = rootRef.current.offsetWidth;
-  }
+  useLayoutEffect(() => {
+    if (!isFullscreen && !isPip && rootRef.current) {
+      inlineWidthRef.current = rootRef.current.offsetWidth;
+    }
+  });
   const {
     widgetUrl,
     widgetClosed,
