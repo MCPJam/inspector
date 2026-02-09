@@ -1,4 +1,11 @@
-import { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import {
+  useRef,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+} from "react";
 
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
