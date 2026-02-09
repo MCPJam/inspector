@@ -51,6 +51,7 @@
     "build": "npm run clean && npm run build:sdk && npm run build:lib && npm run build:client && npm run build:server",
     "build:sdk": "npm --prefix ../sdk run build",
     "bundle:chatgpt": "node scripts/bundle-openai-script.js",
+    "bundle:openai-compat": "node scripts/bundle-openai-compat-runtime.js",
     "clean": "rm -rf dist out .vite client/dist",
     "clean:all": "rm -rf dist out .vite client/dist node_modules sdk/node_modules",
     "deps:ci": "npm ci --legacy-peer-deps --cache .npm-cache && npm --prefix ../sdk ci --legacy-peer-deps --cache .npm-cache",

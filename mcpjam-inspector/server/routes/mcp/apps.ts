@@ -14,8 +14,57 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
+import { OPENAI_COMPAT_RUNTIME_SCRIPT } from "./openai-compat-runtime.bundled";
 
 const apps = new Hono();
+
+// ── OpenAI compat injection helpers ─────────────────────────────────
+
+/**
+ * Escape characters that could break inline <script> content.
+ * Same approach as chatgpt.ts serializeForInlineScript.
+ */
+const serializeForInlineScript = (value: unknown) =>
+  JSON.stringify(value ?? null)
+    .replace(/</g, "\\u003C")
+    .replace(/>/g, "\\u003E")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+
+/**
+ * Inject the OpenAI compatibility runtime into MCP App HTML.
+ * Adds a JSON config element + the bundled IIFE script into <head>.
+ * If no <head> tag exists, wraps the content in a full HTML document.
+ */
+function injectOpenAICompat(
+  html: string,
+  widgetData: {
+    toolId: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+    toolOutput: unknown;
+    theme?: string;
+  },
+): string {
+  const configJson = serializeForInlineScript({
+    toolId: widgetData.toolId,
+    toolName: widgetData.toolName,
+    toolInput: widgetData.toolInput,
+    toolOutput: widgetData.toolOutput,
+    theme: widgetData.theme ?? "dark",
+  });
+
+  const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
+  const runtimeScript = `<script>${OPENAI_COMPAT_RUNTIME_SCRIPT}</script>`;
+  const headContent = `${configScript}${runtimeScript}`;
+
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, `$&${headContent}`);
+  }
+  // No <head> tag — wrap in a full HTML document
+  return `<!DOCTYPE html><html><head>${headContent}<meta charset="UTF-8"></head><body>${html}</body></html>`;
+}
 
 /**
  * SEP-1865 mandated mimetype for MCP Apps
@@ -199,6 +248,9 @@ apps.get("/widget-content/:toolId", async (c) => {
     // When in permissive mode, skip CSP entirely (for testing/debugging)
     // When in widget-declared mode, use the widget's CSP metadata (or restrictive defaults)
     const isPermissive = effectiveCspMode === "permissive";
+
+    // Inject window.openai compat layer into every MCP App iframe
+    html = injectOpenAICompat(html, widgetData);
 
     // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");

@@ -1009,40 +1009,68 @@ export function MCPAppsRenderer({
   }, [toolCallId]);
 
   const handleSandboxMessage = (event: MessageEvent) => {
-    if (event.data?.type !== "mcp-apps:csp-violation") return;
-    const {
-      directive,
-      blockedUri,
-      sourceFile,
-      lineNumber,
-      columnNumber,
-      effectiveDirective,
-      timestamp,
-    } = event.data;
+    const data = event.data;
+    if (!data) return;
 
-    addUiLog({
-      widgetId: toolCallId,
-      serverId,
-      direction: "ui-to-host",
-      protocol: "mcp-apps",
-      method: "csp-violation",
-      message: event.data,
-    });
+    // Handle CSP violation messages (custom type)
+    if (data.type === "mcp-apps:csp-violation") {
+      const {
+        directive,
+        blockedUri,
+        sourceFile,
+        lineNumber,
+        columnNumber,
+        effectiveDirective,
+        timestamp,
+      } = data;
 
-    addCspViolation(toolCallId, {
-      directive,
-      effectiveDirective,
-      blockedUri,
-      sourceFile,
-      lineNumber,
-      columnNumber,
-      timestamp: timestamp || Date.now(),
-    });
+      addUiLog({
+        widgetId: toolCallId,
+        serverId,
+        direction: "ui-to-host",
+        protocol: "mcp-apps",
+        method: "csp-violation",
+        message: data,
+      });
 
-    console.warn(
-      `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
-      sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
-    );
+      addCspViolation(toolCallId, {
+        directive,
+        effectiveDirective,
+        blockedUri,
+        sourceFile,
+        lineNumber,
+        columnNumber,
+        timestamp: timestamp || Date.now(),
+      });
+
+      console.warn(
+        `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
+        sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
+      );
+      return;
+    }
+
+    // Handle openai/* JSON-RPC notifications from the compat layer
+    if (
+      data.jsonrpc === "2.0" &&
+      typeof data.method === "string" &&
+      data.method.startsWith("openai/")
+    ) {
+      addUiLog({
+        widgetId: toolCallId,
+        serverId,
+        direction: "ui-to-host",
+        protocol: "mcp-apps",
+        method: data.method,
+        message: data,
+      });
+
+      if (data.method === "openai/requestModal") {
+        console.log("[MCP Apps] openai/requestModal received", data.params);
+      } else if (data.method === "openai/requestClose") {
+        console.log("[MCP Apps] openai/requestClose received", data.params);
+      }
+    }
   };
 
   // Denied state
