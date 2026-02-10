@@ -121,12 +121,18 @@ function generateUniqueToolCallId(
   usedToolCallIds: Set<string>,
   prefix = "tc",
 ): string {
-  let nextId = `${prefix}_${generateToolCallId()}`;
-  while (usedToolCallIds.has(nextId)) {
-    nextId = `${prefix}_${generateToolCallId()}`;
+  const MAX_ATTEMPTS = 100;
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    const nextId = `${prefix}_${generateToolCallId()}`;
+    if (!usedToolCallIds.has(nextId)) {
+      usedToolCallIds.add(nextId);
+      return nextId;
+    }
   }
-  usedToolCallIds.add(nextId);
-  return nextId;
+  // Fallback: use a counter-based ID that is guaranteed unique
+  const fallbackId = `${prefix}_fallback_${Date.now()}_${usedToolCallIds.size}`;
+  usedToolCallIds.add(fallbackId);
+  return fallbackId;
 }
 
 function createToolCallIdNormalizer(
@@ -270,18 +276,8 @@ async function processStream(
           writer.write(chunk);
           break;
 
-        case "tool-input-start": {
-          const toolCallId = normalizeToolCallId(chunk.toolCallId);
-          writer.write({ ...chunk, toolCallId });
-          break;
-        }
-
-        case "tool-input-delta": {
-          const toolCallId = normalizeToolCallId(chunk.toolCallId);
-          writer.write({ ...chunk, toolCallId });
-          break;
-        }
-
+        case "tool-input-start":
+        case "tool-input-delta":
         case "tool-input-error": {
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
           writer.write({ ...chunk, toolCallId });

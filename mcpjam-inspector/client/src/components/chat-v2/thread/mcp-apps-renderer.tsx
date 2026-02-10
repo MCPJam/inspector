@@ -430,6 +430,27 @@ export function MCPAppsRenderer({
   const isReadyRef = useRef(false);
   const previousToolStateRef = useRef<ToolState | undefined>(toolState);
 
+  /** Clear all streaming-related timers and refs. Shared across reset paths. */
+  const resetStreamingState = useCallback(() => {
+    lastToolInputRef.current = null;
+    lastToolInputPartialRef.current = null;
+    lastToolInputPartialSentAtRef.current = 0;
+    pendingToolInputPartialRef.current = null;
+    if (partialInputTimerRef.current !== null) {
+      window.clearTimeout(partialInputTimerRef.current);
+      partialInputTimerRef.current = null;
+    }
+    if (streamingRevealTimerRef.current !== null) {
+      window.clearTimeout(streamingRevealTimerRef.current);
+      streamingRevealTimerRef.current = null;
+    }
+    lastToolOutputRef.current = null;
+    lastToolErrorRef.current = null;
+    toolInputSentRef.current = false;
+    setStreamingRenderSignaled(false);
+    setHasDeliveredStreamingInput(false);
+  }, []);
+
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
   const onRequestPipRef = useRef(onRequestPip);
@@ -634,25 +655,9 @@ export function MCPAppsRenderer({
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       setIsReady(false);
       isReadyRef.current = false;
-      lastToolInputRef.current = null;
-      lastToolInputPartialRef.current = null;
-      lastToolInputPartialSentAtRef.current = 0;
-      pendingToolInputPartialRef.current = null;
-      if (partialInputTimerRef.current !== null) {
-        window.clearTimeout(partialInputTimerRef.current);
-        partialInputTimerRef.current = null;
-      }
-      if (streamingRevealTimerRef.current !== null) {
-        window.clearTimeout(streamingRevealTimerRef.current);
-        streamingRevealTimerRef.current = null;
-      }
-      setStreamingRenderSignaled(false);
-      setHasDeliveredStreamingInput(false);
-      lastToolOutputRef.current = null;
-      lastToolErrorRef.current = null;
-      toolInputSentRef.current = false;
+      resetStreamingState();
     }
-  }, [cspMode, loadedCspMode]);
+  }, [cspMode, loadedCspMode, resetStreamingState]);
 
   // Sync displayMode from playground store when it changes (SEP-1865)
   // Only sync when not in controlled mode (parent controls displayMode via props)
@@ -1056,7 +1061,7 @@ export function MCPAppsRenderer({
         onReceive: (message) => {
           const method = extractMethod(message, "mcp-apps");
           if (method === "ui/notifications/size-changed") {
-            setStreamingRenderSignaled((prev) => (prev ? prev : true));
+            setStreamingRenderSignaled(true);
           }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           addUiLog({
@@ -1133,27 +1138,11 @@ export function MCPAppsRenderer({
       prevToolState &&
       prevToolState !== "input-streaming"
     ) {
-      lastToolInputRef.current = null;
-      lastToolInputPartialRef.current = null;
-      lastToolInputPartialSentAtRef.current = 0;
-      pendingToolInputPartialRef.current = null;
-      if (partialInputTimerRef.current !== null) {
-        window.clearTimeout(partialInputTimerRef.current);
-        partialInputTimerRef.current = null;
-      }
-      if (streamingRevealTimerRef.current !== null) {
-        window.clearTimeout(streamingRevealTimerRef.current);
-        streamingRevealTimerRef.current = null;
-      }
-      toolInputSentRef.current = false;
-      lastToolOutputRef.current = null;
-      lastToolErrorRef.current = null;
-      setStreamingRenderSignaled(false);
-      setHasDeliveredStreamingInput(false);
+      resetStreamingState();
     }
 
     previousToolStateRef.current = toolState;
-  }, [toolState]);
+  }, [resetStreamingState, toolState]);
 
   // Send partial tool input during streaming (SEP-1865 toolInputPartial)
   useEffect(() => {
@@ -1174,7 +1163,7 @@ export function MCPAppsRenderer({
       lastToolInputPartialRef.current = signature;
       lastToolInputPartialSentAtRef.current = Date.now();
       setHasDeliveredStreamingInput(true);
-      setStreamingRenderSignaled((prev) => (prev ? prev : true));
+      setStreamingRenderSignaled(true);
       Promise.resolve(
         bridge.sendToolInputPartial({ arguments: pending }),
       ).catch(() => {});
@@ -1270,37 +1259,12 @@ export function MCPAppsRenderer({
   }, [isReady, toolErrorText, toolOutput, toolState]);
 
   useEffect(() => {
-    lastToolInputRef.current = null;
-    lastToolInputPartialRef.current = null;
-    lastToolInputPartialSentAtRef.current = 0;
-    pendingToolInputPartialRef.current = null;
-    if (partialInputTimerRef.current !== null) {
-      window.clearTimeout(partialInputTimerRef.current);
-      partialInputTimerRef.current = null;
-    }
-    if (streamingRevealTimerRef.current !== null) {
-      window.clearTimeout(streamingRevealTimerRef.current);
-      streamingRevealTimerRef.current = null;
-    }
-    lastToolOutputRef.current = null;
-    lastToolErrorRef.current = null;
-    toolInputSentRef.current = false;
-    setStreamingRenderSignaled(false);
-    setHasDeliveredStreamingInput(false);
-  }, [toolCallId]);
+    resetStreamingState();
+  }, [toolCallId, resetStreamingState]);
 
   useEffect(() => {
-    return () => {
-      if (partialInputTimerRef.current !== null) {
-        window.clearTimeout(partialInputTimerRef.current);
-        partialInputTimerRef.current = null;
-      }
-      if (streamingRevealTimerRef.current !== null) {
-        window.clearTimeout(streamingRevealTimerRef.current);
-        streamingRevealTimerRef.current = null;
-      }
-    };
-  }, []);
+    return () => resetStreamingState();
+  }, [resetStreamingState]);
 
   const handleSandboxMessage = (event: MessageEvent) => {
     if (event.data?.type !== "mcp-apps:csp-violation") return;
