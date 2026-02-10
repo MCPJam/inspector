@@ -24,6 +24,12 @@ import {
 } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
@@ -307,6 +313,13 @@ export function MCPAppsRenderer({
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
 
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
+  const [modalTitle, setModalTitle] = useState("");
+  const [modalTemplate, setModalTemplate] = useState<string | null>(null);
+  const [modalHtml, setModalHtml] = useState<string | null>(null);
+
   // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
   useEffect(() => {
     setWidgetHtml(null);
@@ -314,6 +327,8 @@ export function MCPAppsRenderer({
   }, [cachedWidgetHtmlUrl]);
 
   const bridgeRef = useRef<AppBridge | null>(null);
+  const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
+  const modalBridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const lastToolInputRef = useRef<string | null>(null);
   const lastToolOutputRef = useRef<string | null>(null);
@@ -1066,12 +1081,174 @@ export function MCPAppsRenderer({
       });
 
       if (data.method === "openai/requestModal") {
-        console.log("[MCP Apps] openai/requestModal received", data.params);
+        const params = data.params ?? {};
+        setModalTitle(params.title || "Modal");
+        setModalParams(params.params || {});
+        setModalTemplate(params.template || null);
+        setModalOpen(true);
       } else if (data.method === "openai/requestClose") {
-        console.log("[MCP Apps] openai/requestClose received", data.params);
+        setModalOpen(false);
       }
     }
   };
+
+  // Fetch modal HTML when modal opens
+  useEffect(() => {
+    if (!modalOpen) {
+      // Clean up when modal closes
+      modalBridgeRef.current?.close().catch(() => {});
+      modalBridgeRef.current = null;
+      setModalHtml(null);
+      return;
+    }
+
+    const fetchModalHtml = async () => {
+      try {
+        // Store widget data (server already has it, but refresh timestamp)
+        const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serverId,
+            resourceUri,
+            toolInput: toolInputRef.current,
+            toolOutput: toolOutputRef.current,
+            toolId: toolCallId,
+            toolName,
+            theme: themeModeRef.current,
+            protocol: "mcp-apps",
+            cspMode,
+          }),
+        });
+
+        if (!storeResponse.ok) {
+          throw new Error(
+            `Failed to store widget: ${storeResponse.statusText}`,
+          );
+        }
+
+        // Build URL with optional template override and modal view params
+        const params = new URLSearchParams({ csp_mode: cspMode });
+        if (modalTemplate) {
+          params.set("template", modalTemplate);
+        }
+        params.set("view_mode", "modal");
+        params.set("view_params", JSON.stringify(modalParams));
+
+        const contentResponse = await fetch(
+          `/api/mcp/apps/widget-content/${toolCallId}?${params.toString()}`,
+        );
+        if (!contentResponse.ok) {
+          const errorData = await contentResponse.json().catch(() => ({}));
+          throw new Error(
+            errorData.error ||
+              `Failed to fetch modal widget: ${contentResponse.statusText}`,
+          );
+        }
+        const { html } = await contentResponse.json();
+        setModalHtml(html);
+      } catch (err) {
+        console.error("[MCP Apps] Failed to fetch modal HTML", err);
+      }
+    };
+
+    fetchModalHtml();
+  }, [
+    modalOpen,
+    modalTemplate,
+    modalParams,
+    serverId,
+    resourceUri,
+    toolCallId,
+    toolName,
+    cspMode,
+  ]);
+
+  // Initialize modal bridge when modal HTML is ready
+  useEffect(() => {
+    if (!modalHtml || !modalOpen) return;
+    const iframe = modalSandboxRef.current?.getIframeElement();
+    if (!iframe?.contentWindow) return;
+
+    const bridge = new AppBridge(
+      null,
+      { name: "mcpjam-inspector", version: __APP_VERSION__ },
+      {
+        openLinks: {},
+        serverTools: {},
+        serverResources: {},
+        logging: {},
+        sandbox: {
+          csp: widgetPermissive ? undefined : widgetCsp,
+          permissions: widgetPermissions,
+        },
+      },
+      { hostContext: hostContextRef.current ?? {} },
+    );
+
+    // Reuse the same handlers as the inline bridge
+    registerBridgeHandlers(bridge);
+
+    // Override oninitialized so it doesn't set the main isReady state
+    bridge.oninitialized = () => {
+      // Send tool input/output to the modal bridge after initialization
+      const resolvedToolInput = toolInputRef.current ?? {};
+      bridge.sendToolInput({ arguments: resolvedToolInput });
+      if (toolOutputRef.current) {
+        bridge.sendToolResult(toolOutputRef.current as CallToolResult);
+      }
+    };
+
+    modalBridgeRef.current = bridge;
+
+    const transport = new LoggingTransport(
+      new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
+      {
+        onSend: (message) => {
+          addUiLog({
+            widgetId: `${toolCallId}-modal`,
+            serverId,
+            direction: "host-to-ui",
+            protocol: "mcp-apps",
+            method: extractMethod(message, "mcp-apps"),
+            message,
+          });
+        },
+        onReceive: (message) => {
+          addUiLog({
+            widgetId: `${toolCallId}-modal`,
+            serverId,
+            direction: "ui-to-host",
+            protocol: "mcp-apps",
+            method: extractMethod(message, "mcp-apps"),
+            message,
+          });
+        },
+      },
+    );
+
+    let isActive = true;
+    bridge.connect(transport).catch((error) => {
+      if (!isActive) return;
+      console.error("[MCP Apps] Modal bridge connection failed", error);
+    });
+
+    return () => {
+      isActive = false;
+      modalBridgeRef.current = null;
+      bridge.close().catch(() => {});
+    };
+  }, [
+    modalHtml,
+    modalOpen,
+    addUiLog,
+    serverId,
+    toolCallId,
+    registerBridgeHandlers,
+    widgetPermissive,
+    widgetCsp,
+    widgetPermissions,
+  ]);
 
   // Denied state
   if (toolState === "output-denied") {
@@ -1219,6 +1396,30 @@ export function MCPAppsRenderer({
       <div className="text-[11px] text-muted-foreground/70">
         MCP App: <code>{resourceUri}</code>
       </div>
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{modalTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 w-full h-full min-h-0 overflow-y-auto">
+            {modalHtml && (
+              <SandboxedIframe
+                ref={modalSandboxRef}
+                html={modalHtml}
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                csp={widgetCsp}
+                permissions={widgetPermissions}
+                permissive={widgetPermissive}
+                onMessage={handleSandboxMessage}
+                title={`MCP App Modal: ${modalTitle}`}
+                className="w-full border-0 rounded-md bg-background overflow-hidden"
+                style={{ height: "100%", minHeight: "400px" }}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

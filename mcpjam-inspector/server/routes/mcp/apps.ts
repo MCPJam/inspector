@@ -45,6 +45,8 @@ function injectOpenAICompat(
     toolInput: Record<string, unknown>;
     toolOutput: unknown;
     theme?: string;
+    viewMode?: string;
+    viewParams?: Record<string, unknown>;
   },
 ): string {
   const configJson = serializeForInlineScript({
@@ -53,6 +55,8 @@ function injectOpenAICompat(
     toolInput: widgetData.toolInput,
     toolOutput: widgetData.toolOutput,
     theme: widgetData.theme ?? "dark",
+    viewMode: widgetData.viewMode ?? "inline",
+    viewParams: widgetData.viewParams ?? {},
   });
 
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
@@ -174,7 +178,14 @@ apps.get("/widget-content/:toolId", async (c) => {
     // Read CSP mode from query param (allows override for testing)
     const cspModeParam = c.req.query("csp_mode") as CspMode | undefined;
 
-    const { serverId, resourceUri, cspMode: storedCspMode } = widgetData;
+    // Support template query param for modal views (overrides resource URI)
+    const templateUri = c.req.query("template");
+    if (templateUri && !templateUri.startsWith("ui://")) {
+      return c.json({ error: "Template must use ui:// protocol" }, 400);
+    }
+
+    const { serverId, cspMode: storedCspMode } = widgetData;
+    const resourceUri = templateUri || widgetData.resourceUri;
 
     // Use query param override if provided, otherwise use stored mode
     const effectiveCspMode = cspModeParam ?? storedCspMode ?? "permissive";
@@ -250,7 +261,18 @@ apps.get("/widget-content/:toolId", async (c) => {
     const isPermissive = effectiveCspMode === "permissive";
 
     // Inject window.openai compat layer into every MCP App iframe
-    html = injectOpenAICompat(html, widgetData);
+    // Pass through view_mode/view_params query params for modal support
+    const viewMode = c.req.query("view_mode");
+    const viewParamsRaw = c.req.query("view_params");
+    let viewParams: Record<string, unknown> | undefined;
+    if (viewParamsRaw) {
+      try {
+        viewParams = JSON.parse(viewParamsRaw);
+      } catch {
+        // Ignore invalid JSON
+      }
+    }
+    html = injectOpenAICompat(html, { ...widgetData, viewMode, viewParams });
 
     // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");

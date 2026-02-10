@@ -24,6 +24,8 @@ type OpenAICompatConfig = {
   toolInput: Record<string, unknown>;
   toolOutput: unknown;
   theme: string;
+  viewMode: string;
+  viewParams: Record<string, unknown>;
 };
 
 type PendingCall = {
@@ -60,7 +62,15 @@ declare global {
   const config = readConfig();
   if (!config) return;
 
-  const { toolId, toolName, toolInput, toolOutput, theme } = config;
+  const {
+    toolId,
+    toolName,
+    toolInput,
+    toolOutput,
+    theme,
+    viewMode,
+    viewParams,
+  } = config;
 
   // JSON-RPC 2.0 call ID counter
   let callId = 0;
@@ -79,10 +89,7 @@ declare global {
     params: Record<string, unknown>,
   ): { id: number } => {
     const id = ++callId;
-    window.parent.postMessage(
-      { jsonrpc: "2.0", id, method, params },
-      "*",
-    );
+    window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
     return { id };
   };
 
@@ -172,13 +179,18 @@ declare global {
     toolOutput: toolOutput ?? null,
     theme: theme ?? "dark",
     displayMode: "inline",
+    viewMode: viewMode ?? "inline",
+    viewParams: viewParams ?? {},
     widgetState: null as unknown,
 
     /**
      * Call an MCP tool by name. Returns a Promise resolved when the
      * host sends back the JSON-RPC response with the matching id.
      */
-    callTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
+    callTool(
+      name: string,
+      args: Record<string, unknown> = {},
+    ): Promise<unknown> {
       const { id } = sendRequest("tools/call", {
         name,
         arguments: args,
@@ -203,7 +215,8 @@ declare global {
      * (messages with an id) to its onmessage handler.
      */
     sendFollowUpMessage(opts: unknown): void {
-      const prompt = typeof opts === "string" ? opts : (opts as any)?.prompt ?? "";
+      const prompt =
+        typeof opts === "string" ? opts : ((opts as any)?.prompt ?? "");
       sendRequest("ui/message", {
         role: "user",
         content: [{ type: "text", text: prompt }],
@@ -257,9 +270,10 @@ declare global {
     setWidgetState(state: unknown): void {
       this.widgetState = state;
       sendRequest("ui/update-model-context", {
-        structuredContent: typeof state === "object" && state !== null
-          ? state as Record<string, unknown>
-          : { value: state },
+        structuredContent:
+          typeof state === "object" && state !== null
+            ? (state as Record<string, unknown>)
+            : { value: state },
       });
     },
 
@@ -296,7 +310,10 @@ declare global {
     if (!data || data.jsonrpc !== "2.0") return;
 
     // JSON-RPC response (has id, has result or error)
-    if (data.id != null && (data.result !== undefined || data.error !== undefined)) {
+    if (
+      data.id != null &&
+      (data.result !== undefined || data.error !== undefined)
+    ) {
       const pending = pendingCalls.get(data.id);
       if (pending) {
         pendingCalls.delete(data.id);
@@ -305,7 +322,7 @@ declare global {
             new Error(
               typeof data.error === "string"
                 ? data.error
-                : data.error?.message ?? "Unknown error",
+                : (data.error?.message ?? "Unknown error"),
             ),
           );
         } else {
