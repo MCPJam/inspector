@@ -1189,6 +1189,24 @@ export function MCPAppsRenderer({
     // Reuse the same handlers as the inline bridge
     registerBridgeHandlers(bridge);
 
+    // Override onsizechange to target modal iframe instead of main widget
+    bridge.onsizechange = ({ height }) => {
+      const iframe = modalSandboxRef.current?.getIframeElement();
+      if (!iframe || height === undefined) return;
+
+      const style = getComputedStyle(iframe);
+      const isBorderBox = style.boxSizing === "border-box";
+
+      let adjustedHeight = height;
+      if (isBorderBox) {
+        adjustedHeight +=
+          parseFloat(style.borderTopWidth) +
+          parseFloat(style.borderBottomWidth);
+      }
+
+      iframe.style.height = `${adjustedHeight}px`;
+    };
+
     // Override oninitialized so it doesn't set the main isReady state
     bridge.oninitialized = () => {
       // Send tool input/output to the modal bridge after initialization
