@@ -1,9 +1,5 @@
 // Shared types between client and server
 
-import { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
-
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
   id: string;
@@ -572,43 +568,6 @@ export const getModelById = (id: string): ModelDefinition | undefined => {
 
 export const isModelSupported = (id: string): boolean => {
   return SUPPORTED_MODELS.some((model) => model.id === id);
-};
-
-// MCP Server Definition Types
-export type BaseServerOptions = {
-  name?: string;
-  timeout?: number;
-  capabilities?: ClientCapabilities;
-  enableServerLogs?: boolean;
-};
-
-export type StdioServerDefinition = BaseServerOptions & {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: never;
-  requestInit?: never;
-  eventSourceInit?: never;
-  reconnectionOptions?: never;
-  sessionId?: never;
-  oauth?: never;
-};
-
-export type HttpServerDefinition = BaseServerOptions & {
-  url: URL;
-  command?: never;
-  args?: never;
-  env?: never;
-  requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
-  eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
-  // Note: authProvider is intentionally not included because it can't be serialized
-  // when sending configs over HTTP. OAuth tokens should be in requestInit headers.
-  reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
-  sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
-  oauth?: any;
-  oauthScopes?: string[]; // Persist OAuth scopes in config
-  clientId?: string; // Persist OAuth client ID in config
-  clientSecret?: string; // Persist OAuth client secret in config
 };
 
 export interface ServerFormData {

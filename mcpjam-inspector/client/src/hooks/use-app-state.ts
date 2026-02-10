@@ -46,7 +46,7 @@ import {
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
-import { MCPServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 export type { ServerWithName } from "@/state/app-types";
@@ -438,13 +438,18 @@ export function useAppState() {
       }
 
       // Merge env vars into config if they exist in localStorage
-      const configWithEnv = envFromStorage
-        ? { ...server.config, env: envFromStorage }
-        : server.config;
+      let configWithEnv: MCPServerConfig = server.config;
+      if (
+        envFromStorage &&
+        "command" in server.config &&
+        typeof server.config.command === "string"
+      ) {
+        configWithEnv = { ...server.config, env: envFromStorage };
+      }
 
       serversWithRuntime[name] = {
         ...server,
-        config: configWithEnv as MCPServerConfig,
+        config: configWithEnv,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
@@ -840,16 +845,16 @@ export function useAppState() {
               serverName: formData.name,
             });
             const serverConfig = {
-              url: new URL(formData.url),
+              url: formData.url,
               requestInit: {
                 headers: {
                   Authorization: `Bearer ${existingTokens.access_token}`,
                   ...(formData.headers || {}),
                 },
               },
-            };
+            } satisfies HttpServerConfig;
             const connectionResult = await testConnection(
-              serverConfig as MCPServerConfig,
+              serverConfig,
               formData.name,
             );
             if (isStaleOp(formData.name, token)) return;
@@ -857,7 +862,7 @@ export function useAppState() {
               dispatch({
                 type: "CONNECT_SUCCESS",
                 name: formData.name,
-                config: serverConfig as MCPServerConfig,
+                config: serverConfig,
                 tokens: existingTokens,
               });
               toast.success(
@@ -1162,18 +1167,17 @@ export function useAppState() {
 
       // 4. Create server config with OAuth
       const serverConfig = {
-        url: new URL(serverUrl),
+        url: serverUrl,
         requestInit: {
           headers: { Authorization: `Bearer ${tokens.accessToken}` },
         },
-        oauth: tokenData,
-      };
+      } satisfies HttpServerConfig;
 
       // 5. Mark as connecting
       dispatch({
         type: "CONNECT_REQUEST",
         name: serverName,
-        config: serverConfig as MCPServerConfig,
+        config: serverConfig,
         select: true,
       });
 
@@ -1181,10 +1185,7 @@ export function useAppState() {
 
       // 6. Connect using reconnect (which disconnects first if needed)
       try {
-        const result = await reconnectServer(
-          serverName,
-          serverConfig as MCPServerConfig,
-        );
+        const result = await reconnectServer(serverName, serverConfig);
         if (isStaleOp(serverName, token)) {
           return { success: false, error: "Operation cancelled" };
         }
@@ -1192,7 +1193,7 @@ export function useAppState() {
           dispatch({
             type: "CONNECT_SUCCESS",
             name: serverName,
-            config: serverConfig as MCPServerConfig,
+            config: serverConfig,
             tokens: getStoredTokens(serverName),
           });
           await fetchAndStoreInitInfo(serverName);
