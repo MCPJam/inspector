@@ -24,12 +24,6 @@ import {
 } from "@/stores/ui-playground-store";
 import { X } from "lucide-react";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
@@ -45,16 +39,13 @@ import {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   JSONRPCMessage,
-  MessageExtraInfo,
   CallToolResult,
   ContentBlock,
 } from "@modelcontextprotocol/sdk/types.js";
-import type {
-  Transport,
-  TransportSendOptions,
-} from "@modelcontextprotocol/sdk/shared/transport.js";
 import { getMcpAppsStyleVariables } from "./mcp-apps-renderer-helper";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
+import { LoggingTransport } from "./mcp-apps-logging-transport";
+import { McpAppsModal } from "./mcp-apps-modal";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -218,65 +209,6 @@ function getToolInputSignature(
   return getValueSignature(input, 0);
 }
 
-class LoggingTransport implements Transport {
-  private inner: Transport;
-  private onSend?: (message: JSONRPCMessage) => void;
-  private onReceive?: (message: JSONRPCMessage) => void;
-  private _sessionId?: string;
-
-  onclose?: () => void;
-  onerror?: (error: Error) => void;
-  onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
-  setProtocolVersion?: (version: string) => void;
-
-  constructor(
-    inner: Transport,
-    handlers: {
-      onSend?: (message: JSONRPCMessage) => void;
-      onReceive?: (message: JSONRPCMessage) => void;
-    },
-  ) {
-    this.inner = inner;
-    this.onSend = handlers.onSend;
-    this.onReceive = handlers.onReceive;
-  }
-
-  get sessionId() {
-    return this._sessionId ?? this.inner.sessionId;
-  }
-
-  set sessionId(value: string | undefined) {
-    this._sessionId = value;
-    this.inner.sessionId = value;
-  }
-
-  async start() {
-    this.inner.onmessage = (message, extra) => {
-      this.onReceive?.(message);
-      this.onmessage?.(message, extra);
-    };
-    this.inner.onerror = (error) => {
-      this.onerror?.(error);
-    };
-    this.inner.onclose = () => {
-      this.onclose?.();
-    };
-    this.inner.setProtocolVersion = (version) => {
-      this.setProtocolVersion?.(version);
-    };
-    await this.inner.start();
-  }
-
-  async send(message: JSONRPCMessage, options?: TransportSendOptions) {
-    this.onSend?.(message);
-    await this.inner.send(message, options);
-  }
-
-  async close() {
-    await this.inner.close();
-  }
-}
-
 export function MCPAppsRenderer({
   serverId,
   toolCallId,
@@ -423,7 +355,6 @@ export function MCPAppsRenderer({
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
   const [modalTitle, setModalTitle] = useState("");
   const [modalTemplate, setModalTemplate] = useState<string | null>(null);
-  const [modalHtml, setModalHtml] = useState<string | null>(null);
 
   // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
   useEffect(() => {
@@ -432,8 +363,6 @@ export function MCPAppsRenderer({
   }, [cachedWidgetHtmlUrl]);
 
   const bridgeRef = useRef<AppBridge | null>(null);
-  const modalSandboxRef = useRef<SandboxedIframeHandle>(null);
-  const modalBridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const lastToolInputRef = useRef<string | null>(null);
   const lastToolInputPartialRef = useRef<string | null>(null);
@@ -1285,12 +1214,11 @@ export function MCPAppsRenderer({
     return () => resetStreamingState();
   }, [resetStreamingState]);
 
-  const handleSandboxMessage = (event: MessageEvent) => {
-    const data = event.data;
-    if (!data) return;
+  const handleCspViolation = useCallback(
+    (event: MessageEvent) => {
+      const data = event.data;
+      if (!data) return;
 
-    // Handle CSP violation messages (custom type)
-    if (data.type === "mcp-apps:csp-violation") {
       const {
         directive,
         blockedUri,
@@ -1324,6 +1252,17 @@ export function MCPAppsRenderer({
         `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
         sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
       );
+    },
+    [addUiLog, toolCallId, serverId, addCspViolation],
+  );
+
+  const handleSandboxMessage = (event: MessageEvent) => {
+    const data = event.data;
+    if (!data) return;
+
+    // Handle CSP violation messages (custom type)
+    if (data.type === "mcp-apps:csp-violation") {
+      handleCspViolation(event);
       return;
     }
 
@@ -1353,188 +1292,6 @@ export function MCPAppsRenderer({
       }
     }
   };
-
-  // Fetch modal HTML when modal opens
-  useEffect(() => {
-    if (!modalOpen) {
-      // Clean up when modal closes
-      modalBridgeRef.current?.close().catch(() => {});
-      modalBridgeRef.current = null;
-      setModalHtml(null);
-      return;
-    }
-
-    const fetchModalHtml = async () => {
-      try {
-        // Store widget data (server already has it, but refresh timestamp)
-        const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverId,
-            resourceUri,
-            toolInput: toolInputRef.current,
-            toolOutput: toolOutputRef.current,
-            toolId: toolCallId,
-            toolName,
-            theme: themeModeRef.current,
-            protocol: "mcp-apps",
-            cspMode,
-          }),
-        });
-
-        if (!storeResponse.ok) {
-          throw new Error(
-            `Failed to store widget: ${storeResponse.statusText}`,
-          );
-        }
-
-        // Build URL with optional template override and modal view params
-        const params = new URLSearchParams({ csp_mode: cspMode });
-        if (modalTemplate) {
-          params.set("template", modalTemplate);
-        }
-        params.set("view_mode", "modal");
-        params.set("view_params", JSON.stringify(modalParams));
-
-        const contentResponse = await fetch(
-          `/api/mcp/apps/widget-content/${toolCallId}?${params.toString()}`,
-        );
-        if (!contentResponse.ok) {
-          const errorData = await contentResponse.json().catch(() => ({}));
-          throw new Error(
-            errorData.error ||
-              `Failed to fetch modal widget: ${contentResponse.statusText}`,
-          );
-        }
-        const { html } = await contentResponse.json();
-        setModalHtml(html);
-      } catch (err) {
-        console.error("[MCP Apps] Failed to fetch modal HTML", err);
-      }
-    };
-
-    fetchModalHtml();
-  }, [
-    modalOpen,
-    modalTemplate,
-    modalParams,
-    serverId,
-    resourceUri,
-    toolCallId,
-    toolName,
-    cspMode,
-  ]);
-
-  // Initialize modal bridge when modal HTML is ready
-  useEffect(() => {
-    if (!modalHtml || !modalOpen) return;
-    const iframe = modalSandboxRef.current?.getIframeElement();
-    if (!iframe?.contentWindow) return;
-
-    const bridge = new AppBridge(
-      null,
-      { name: "mcpjam-inspector", version: __APP_VERSION__ },
-      {
-        openLinks: {},
-        serverTools: {},
-        serverResources: {},
-        logging: {},
-        sandbox: {
-          csp: widgetPermissive ? undefined : widgetCsp,
-          permissions: widgetPermissions,
-        },
-      },
-      { hostContext: hostContextRef.current ?? {} },
-    );
-
-    // Reuse the same handlers as the inline bridge
-    registerBridgeHandlers(bridge);
-
-    // Override onsizechange to target modal iframe instead of main widget
-    bridge.onsizechange = ({ width, height }) => {
-      const iframe = modalSandboxRef.current?.getIframeElement();
-      if (!iframe) return;
-
-      if (height !== undefined) {
-        const style = getComputedStyle(iframe);
-        const isBorderBox = style.boxSizing === "border-box";
-
-        let adjustedHeight = height;
-        if (isBorderBox) {
-          adjustedHeight +=
-            parseFloat(style.borderTopWidth) +
-            parseFloat(style.borderBottomWidth);
-        }
-
-        iframe.style.height = `${adjustedHeight}px`;
-      }
-
-      if (width !== undefined) {
-        iframe.style.width = `${width}px`;
-      }
-    };
-
-    // Override oninitialized so it doesn't set the main isReady state
-    bridge.oninitialized = () => {
-      // Send tool input/output to the modal bridge after initialization
-      const resolvedToolInput = toolInputRef.current ?? {};
-      bridge.sendToolInput({ arguments: resolvedToolInput });
-      if (toolOutputRef.current) {
-        bridge.sendToolResult(toolOutputRef.current as CallToolResult);
-      }
-    };
-
-    modalBridgeRef.current = bridge;
-
-    const transport = new LoggingTransport(
-      new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
-      {
-        onSend: (message) => {
-          addUiLog({
-            widgetId: `${toolCallId}-modal`,
-            serverId,
-            direction: "host-to-ui",
-            protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
-            message,
-          });
-        },
-        onReceive: (message) => {
-          addUiLog({
-            widgetId: `${toolCallId}-modal`,
-            serverId,
-            direction: "ui-to-host",
-            protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
-            message,
-          });
-        },
-      },
-    );
-
-    let isActive = true;
-    bridge.connect(transport).catch((error) => {
-      if (!isActive) return;
-      console.error("[MCP Apps] Modal bridge connection failed", error);
-    });
-
-    return () => {
-      isActive = false;
-      modalBridgeRef.current = null;
-      bridge.close().catch(() => {});
-    };
-  }, [
-    modalHtml,
-    modalOpen,
-    addUiLog,
-    serverId,
-    toolCallId,
-    registerBridgeHandlers,
-    widgetPermissive,
-    widgetCsp,
-    widgetPermissions,
-  ]);
 
   // Denied state
   if (toolState === "output-denied") {
@@ -1690,29 +1447,28 @@ export function MCPAppsRenderer({
         MCP App: <code>{resourceUri}</code>
       </div>
 
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>{modalTitle}</DialogTitle>
-          </DialogHeader>
-          <div className="flex-1 w-full h-full min-h-0 overflow-auto">
-            {modalHtml && (
-              <SandboxedIframe
-                ref={modalSandboxRef}
-                html={modalHtml}
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
-                csp={widgetCsp}
-                permissions={widgetPermissions}
-                permissive={widgetPermissive}
-                onMessage={handleSandboxMessage}
-                title={`MCP App Modal: ${modalTitle}`}
-                className="min-w-full border-0 rounded-md bg-background overflow-hidden"
-                style={{ height: "100%", minHeight: "400px" }}
-              />
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <McpAppsModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        title={modalTitle}
+        template={modalTemplate}
+        params={modalParams}
+        registerBridgeHandlers={registerBridgeHandlers}
+        widgetCsp={widgetCsp}
+        widgetPermissions={widgetPermissions}
+        widgetPermissive={widgetPermissive}
+        hostContextRef={hostContextRef}
+        serverId={serverId}
+        resourceUri={resourceUri}
+        toolCallId={toolCallId}
+        toolName={toolName}
+        cspMode={cspMode}
+        toolInputRef={toolInputRef}
+        toolOutputRef={toolOutputRef}
+        themeModeRef={themeModeRef}
+        addUiLog={addUiLog}
+        onCspViolation={handleCspViolation}
+      />
     </div>
   );
 }

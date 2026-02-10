@@ -148,12 +148,8 @@ vi.mock("lucide-react", () => ({
   X: (props: any) => <div {...props} />,
 }));
 
-vi.mock("@/components/ui/dialog", () => ({
-  Dialog: ({ children, open }: any) =>
-    open ? <div data-testid="dialog">{children}</div> : null,
-  DialogContent: ({ children }: any) => <div>{children}</div>,
-  DialogHeader: ({ children }: any) => <div>{children}</div>,
-  DialogTitle: ({ children }: any) => <div>{children}</div>,
+vi.mock("../mcp-apps-modal", () => ({
+  McpAppsModal: () => null,
 }));
 
 // ── Import component under test (after mocks) ─────────────────────────────
