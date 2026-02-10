@@ -532,7 +532,6 @@ export function useAppState() {
               ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
               : undefined,
             clientId: serverEntry.oauthFlowProfile?.clientId,
-            order: serverEntry.order,
           });
         } else {
           // Create new server
@@ -552,7 +551,6 @@ export function useAppState() {
               ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
               : undefined,
             clientId: serverEntry.oauthFlowProfile?.clientId,
-            order: serverEntry.order,
           });
         }
       } catch (error) {
@@ -1442,38 +1440,12 @@ export function useAppState() {
     (orderedNames: string[]) => {
       dispatch({ type: "REORDER_SERVERS", orderedNames });
 
-      // Persist order to localStorage for instant restore on refresh
+      // Persist order to localStorage for instant restore on refresh.
+      // Order is intentionally local-only (not synced to Convex) so that
+      // reordering doesn't affect other members in the same workspace.
       saveServerOrder(effectiveActiveWorkspaceId, orderedNames);
-
-      // Sync updated order to Convex for authenticated users
-      if (isAuthenticated && !useLocalFallback && activeWorkspaceServersFlat) {
-        orderedNames.forEach((name, index) => {
-          const remoteServer = activeWorkspaceServersFlat.find(
-            (s) => s.name === name,
-          );
-          if (remoteServer) {
-            convexUpdateServer({
-              serverId: remoteServer._id,
-              order: index,
-            }).catch((err: unknown) =>
-              logger.warn("Failed to sync server order to Convex", {
-                serverName: name,
-                err,
-              }),
-            );
-          }
-        });
-      }
     },
-    [
-      dispatch,
-      effectiveActiveWorkspaceId,
-      isAuthenticated,
-      useLocalFallback,
-      activeWorkspaceServersFlat,
-      convexUpdateServer,
-      logger,
-    ],
+    [dispatch, effectiveActiveWorkspaceId],
   );
 
   const handleReconnect = useCallback(
