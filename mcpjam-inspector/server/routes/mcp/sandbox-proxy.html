@@ -306,7 +306,18 @@ document.addEventListener('securitypolicyviolation', function(e) {
           }
         } else if (event.source === inner.contentWindow) {
           // Relay messages from inner (guest UI) to parent (host)
-          window.parent.postMessage(event.data, "*");
+          // Only forward JSON-RPC 2.0 messages and whitelisted non-JSON-RPC types.
+          // This prevents non-protocol messages (browser extensions, widget internals)
+          // from reaching PostMessageTransport and causing parse errors.
+          var data = event.data;
+          if (data && typeof data === "object") {
+            if (
+              data.jsonrpc === "2.0" ||
+              data.type === "mcp-apps:csp-violation"
+            ) {
+              window.parent.postMessage(data, "*");
+            }
+          }
         }
       });
 

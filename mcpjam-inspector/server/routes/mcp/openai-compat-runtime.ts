@@ -335,17 +335,67 @@ declare global {
     if (data.method) {
       const params = data.params ?? {};
       switch (data.method) {
-        case "ui/set-tool-input":
-          openaiAPI.toolInput = params.toolInput ?? params;
+        // MCP Apps bridge notification names (SEP-1865)
+        case "ui/notifications/tool-input":
+          openaiAPI.toolInput = params.arguments ?? params;
           break;
-        case "ui/set-tool-output":
-          openaiAPI.toolOutput = params.toolOutput ?? params;
+        case "ui/notifications/tool-input-partial":
+          openaiAPI.toolInput = params.arguments ?? params;
           break;
-        case "ui/set-theme":
+        case "ui/notifications/tool-result":
+          openaiAPI.toolOutput = params;
+          break;
+        case "ui/notifications/tool-cancelled":
+          // Tool was cancelled/errored
+          break;
+        case "ui/notifications/host-context-changed":
           if (params.theme) openaiAPI.theme = params.theme;
+          if (params.displayMode) openaiAPI.displayMode = params.displayMode;
           break;
       }
     }
+  });
+
+  // ── MCP Apps initialization handshake ─────────────────────────────
+  // The host AppBridge expects ui/initialize → response → ui/notifications/initialized.
+  // Without this, the bridge never fires oninitialized and the widget stays hidden.
+
+  const PROTOCOL_VERSION = "2026-01-26";
+
+  const initId = ++callId;
+  window.parent.postMessage(
+    {
+      jsonrpc: "2.0",
+      id: initId,
+      method: "ui/initialize",
+      params: {
+        appInfo: { name: "openai-compat", version: "1.0.0" },
+        appCapabilities: {},
+        protocolVersion: PROTOCOL_VERSION,
+      },
+    },
+    "*",
+  );
+
+  // Wait for the initialize response, then send initialized notification
+  pendingCalls.set(initId, {
+    resolve: (result: unknown) => {
+      const res = result as Record<string, unknown> | null;
+      // Apply host context from init response
+      if (res?.hostContext) {
+        const ctx = res.hostContext as Record<string, unknown>;
+        if (ctx.theme && typeof ctx.theme === "string")
+          openaiAPI.theme = ctx.theme;
+        if (ctx.displayMode && typeof ctx.displayMode === "string")
+          openaiAPI.displayMode = ctx.displayMode;
+      }
+      // Complete the handshake — this triggers bridge.oninitialized on the host
+      sendNotification("ui/notifications/initialized", {});
+    },
+    reject: () => {
+      // Initialization failed; still try to signal initialized so widget shows
+      sendNotification("ui/notifications/initialized", {});
+    },
   });
 
   // ── Mount on window ────────────────────────────────────────────────
