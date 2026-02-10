@@ -325,18 +325,7 @@ export default function App() {
         servers={workspaceServers}
       />
       <SidebarInset className="flex flex-col min-h-0">
-        <Header
-          workspaces={workspaces}
-          activeWorkspaceId={activeWorkspaceId}
-          onSwitchWorkspace={handleSwitchWorkspace}
-          onCreateWorkspace={handleCreateWorkspace}
-          onUpdateWorkspace={handleUpdateWorkspace}
-          onDeleteWorkspace={handleDeleteWorkspace}
-          onLeaveWorkspace={handleLeaveWorkspace}
-          onWorkspaceShared={handleWorkspaceShared}
-          activeServerSelectorProps={activeServerSelectorProps}
-          isLoadingWorkspaces={isLoadingRemoteWorkspaces}
-        />
+        <Header activeServerSelectorProps={activeServerSelectorProps} />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {/* Content Areas */}
           {activeTab === "servers" && (
@@ -347,9 +336,13 @@ export default function App() {
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              onSwitchWorkspace={handleSwitchWorkspace}
+              onCreateWorkspace={handleCreateWorkspace}
+              onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
-              workspaceName={activeWorkspace?.name || "Workspace"}
-              sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
               onWorkspaceShared={handleWorkspaceShared}
               onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
@@ -366,7 +359,11 @@ export default function App() {
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "views" && (
-            <ViewsTab selectedServer={appState.selectedServer} />
+            <ViewsTab
+              selectedServer={appState.selectedServer}
+              onWorkspaceShared={handleWorkspaceShared}
+              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
+            />
           )}
           {activeTab === "resources" && (
             <div className="h-full overflow-hidden">

@@ -14,6 +14,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
+import { WorkspaceSelector } from "./connection/WorkspaceSelector";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -25,6 +26,7 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "./ui/skeleton";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { Workspace } from "@/state/app-types";
 
 interface ServersTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -40,9 +42,13 @@ interface ServersTabProps {
     skipAutoConnect?: boolean,
   ) => void;
   onRemove: (serverName: string) => void;
+  workspaces: Record<string, Workspace>;
+  activeWorkspaceId: string;
+  onSwitchWorkspace: (workspaceId: string) => void;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
+  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
-  workspaceName?: string;
-  sharedWorkspaceId?: string | null;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
   onLeaveWorkspace?: () => void;
 }
@@ -54,9 +60,13 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
+  workspaces,
+  activeWorkspaceId,
+  onSwitchWorkspace,
+  onCreateWorkspace,
+  onUpdateWorkspace,
+  onDeleteWorkspace,
   isLoadingWorkspaces,
-  workspaceName = "Workspace",
-  sharedWorkspaceId,
   onWorkspaceShared,
   onLeaveWorkspace,
 }: ServersTabProps) {
@@ -81,6 +91,9 @@ export function ServersTab({
   }, []);
 
   const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
+  const activeWorkspace = workspaces[activeWorkspaceId];
+  const workspaceName = activeWorkspace?.name || "Workspace";
+  const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
 
   const handleEditServer = (server: ServerWithName) => {
     setServerToEdit(server);
@@ -172,9 +185,15 @@ export function ServersTab({
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-6">
-                <h2 className="text-2xl font-bold tracking-tight">
-                  {isAuthenticated ? workspaceName : "MCP Servers"}
-                </h2>
+                <WorkspaceSelector
+                  activeWorkspaceId={activeWorkspaceId}
+                  workspaces={workspaces}
+                  onSwitchWorkspace={onSwitchWorkspace}
+                  onCreateWorkspace={onCreateWorkspace}
+                  onUpdateWorkspace={onUpdateWorkspace}
+                  onDeleteWorkspace={onDeleteWorkspace}
+                  isLoading={isLoadingWorkspaces}
+                />
               </div>
               <div className="flex items-center gap-2">
                 {isAuthenticated && user && (
@@ -238,9 +257,15 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <h2 className="text-2xl font-bold tracking-tight">
-            {isAuthenticated ? workspaceName : "MCP Servers"}
-          </h2>
+          <WorkspaceSelector
+            activeWorkspaceId={activeWorkspaceId}
+            workspaces={workspaces}
+            onSwitchWorkspace={onSwitchWorkspace}
+            onCreateWorkspace={onCreateWorkspace}
+            onUpdateWorkspace={onUpdateWorkspace}
+            onDeleteWorkspace={onDeleteWorkspace}
+            isLoading={isLoadingWorkspaces}
+          />
         </div>
         <div className="flex items-center gap-2">
           {isAuthenticated && user && (
