@@ -255,7 +255,7 @@ const initialState = {
   lastToolCallId: null,
   followUpMessages: [] as FollowUpMessage[],
   isSidebarVisible: getStoredVisibility(STORAGE_KEY_SIDEBAR, true),
-  cspMode: "permissive" as CspMode,
+  cspMode: "widget-declared" as CspMode,
   mcpAppsCspMode: "widget-declared" as CspMode,
   selectedProtocol: getStoredSelectedProtocol(),
   capabilities: getDefaultCapabilities("desktop"),

@@ -227,7 +227,7 @@ export function ExpectedToolsEditor({
                 const argSchema = getArgumentSchema(toolIndex, key);
                 const availableArgs = getAvailableArguments(toolIndex).filter(
                   (arg) =>
-                    !toolCall.arguments.hasOwnProperty(arg.key) ||
+                    !Object.hasOwn(toolCall.arguments, arg.key) ||
                     arg.key === key,
                 );
 

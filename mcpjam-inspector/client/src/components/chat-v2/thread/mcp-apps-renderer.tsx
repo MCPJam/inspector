@@ -62,6 +62,17 @@ declare const __APP_VERSION__: string;
 // Default input schema for tools without metadata
 const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
+const PARTIAL_INPUT_THROTTLE_MS = 120;
+const STREAMING_REVEAL_FALLBACK_MS = 700;
+const SIGNATURE_MAX_DEPTH = 4;
+const SIGNATURE_MAX_ARRAY_ITEMS = 24;
+const SIGNATURE_MAX_OBJECT_KEYS = 32;
+const SIGNATURE_STRING_EDGE_LENGTH = 24;
+const SUPPRESSED_UI_LOG_METHODS = new Set([
+  "ui/notifications/tool-input-partial",
+  "ui/notifications/size-changed",
+]);
+
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
   | "input-streaming"
@@ -114,6 +125,97 @@ interface MCPAppsRendererProps {
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
   cachedWidgetHtmlUrl?: string;
+}
+
+function getToolInputSignature(
+  input: Record<string, unknown> | undefined,
+): string {
+  if (!input) return "";
+  const seen = new WeakSet<object>();
+
+  const getValueSignature = (value: unknown, depth: number): string => {
+    if (value == null) return "null";
+
+    const valueType = typeof value;
+    if (valueType === "string") {
+      const text = value as string;
+      const head = text.slice(0, SIGNATURE_STRING_EDGE_LENGTH);
+      const tail = text.slice(-SIGNATURE_STRING_EDGE_LENGTH);
+      return `str:${text.length}:${JSON.stringify(head)}:${JSON.stringify(tail)}`;
+    }
+    if (valueType === "number") {
+      if (Number.isNaN(value)) return "num:NaN";
+      if (value === Infinity) return "num:Infinity";
+      if (value === -Infinity) return "num:-Infinity";
+      if (Object.is(value, -0)) return "num:-0";
+      return `num:${value as number}`;
+    }
+    if (valueType === "boolean") return `bool:${String(value)}`;
+    if (valueType === "bigint") return `bigint:${String(value)}`;
+    if (valueType === "undefined") return "undefined";
+    if (valueType === "function") return "function";
+    if (valueType === "symbol") return `symbol:${String(value)}`;
+
+    if (depth >= SIGNATURE_MAX_DEPTH) {
+      if (Array.isArray(value)) return `arr:max-depth:${value.length}`;
+      return `obj:max-depth:${Object.keys(value as Record<string, unknown>).length}`;
+    }
+
+    if (Array.isArray(value)) {
+      const length = value.length;
+      if (length === 0) return "arr:0";
+
+      const headCount = Math.min(length, SIGNATURE_MAX_ARRAY_ITEMS);
+      const headSignatures: string[] = [];
+      for (let index = 0; index < headCount; index += 1) {
+        headSignatures.push(
+          `${index}:${getValueSignature(value[index], depth + 1)}`,
+        );
+      }
+
+      if (length <= SIGNATURE_MAX_ARRAY_ITEMS) {
+        return `arr:${length}:[${headSignatures.join(",")}]`;
+      }
+
+      const tailStart = Math.max(headCount, length - 2);
+      const tailSignatures: string[] = [];
+      for (let index = tailStart; index < length; index += 1) {
+        tailSignatures.push(
+          `${index}:${getValueSignature(value[index], depth + 1)}`,
+        );
+      }
+
+      return `arr:${length}:[${headSignatures.join(",")}]|tail:[${tailSignatures.join(",")}]`;
+    }
+
+    if (valueType === "object") {
+      const record = value as Record<string, unknown>;
+      if (seen.has(record)) return "obj:circular";
+      seen.add(record);
+
+      const keys = Object.keys(record).sort();
+      const keyCount = Math.min(keys.length, SIGNATURE_MAX_OBJECT_KEYS);
+      const entries: string[] = [];
+
+      for (let index = 0; index < keyCount; index += 1) {
+        const key = keys[index];
+        entries.push(`${key}:${getValueSignature(record[key], depth + 1)}`);
+      }
+
+      if (keys.length > SIGNATURE_MAX_OBJECT_KEYS) {
+        const omitted = keys.length - SIGNATURE_MAX_OBJECT_KEYS;
+        const tailKeys = keys.slice(-2).join(",");
+        entries.push(`omitted:${omitted}:tail-keys:${tailKeys}`);
+      }
+
+      seen.delete(record);
+      return `obj:${keys.length}:{${entries.join("|")}}`;
+    }
+
+    return `other:${valueType}`;
+  };
+
+  return getValueSignature(input, 0);
 }
 
 class LoggingTransport implements Transport {
@@ -204,12 +306,12 @@ export function MCPAppsRenderer({
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  // Get CSP mode from playground store when in playground, otherwise use permissive
+  // Get CSP mode from playground store when in playground, otherwise use widget-declared
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
-    : "permissive";
+    : "widget-declared";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -312,6 +414,9 @@ export function MCPAppsRenderer({
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
+  const [streamingRenderSignaled, setStreamingRenderSignaled] = useState(false);
+  const [hasDeliveredStreamingInput, setHasDeliveredStreamingInput] =
+    useState(false);
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -331,9 +436,39 @@ export function MCPAppsRenderer({
   const modalBridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const lastToolInputRef = useRef<string | null>(null);
+  const lastToolInputPartialRef = useRef<string | null>(null);
+  const lastToolInputPartialSentAtRef = useRef(0);
+  const pendingToolInputPartialRef = useRef<Record<string, unknown> | null>(
+    null,
+  );
+  const partialInputTimerRef = useRef<number | null>(null);
+  const streamingRevealTimerRef = useRef<number | null>(null);
   const lastToolOutputRef = useRef<string | null>(null);
   const lastToolErrorRef = useRef<string | null>(null);
+  const toolInputSentRef = useRef(false);
   const isReadyRef = useRef(false);
+  const previousToolStateRef = useRef<ToolState | undefined>(toolState);
+
+  /** Clear all streaming-related timers and refs. Shared across reset paths. */
+  const resetStreamingState = useCallback(() => {
+    lastToolInputRef.current = null;
+    lastToolInputPartialRef.current = null;
+    lastToolInputPartialSentAtRef.current = 0;
+    pendingToolInputPartialRef.current = null;
+    if (partialInputTimerRef.current !== null) {
+      window.clearTimeout(partialInputTimerRef.current);
+      partialInputTimerRef.current = null;
+    }
+    if (streamingRevealTimerRef.current !== null) {
+      window.clearTimeout(streamingRevealTimerRef.current);
+      streamingRevealTimerRef.current = null;
+    }
+    lastToolOutputRef.current = null;
+    lastToolErrorRef.current = null;
+    toolInputSentRef.current = false;
+    setStreamingRenderSignaled(false);
+    setHasDeliveredStreamingInput(false);
+  }, []);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
@@ -362,9 +497,23 @@ export function MCPAppsRenderer({
   const themeModeRef = useRef(themeMode);
   themeModeRef.current = themeMode;
 
-  // Fetch widget HTML when tool output is available or CSP mode changes
+  const hasToolInputData = useMemo(
+    () => !!toolInput && Object.keys(toolInput).length > 0,
+    [toolInput],
+  );
+
+  const canRenderStreamingInput = useMemo(() => {
+    if (toolState !== "input-streaming") return true;
+    return streamingRenderSignaled && hasDeliveredStreamingInput;
+  }, [hasDeliveredStreamingInput, streamingRenderSignaled, toolState]);
+
+  // Fetch widget HTML when tool is active (streaming, input ready, or output available) or CSP mode changes
   useEffect(() => {
-    if (toolState !== "output-available") return;
+    const isActiveToolState =
+      toolState === "input-streaming" ||
+      toolState === "input-available" ||
+      toolState === "output-available";
+    if (!isActiveToolState) return;
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP policy)
     if (widgetHtml && loadedCspMode === cspMode) return;
 
@@ -525,11 +674,9 @@ export function MCPAppsRenderer({
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       setIsReady(false);
       isReadyRef.current = false;
-      lastToolInputRef.current = null;
-      lastToolOutputRef.current = null;
-      lastToolErrorRef.current = null;
+      resetStreamingState();
     }
-  }, [cspMode, loadedCspMode]);
+  }, [cspMode, loadedCspMode, resetStreamingState]);
 
   // Sync displayMode from playground store when it changes (SEP-1865)
   // Only sync when not in controlled mode (parent controls displayMode via props)
@@ -919,22 +1066,29 @@ export function MCPAppsRenderer({
       new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
       {
         onSend: (message) => {
+          const method = extractMethod(message, "mcp-apps");
+          if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           addUiLog({
             widgetId: toolCallId,
             serverId,
             direction: "host-to-ui",
             protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
+            method,
             message,
           });
         },
         onReceive: (message) => {
+          const method = extractMethod(message, "mcp-apps");
+          if (method === "ui/notifications/size-changed") {
+            setStreamingRenderSignaled(true);
+          }
+          if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           addUiLog({
             widgetId: toolCallId,
             serverId,
             direction: "ui-to-host",
             protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
+            method,
             message,
           });
         },
@@ -975,15 +1129,121 @@ export function MCPAppsRenderer({
   }, [hostContext, isReady]);
 
   useEffect(() => {
-    if (!isReady || toolState !== "output-available") return;
+    if (!streamingRenderSignaled) return;
+    if (streamingRevealTimerRef.current !== null) {
+      window.clearTimeout(streamingRevealTimerRef.current);
+      streamingRevealTimerRef.current = null;
+    }
+  }, [streamingRenderSignaled]);
+
+  useEffect(() => {
+    if (!isReady || toolState !== "input-streaming" || streamingRenderSignaled)
+      return;
+    if (streamingRevealTimerRef.current !== null) return;
+
+    streamingRevealTimerRef.current = window.setTimeout(() => {
+      streamingRevealTimerRef.current = null;
+      setStreamingRenderSignaled(true);
+    }, STREAMING_REVEAL_FALLBACK_MS);
+  }, [isReady, streamingRenderSignaled, toolState]);
+
+  useEffect(() => {
+    const prevToolState = previousToolStateRef.current;
+
+    // Some providers may re-enter input-streaming for a new call while reusing
+    // the same toolCallId. Reset send guards so we can stream/send fresh input.
+    if (
+      toolState === "input-streaming" &&
+      prevToolState &&
+      prevToolState !== "input-streaming"
+    ) {
+      resetStreamingState();
+    }
+
+    previousToolStateRef.current = toolState;
+  }, [resetStreamingState, toolState]);
+
+  // Send partial tool input during streaming (SEP-1865 toolInputPartial)
+  useEffect(() => {
+    if (!isReady || toolState !== "input-streaming" || toolInputSentRef.current)
+      return;
+    if (!hasToolInputData) return;
+    const resolvedToolInput = toolInput ?? {};
+    pendingToolInputPartialRef.current = resolvedToolInput;
+
+    const flushPartialInput = () => {
+      const bridge = bridgeRef.current;
+      if (!bridge || !isReadyRef.current || toolInputSentRef.current) return;
+      const pending = pendingToolInputPartialRef.current;
+      if (!pending) return;
+
+      const signature = getToolInputSignature(pending);
+      if (lastToolInputPartialRef.current === signature) return;
+      lastToolInputPartialRef.current = signature;
+      lastToolInputPartialSentAtRef.current = Date.now();
+      setHasDeliveredStreamingInput(true);
+      setStreamingRenderSignaled(true);
+      Promise.resolve(
+        bridge.sendToolInputPartial({ arguments: pending }),
+      ).catch(() => {});
+    };
+
+    const now = Date.now();
+    const elapsed = now - lastToolInputPartialSentAtRef.current;
+    if (
+      lastToolInputPartialSentAtRef.current === 0 ||
+      elapsed >= PARTIAL_INPUT_THROTTLE_MS
+    ) {
+      if (partialInputTimerRef.current !== null) {
+        window.clearTimeout(partialInputTimerRef.current);
+        partialInputTimerRef.current = null;
+      }
+      flushPartialInput();
+      return;
+    }
+
+    if (partialInputTimerRef.current !== null) {
+      window.clearTimeout(partialInputTimerRef.current);
+    }
+    partialInputTimerRef.current = window.setTimeout(() => {
+      partialInputTimerRef.current = null;
+      flushPartialInput();
+    }, PARTIAL_INPUT_THROTTLE_MS - elapsed);
+  }, [hasToolInputData, isReady, toolInput, toolState]);
+
+  // Send complete tool input when arguments are ready
+  useEffect(() => {
+    if (!isReady) return;
+    if (toolState !== "input-available" && toolState !== "output-available")
+      return;
+    if (partialInputTimerRef.current !== null) {
+      window.clearTimeout(partialInputTimerRef.current);
+      partialInputTimerRef.current = null;
+    }
+    if (streamingRevealTimerRef.current !== null) {
+      window.clearTimeout(streamingRevealTimerRef.current);
+      streamingRevealTimerRef.current = null;
+    }
+    pendingToolInputPartialRef.current = null;
     const bridge = bridgeRef.current;
     if (!bridge) return;
 
     const resolvedToolInput = toolInput ?? {};
     const serialized = JSON.stringify(resolvedToolInput);
-    if (lastToolInputRef.current === serialized) return;
+    // Allow live editors/previews to update tool input repeatedly while keeping
+    // duplicate sends suppressed for identical payloads.
+    if (lastToolInputRef.current === serialized) {
+      toolInputSentRef.current = true;
+      return;
+    }
     lastToolInputRef.current = serialized;
-    bridge.sendToolInput({ arguments: resolvedToolInput });
+    toolInputSentRef.current = true;
+    Promise.resolve(
+      bridge.sendToolInput({ arguments: resolvedToolInput }),
+    ).catch(() => {
+      toolInputSentRef.current = false;
+      lastToolInputRef.current = null;
+    });
   }, [isReady, toolInput, toolState]);
 
   useEffect(() => {
@@ -1018,10 +1278,12 @@ export function MCPAppsRenderer({
   }, [isReady, toolErrorText, toolOutput, toolState]);
 
   useEffect(() => {
-    lastToolInputRef.current = null;
-    lastToolOutputRef.current = null;
-    lastToolErrorRef.current = null;
-  }, [toolCallId]);
+    resetStreamingState();
+  }, [toolCallId, resetStreamingState]);
+
+  useEffect(() => {
+    return () => resetStreamingState();
+  }, [resetStreamingState]);
 
   const handleSandboxMessage = (event: MessageEvent) => {
     const data = event.data;
@@ -1277,15 +1539,6 @@ export function MCPAppsRenderer({
     );
   }
 
-  // Loading states
-  if (toolState !== "output-available") {
-    return (
-      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-        Waiting for tool to finish executing...
-      </div>
-    );
-  }
-
   if (loadError) {
     return (
       <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
@@ -1332,16 +1585,32 @@ export function MCPAppsRenderer({
     return "mt-3 space-y-2 relative group";
   })();
 
+  // Keep streaming active in background, but delay visual reveal until the app
+  // signals layout (size-changed) or fallback timeout elapses.
+  const showWidget = isReady && canRenderStreamingInput;
+
   const iframeStyle: CSSProperties = {
     height: isFullscreen ? "100%" : "400px",
     width: "100%",
     maxWidth: "100%",
     // Width transition was previously included here ("width 300ms ease-out").
     transition: isFullscreen ? undefined : "height 300ms ease-out",
+    // Hide iframe visually while not ready to display
+    ...(!showWidget
+      ? { visibility: "hidden" as const, position: "absolute" as const }
+      : {}),
   };
 
   return (
     <div className={containerClassName}>
+      {!showWidget && (
+        <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+          {toolState === "input-streaming"
+            ? "Streaming tool arguments..."
+            : "Preparing MCP App widget..."}
+        </div>
+      )}
+
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
         <button

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Check,
@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
+import { usePostHog } from "posthog-js/react";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
@@ -83,12 +84,30 @@ export function ToolPart({
   /** Whether the view is currently being saved */
   isSaving?: boolean;
 }) {
+  const posthog = usePostHog();
+  const hasTrackedSkillLoad = useRef(false);
+
   const label = isDynamicTool(part)
     ? part.toolName
     : getToolNameFromType((part as any).type);
 
   const toolCallId = (part as any).toolCallId as string | undefined;
   const state = part.state as ToolState | undefined;
+
+  useEffect(() => {
+    const isUserInjected = toolCallId?.startsWith("skill-load-");
+    if (
+      !hasTrackedSkillLoad.current &&
+      !isUserInjected &&
+      label === "loadSkill" &&
+      state === "output-available"
+    ) {
+      hasTrackedSkillLoad.current = true;
+      posthog.capture("skill_loaded", {
+        skill_name: (part as any).input?.name ?? "unknown",
+      });
+    }
+  }, [state, label, posthog, toolCallId, part]);
   const toolState = getToolStateMeta(state);
   const StatusIcon = toolState?.Icon;
   const themeMode = usePreferencesStore((s) => s.themeMode);

@@ -65,6 +65,8 @@ interface StepContext {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  stepIndex: number;
+  usedToolCallIds: Set<string>;
 }
 
 interface StreamResult {
@@ -78,6 +80,88 @@ interface StreamResult {
  */
 function generateToolCallId(): string {
   return `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
+  const usedToolCallIds = new Set<string>();
+
+  for (const msg of messages) {
+    if (msg?.role === "assistant") {
+      const assistantMsg = msg as AssistantModelMessage;
+      if (!Array.isArray(assistantMsg.content)) continue;
+      for (const part of assistantMsg.content) {
+        if (
+          (part.type === "tool-call" ||
+            part.type === "tool-approval-request") &&
+          typeof part.toolCallId === "string"
+        ) {
+          usedToolCallIds.add(part.toolCallId);
+        }
+      }
+      continue;
+    }
+
+    if (msg?.role === "tool") {
+      const toolMsg = msg as ToolModelMessage;
+      for (const part of toolMsg.content) {
+        if (
+          part.type === "tool-result" &&
+          typeof part.toolCallId === "string"
+        ) {
+          usedToolCallIds.add(part.toolCallId);
+        }
+      }
+    }
+  }
+
+  return usedToolCallIds;
+}
+
+function generateUniqueToolCallId(
+  usedToolCallIds: Set<string>,
+  prefix = "tc",
+): string {
+  const MAX_ATTEMPTS = 100;
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    const nextId = `${prefix}_${generateToolCallId()}`;
+    if (!usedToolCallIds.has(nextId)) {
+      usedToolCallIds.add(nextId);
+      return nextId;
+    }
+  }
+  // Fallback: use a counter-based ID that is guaranteed unique
+  const fallbackId = `${prefix}_fallback_${Date.now()}_${usedToolCallIds.size}`;
+  usedToolCallIds.add(fallbackId);
+  return fallbackId;
+}
+
+function createToolCallIdNormalizer(
+  usedToolCallIds: Set<string>,
+  stepIndex: number,
+): (rawToolCallId?: string) => string {
+  const perStepMap = new Map<string, string>();
+  let collisionCounter = 0;
+
+  return (rawToolCallId?: string): string => {
+    if (!rawToolCallId) {
+      return generateUniqueToolCallId(usedToolCallIds, `step${stepIndex + 1}`);
+    }
+
+    const existing = perStepMap.get(rawToolCallId);
+    if (existing) return existing;
+
+    let normalized = rawToolCallId;
+    if (usedToolCallIds.has(normalized)) {
+      do {
+        collisionCounter += 1;
+        normalized = `${rawToolCallId}__s${stepIndex + 1}_${collisionCounter}`;
+      } while (usedToolCallIds.has(normalized));
+    }
+
+    perStepMap.set(rawToolCallId, normalized);
+    usedToolCallIds.add(normalized);
+    return normalized;
+  };
 }
 
 /**
@@ -131,6 +215,7 @@ function scrubMessagesForBackend(
 async function processStream(
   body: ReadableStream<Uint8Array>,
   writer: StepContext["writer"],
+  normalizeToolCallId: (toolCallId?: string) => string,
   requireToolApproval?: boolean,
 ): Promise<StreamResult> {
   const contentParts: Array<TextPart | ToolCallPart> = [];
@@ -191,9 +276,17 @@ async function processStream(
           writer.write(chunk);
           break;
 
+        case "tool-input-start":
+        case "tool-input-delta":
+        case "tool-input-error": {
+          const toolCallId = normalizeToolCallId(chunk.toolCallId);
+          writer.write({ ...chunk, toolCallId });
+          break;
+        }
+
         case "tool-input-available": {
           flushText();
-          const toolCallId = chunk.toolCallId ?? generateToolCallId();
+          const toolCallId = normalizeToolCallId(chunk.toolCallId);
           contentParts.push({
             type: "tool-call",
             toolCallId,
@@ -452,6 +545,8 @@ async function processOneStep(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    stepIndex,
+    usedToolCallIds,
   } = ctx;
 
   const beforeStepLength = messageHistory.length;
@@ -463,6 +558,11 @@ async function processOneStep(
     selectedServers,
   );
 
+  const normalizeToolCallId = createToolCallIdNormalizer(
+    usedToolCallIds,
+    stepIndex,
+  );
+
   // Call Convex /stream endpoint
   const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
     method: "POST",
@@ -471,6 +571,7 @@ async function processOneStep(
       ...(authHeader ? { authorization: authHeader } : {}),
     },
     body: JSON.stringify({
+      mode: "stream",
       messages: JSON.stringify(scrubbedMessages),
       model: modelId,
       systemPrompt,
@@ -489,6 +590,7 @@ async function processOneStep(
   const { contentParts, finishChunk } = await processStream(
     res.body,
     writer,
+    normalizeToolCallId,
     requireToolApproval,
   );
 
@@ -558,6 +660,7 @@ export async function handleMCPJamFreeChatModel(
 
   const toolDefs = serializeToolsForConvex(tools);
   const messageHistory = [...messages];
+  const usedToolCallIds = collectUsedToolCallIds(messageHistory);
   let steps = 0;
 
   const stream = createUIMessageStream({
@@ -592,6 +695,8 @@ export async function handleMCPJamFreeChatModel(
             mcpClientManager,
             selectedServers,
             requireToolApproval,
+            stepIndex: steps,
+            usedToolCallIds,
           });
 
           steps++;

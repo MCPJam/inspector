@@ -30,6 +30,7 @@
           "inspector/tools-prompts-resources",
           "inspector/test-cases",
           "inspector/workspaces",
+          "inspector/views",
           "inspector/skills"
         ]
       },

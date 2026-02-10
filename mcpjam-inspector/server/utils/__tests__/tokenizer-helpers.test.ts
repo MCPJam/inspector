@@ -84,8 +84,8 @@ describe("mapModelIdToTokenizerBackend", () => {
     });
 
     it("normalizes x-ai prefix to xai", () => {
-      expect(mapModelIdToTokenizerBackend("x-ai/grok-4-fast")).toBe(
-        "xai/grok-4-fast-reasoning",
+      expect(mapModelIdToTokenizerBackend("x-ai/grok-4.1-fast")).toBe(
+        "xai/grok-4.1-fast",
       );
     });
   });
@@ -106,7 +106,7 @@ describe("mapModelIdToTokenizerBackend", () => {
 
   describe("provider prefix normalization", () => {
     it("normalizes z-ai to zai", () => {
-      expect(mapModelIdToTokenizerBackend("z-ai/glm-4.6")).toBe("zai/glm-4.5");
+      expect(mapModelIdToTokenizerBackend("z-ai/glm-4.7")).toBe("zai/glm-4.7");
     });
 
     it("passes through already normalized prefixes", () => {
