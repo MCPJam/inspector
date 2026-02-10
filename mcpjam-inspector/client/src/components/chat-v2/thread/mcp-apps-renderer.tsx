@@ -369,7 +369,9 @@ export function MCPAppsRenderer({
   const lastToolInputRef = useRef<string | null>(null);
   const lastToolInputPartialRef = useRef<string | null>(null);
   const lastToolInputPartialSentAtRef = useRef(0);
-  const pendingToolInputPartialRef = useRef<Record<string, unknown> | null>(null);
+  const pendingToolInputPartialRef = useRef<Record<string, unknown> | null>(
+    null,
+  );
   const partialInputTimerRef = useRef<number | null>(null);
   const streamingRevealTimerRef = useRef<number | null>(null);
   const lastToolOutputRef = useRef<string | null>(null);
@@ -1353,7 +1355,9 @@ export function MCPAppsRenderer({
     // Width transition was previously included here ("width 300ms ease-out").
     transition: isFullscreen ? undefined : "height 300ms ease-out",
     // Hide iframe visually while not ready to display
-    ...(!showWidget ? { visibility: "hidden" as const, position: "absolute" as const } : {}),
+    ...(!showWidget
+      ? { visibility: "hidden" as const, position: "absolute" as const }
+      : {}),
   };
 
   return (

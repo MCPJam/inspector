@@ -91,7 +91,8 @@ function collectUsedToolCallIds(messages: ModelMessage[]): Set<string> {
       if (!Array.isArray(assistantMsg.content)) continue;
       for (const part of assistantMsg.content) {
         if (
-          (part.type === "tool-call" || part.type === "tool-approval-request") &&
+          (part.type === "tool-call" ||
+            part.type === "tool-approval-request") &&
           typeof part.toolCallId === "string"
         ) {
           usedToolCallIds.add(part.toolCallId);

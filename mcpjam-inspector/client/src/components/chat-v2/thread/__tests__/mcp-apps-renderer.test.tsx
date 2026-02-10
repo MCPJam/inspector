@@ -228,9 +228,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       mockBridge.onsizechange?.({ width: 400, height: 300 });
     });
 
-    expect((screen.getByTestId("sandboxed-iframe") as HTMLElement).style.visibility).toBe(
-      "hidden",
-    );
+    expect(
+      (screen.getByTestId("sandboxed-iframe") as HTMLElement).style.visibility,
+    ).toBe("hidden");
     expect(screen.getByText("Streaming tool arguments...")).toBeTruthy();
 
     const partialInput = { elements: '[{"type":"rectangle"' };
@@ -250,7 +250,8 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
     await vi.waitFor(() => {
       expect(
-        (screen.getByTestId("sandboxed-iframe") as HTMLElement).style.visibility,
+        (screen.getByTestId("sandboxed-iframe") as HTMLElement).style
+          .visibility,
       ).toBe("");
     });
     expect(screen.queryByText("Streaming tool arguments...")).toBeNull();
@@ -258,7 +259,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("streams updated partial input values while still streaming", async () => {
     const firstPartial = { elements: '[{"type":"rectangle"' };
-    const secondPartial = { elements: '[{"type":"rectangle"},{"type":"ellipse"' };
+    const secondPartial = {
+      elements: '[{"type":"rectangle"},{"type":"ellipse"',
+    };
     const { rerender } = render(
       <MCPAppsRenderer
         {...baseProps}
