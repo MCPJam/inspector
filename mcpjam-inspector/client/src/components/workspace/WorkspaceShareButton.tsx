@@ -6,6 +6,11 @@ import { useConvexAuth } from "convex/react";
 import { ShareWorkspaceDialog } from "./ShareWorkspaceDialog";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface WorkspaceShareButtonProps {
   workspaceName: string;
@@ -22,10 +27,11 @@ export function WorkspaceShareButton({
   onWorkspaceShared,
   onLeaveWorkspace,
 }: WorkspaceShareButtonProps) {
-  const { user, signIn } = useAuth();
+  const { user } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const posthog = usePostHog();
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const isShareEnabled = isAuthenticated && !!user;
 
   const handleClick = () => {
     posthog.capture("workspace_share_button_clicked", {
@@ -33,20 +39,30 @@ export function WorkspaceShareButton({
       platform: detectPlatform(),
       environment: detectEnvironment(),
     });
-    if (!isAuthenticated || !user) {
-      signIn();
-      return;
-    }
     setIsShareDialogOpen(true);
   };
 
   return (
     <>
-      <Button size="sm" variant="outline" onClick={handleClick}>
-        <Users className="h-4 w-4 mr-2" />
-        Share
-      </Button>
-      {isAuthenticated && user && (
+      {isShareEnabled ? (
+        <Button size="sm" variant="outline" onClick={handleClick}>
+          <Users className="h-4 w-4 mr-2" />
+          Share
+        </Button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex">
+              <Button size="sm" variant="outline" disabled>
+                <Users className="h-4 w-4 mr-2" />
+                Share
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Log in to share</TooltipContent>
+        </Tooltip>
+      )}
+      {isShareEnabled && user && (
         <ShareWorkspaceDialog
           isOpen={isShareDialogOpen}
           onClose={() => setIsShareDialogOpen(false)}

@@ -437,51 +437,6 @@ export function ServerConnectionCard({
                       )}
                       {isExporting ? "Exporting..." : "Export server info"}
                     </DropdownMenuItem>
-                    {showTunnelActions && (
-                      <>
-                        <Separator />
-                        {hasTunnel ? (
-                          <>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                copyToClipboard(tunnelUrl!, "tunnel");
-                              }}
-                              className="text-xs cursor-pointer"
-                            >
-                              <Copy className="h-3 w-3 mr-2" />
-                              Copy Tunnel URL
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={handleCloseTunnel}
-                              disabled={isClosingTunnel}
-                              className="text-xs cursor-pointer"
-                            >
-                              {isClosingTunnel ? (
-                                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                              ) : (
-                                <Cable className="h-3 w-3 mr-2" />
-                              )}
-                              Close Tunnel
-                            </DropdownMenuItem>
-                          </>
-                        ) : (
-                          <DropdownMenuItem
-                            onClick={handleCreateTunnel}
-                            disabled={isCreatingTunnel || !canManageTunnels}
-                            className="text-xs cursor-pointer"
-                          >
-                            {isCreatingTunnel ? (
-                              <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                            ) : (
-                              <Cable className="h-3 w-3 mr-2" />
-                            )}
-                            {canManageTunnels
-                              ? "Create Tunnel"
-                              : "Sign in to create tunnel"}
-                          </DropdownMenuItem>
-                        )}
-                      </>
-                    )}
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
