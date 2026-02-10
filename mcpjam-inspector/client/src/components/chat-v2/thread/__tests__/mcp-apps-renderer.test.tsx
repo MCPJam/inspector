@@ -407,4 +407,43 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.sendToolResult).toHaveBeenLastCalledWith(newOutput);
     });
   });
+
+  it("re-sends complete tool input when input changes in output-available", async () => {
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={{ elements: '[{"type":"rectangle"}]' }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInput).toHaveBeenCalledWith({
+        arguments: { elements: '[{"type":"rectangle"}]' },
+      });
+    });
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="output-available"
+        toolInput={{ elements: '[{"type":"ellipse"}]' }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(2);
+      expect(mockBridge.sendToolInput).toHaveBeenLastCalledWith({
+        arguments: { elements: '[{"type":"ellipse"}]' },
+      });
+    });
+  });
 });

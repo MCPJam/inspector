@@ -1156,7 +1156,6 @@ export function MCPAppsRenderer({
     if (!isReady) return;
     if (toolState !== "input-available" && toolState !== "output-available")
       return;
-    if (toolInputSentRef.current) return;
     if (partialInputTimerRef.current !== null) {
       window.clearTimeout(partialInputTimerRef.current);
       partialInputTimerRef.current = null;
@@ -1171,6 +1170,8 @@ export function MCPAppsRenderer({
 
     const resolvedToolInput = toolInput ?? {};
     const serialized = JSON.stringify(resolvedToolInput);
+    // Allow live editors/previews to update tool input repeatedly while keeping
+    // duplicate sends suppressed for identical payloads.
     if (lastToolInputRef.current === serialized) {
       toolInputSentRef.current = true;
       return;
