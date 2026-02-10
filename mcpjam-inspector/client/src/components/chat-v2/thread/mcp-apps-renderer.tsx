@@ -56,6 +56,38 @@ declare const __APP_VERSION__: string;
 // Default input schema for tools without metadata
 const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
+const NON_DRAWABLE_EXCALIDRAW_TYPES = new Set([
+  "cameraUpdate",
+  "viewportUpdate",
+  "restoreCheckpoint",
+  "delete",
+]);
+const PARTIAL_INPUT_THROTTLE_MS = 120;
+const STREAMING_REVEAL_PARSE_LIMIT = 30000;
+const SUPPRESSED_UI_LOG_METHODS = new Set([
+  "ui/notifications/tool-input-partial",
+  "ui/notifications/size-changed",
+]);
+
+function parsePartialJsonArray(value: string): unknown[] {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("[")) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    const lastObjectClose = trimmed.lastIndexOf("}");
+    if (lastObjectClose < 0) return [];
+    try {
+      const recovered = JSON.parse(trimmed.slice(0, lastObjectClose + 1) + "]");
+      return Array.isArray(recovered) ? recovered : [];
+    } catch {
+      return [];
+    }
+  }
+}
+
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
   | "input-streaming"
@@ -316,8 +348,13 @@ export function MCPAppsRenderer({
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const lastToolInputRef = useRef<string | null>(null);
+  const lastToolInputPartialRef = useRef<string | null>(null);
+  const lastToolInputPartialSentAtRef = useRef(0);
+  const pendingToolInputPartialRef = useRef<Record<string, unknown> | null>(null);
+  const partialInputTimerRef = useRef<number | null>(null);
   const lastToolOutputRef = useRef<string | null>(null);
   const lastToolErrorRef = useRef<string | null>(null);
+  const toolInputSentRef = useRef(false);
   const isReadyRef = useRef(false);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
@@ -347,9 +384,40 @@ export function MCPAppsRenderer({
   const themeModeRef = useRef(themeMode);
   themeModeRef.current = themeMode;
 
-  // Fetch widget HTML when tool output is available or CSP mode changes
+  const hasToolInputData = useMemo(
+    () => !!toolInput && Object.keys(toolInput).length > 0,
+    [toolInput],
+  );
+
+  const canRenderStreamingInput = useMemo(() => {
+    if (toolState !== "input-streaming") return true;
+    if (!hasToolInputData) return false;
+
+    // Excalidraw streams elements as partial JSON in `arguments.elements`.
+    // Keep iframe hidden until at least one drawable element is recoverable.
+    const maybeElements = (toolInput as { elements?: unknown } | undefined)
+      ?.elements;
+    if (typeof maybeElements !== "string") return true;
+    if (maybeElements.length > STREAMING_REVEAL_PARSE_LIMIT) return true;
+    if (!maybeElements.includes("}")) return false;
+
+    const partialElements = parsePartialJsonArray(maybeElements);
+    return partialElements.some((item) => {
+      if (!item || typeof item !== "object") return false;
+      const type = (item as { type?: unknown }).type;
+      return (
+        typeof type === "string" && !NON_DRAWABLE_EXCALIDRAW_TYPES.has(type)
+      );
+    });
+  }, [toolInput, toolState, hasToolInputData]);
+
+  // Fetch widget HTML when tool is active (streaming, input ready, or output available) or CSP mode changes
   useEffect(() => {
-    if (toolState !== "output-available") return;
+    const isActiveToolState =
+      toolState === "input-streaming" ||
+      toolState === "input-available" ||
+      toolState === "output-available";
+    if (!isActiveToolState) return;
     // Re-fetch if CSP mode changed (widget needs to reload with new CSP policy)
     if (widgetHtml && loadedCspMode === cspMode) return;
 
@@ -511,8 +579,16 @@ export function MCPAppsRenderer({
       setIsReady(false);
       isReadyRef.current = false;
       lastToolInputRef.current = null;
+      lastToolInputPartialRef.current = null;
+      lastToolInputPartialSentAtRef.current = 0;
+      pendingToolInputPartialRef.current = null;
+      if (partialInputTimerRef.current !== null) {
+        window.clearTimeout(partialInputTimerRef.current);
+        partialInputTimerRef.current = null;
+      }
       lastToolOutputRef.current = null;
       lastToolErrorRef.current = null;
+      toolInputSentRef.current = false;
     }
   }, [cspMode, loadedCspMode]);
 
@@ -904,22 +980,26 @@ export function MCPAppsRenderer({
       new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
       {
         onSend: (message) => {
+          const method = extractMethod(message, "mcp-apps");
+          if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           addUiLog({
             widgetId: toolCallId,
             serverId,
             direction: "host-to-ui",
             protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
+            method,
             message,
           });
         },
         onReceive: (message) => {
+          const method = extractMethod(message, "mcp-apps");
+          if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           addUiLog({
             widgetId: toolCallId,
             serverId,
             direction: "ui-to-host",
             protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
+            method,
             message,
           });
         },
@@ -959,16 +1039,80 @@ export function MCPAppsRenderer({
     bridge.setHostContext(hostContext);
   }, [hostContext, isReady]);
 
+  // Send partial tool input during streaming (SEP-1865 toolInputPartial)
   useEffect(() => {
-    if (!isReady || toolState !== "output-available") return;
+    if (!isReady || toolState !== "input-streaming" || toolInputSentRef.current)
+      return;
+    if (!hasToolInputData) return;
+    const resolvedToolInput = toolInput ?? {};
+    pendingToolInputPartialRef.current = resolvedToolInput;
+
+    const flushPartialInput = () => {
+      const bridge = bridgeRef.current;
+      if (!bridge || !isReadyRef.current || toolInputSentRef.current) return;
+      const pending = pendingToolInputPartialRef.current;
+      if (!pending) return;
+
+      const serialized = JSON.stringify(pending);
+      if (lastToolInputPartialRef.current === serialized) return;
+      lastToolInputPartialRef.current = serialized;
+      lastToolInputPartialSentAtRef.current = Date.now();
+      Promise.resolve(
+        bridge.sendToolInputPartial({ arguments: pending }),
+      ).catch(() => {});
+    };
+
+    const now = Date.now();
+    const elapsed = now - lastToolInputPartialSentAtRef.current;
+    if (
+      lastToolInputPartialSentAtRef.current === 0 ||
+      elapsed >= PARTIAL_INPUT_THROTTLE_MS
+    ) {
+      if (partialInputTimerRef.current !== null) {
+        window.clearTimeout(partialInputTimerRef.current);
+        partialInputTimerRef.current = null;
+      }
+      flushPartialInput();
+      return;
+    }
+
+    if (partialInputTimerRef.current !== null) {
+      window.clearTimeout(partialInputTimerRef.current);
+    }
+    partialInputTimerRef.current = window.setTimeout(() => {
+      partialInputTimerRef.current = null;
+      flushPartialInput();
+    }, PARTIAL_INPUT_THROTTLE_MS - elapsed);
+  }, [hasToolInputData, isReady, toolInput, toolState]);
+
+  // Send complete tool input when arguments are ready
+  useEffect(() => {
+    if (!isReady) return;
+    if (toolState !== "input-available" && toolState !== "output-available")
+      return;
+    if (toolInputSentRef.current) return;
+    if (partialInputTimerRef.current !== null) {
+      window.clearTimeout(partialInputTimerRef.current);
+      partialInputTimerRef.current = null;
+    }
+    pendingToolInputPartialRef.current = null;
     const bridge = bridgeRef.current;
     if (!bridge) return;
 
     const resolvedToolInput = toolInput ?? {};
     const serialized = JSON.stringify(resolvedToolInput);
-    if (lastToolInputRef.current === serialized) return;
+    if (lastToolInputRef.current === serialized) {
+      toolInputSentRef.current = true;
+      return;
+    }
     lastToolInputRef.current = serialized;
-    bridge.sendToolInput({ arguments: resolvedToolInput });
+    toolInputSentRef.current = true;
+    Promise.resolve(
+      bridge.sendToolInput({ arguments: resolvedToolInput }),
+    ).catch(() => {
+      toolInputSentRef.current = false;
+      lastToolInputRef.current = null;
+    });
   }, [isReady, toolInput, toolState]);
 
   useEffect(() => {
@@ -1004,9 +1148,26 @@ export function MCPAppsRenderer({
 
   useEffect(() => {
     lastToolInputRef.current = null;
+    lastToolInputPartialRef.current = null;
+    lastToolInputPartialSentAtRef.current = 0;
+    pendingToolInputPartialRef.current = null;
+    if (partialInputTimerRef.current !== null) {
+      window.clearTimeout(partialInputTimerRef.current);
+      partialInputTimerRef.current = null;
+    }
     lastToolOutputRef.current = null;
     lastToolErrorRef.current = null;
+    toolInputSentRef.current = false;
   }, [toolCallId]);
+
+  useEffect(() => {
+    return () => {
+      if (partialInputTimerRef.current !== null) {
+        window.clearTimeout(partialInputTimerRef.current);
+        partialInputTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const handleSandboxMessage = (event: MessageEvent) => {
     if (event.data?.type !== "mcp-apps:csp-violation") return;
@@ -1050,15 +1211,6 @@ export function MCPAppsRenderer({
     return (
       <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
         Tool execution was denied.
-      </div>
-    );
-  }
-
-  // Loading states
-  if (toolState !== "output-available") {
-    return (
-      <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-        Waiting for tool to finish executing...
       </div>
     );
   }
@@ -1109,16 +1261,30 @@ export function MCPAppsRenderer({
     return "mt-3 space-y-2 relative group";
   })();
 
+  // Keep streaming active in background, but reveal iframe only when there's
+  // likely renderable partial content to avoid blank/dark pre-render flashes.
+  const showWidget = isReady && canRenderStreamingInput;
+
   const iframeStyle: CSSProperties = {
     height: isFullscreen ? "100%" : "400px",
     width: "100%",
     maxWidth: "100%",
     // Width transition was previously included here ("width 300ms ease-out").
     transition: isFullscreen ? undefined : "height 300ms ease-out",
+    // Hide iframe visually while not ready to display
+    ...(!showWidget ? { visibility: "hidden" as const, position: "absolute" as const } : {}),
   };
 
   return (
     <div className={containerClassName}>
+      {!showWidget && (
+        <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
+          {toolState === "input-streaming"
+            ? "Streaming tool arguments..."
+            : "Preparing MCP App widget..."}
+        </div>
+      )}
+
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
         <button

@@ -11,6 +11,7 @@ const { mockBridge, mockPostMessageTransport, triggerReady, stableStoreFns } =
   vi.hoisted(() => {
     const bridge = {
       sendToolInput: vi.fn(),
+      sendToolInputPartial: vi.fn(),
       sendToolResult: vi.fn(),
       sendToolCancelled: vi.fn(),
       setHostContext: vi.fn(),
@@ -149,11 +150,11 @@ const baseProps = {
 };
 
 // ── Tests ──────────────────────────────────────────────────────────────────
-describe("MCPAppsRenderer tool input/output re-sending", () => {
+describe("MCPAppsRenderer tool input streaming", () => {
   beforeEach(() => {
-    // Reset all mock state between tests
     vi.clearAllMocks();
     mockBridge.sendToolInput.mockClear();
+    mockBridge.sendToolInputPartial.mockClear();
     mockBridge.sendToolResult.mockClear();
     mockBridge.sendToolCancelled.mockClear();
     mockBridge.connect.mockClear().mockResolvedValue(undefined);
@@ -162,7 +163,6 @@ describe("MCPAppsRenderer tool input/output re-sending", () => {
     mockBridge.teardownResource.mockClear().mockResolvedValue({});
     mockBridge.oninitialized = null;
 
-    // Override global fetch to return real HTML for the cached URL fetch
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
       text: () => Promise.resolve("<html><body>widget</body></html>"),
@@ -172,82 +172,135 @@ describe("MCPAppsRenderer tool input/output re-sending", () => {
     } as Response);
   });
 
-  it("sends tool input when widget becomes ready", async () => {
+  it("sends partial tool input during input-streaming", async () => {
+    const partialInput = { elements: '[{"type":"rectangle"' };
     render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={partialInput}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
     );
 
-    // Wait for fetch + bridge.connect
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
     });
-
-    // Simulate widget ready
     act(() => triggerReady());
 
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledWith({
+        arguments: partialInput,
+      });
+    });
+    expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(0);
+  });
+
+  it("streams updated partial input values while still streaming", async () => {
+    const firstPartial = { elements: '[{"type":"rectangle"' };
+    const secondPartial = { elements: '[{"type":"rectangle"},{"type":"ellipse"' };
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={firstPartial}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={secondPartial}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
+      expect(mockBridge.sendToolInputPartial).toHaveBeenLastCalledWith({
+        arguments: secondPartial,
+      });
+    });
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={{ ...secondPartial }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+    expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends complete tool input once and then stops partial updates", async () => {
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={{ elements: '[{"type":"rectangle"' }}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
+    });
+
+    const completeInput = { elements: '[{"type":"rectangle"}]' };
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-available"
+        toolInput={completeInput}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
     await vi.waitFor(() => {
       expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
       expect(mockBridge.sendToolInput).toHaveBeenCalledWith({
-        arguments: baseProps.toolInput,
+        arguments: completeInput,
       });
     });
-  });
 
-  it("re-sends tool input when prop changes", async () => {
-    const { rerender } = render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
-    );
-
-    await vi.waitFor(() => {
-      expect(mockBridge.connect).toHaveBeenCalled();
-    });
-    act(() => triggerReady());
-    await vi.waitFor(() => {
-      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
-    });
-
-    // Change tool input
-    const newInput = { elements: '[{"type":"ellipse"}]' };
     rerender(
       <MCPAppsRenderer
         {...baseProps}
-        toolInput={newInput}
+        toolState="input-streaming"
+        toolInput={{ elements: '[{"type":"triangle"' }}
         cachedWidgetHtmlUrl="blob:cached"
       />,
     );
-
-    await vi.waitFor(() => {
-      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(2);
-      expect(mockBridge.sendToolInput).toHaveBeenLastCalledWith({
-        arguments: newInput,
-      });
-    });
-  });
-
-  it("does not re-send tool input if value is unchanged", async () => {
-    const { rerender } = render(
-      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
-    );
-
-    await vi.waitFor(() => {
-      expect(mockBridge.connect).toHaveBeenCalled();
-    });
-    act(() => triggerReady());
     await vi.waitFor(() => {
       expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
     });
 
-    // Rerender with a new reference but same serialized value
     rerender(
       <MCPAppsRenderer
         {...baseProps}
-        toolInput={{ ...baseProps.toolInput }}
+        toolState="output-available"
+        toolInput={{ elements: '[{"type":"ellipse"}]' }}
         cachedWidgetHtmlUrl="blob:cached"
       />,
     );
-
-    // Should still be 1 — dedup prevents re-send
-    expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("sends tool output when widget becomes ready", async () => {
@@ -281,7 +334,6 @@ describe("MCPAppsRenderer tool input/output re-sending", () => {
       expect(mockBridge.sendToolResult).toHaveBeenCalledTimes(1);
     });
 
-    // Change tool output
     const newOutput = { content: [{ type: "text" as const, text: "updated" }] };
     rerender(
       <MCPAppsRenderer
