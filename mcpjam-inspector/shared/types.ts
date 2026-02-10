@@ -287,12 +287,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 400000,
   },
-  {
-    id: "openai/gpt-5.1-codex-mini",
-    name: "GPT-5.1 Codex Mini (Free)",
-    provider: "openai",
-    contextLength: 200000,
-  },
   { id: Model.GPT_5, name: "GPT-5", provider: "openai", contextLength: 400000 },
   {
     id: Model.GPT_5_MINI,
