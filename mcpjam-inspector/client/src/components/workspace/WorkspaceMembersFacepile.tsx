@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { Share2 } from "lucide-react";
@@ -8,10 +6,12 @@ import { ShareWorkspaceDialog } from "./ShareWorkspaceDialog";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { cn } from "@/lib/utils";
+import { User } from "@workos-inc/authkit-js";
 
 interface WorkspaceMembersFacepileProps {
   workspaceName: string;
   workspaceServers: Record<string, any>;
+  currentUser: User;
   sharedWorkspaceId?: string | null;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
   onLeaveWorkspace?: () => void;
@@ -20,26 +20,21 @@ interface WorkspaceMembersFacepileProps {
 export function WorkspaceMembersFacepile({
   workspaceName,
   workspaceServers,
+  currentUser,
   sharedWorkspaceId,
   onWorkspaceShared,
   onLeaveWorkspace,
 }: WorkspaceMembersFacepileProps) {
-  const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   const { activeMembers, isLoading } = useWorkspaceMembers({
-    isAuthenticated,
+    isAuthenticated: true,
     workspaceId: sharedWorkspaceId ?? null,
   });
 
-  if (!isAuthenticated || !user) {
-    return null;
-  }
-
   if (!sharedWorkspaceId) {
-    const displayName = [user.firstName, user.lastName]
+    const displayName = [currentUser.firstName, currentUser.lastName]
       .filter(Boolean)
       .join(" ");
     const initials = getInitials(displayName);
@@ -64,7 +59,7 @@ export function WorkspaceMembersFacepile({
           workspaceName={workspaceName}
           workspaceServers={workspaceServers}
           sharedWorkspaceId={sharedWorkspaceId}
-          currentUser={user}
+          currentUser={currentUser}
           onWorkspaceShared={onWorkspaceShared}
           onLeaveWorkspace={onLeaveWorkspace}
         />
@@ -130,7 +125,7 @@ export function WorkspaceMembersFacepile({
         workspaceName={workspaceName}
         workspaceServers={workspaceServers}
         sharedWorkspaceId={sharedWorkspaceId}
-        currentUser={user}
+        currentUser={currentUser}
         onWorkspaceShared={onWorkspaceShared}
         onLeaveWorkspace={onLeaveWorkspace}
       />

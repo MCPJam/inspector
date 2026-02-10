@@ -1,25 +1,12 @@
 import { useEffect, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import {
-  Plus,
-  FileText,
-  FileSymlink,
-  Cable,
-  Link,
-  Loader2,
-  Copy,
-  Check,
-} from "lucide-react";
+import { Plus, FileText } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import { EditServerModal } from "./connection/EditServerModal";
 import { JsonImportModal } from "./connection/JsonImportModal";
-import {
-  TunnelExplanationModal,
-  TUNNEL_EXPLANATION_DISMISSED_KEY,
-} from "./connection/TunnelExplanationModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
@@ -30,27 +17,10 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "./ui/resizable";
-import {
-  createTunnel,
-  getTunnel,
-  closeTunnel,
-  cleanupOrphanedTunnels,
-} from "@/lib/apis/mcp-tunnels-api";
-import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
-import { toast } from "sonner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "./ui/tooltip";
 import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
-import { formatJsonConfig } from "@/lib/json-config-parser";
 import { Skeleton } from "./ui/skeleton";
-import { HOSTED_MODE } from "@/lib/config";
 
 interface ServersTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -79,8 +49,6 @@ export function ServersTab({
   isLoadingWorkspaces,
 }: ServersTabProps) {
   const posthog = usePostHog();
-  const { getAccessToken } = useAuth();
-  const { isAuthenticated } = useConvexAuth();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -88,11 +56,6 @@ export function ServersTab({
   const [isEditingServer, setIsEditingServer] = useState(false);
   const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
-  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
-  const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
-  const [isClosingTunnel, setIsClosingTunnel] = useState(false);
-  const [isTunnelUrlCopied, setIsTunnelUrlCopied] = useState(false);
-  const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
 
   useEffect(() => {
     posthog.capture("servers_tab_viewed", {
@@ -102,23 +65,6 @@ export function ServersTab({
       num_servers: Object.keys(connectedOrConnectingServerConfigs).length,
     });
   }, []);
-
-  // Check for existing tunnel on mount
-  useEffect(() => {
-    const checkExistingTunnel = async () => {
-      try {
-        const accessToken = await getAccessToken();
-        const existingTunnel = await getTunnel(accessToken);
-        if (existingTunnel) {
-          setTunnelUrl(existingTunnel.url);
-        }
-      } catch (err) {
-        console.debug("No existing tunnel found:", err);
-      }
-    };
-
-    checkExistingTunnel();
-  }, [getAccessToken]);
 
   const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
 
@@ -158,229 +104,8 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
-  const downloadJson = (filename: string, data: any) => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const handleExportAsJsonClick = () => {
-    posthog.capture("export_servers_to_json_button_clicked", {
-      location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-    });
-    const formattedJson = formatJsonConfig(connectedOrConnectingServerConfigs);
-    const timestamp = new Date()
-      .toISOString()
-      .split(".")[0]
-      .replace(/[T:]/g, "-");
-    const fileName = `mcp-servers-config-${timestamp}.json`;
-    downloadJson(fileName, formattedJson);
-  };
-
-  const handleCreateTunnel = () => {
-    posthog.capture("create_tunnel_button_clicked", {
-      location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-    });
-
-    const isDismissed =
-      localStorage.getItem(TUNNEL_EXPLANATION_DISMISSED_KEY) === "true";
-    if (isDismissed) {
-      handleConfirmCreateTunnel();
-    } else {
-      setShowTunnelExplanation(true);
-    }
-  };
-
-  const handleConfirmCreateTunnel = async () => {
-    setIsCreatingTunnel(true);
-    try {
-      const accessToken = await getAccessToken();
-
-      // Cleanup orphaned tunnels BEFORE creating new one
-      await cleanupOrphanedTunnels(accessToken);
-
-      const result = await createTunnel(accessToken);
-      setTunnelUrl(result.url);
-
-      // Cleanup again AFTER creation to catch the tunnel that was just closed
-      // (recordTunnel marks the old tunnel as closed)
-      await cleanupOrphanedTunnels(accessToken);
-
-      toast.success("Tunnel is ready to use!");
-
-      posthog.capture("tunnel_created", {
-        location: "servers_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-      });
-
-      setShowTunnelExplanation(false);
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to create tunnel";
-      toast.error(`Tunnel creation failed: ${errorMessage}`);
-    } finally {
-      setIsCreatingTunnel(false);
-    }
-  };
-
-  const handleCloseTunnel = async () => {
-    setIsClosingTunnel(true);
-    try {
-      const accessToken = await getAccessToken();
-      await closeTunnel(accessToken);
-      setTunnelUrl(null);
-
-      toast.success("Tunnel closed successfully");
-
-      posthog.capture("tunnel_closed", {
-        location: "servers_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-      });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to close tunnel";
-      toast.error(`Failed to close tunnel: ${errorMessage}`);
-    } finally {
-      setIsClosingTunnel(false);
-    }
-  };
-
-  const copyTunnelUrl = async () => {
-    if (!tunnelUrl) return;
-
-    posthog.capture("copy_tunnel_url_clicked", {
-      location: "servers_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-    });
-
-    try {
-      await navigator.clipboard.writeText(tunnelUrl);
-      setIsTunnelUrlCopied(true);
-      setTimeout(() => setIsTunnelUrlCopied(false), 2000);
-    } catch (error) {
-      console.error("Failed to copy tunnel URL:", error);
-    }
-  };
-
-  const renderTunnelButton = () => {
-    // Tunnels are not available in hosted mode
-    if (HOSTED_MODE) {
-      const disabledButton = (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={true}
-          className="cursor-not-allowed"
-        >
-          <Cable className="h-4 w-4 mr-2" />
-          Create ngrok tunnel
-        </Button>
-      );
-
-      return (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span tabIndex={0}>{disabledButton}</span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>This feature is not available on the web</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      );
-    }
-
-    if (tunnelUrl) {
-      return (
-        <Button
-          variant="destructive"
-          size="sm"
-          onClick={handleCloseTunnel}
-          disabled={isClosingTunnel}
-          className="cursor-pointer relative"
-        >
-          {isClosingTunnel ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Close Tunnel
-            </>
-          ) : (
-            <>
-              <span className="relative flex h-2 w-2 mr-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-foreground opacity-50"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-primary-foreground"></span>
-              </span>
-              Close Tunnel
-            </>
-          )}
-        </Button>
-      );
-    }
-
-    const button = (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleCreateTunnel}
-        disabled={isCreatingTunnel || !isAuthenticated}
-        className="cursor-pointer"
-      >
-        {isCreatingTunnel ? (
-          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-        ) : (
-          <Cable className="h-4 w-4 mr-2" />
-        )}
-        Create ngrok tunnel
-      </Button>
-    );
-
-    if (!isAuthenticated) {
-      return (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span tabIndex={0}>{button}</span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Sign in to create tunnels</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      );
-    }
-
-    return button;
-  };
-
   const renderServerActionsMenu = () => (
     <>
-      {Object.keys(connectedOrConnectingServerConfigs ?? {}).length > 0 && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="justify-start"
-          onClick={handleExportAsJsonClick}
-        >
-          <FileSymlink className="h-4 w-4 mr-2" />
-          Export Servers
-        </Button>
-      )}
       <HoverCard
         open={isActionMenuOpen}
         onOpenChange={setIsActionMenuOpen}
@@ -438,7 +163,6 @@ export function ServersTab({
                 </h2>
               </div>
               <div className="flex items-center gap-2">
-                {renderTunnelButton()}
                 {renderServerActionsMenu()}
               </div>
             </div>
@@ -455,7 +179,6 @@ export function ServersTab({
                   onReconnect={onReconnect}
                   onEdit={handleEditServer}
                   onRemove={onRemove}
-                  sharedTunnelUrl={tunnelUrl}
                 />
               ),
             )}
@@ -485,28 +208,8 @@ export function ServersTab({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-6">
           <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
-          {tunnelUrl && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">Tunnel:</span>
-              <button
-                onClick={copyTunnelUrl}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground bg-muted/20 px-1.5 py-0.5 rounded border border-border/20 transition-colors cursor-pointer"
-              >
-                <Link className="h-2.5 w-2.5 flex-shrink-0" />
-                {isTunnelUrlCopied ? (
-                  <>
-                    <Check className="h-2.5 w-2.5 text-green-500" />
-                    <span className="text-green-500">Copied!</span>
-                  </>
-                ) : (
-                  <Copy className="h-2.5 w-2.5" />
-                )}
-              </button>
-            </div>
-          )}
         </div>
         <div className="flex items-center gap-2">
-          {renderTunnelButton()}
           {renderServerActionsMenu()}
         </div>
       </div>
@@ -581,14 +284,6 @@ export function ServersTab({
         isOpen={isImportingJson}
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
-      />
-
-      {/* Tunnel Explanation Modal */}
-      <TunnelExplanationModal
-        isOpen={showTunnelExplanation}
-        onClose={() => setShowTunnelExplanation(false)}
-        onConfirm={handleConfirmCreateTunnel}
-        isCreating={isCreatingTunnel}
       />
     </div>
   );
