@@ -413,8 +413,8 @@ export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
       <a
         href={
           protocol === "mcp-apps"
-            ? "https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/draft/apps.mdx#ui-resource-format"
-            : "https://developers.openai.com/apps-sdk/reference/#component-resource-configuration"
+            ? "https://github.com/modelcontextprotocol/ext-apps/blob/bcfffb6585ea4fb1e3a9da39fb8911b83399fa71/specification/draft/apps.mdx?plain=1#L672"
+            : "https://developers.openai.com/apps-sdk/build/mcp-server/"
         }
         target="_blank"
         rel="noopener noreferrer"
@@ -422,8 +422,8 @@ export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
       >
         <ExternalLink className="h-3 w-3" />
         {protocol === "mcp-apps"
-          ? "MCP Apps UI format docs"
-          : "openai/widgetCSP docs"}
+          ? "CSP for MCP Apps docs"
+          : "CSP for OpenAI Apps docs"}
       </a>
     </div>
   );
