@@ -162,7 +162,9 @@ function getToolInputSignature(
       const headCount = Math.min(length, SIGNATURE_MAX_ARRAY_ITEMS);
       const headSignatures: string[] = [];
       for (let index = 0; index < headCount; index += 1) {
-        headSignatures.push(`${index}:${getValueSignature(value[index], depth + 1)}`);
+        headSignatures.push(
+          `${index}:${getValueSignature(value[index], depth + 1)}`,
+        );
       }
 
       if (length <= SIGNATURE_MAX_ARRAY_ITEMS) {
@@ -172,7 +174,9 @@ function getToolInputSignature(
       const tailStart = Math.max(headCount, length - 2);
       const tailSignatures: string[] = [];
       for (let index = tailStart; index < length; index += 1) {
-        tailSignatures.push(`${index}:${getValueSignature(value[index], depth + 1)}`);
+        tailSignatures.push(
+          `${index}:${getValueSignature(value[index], depth + 1)}`,
+        );
       }
 
       return `arr:${length}:[${headSignatures.join(",")}]|tail:[${tailSignatures.join(",")}]`;
