@@ -163,87 +163,51 @@ const clampNumber = (value: unknown): number | null => {
     return subjectId;
   };
 
-  const postResize = (() => {
+  const postHeight = (() => {
     let lastHeight = 0;
-    let lastWidth = 0;
-    return (height: number, width: number) => {
-      const rh =
-        Number.isFinite(height) && height > 0 ? Math.round(height) : lastHeight;
-      const rw =
-        Number.isFinite(width) && width > 0 ? Math.round(width) : lastWidth;
-      if (rh === lastHeight && rw === lastWidth) return;
-      lastHeight = rh;
-      lastWidth = rw;
+    return (height: unknown) => {
+      const numericHeight = Number(height);
+      if (!Number.isFinite(numericHeight) || numericHeight <= 0) return;
+      const roundedHeight = Math.round(numericHeight);
+      if (roundedHeight === lastHeight) return;
+      lastHeight = roundedHeight;
       window.parent.postMessage(
-        { type: "openai:resize", height: rh, width: rw },
+        { type: "openai:resize", height: roundedHeight },
         "*",
       );
     };
   })();
 
-  const measureHeight = (): number => {
-    let contentHeight = 0;
-
-    if (document.body) {
-      const children = document.body.children;
-      for (let i = 0; i < children.length; i++) {
-        const child = children[i] as HTMLElement;
-        if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
-        const rect = child.getBoundingClientRect();
-        const bottom = rect.top + rect.height + window.scrollY;
-        contentHeight = Math.max(contentHeight, bottom);
-      }
-
-      const bodyStyle = window.getComputedStyle(document.body);
-      contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
-      contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
-    }
-
-    if (contentHeight <= 0) {
-      const docEl = document.documentElement;
-      contentHeight = Math.max(
-        docEl ? docEl.scrollHeight : 0,
-        document.body ? document.body.scrollHeight : 0,
-      );
-    }
-
-    return Math.ceil(contentHeight);
-  };
-
-  const measureWidth = (): number => {
-    let contentWidth = 0;
-
-    if (document.body) {
-      const children = document.body.children;
-      for (let i = 0; i < children.length; i++) {
-        const child = children[i] as HTMLElement;
-        if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
-        const rect = child.getBoundingClientRect();
-        const right = rect.left + rect.width + window.scrollX;
-        contentWidth = Math.max(contentWidth, right);
-      }
-
-      const bodyStyle = window.getComputedStyle(document.body);
-      contentWidth += parseFloat(bodyStyle.marginRight) || 0;
-      contentWidth += parseFloat(bodyStyle.paddingRight) || 0;
-    }
-
-    if (contentWidth <= 0) {
-      const docEl = document.documentElement;
-      contentWidth = Math.max(
-        docEl ? docEl.scrollWidth : 0,
-        document.body ? document.body.scrollWidth : 0,
-      );
-    }
-
-    return Math.ceil(contentWidth);
-  };
-
-  const measureAndNotify = () => {
+  const measureAndNotifyHeight = () => {
     try {
-      postResize(measureHeight(), measureWidth());
+      let contentHeight = 0;
+
+      if (document.body) {
+        const children = document.body.children;
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i] as HTMLElement;
+          if (child.tagName === "SCRIPT" || child.tagName === "STYLE") continue;
+          const rect = child.getBoundingClientRect();
+          const bottom = rect.top + rect.height + window.scrollY;
+          contentHeight = Math.max(contentHeight, bottom);
+        }
+
+        const bodyStyle = window.getComputedStyle(document.body);
+        contentHeight += parseFloat(bodyStyle.marginBottom) || 0;
+        contentHeight += parseFloat(bodyStyle.paddingBottom) || 0;
+      }
+
+      if (contentHeight <= 0) {
+        const docEl = document.documentElement;
+        contentHeight = Math.max(
+          docEl ? docEl.scrollHeight : 0,
+          document.body ? document.body.scrollHeight : 0,
+        );
+      }
+
+      postHeight(Math.ceil(contentHeight));
     } catch (err) {
-      console.error("[OpenAI Widget] Failed to measure dimensions:", err);
+      console.error("[OpenAI Widget] Failed to measure height:", err);
     }
   };
 
@@ -255,7 +219,7 @@ const clampNumber = (value: unknown): number | null => {
       scheduled = true;
       requestAnimationFrame(() => {
         scheduled = false;
-        measureAndNotify();
+        measureAndNotifyHeight();
       });
     };
 
@@ -270,7 +234,7 @@ const clampNumber = (value: unknown): number | null => {
     }
 
     window.addEventListener("load", () => {
-      requestAnimationFrame(measureAndNotify);
+      requestAnimationFrame(measureAndNotifyHeight);
     });
   };
 
@@ -555,7 +519,7 @@ const clampNumber = (value: unknown): number | null => {
     },
 
     notifyIntrinsicHeight(height: unknown) {
-      postResize(Number(height), measureWidth());
+      postHeight(height);
     },
 
     notifyNavigation(direction: "back" | "forward") {
@@ -657,19 +621,8 @@ const clampNumber = (value: unknown): number | null => {
       }
       case "openai:set_globals":
         if (globals) {
-          if (globals.displayMode !== undefined) {
+          if (globals.displayMode !== undefined)
             window.openai.displayMode = globals.displayMode;
-            // Enable native scrollbars in fullscreen/PiP; keep hidden-x in inline
-            if (
-              globals.displayMode === "fullscreen" ||
-              globals.displayMode === "pip"
-            ) {
-              document.documentElement.style.overflow = "auto";
-            } else {
-              document.documentElement.style.overflowX = "hidden";
-              document.documentElement.style.overflowY = "auto";
-            }
-          }
           if (globals.maxHeight !== undefined)
             window.openai.maxHeight = globals.maxHeight;
           if (globals.theme !== undefined) window.openai.theme = globals.theme;
@@ -705,7 +658,7 @@ const clampNumber = (value: unknown): number | null => {
         }
         break;
       case "openai:requestResize":
-        measureAndNotify();
+        measureAndNotifyHeight();
         break;
       case "openai:navigate":
         if (event.data.toolId === toolId) {
@@ -741,9 +694,9 @@ const clampNumber = (value: unknown): number | null => {
             ? detail.size.height
             : null;
       if (height != null) {
-        postResize(height, measureWidth());
+        postHeight(height);
       } else {
-        measureAndNotify();
+        measureAndNotifyHeight();
       }
     } catch (err) {
       console.error("[OpenAI Widget] Failed to process resize event:", err);
