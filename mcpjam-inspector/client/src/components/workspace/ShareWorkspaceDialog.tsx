@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import posthog from "posthog-js";
+import { usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   Dialog,
@@ -20,20 +20,14 @@ import {
 import { useConvexAuth } from "convex/react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { serializeServersForSharing } from "@/lib/workspace-serialization";
-
-interface CurrentUser {
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-}
-
+import { User } from "@workos-inc/authkit-js";
 interface ShareWorkspaceDialogProps {
   isOpen: boolean;
   onClose: () => void;
   workspaceName: string;
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
-  currentUser: CurrentUser;
+  currentUser: User;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
   onLeaveWorkspace?: () => void;
 }
@@ -48,6 +42,7 @@ export function ShareWorkspaceDialog({
   onWorkspaceShared,
   onLeaveWorkspace,
 }: ShareWorkspaceDialogProps) {
+  const posthog = usePostHog();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
@@ -176,7 +171,7 @@ export function ShareWorkspaceDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>Share "{workspaceName}"</DialogTitle>
+          <DialogTitle>Share "{workspaceName}" Workspace</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">

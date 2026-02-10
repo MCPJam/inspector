@@ -19,6 +19,28 @@ vi.mock("@/lib/apis/mcp-export-api", () => ({
   exportServerApi: vi.fn().mockResolvedValue({}),
 }));
 
+vi.mock("@/lib/apis/mcp-tunnels-api", () => ({
+  getServerTunnel: vi.fn().mockResolvedValue(null),
+  createServerTunnel: vi.fn().mockResolvedValue({
+    url: "https://tunnel.example.com",
+    serverId: "test-server",
+  }),
+  closeServerTunnel: vi.fn().mockResolvedValue(undefined),
+  cleanupOrphanedTunnels: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({
+    getAccessToken: vi.fn().mockResolvedValue("test-token"),
+  }),
+}));
+
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({
+    isAuthenticated: true,
+  }),
+}));
+
 // Mock sonner toast
 vi.mock("sonner", () => ({
   toast: {
@@ -70,11 +92,11 @@ describe("ServerConnectionCard", () => {
       expect(screen.getByText("my-server")).toBeInTheDocument();
     });
 
-    it("renders transport type label", () => {
+    it("does not show details toggle", () => {
       const server = createServer();
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      expect(screen.getByText("STDIO")).toBeInTheDocument();
+      expect(screen.queryByText("Show details")).not.toBeInTheDocument();
     });
 
     it("renders command display for stdio transport", () => {
@@ -209,7 +231,7 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       // Should show truncated version
-      expect(screen.getByText(`${"A".repeat(100)}...`)).toBeInTheDocument();
+      expect(screen.getByText(`${"A".repeat(140)}...`)).toBeInTheDocument();
     });
 
     it("shows troubleshooting link when connection failed", () => {
@@ -220,9 +242,7 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Having trouble?")).toBeInTheDocument();
-      expect(
-        screen.getByText("Check out our troubleshooting page"),
-      ).toBeInTheDocument();
+      expect(screen.getByText("Check troubleshooting")).toBeInTheDocument();
     });
   });
 
@@ -286,30 +306,30 @@ describe("ServerConnectionCard", () => {
   });
 
   describe("tunnel URL", () => {
-    it("shows copy tunnel URL button when connected with tunnel", () => {
+    it("shows copy url tunnel pill when connected with tunnel", () => {
       const server = createServer({ connectionStatus: "connected" });
       render(
         <ServerConnectionCard
           server={server}
           {...defaultProps}
-          sharedTunnelUrl="https://tunnel.example.com"
+          serverTunnelUrl="https://tunnel.example.com"
         />,
       );
 
-      expect(screen.getByText("Copy Tunnel Url")).toBeInTheDocument();
+      expect(screen.getByText("Copy ngrok URL")).toBeInTheDocument();
     });
 
-    it("does not show tunnel URL when disconnected", () => {
+    it("does not show copy url tunnel pill when disconnected", () => {
       const server = createServer({ connectionStatus: "disconnected" });
       render(
         <ServerConnectionCard
           server={server}
           {...defaultProps}
-          sharedTunnelUrl="https://tunnel.example.com"
+          serverTunnelUrl="https://tunnel.example.com"
         />,
       );
 
-      expect(screen.queryByText("Copy Tunnel Url")).not.toBeInTheDocument();
+      expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();
     });
   });
 });

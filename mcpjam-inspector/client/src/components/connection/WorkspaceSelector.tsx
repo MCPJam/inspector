@@ -78,7 +78,7 @@ export function WorkspaceSelector({
       <EditableText
         value={activeWorkspace?.name || "No Workspace"}
         onSave={handleSaveName}
-        className="px-3 py-2 text-m font-semibold"
+        className="px-3 py-2 text-2xl font-bold tracking-tight"
         placeholder="Workspace name"
       />
 

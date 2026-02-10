@@ -14,6 +14,7 @@ export interface TunnelResponse {
 export interface ServerTunnelResponse {
   url: string;
   serverId: string;
+  existed?: boolean;
 }
 
 export interface TunnelError {
@@ -43,6 +44,39 @@ export async function createTunnel(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || "Failed to create tunnel");
+  }
+
+  return response.json();
+}
+
+/**
+ * Create a tunnel scoped to an individual MCP server
+ * @param serverId - The MCP server ID
+ * @param accessToken - Optional WorkOS access token for authenticated requests
+ */
+export async function createServerTunnel(
+  serverId: string,
+  accessToken?: string,
+): Promise<ServerTunnelResponse> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
+
+  const response = await authFetch(
+    `${API_BASE}/api/mcp/tunnels/create/${encodeURIComponent(serverId)}`,
+    {
+      method: "POST",
+      headers,
+    },
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to create server tunnel");
   }
 
   return response.json();
@@ -138,6 +172,37 @@ export async function closeTunnel(accessToken?: string): Promise<void> {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || "Failed to close tunnel");
+  }
+}
+
+/**
+ * Close a tunnel for an individual MCP server
+ * @param serverId - The MCP server ID
+ * @param accessToken - Optional WorkOS access token for authenticated requests
+ */
+export async function closeServerTunnel(
+  serverId: string,
+  accessToken?: string,
+): Promise<void> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
+
+  const response = await authFetch(
+    `${API_BASE}/api/mcp/tunnels/server/${encodeURIComponent(serverId)}`,
+    {
+      method: "DELETE",
+      headers,
+    },
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || "Failed to close server tunnel");
   }
 }
 

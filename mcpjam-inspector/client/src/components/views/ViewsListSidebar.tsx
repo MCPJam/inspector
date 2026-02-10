@@ -2,6 +2,9 @@ import { Trash2, Pencil, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type AnyView } from "@/hooks/useViews";
+import { User } from "@workos-inc/authkit-js";
+import { WorkspaceMembersFacepile } from "@/components/workspace/WorkspaceMembersFacepile";
+import { WorkspaceShareButton } from "@/components/workspace/WorkspaceShareButton";
 
 interface ViewsListSidebarProps {
   views: AnyView[];
@@ -14,6 +17,13 @@ interface ViewsListSidebarProps {
   deletingViewId: string | null;
   duplicatingViewId: string | null;
   isLoading: boolean;
+  workspaceName: string;
+  workspaceServers: Record<string, any>;
+  sharedWorkspaceId?: string | null;
+  currentUser?: User | null;
+  isAuthenticated?: boolean;
+  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onLeaveWorkspace?: () => void;
 }
 
 export function ViewsListSidebar({
@@ -23,16 +33,41 @@ export function ViewsListSidebar({
   onEditView,
   onDuplicateView,
   onDeleteView,
-
   deletingViewId,
   duplicatingViewId,
   isLoading,
+  workspaceName,
+  workspaceServers,
+  sharedWorkspaceId,
+  currentUser,
+  isAuthenticated,
+  onWorkspaceShared,
+  onLeaveWorkspace,
 }: ViewsListSidebarProps) {
   return (
     <>
       {/* Header */}
-      <div className="p-4 border-b">
+      <div className="p-4 border-b flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Views</h2>
+        <div className="flex items-center gap-2">
+          {isAuthenticated && currentUser && (
+            <WorkspaceMembersFacepile
+              workspaceName={workspaceName}
+              workspaceServers={workspaceServers}
+              currentUser={currentUser}
+              sharedWorkspaceId={sharedWorkspaceId}
+              onWorkspaceShared={onWorkspaceShared}
+              onLeaveWorkspace={onLeaveWorkspace}
+            />
+          )}
+          <WorkspaceShareButton
+            workspaceName={workspaceName}
+            workspaceServers={workspaceServers}
+            sharedWorkspaceId={sharedWorkspaceId}
+            onWorkspaceShared={onWorkspaceShared}
+            onLeaveWorkspace={onLeaveWorkspace}
+          />
+        </div>
       </div>
 
       {/* Views List */}

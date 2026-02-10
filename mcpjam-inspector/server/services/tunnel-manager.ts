@@ -2,121 +2,133 @@ import ngrok from "@ngrok/ngrok";
 import type { Listener } from "@ngrok/ngrok";
 import { logger } from "../utils/logger";
 
+interface TunnelEntry {
+  listener: Listener;
+  baseUrl: string;
+  credentialId?: string;
+  domainId?: string;
+  domain?: string;
+}
+
+interface CreateTunnelOptions {
+  localAddr?: string;
+  ngrokToken: string;
+  credentialId?: string;
+  domainId?: string;
+  domain?: string;
+}
+
 class TunnelManager {
-  private listener: Listener | null = null;
-  private baseUrl: string | null = null;
-  private ngrokToken: string | null = null;
-  private credentialId: string | null = null;
-  private domainId: string | null = null;
-  private domain: string | null = null;
+  private tunnels: Map<string, TunnelEntry> = new Map();
+  private readonly sharedTunnelId = "shared";
 
-  setNgrokToken(
-    token: string,
-    credentialId?: string,
-    domainId?: string,
-    domain?: string,
-  ) {
-    this.ngrokToken = token;
-    if (credentialId) this.credentialId = credentialId;
-    if (domainId) this.domainId = domainId;
-    if (domain) this.domain = domain;
-  }
-
-  async createTunnel(localAddr?: string): Promise<string> {
-    if (this.listener) {
-      await this.listener.close();
-      this.listener = null;
-      this.baseUrl = null;
+  async createTunnel(
+    tunnelId: string,
+    options: CreateTunnelOptions,
+  ): Promise<string> {
+    const existingTunnel = this.tunnels.get(tunnelId);
+    if (existingTunnel) {
+      return existingTunnel.baseUrl;
     }
 
-    if (this.baseUrl) {
-      return this.baseUrl;
-    }
-
-    if (!this.ngrokToken) {
-      throw new Error("Ngrok token not configured. Please fetch token first.");
-    }
-
-    const addr = localAddr || "http://localhost:6274";
+    const addr = options.localAddr || "http://localhost:6274";
 
     try {
       const config: any = {
         addr,
-        authtoken: this.ngrokToken,
+        authtoken: options.ngrokToken,
       };
 
-      if (this.domain) {
-        config.domain = this.domain;
+      if (options.domain) {
+        config.domain = options.domain;
         // Add X-Forwarded-Host and X-Forwarded-Proto headers to preserve the original
         // ngrok domain and protocol. This allows downstream servers to know the public URL.
         config.request_header_add = [
-          `X-Forwarded-Host:${this.domain}`,
+          `X-Forwarded-Host:${options.domain}`,
           `X-Forwarded-Proto:https`,
         ];
       }
 
-      this.listener = await ngrok.forward(config);
-      this.baseUrl = this.listener.url()!;
+      const listener = await ngrok.forward(config);
+      const baseUrl = listener.url()!;
+      this.tunnels.set(tunnelId, {
+        listener,
+        baseUrl,
+        credentialId: options.credentialId,
+        domainId: options.domainId,
+        domain: options.domain,
+      });
 
-      logger.info(`✓ Created tunnel: ${this.baseUrl} -> ${addr}`);
-      return this.baseUrl;
+      logger.info(`✓ Created tunnel (${tunnelId}): ${baseUrl} -> ${addr}`);
+      return baseUrl;
     } catch (error: any) {
       logger.error(`✗ Failed to create tunnel:`, error);
-      this.clearCredentials();
       throw error;
     }
   }
 
-  async closeTunnel(): Promise<void> {
-    if (this.listener) {
-      await this.listener.close();
-      this.listener = null;
-      this.baseUrl = null;
+  async closeTunnel(tunnelId: string): Promise<void> {
+    const entry = this.tunnels.get(tunnelId);
+    if (!entry) {
+      return;
+    }
+
+    await entry.listener.close();
+    this.tunnels.delete(tunnelId);
+    logger.info(`✓ Closed tunnel (${tunnelId})`);
+
+    try {
+      if (this.tunnels.size === 0) {
+        await ngrok.disconnect();
+      }
+    } catch (error) {
+      // Already disconnected or no active listeners
+    }
+  }
+
+  getCredentialId(tunnelId: string): string | null {
+    return this.tunnels.get(tunnelId)?.credentialId ?? null;
+  }
+
+  getDomainId(tunnelId: string): string | null {
+    return this.tunnels.get(tunnelId)?.domainId ?? null;
+  }
+
+  clearCredentials(tunnelId: string): void {
+    const entry = this.tunnels.get(tunnelId);
+    if (!entry) {
+      return;
+    }
+    entry.credentialId = undefined;
+    entry.domainId = undefined;
+    entry.domain = undefined;
+  }
+
+  getTunnelUrl(tunnelId: string = this.sharedTunnelId): string | null {
+    return this.tunnels.get(tunnelId)?.baseUrl ?? null;
+  }
+
+  getServerTunnelUrl(serverId: string): string | null {
+    const perServerTunnelUrl = this.getTunnelUrl(serverId);
+    return perServerTunnelUrl
+      ? `${perServerTunnelUrl}/api/mcp/adapter-http/${serverId}`
+      : null;
+  }
+
+  hasTunnel(): boolean {
+    return this.tunnels.size > 0;
+  }
+
+  async closeAll(): Promise<void> {
+    const tunnelIds = [...this.tunnels.keys()];
+    for (const tunnelId of tunnelIds) {
+      await this.closeTunnel(tunnelId);
     }
 
     try {
       await ngrok.disconnect();
-      logger.info(`✓ Closed tunnel`);
     } catch (error) {
       // Already disconnected
-    }
-
-    this.clearCredentials();
-  }
-
-  getCredentialId(): string | null {
-    return this.credentialId;
-  }
-
-  getDomainId(): string | null {
-    return this.domainId;
-  }
-
-  clearCredentials(): void {
-    this.ngrokToken = null;
-    this.credentialId = null;
-    this.domainId = null;
-    this.domain = null;
-  }
-
-  getTunnelUrl(): string | null {
-    return this.baseUrl;
-  }
-
-  getServerTunnelUrl(serverId: string): string | null {
-    if (!this.baseUrl) {
-      return null;
-    }
-    return `${this.baseUrl}/api/mcp/adapter-http/${serverId}`;
-  }
-
-  hasTunnel(): boolean {
-    return this.baseUrl !== null;
-  }
-
-  async closeAll(): Promise<void> {
-    if (this.listener) {
-      await this.closeTunnel();
     }
   }
 }
