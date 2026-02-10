@@ -1452,21 +1452,27 @@ export function MCPAppsRenderer({
     registerBridgeHandlers(bridge);
 
     // Override onsizechange to target modal iframe instead of main widget
-    bridge.onsizechange = ({ height }) => {
+    bridge.onsizechange = ({ width, height }) => {
       const iframe = modalSandboxRef.current?.getIframeElement();
-      if (!iframe || height === undefined) return;
+      if (!iframe) return;
 
-      const style = getComputedStyle(iframe);
-      const isBorderBox = style.boxSizing === "border-box";
+      if (height !== undefined) {
+        const style = getComputedStyle(iframe);
+        const isBorderBox = style.boxSizing === "border-box";
 
-      let adjustedHeight = height;
-      if (isBorderBox) {
-        adjustedHeight +=
-          parseFloat(style.borderTopWidth) +
-          parseFloat(style.borderBottomWidth);
+        let adjustedHeight = height;
+        if (isBorderBox) {
+          adjustedHeight +=
+            parseFloat(style.borderTopWidth) +
+            parseFloat(style.borderBottomWidth);
+        }
+
+        iframe.style.height = `${adjustedHeight}px`;
       }
 
-      iframe.style.height = `${adjustedHeight}px`;
+      if (width !== undefined) {
+        iframe.style.width = `${width}px`;
+      }
     };
 
     // Override oninitialized so it doesn't set the main isReady state
@@ -1689,7 +1695,7 @@ export function MCPAppsRenderer({
           <DialogHeader>
             <DialogTitle>{modalTitle}</DialogTitle>
           </DialogHeader>
-          <div className="flex-1 w-full h-full min-h-0 overflow-y-auto">
+          <div className="flex-1 w-full h-full min-h-0 overflow-auto">
             {modalHtml && (
               <SandboxedIframe
                 ref={modalSandboxRef}
@@ -1700,7 +1706,7 @@ export function MCPAppsRenderer({
                 permissive={widgetPermissive}
                 onMessage={handleSandboxMessage}
                 title={`MCP App Modal: ${modalTitle}`}
-                className="w-full border-0 rounded-md bg-background overflow-hidden"
+                className="min-w-full border-0 rounded-md bg-background overflow-hidden"
                 style={{ height: "100%", minHeight: "400px" }}
               />
             )}
