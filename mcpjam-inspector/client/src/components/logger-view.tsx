@@ -440,10 +440,14 @@ export function LoggerView({
               const isIncoming =
                 it.direction === "RECEIVE" || it.direction === "UI→HOST";
 
-              // Border color: purple for Apps traffic, none for MCP Server
-              const borderClass = isAppsTraffic
-                ? "border-l-4 border-l-purple-500/50"
-                : "";
+              const isCspViolation = it.method === "csp-violation";
+
+              // Border color: red for CSP violations, purple for Apps traffic, none for MCP Server
+              const borderClass = isCspViolation
+                ? "border-l-4 border-l-destructive"
+                : isAppsTraffic
+                  ? "border-l-4 border-l-purple-500/50"
+                  : "";
 
               return (
                 <div
@@ -481,7 +485,10 @@ export function LoggerView({
                         )}
                       </span>
                       <span
-                        className="text-xs font-mono text-foreground truncate"
+                        className={cn(
+                          "text-xs font-mono truncate",
+                          "text-foreground",
+                        )}
                         title={it.method}
                       >
                         {it.method}

@@ -344,7 +344,7 @@ export function ToolPart({
                         {badge !== undefined && badge > 0 && (
                           <Badge
                             variant="destructive"
-                            className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none"
+                            className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none text-white"
                           >
                             {badge}
                           </Badge>
