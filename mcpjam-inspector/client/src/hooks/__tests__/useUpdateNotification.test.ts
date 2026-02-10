@@ -110,10 +110,7 @@ describe("useUpdateNotification", () => {
       const { mockRestartAndInstall } = setupElectronMock();
 
       // Simulate a stored update
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ version: "2.0.0" }),
-      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: "2.0.0" }));
 
       const { result } = renderHook(() => useUpdateNotification());
 
