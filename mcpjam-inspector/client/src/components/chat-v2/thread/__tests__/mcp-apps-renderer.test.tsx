@@ -305,6 +305,86 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
   });
 
+  it("streams partial input when nested object values change with same keys", async () => {
+    const firstPartial = { config: { width: 100, height: 200 } };
+    const secondPartial = { config: { width: 500, height: 200 } };
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={firstPartial}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledWith({
+        arguments: firstPartial,
+      });
+    });
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={secondPartial}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
+      expect(mockBridge.sendToolInputPartial).toHaveBeenLastCalledWith({
+        arguments: secondPartial,
+      });
+    });
+  });
+
+  it("streams partial input when same-length primitive arrays change", async () => {
+    const firstPartial = { points: [1, 2, 3] };
+    const secondPartial = { points: [1, 9, 3] };
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={firstPartial}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledWith({
+        arguments: firstPartial,
+      });
+    });
+
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={secondPartial}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
+      expect(mockBridge.sendToolInputPartial).toHaveBeenLastCalledWith({
+        arguments: secondPartial,
+      });
+    });
+  });
+
   it("resumes partial input when tool state restarts streaming for same toolCallId", async () => {
     const { rerender } = render(
       <MCPAppsRenderer

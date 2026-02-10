@@ -58,6 +58,10 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 const PARTIAL_INPUT_THROTTLE_MS = 120;
 const STREAMING_REVEAL_FALLBACK_MS = 700;
+const SIGNATURE_MAX_DEPTH = 4;
+const SIGNATURE_MAX_ARRAY_ITEMS = 24;
+const SIGNATURE_MAX_OBJECT_KEYS = 32;
+const SIGNATURE_STRING_EDGE_LENGTH = 24;
 const SUPPRESSED_UI_LOG_METHODS = new Set([
   "ui/notifications/tool-input-partial",
   "ui/notifications/size-changed",
@@ -121,41 +125,87 @@ function getToolInputSignature(
   input: Record<string, unknown> | undefined,
 ): string {
   if (!input) return "";
-  const keys = Object.keys(input).sort();
-  if (keys.length === 0) return "";
+  const seen = new WeakSet<object>();
 
-  return keys
-    .map((key) => {
-      const value = input[key];
+  const getValueSignature = (value: unknown, depth: number): string => {
+    if (value == null) return "null";
 
-      if (value == null) return `${key}:null`;
-      if (typeof value === "string") {
-        const tail = value.slice(-32);
-        return `${key}:str:${value.length}:${tail}`;
-      }
-      if (typeof value === "number" || typeof value === "boolean") {
-        return `${key}:${typeof value}:${String(value)}`;
-      }
-      if (Array.isArray(value)) {
-        const last = value[value.length - 1];
-        if (last && typeof last === "object") {
-          const lastRecord = last as Record<string, unknown>;
-          const marker =
-            (typeof lastRecord.id === "string" && lastRecord.id) ||
-            (typeof lastRecord.type === "string" && lastRecord.type) ||
-            "obj";
-          return `${key}:arr:${value.length}:${marker}`;
-        }
-        return `${key}:arr:${value.length}`;
-      }
-      if (typeof value === "object") {
-        const nestedKeys = Object.keys(value as Record<string, unknown>).sort();
-        return `${key}:obj:${nestedKeys.join(",")}`;
+    const valueType = typeof value;
+    if (valueType === "string") {
+      const text = value as string;
+      const head = text.slice(0, SIGNATURE_STRING_EDGE_LENGTH);
+      const tail = text.slice(-SIGNATURE_STRING_EDGE_LENGTH);
+      return `str:${text.length}:${JSON.stringify(head)}:${JSON.stringify(tail)}`;
+    }
+    if (valueType === "number") {
+      if (Number.isNaN(value)) return "num:NaN";
+      if (value === Infinity) return "num:Infinity";
+      if (value === -Infinity) return "num:-Infinity";
+      if (Object.is(value, -0)) return "num:-0";
+      return `num:${value as number}`;
+    }
+    if (valueType === "boolean") return `bool:${String(value)}`;
+    if (valueType === "bigint") return `bigint:${String(value)}`;
+    if (valueType === "undefined") return "undefined";
+    if (valueType === "function") return "function";
+    if (valueType === "symbol") return `symbol:${String(value)}`;
+
+    if (depth >= SIGNATURE_MAX_DEPTH) {
+      if (Array.isArray(value)) return `arr:max-depth:${value.length}`;
+      return `obj:max-depth:${Object.keys(value as Record<string, unknown>).length}`;
+    }
+
+    if (Array.isArray(value)) {
+      const length = value.length;
+      if (length === 0) return "arr:0";
+
+      const headCount = Math.min(length, SIGNATURE_MAX_ARRAY_ITEMS);
+      const headSignatures: string[] = [];
+      for (let index = 0; index < headCount; index += 1) {
+        headSignatures.push(`${index}:${getValueSignature(value[index], depth + 1)}`);
       }
 
-      return `${key}:other:${typeof value}`;
-    })
-    .join("|");
+      if (length <= SIGNATURE_MAX_ARRAY_ITEMS) {
+        return `arr:${length}:[${headSignatures.join(",")}]`;
+      }
+
+      const tailStart = Math.max(headCount, length - 2);
+      const tailSignatures: string[] = [];
+      for (let index = tailStart; index < length; index += 1) {
+        tailSignatures.push(`${index}:${getValueSignature(value[index], depth + 1)}`);
+      }
+
+      return `arr:${length}:[${headSignatures.join(",")}]|tail:[${tailSignatures.join(",")}]`;
+    }
+
+    if (valueType === "object") {
+      const record = value as Record<string, unknown>;
+      if (seen.has(record)) return "obj:circular";
+      seen.add(record);
+
+      const keys = Object.keys(record).sort();
+      const keyCount = Math.min(keys.length, SIGNATURE_MAX_OBJECT_KEYS);
+      const entries: string[] = [];
+
+      for (let index = 0; index < keyCount; index += 1) {
+        const key = keys[index];
+        entries.push(`${key}:${getValueSignature(record[key], depth + 1)}`);
+      }
+
+      if (keys.length > SIGNATURE_MAX_OBJECT_KEYS) {
+        const omitted = keys.length - SIGNATURE_MAX_OBJECT_KEYS;
+        const tailKeys = keys.slice(-2).join(",");
+        entries.push(`omitted:${omitted}:tail-keys:${tailKeys}`);
+      }
+
+      seen.delete(record);
+      return `obj:${keys.length}:{${entries.join("|")}}`;
+    }
+
+    return `other:${valueType}`;
+  };
+
+  return getValueSignature(input, 0);
 }
 
 class LoggingTransport implements Transport {
