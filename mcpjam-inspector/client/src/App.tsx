@@ -348,6 +348,10 @@ export default function App() {
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+              workspaceName={activeWorkspace?.name || "Workspace"}
+              sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
+              onWorkspaceShared={handleWorkspaceShared}
+              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
           {activeTab === "tools" && (

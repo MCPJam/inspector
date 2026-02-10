@@ -551,7 +551,7 @@ export function ServerConnectionCard({
                       ) : (
                         <>
                           <Cable className="h-3 w-3" />
-                          <span>Copy URL</span>
+                          <span>Copy ngrok URL</span>
                         </>
                       )}
                     </button>

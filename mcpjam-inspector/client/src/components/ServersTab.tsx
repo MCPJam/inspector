@@ -12,6 +12,8 @@ import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
+import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -21,6 +23,8 @@ import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "./ui/skeleton";
+import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 
 interface ServersTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -37,6 +41,10 @@ interface ServersTabProps {
   ) => void;
   onRemove: (serverName: string) => void;
   isLoadingWorkspaces?: boolean;
+  workspaceName?: string;
+  sharedWorkspaceId?: string | null;
+  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onLeaveWorkspace?: () => void;
 }
 
 export function ServersTab({
@@ -47,8 +55,14 @@ export function ServersTab({
   onUpdate,
   onRemove,
   isLoadingWorkspaces,
+  workspaceName = "Workspace",
+  sharedWorkspaceId,
+  onWorkspaceShared,
+  onLeaveWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
+  const { isAuthenticated } = useConvexAuth();
+  const { user } = useAuth();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -159,10 +173,27 @@ export function ServersTab({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-6">
                 <h2 className="text-2xl font-bold tracking-tight">
-                  MCP Servers
+                  {isAuthenticated ? workspaceName : "MCP Servers"}
                 </h2>
               </div>
               <div className="flex items-center gap-2">
+                {isAuthenticated && user && (
+                  <WorkspaceMembersFacepile
+                    workspaceName={workspaceName}
+                    workspaceServers={connectedOrConnectingServerConfigs}
+                    currentUser={user}
+                    sharedWorkspaceId={sharedWorkspaceId}
+                    onWorkspaceShared={onWorkspaceShared}
+                    onLeaveWorkspace={onLeaveWorkspace}
+                  />
+                )}
+                <WorkspaceShareButton
+                  workspaceName={workspaceName}
+                  workspaceServers={connectedOrConnectingServerConfigs}
+                  sharedWorkspaceId={sharedWorkspaceId}
+                  onWorkspaceShared={onWorkspaceShared}
+                  onLeaveWorkspace={onLeaveWorkspace}
+                />
                 {renderServerActionsMenu()}
               </div>
             </div>
@@ -207,9 +238,28 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <h2 className="text-2xl font-bold tracking-tight">MCP Servers</h2>
+          <h2 className="text-2xl font-bold tracking-tight">
+            {isAuthenticated ? workspaceName : "MCP Servers"}
+          </h2>
         </div>
         <div className="flex items-center gap-2">
+          {isAuthenticated && user && (
+            <WorkspaceMembersFacepile
+              workspaceName={workspaceName}
+              workspaceServers={connectedOrConnectingServerConfigs}
+              currentUser={user}
+              sharedWorkspaceId={sharedWorkspaceId}
+              onWorkspaceShared={onWorkspaceShared}
+              onLeaveWorkspace={onLeaveWorkspace}
+            />
+          )}
+          <WorkspaceShareButton
+            workspaceName={workspaceName}
+            workspaceServers={connectedOrConnectingServerConfigs}
+            sharedWorkspaceId={sharedWorkspaceId}
+            onWorkspaceShared={onWorkspaceShared}
+            onLeaveWorkspace={onLeaveWorkspace}
+          />
           {renderServerActionsMenu()}
         </div>
       </div>

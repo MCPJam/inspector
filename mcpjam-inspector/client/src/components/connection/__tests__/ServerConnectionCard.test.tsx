@@ -316,7 +316,7 @@ describe("ServerConnectionCard", () => {
         />,
       );
 
-      expect(screen.getByText("Copy URL")).toBeInTheDocument();
+      expect(screen.getByText("Copy ngrok URL")).toBeInTheDocument();
     });
 
     it("does not show copy url tunnel pill when disconnected", () => {
@@ -329,7 +329,7 @@ describe("ServerConnectionCard", () => {
         />,
       );
 
-      expect(screen.queryByText("Copy URL")).not.toBeInTheDocument();
+      expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();
     });
   });
 });
