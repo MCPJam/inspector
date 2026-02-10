@@ -60,7 +60,10 @@ function injectOpenAICompat(
   });
 
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
-  const runtimeScript = `<script>${OPENAI_COMPAT_RUNTIME_SCRIPT}</script>`;
+  // Escape </ sequences to prevent a literal "</script>" in the bundled code
+  // from prematurely closing the tag (XSS vector). In JS, \/ is just /.
+  const escapedRuntime = OPENAI_COMPAT_RUNTIME_SCRIPT.replace(/<\//g, "<\\/");
+  const runtimeScript = `<script>${escapedRuntime}</script>`;
   const headContent = `${configScript}${runtimeScript}`;
 
   if (/<head[^>]*>/i.test(html)) {

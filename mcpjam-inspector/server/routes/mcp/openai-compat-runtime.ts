@@ -246,7 +246,6 @@ declare global {
       const href = typeof options === "string" ? options : options?.href;
       if (!href) throw new Error("href is required for openExternal");
       sendRequest("ui/open-link", { url: href });
-      window.open(href, "_blank", "noopener,noreferrer");
     },
 
     /**
