@@ -15,6 +15,11 @@ export interface ChatGPTSandboxedIframeHandle {
    * avoid an extra React re-render when only the size changes.
    */
   setHeight: (height: number) => void;
+  /**
+   * Imperatively set the outer iframe width. Used for resize notifications so
+   * a parent wrapper can scroll horizontally when content is wider than the container.
+   */
+  setWidth: (width: number) => void;
 }
 
 interface ChatGPTSandboxedIframeProps {
@@ -104,6 +109,14 @@ export const ChatGPTSandboxedIframe = forwardRef<
     }
   }, []);
 
+  const setIframeWidth = useCallback((width: number) => {
+    if (!Number.isFinite(width) || width <= 0) return;
+    const rounded = Math.round(width);
+    if (outerIframeRef.current) {
+      outerIframeRef.current.style.width = `${rounded}px`;
+    }
+  }, []);
+
   // Expose postMessage to parent - routes through outer -> middle -> inner
   useImperativeHandle(
     ref,
@@ -113,8 +126,9 @@ export const ChatGPTSandboxedIframe = forwardRef<
         outerIframeRef.current?.contentWindow?.postMessage(data, "*");
       },
       setHeight: setIframeHeight,
+      setWidth: setIframeWidth,
     }),
-    [setIframeHeight],
+    [setIframeHeight, setIframeWidth],
   );
 
   // Handle messages from the iframe chain
@@ -190,7 +204,7 @@ export const ChatGPTSandboxedIframe = forwardRef<
   <title>ChatGPT Sandbox Container</title>
   <style>
     html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
-    iframe { border: none; width: 100%; height: 100%; }
+    iframe { border: none; width: 100%; height: 100%; overflow: hidden; }
     .measurement { z-index: -1; position: absolute; width: 100%; height: 100%; top: 0; left: 0; opacity: 0; }
   </style>
 </head>

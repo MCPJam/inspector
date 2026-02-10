@@ -1,4 +1,11 @@
-import { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import {
+  useRef,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+} from "react";
 
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
@@ -640,6 +647,8 @@ export function ChatGPTAppRenderer({
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inlineWidthRef = useRef<number | undefined>(undefined);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Get locale from playground store, fallback to navigator.language
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -707,6 +716,9 @@ export function ChatGPTAppRenderer({
   );
   const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const [contentHeight, setContentHeight] = useState<number>(320);
+  const [contentWidth, setContentWidth] = useState<number | undefined>(
+    undefined,
+  );
   const [isReady, setIsReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -778,6 +790,13 @@ export function ChatGPTAppRenderer({
   const isFullscreen = effectiveDisplayMode === "fullscreen";
   const isPip = effectiveDisplayMode === "pip";
   const allowAutoResize = !isFullscreen && !isPip;
+
+  // Capture inline container width so modals in fullscreen/PiP can use it.
+  useLayoutEffect(() => {
+    if (!isFullscreen && !isPip && rootRef.current) {
+      inlineWidthRef.current = rootRef.current.offsetWidth;
+    }
+  });
   const {
     widgetUrl,
     widgetClosed,
@@ -1022,6 +1041,10 @@ export function ChatGPTAppRenderer({
       switch (eventType) {
         case "openai:resize": {
           applyMeasuredHeight(event.data.height);
+          const w = Number(event.data.width);
+          if (Number.isFinite(w) && w > 0) {
+            setContentWidth(Math.ceil(w));
+          }
           break;
         }
         case "openai:setWidgetState": {
@@ -1224,6 +1247,15 @@ export function ChatGPTAppRenderer({
           method: extractMethod(event.data, "openai-apps"),
           message: event.data,
         });
+      }
+
+      // Resize modal to match iframe's width so wide content
+      // scrolls horizontally instead of being clipped.
+      if (event.data?.type === "openai:resize") {
+        const w = Number(event.data.width);
+        if (Number.isFinite(w) && w > 0) {
+          modalSandboxRef.current?.setWidth?.(w);
+        }
       }
 
       if (
@@ -1520,11 +1552,11 @@ export function ChatGPTAppRenderer({
     }
 
     // Inline mode
-    return "mt-3 space-y-2 relative group";
+    return "mt-3 space-y-2 relative group overflow-x-auto";
   })();
 
   return (
-    <div className={containerClassName}>
+    <div ref={rootRef} className={containerClassName}>
       {/* Contained fullscreen modes: simple floating X button */}
       {((isFullscreen && isContainedFullscreenMode) ||
         (isPip && isMobilePlaygroundMode)) && (
@@ -1621,15 +1653,16 @@ export function ChatGPTAppRenderer({
           setLoadError(null);
         }}
         title={`ChatGPT App Widget: ${toolName || "tool"}`}
-        className={`w-full bg-background overflow-hidden ${
+        className={`w-full bg-background ${
           isFullscreen
             ? "flex-1 border-0 rounded-none"
-            : `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
+            : isPip
+              ? `rounded-md ${prefersBorder ? "border border-border/40" : ""}`
+              : `min-w-full overflow-hidden rounded-md ${prefersBorder ? "border border-border/40" : ""}`
         }`}
         style={{
           height: iframeHeight,
-          // Remove max-height in fullscreen to allow flex-1 to control size
-          // In mobile playground mode, PiP should not be constrained by 90vh
+          width: !isFullscreen && !isPip ? contentWidth : undefined,
           maxHeight:
             effectiveDisplayMode === "pip" && !isMobilePlaygroundMode
               ? "90vh"
@@ -1643,11 +1676,22 @@ export function ChatGPTAppRenderer({
       )}
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="w-fit max-w-[90vw] h-fit max-h-[70vh] flex flex-col">
+        {/* Safe: modals can only open after widget mounts.
+            Like ChatGPT, display mode can't change while modal is open. */}
+        <DialogContent
+          className="w-full h-fit max-h-[70vh] flex flex-col"
+          // We should have inline width for modals in fullscreen or PiP.
+          style={{
+            maxWidth:
+              isFullscreen || isPip
+                ? inlineWidthRef.current
+                : rootRef.current?.offsetWidth,
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{modalTitle}</DialogTitle>
           </DialogHeader>
-          <div className="flex-1 w-full h-full min-h-0 overflow-y-auto">
+          <div className="flex-1 w-full h-full min-h-0 overflow-auto">
             {modalWidgetUrl && (
               <ChatGPTSandboxedIframe
                 ref={modalSandboxRef}
@@ -1655,7 +1699,7 @@ export function ChatGPTAppRenderer({
                 onMessage={handleModalSandboxMessage}
                 onReady={handleModalReady}
                 title={`ChatGPT App Modal: ${modalTitle}`}
-                className="w-full h-full border-0 rounded-md bg-background overflow-hidden"
+                className="min-w-full h-full border-0 rounded-md bg-background overflow-hidden"
               />
             )}
           </div>
