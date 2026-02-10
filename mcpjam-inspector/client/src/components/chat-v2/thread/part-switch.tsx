@@ -7,7 +7,7 @@ import { usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
-import { MCPAppsRenderer } from "./mcp-apps-renderer";
+import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
 import { ToolPart } from "./parts/tool-part";
 import { ReasoningPart } from "./parts/reasoning-part";
 import { FilePart } from "./parts/file-part";

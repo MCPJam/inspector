@@ -12,7 +12,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getProviderLogo } from "@/lib/provider-logos";
 import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
 import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
-import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps-renderer";
+import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps/mcp-apps-renderer";
 import { JsonEditor } from "@/components/ui/json-editor";
 
 interface ContentPart {
