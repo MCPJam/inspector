@@ -9,7 +9,7 @@ import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { cn } from "@/lib/utils";
 
-interface WorkspaceMembersProps {
+interface WorkspaceMembersFacepileProps {
   workspaceName: string;
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
@@ -17,13 +17,13 @@ interface WorkspaceMembersProps {
   onLeaveWorkspace?: () => void;
 }
 
-export function WorkspaceMembers({
+export function WorkspaceMembersFacepile({
   workspaceName,
   workspaceServers,
   sharedWorkspaceId,
   onWorkspaceShared,
   onLeaveWorkspace,
-}: WorkspaceMembersProps) {
+}: WorkspaceMembersFacepileProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const { profilePictureUrl } = useProfilePicture();

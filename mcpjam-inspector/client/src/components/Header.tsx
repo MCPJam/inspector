@@ -2,7 +2,7 @@ import { AuthUpperArea } from "./auth/auth-upper-area";
 import { SidebarTrigger } from "./ui/sidebar";
 import { useHeaderIpc } from "./ipc/use-header-ipc";
 import { WorkspaceSelector } from "./connection/WorkspaceSelector";
-import { WorkspaceMembers } from "./workspace/WorkspaceMembers";
+import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
 import { Workspace } from "@/state/app-types";
 import { ActiveServerSelectorProps } from "./ActiveServerSelector";
 
@@ -53,7 +53,7 @@ export const Header = ({
             onDeleteWorkspace={onDeleteWorkspace}
             isLoading={isLoadingWorkspaces}
           />
-          <WorkspaceMembers
+          <WorkspaceMembersFacepile
             workspaceName={activeWorkspace?.name || "Workspace"}
             workspaceServers={activeWorkspace?.servers || {}}
             sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
