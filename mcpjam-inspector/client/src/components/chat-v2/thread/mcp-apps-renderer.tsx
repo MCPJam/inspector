@@ -56,37 +56,12 @@ declare const __APP_VERSION__: string;
 // Default input schema for tools without metadata
 const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
-const NON_DRAWABLE_EXCALIDRAW_TYPES = new Set([
-  "cameraUpdate",
-  "viewportUpdate",
-  "restoreCheckpoint",
-  "delete",
-]);
 const PARTIAL_INPUT_THROTTLE_MS = 120;
-const STREAMING_REVEAL_PARSE_LIMIT = 30000;
+const STREAMING_REVEAL_FALLBACK_MS = 700;
 const SUPPRESSED_UI_LOG_METHODS = new Set([
   "ui/notifications/tool-input-partial",
   "ui/notifications/size-changed",
 ]);
-
-function parsePartialJsonArray(value: string): unknown[] {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("[")) return [];
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    const lastObjectClose = trimmed.lastIndexOf("}");
-    if (lastObjectClose < 0) return [];
-    try {
-      const recovered = JSON.parse(trimmed.slice(0, lastObjectClose + 1) + "]");
-      return Array.isArray(recovered) ? recovered : [];
-    } catch {
-      return [];
-    }
-  }
-}
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
@@ -140,6 +115,47 @@ interface MCPAppsRendererProps {
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
   cachedWidgetHtmlUrl?: string;
+}
+
+function getToolInputSignature(
+  input: Record<string, unknown> | undefined,
+): string {
+  if (!input) return "";
+  const keys = Object.keys(input).sort();
+  if (keys.length === 0) return "";
+
+  return keys
+    .map((key) => {
+      const value = input[key];
+
+      if (value == null) return `${key}:null`;
+      if (typeof value === "string") {
+        const tail = value.slice(-32);
+        return `${key}:str:${value.length}:${tail}`;
+      }
+      if (typeof value === "number" || typeof value === "boolean") {
+        return `${key}:${typeof value}:${String(value)}`;
+      }
+      if (Array.isArray(value)) {
+        const last = value[value.length - 1];
+        if (last && typeof last === "object") {
+          const lastRecord = last as Record<string, unknown>;
+          const marker =
+            (typeof lastRecord.id === "string" && lastRecord.id) ||
+            (typeof lastRecord.type === "string" && lastRecord.type) ||
+            "obj";
+          return `${key}:arr:${value.length}:${marker}`;
+        }
+        return `${key}:arr:${value.length}`;
+      }
+      if (typeof value === "object") {
+        const nestedKeys = Object.keys(value as Record<string, unknown>).sort();
+        return `${key}:obj:${nestedKeys.join(",")}`;
+      }
+
+      return `${key}:other:${typeof value}`;
+    })
+    .join("|");
 }
 
 class LoggingTransport implements Transport {
@@ -338,6 +354,9 @@ export function MCPAppsRenderer({
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
+  const [streamingRenderSignaled, setStreamingRenderSignaled] = useState(false);
+  const [hasDeliveredStreamingInput, setHasDeliveredStreamingInput] =
+    useState(false);
 
   // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
   useEffect(() => {
@@ -352,10 +371,12 @@ export function MCPAppsRenderer({
   const lastToolInputPartialSentAtRef = useRef(0);
   const pendingToolInputPartialRef = useRef<Record<string, unknown> | null>(null);
   const partialInputTimerRef = useRef<number | null>(null);
+  const streamingRevealTimerRef = useRef<number | null>(null);
   const lastToolOutputRef = useRef<string | null>(null);
   const lastToolErrorRef = useRef<string | null>(null);
   const toolInputSentRef = useRef(false);
   const isReadyRef = useRef(false);
+  const previousToolStateRef = useRef<ToolState | undefined>(toolState);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
@@ -391,25 +412,8 @@ export function MCPAppsRenderer({
 
   const canRenderStreamingInput = useMemo(() => {
     if (toolState !== "input-streaming") return true;
-    if (!hasToolInputData) return false;
-
-    // Excalidraw streams elements as partial JSON in `arguments.elements`.
-    // Keep iframe hidden until at least one drawable element is recoverable.
-    const maybeElements = (toolInput as { elements?: unknown } | undefined)
-      ?.elements;
-    if (typeof maybeElements !== "string") return true;
-    if (maybeElements.length > STREAMING_REVEAL_PARSE_LIMIT) return true;
-    if (!maybeElements.includes("}")) return false;
-
-    const partialElements = parsePartialJsonArray(maybeElements);
-    return partialElements.some((item) => {
-      if (!item || typeof item !== "object") return false;
-      const type = (item as { type?: unknown }).type;
-      return (
-        typeof type === "string" && !NON_DRAWABLE_EXCALIDRAW_TYPES.has(type)
-      );
-    });
-  }, [toolInput, toolState, hasToolInputData]);
+    return streamingRenderSignaled && hasDeliveredStreamingInput;
+  }, [hasDeliveredStreamingInput, streamingRenderSignaled, toolState]);
 
   // Fetch widget HTML when tool is active (streaming, input ready, or output available) or CSP mode changes
   useEffect(() => {
@@ -586,6 +590,12 @@ export function MCPAppsRenderer({
         window.clearTimeout(partialInputTimerRef.current);
         partialInputTimerRef.current = null;
       }
+      if (streamingRevealTimerRef.current !== null) {
+        window.clearTimeout(streamingRevealTimerRef.current);
+        streamingRevealTimerRef.current = null;
+      }
+      setStreamingRenderSignaled(false);
+      setHasDeliveredStreamingInput(false);
       lastToolOutputRef.current = null;
       lastToolErrorRef.current = null;
       toolInputSentRef.current = false;
@@ -993,6 +1003,9 @@ export function MCPAppsRenderer({
         },
         onReceive: (message) => {
           const method = extractMethod(message, "mcp-apps");
+          if (method === "ui/notifications/size-changed") {
+            setStreamingRenderSignaled((prev) => (prev ? prev : true));
+          }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
           addUiLog({
             widgetId: toolCallId,
@@ -1039,6 +1052,57 @@ export function MCPAppsRenderer({
     bridge.setHostContext(hostContext);
   }, [hostContext, isReady]);
 
+  useEffect(() => {
+    if (!streamingRenderSignaled) return;
+    if (streamingRevealTimerRef.current !== null) {
+      window.clearTimeout(streamingRevealTimerRef.current);
+      streamingRevealTimerRef.current = null;
+    }
+  }, [streamingRenderSignaled]);
+
+  useEffect(() => {
+    if (!isReady || toolState !== "input-streaming" || streamingRenderSignaled)
+      return;
+    if (streamingRevealTimerRef.current !== null) return;
+
+    streamingRevealTimerRef.current = window.setTimeout(() => {
+      streamingRevealTimerRef.current = null;
+      setStreamingRenderSignaled(true);
+    }, STREAMING_REVEAL_FALLBACK_MS);
+  }, [isReady, streamingRenderSignaled, toolState]);
+
+  useEffect(() => {
+    const prevToolState = previousToolStateRef.current;
+
+    // Some providers may re-enter input-streaming for a new call while reusing
+    // the same toolCallId. Reset send guards so we can stream/send fresh input.
+    if (
+      toolState === "input-streaming" &&
+      prevToolState &&
+      prevToolState !== "input-streaming"
+    ) {
+      lastToolInputRef.current = null;
+      lastToolInputPartialRef.current = null;
+      lastToolInputPartialSentAtRef.current = 0;
+      pendingToolInputPartialRef.current = null;
+      if (partialInputTimerRef.current !== null) {
+        window.clearTimeout(partialInputTimerRef.current);
+        partialInputTimerRef.current = null;
+      }
+      if (streamingRevealTimerRef.current !== null) {
+        window.clearTimeout(streamingRevealTimerRef.current);
+        streamingRevealTimerRef.current = null;
+      }
+      toolInputSentRef.current = false;
+      lastToolOutputRef.current = null;
+      lastToolErrorRef.current = null;
+      setStreamingRenderSignaled(false);
+      setHasDeliveredStreamingInput(false);
+    }
+
+    previousToolStateRef.current = toolState;
+  }, [toolState]);
+
   // Send partial tool input during streaming (SEP-1865 toolInputPartial)
   useEffect(() => {
     if (!isReady || toolState !== "input-streaming" || toolInputSentRef.current)
@@ -1053,10 +1117,12 @@ export function MCPAppsRenderer({
       const pending = pendingToolInputPartialRef.current;
       if (!pending) return;
 
-      const serialized = JSON.stringify(pending);
-      if (lastToolInputPartialRef.current === serialized) return;
-      lastToolInputPartialRef.current = serialized;
+      const signature = getToolInputSignature(pending);
+      if (lastToolInputPartialRef.current === signature) return;
+      lastToolInputPartialRef.current = signature;
       lastToolInputPartialSentAtRef.current = Date.now();
+      setHasDeliveredStreamingInput(true);
+      setStreamingRenderSignaled((prev) => (prev ? prev : true));
       Promise.resolve(
         bridge.sendToolInputPartial({ arguments: pending }),
       ).catch(() => {});
@@ -1094,6 +1160,10 @@ export function MCPAppsRenderer({
     if (partialInputTimerRef.current !== null) {
       window.clearTimeout(partialInputTimerRef.current);
       partialInputTimerRef.current = null;
+    }
+    if (streamingRevealTimerRef.current !== null) {
+      window.clearTimeout(streamingRevealTimerRef.current);
+      streamingRevealTimerRef.current = null;
     }
     pendingToolInputPartialRef.current = null;
     const bridge = bridgeRef.current;
@@ -1155,9 +1225,15 @@ export function MCPAppsRenderer({
       window.clearTimeout(partialInputTimerRef.current);
       partialInputTimerRef.current = null;
     }
+    if (streamingRevealTimerRef.current !== null) {
+      window.clearTimeout(streamingRevealTimerRef.current);
+      streamingRevealTimerRef.current = null;
+    }
     lastToolOutputRef.current = null;
     lastToolErrorRef.current = null;
     toolInputSentRef.current = false;
+    setStreamingRenderSignaled(false);
+    setHasDeliveredStreamingInput(false);
   }, [toolCallId]);
 
   useEffect(() => {
@@ -1165,6 +1241,10 @@ export function MCPAppsRenderer({
       if (partialInputTimerRef.current !== null) {
         window.clearTimeout(partialInputTimerRef.current);
         partialInputTimerRef.current = null;
+      }
+      if (streamingRevealTimerRef.current !== null) {
+        window.clearTimeout(streamingRevealTimerRef.current);
+        streamingRevealTimerRef.current = null;
       }
     };
   }, []);
@@ -1261,8 +1341,8 @@ export function MCPAppsRenderer({
     return "mt-3 space-y-2 relative group";
   })();
 
-  // Keep streaming active in background, but reveal iframe only when there's
-  // likely renderable partial content to avoid blank/dark pre-render flashes.
+  // Keep streaming active in background, but delay visual reveal until the app
+  // signals layout (size-changed) or fallback timeout elapses.
   const showWidget = isReady && canRenderStreamingInput;
 
   const iframeStyle: CSSProperties = {

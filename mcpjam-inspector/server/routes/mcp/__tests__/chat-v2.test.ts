@@ -793,5 +793,123 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
+
+    it("normalizes duplicate tool call IDs across MCPJam stream steps", async () => {
+      const { hasUnresolvedToolCalls, executeToolCallsFromMessages } =
+        await import("@/shared/http-tool-calls");
+
+      let unresolvedChecks = 0;
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(() => {
+        unresolvedChecks++;
+        // Step 1 and step 2 produce tool calls; step 3 is final text.
+        return unresolvedChecks <= 2;
+      });
+
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const latestAssistantWithToolCall = [...messages]
+            .reverse()
+            .find(
+              (msg) =>
+                msg?.role === "assistant" &&
+                Array.isArray(msg.content) &&
+                msg.content.some((part: any) => part?.type === "tool-call"),
+            );
+
+          const latestToolCall = latestAssistantWithToolCall?.content?.find(
+            (part: any) => part?.type === "tool-call",
+          );
+
+          if (!latestToolCall?.toolCallId) return;
+
+          messages.push({
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: latestToolCall.toolCallId,
+                output: { type: "json", value: { ok: true } },
+              },
+            ],
+          });
+        },
+      );
+
+      const originalFetch = global.fetch;
+      let fetchCallCount = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        fetchCallCount++;
+
+        if (fetchCallCount <= 2) {
+          return createSseResponse([
+            {
+              type: "tool-input-available",
+              toolCallId: "dup-call",
+              toolName: "create_view",
+              input: { step: fetchCallCount },
+            },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
+        }
+
+        return createSseResponse([
+          { type: "text-start", id: "msg-final" },
+          { type: "text-delta", id: "msg-final", delta: "Done" },
+          { type: "text-end", id: "msg-final" },
+          {
+            type: "finish",
+            finishReason: "stop",
+            messageMetadata: {
+              inputTokens: 1,
+              outputTokens: 1,
+              totalTokens: 2,
+            },
+          },
+        ]);
+      });
+
+      try {
+        await postJson(app, "/api/mcp/chat-v2", {
+          messages: [{ role: "user", content: "Do two create_view calls" }],
+          model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
+        });
+        await lastStreamExecution;
+
+        const toolInputEvents = capturedStreamEvents.filter(
+          (e) => e.type === "tool-input-available",
+        );
+        const toolOutputEvents = capturedStreamEvents.filter(
+          (e) => e.type === "tool-output-available",
+        );
+
+        expect(fetchCallCount).toBe(3);
+        expect(toolInputEvents).toHaveLength(2);
+        expect(toolOutputEvents).toHaveLength(2);
+
+        const firstToolCallId = toolInputEvents[0]?.toolCallId;
+        const secondToolCallId = toolInputEvents[1]?.toolCallId;
+
+        expect(firstToolCallId).toBe("dup-call");
+        expect(secondToolCallId).not.toBe("dup-call");
+        expect(secondToolCallId).toMatch(/dup-call__s2_/);
+
+        expect(
+          toolOutputEvents.some((e) => e.toolCallId === firstToolCallId),
+        ).toBe(true);
+        expect(
+          toolOutputEvents.some((e) => e.toolCallId === secondToolCallId),
+        ).toBe(true);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 });

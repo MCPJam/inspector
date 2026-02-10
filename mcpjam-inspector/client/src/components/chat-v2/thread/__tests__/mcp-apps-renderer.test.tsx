@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, screen } from "@testing-library/react";
 import React from "react";
 
 // Declare the global that Vite normally injects
@@ -68,16 +68,29 @@ vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
 
 // Mock SandboxedIframe using forwardRef so the parent's useRef gets populated
 vi.mock("@/components/ui/sandboxed-iframe", () => ({
-  SandboxedIframe: React.forwardRef((_props: any, ref: any) => {
+  SandboxedIframe: React.forwardRef((props: any, ref: any) => {
+    const iframeElementRef = React.useRef<HTMLElement | null>(null);
+    if (!iframeElementRef.current) {
+      const el = document.createElement("div");
+      Object.defineProperty(el, "contentWindow", {
+        value: { postMessage: vi.fn() },
+      });
+      Object.defineProperty(el, "offsetHeight", { value: 400 });
+      (el as HTMLElement & { animate: ReturnType<typeof vi.fn> }).animate =
+        vi.fn();
+      iframeElementRef.current = el;
+    }
+
     React.useImperativeHandle(ref, () => ({
-      getIframeElement: () => ({
-        contentWindow: { postMessage: vi.fn() },
-        offsetHeight: 400,
-        style: {},
-        animate: vi.fn(),
-      }),
+      getIframeElement: () => iframeElementRef.current,
     }));
-    return <div data-testid="sandboxed-iframe" />;
+    return (
+      <div
+        data-testid="sandboxed-iframe"
+        className={props.className}
+        style={props.style}
+      />
+    );
   }),
 }));
 
@@ -197,6 +210,52 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(0);
   });
 
+  it("keeps iframe hidden until first tool input chunk is delivered", async () => {
+    const { rerender } = render(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={undefined}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => triggerReady());
+    act(() => {
+      mockBridge.onsizechange?.({ width: 400, height: 300 });
+    });
+
+    expect((screen.getByTestId("sandboxed-iframe") as HTMLElement).style.visibility).toBe(
+      "hidden",
+    );
+    expect(screen.getByText("Streaming tool arguments...")).toBeTruthy();
+
+    const partialInput = { elements: '[{"type":"rectangle"' };
+    rerender(
+      <MCPAppsRenderer
+        {...baseProps}
+        toolState="input-streaming"
+        toolInput={partialInput}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledWith({
+        arguments: partialInput,
+      });
+    });
+    await vi.waitFor(() => {
+      expect(
+        (screen.getByTestId("sandboxed-iframe") as HTMLElement).style.visibility,
+      ).toBe("");
+    });
+    expect(screen.queryByText("Streaming tool arguments...")).toBeNull();
+  });
+
   it("streams updated partial input values while still streaming", async () => {
     const firstPartial = { elements: '[{"type":"rectangle"' };
     const secondPartial = { elements: '[{"type":"rectangle"},{"type":"ellipse"' };
@@ -243,7 +302,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
   });
 
-  it("sends complete tool input once and then stops partial updates", async () => {
+  it("resumes partial input when tool state restarts streaming for same toolCallId", async () => {
     const { rerender } = render(
       <MCPAppsRenderer
         {...baseProps}
@@ -287,7 +346,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     );
     await vi.waitFor(() => {
       expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
-      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInputPartial).toHaveBeenCalledTimes(2);
     });
 
     rerender(
@@ -299,7 +358,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       />,
     );
     await vi.waitFor(() => {
-      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(1);
+      expect(mockBridge.sendToolInput).toHaveBeenCalledTimes(2);
     });
   });
 
