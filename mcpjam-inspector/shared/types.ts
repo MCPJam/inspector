@@ -112,6 +112,9 @@ export type ModelProvider =
   | "z-ai"
   | "minimax";
 
+// Premium models (e.g. claude-sonnet-4.5, gpt-5, gpt-5.1) were removed to reduce free tier costs.
+// See: https://github.com/MCPJam/inspector/pull/1391
+// We may add them back as a premium offering in the future.
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "openai/gpt-oss-120b",
   "openai/gpt-5-nano",
