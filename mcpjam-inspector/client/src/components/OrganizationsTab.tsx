@@ -145,7 +145,8 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
 
   const canRemoveMember = (member: OrganizationMember): boolean => {
     if (!currentRole) return false;
-    const isSelf = member.email.toLowerCase() === currentUserEmail?.toLowerCase();
+    const isSelf =
+      member.email.toLowerCase() === currentUserEmail?.toLowerCase();
     if (isSelf) return false;
 
     const targetRole = resolveOrganizationRole(member);
@@ -440,20 +441,22 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
 
           <div className="space-y-8 mt-6">
             <section>
-              <h3 className="text-lg font-semibold mb-4">Member Administration</h3>
+              <h3 className="text-lg font-semibold mb-4">
+                Member Administration
+              </h3>
 
               <div className="mb-6 rounded-lg border bg-muted/20 p-4">
                 <h4 className="text-sm font-semibold mb-2">Roles</h4>
                 <div className="space-y-1 text-sm text-muted-foreground">
                   <p>
                     <span className="font-medium text-foreground">Owner:</span>{" "}
-                    Full control. Can change roles, transfer ownership, and delete
-                    the organization.
+                    Full control. Can change roles, transfer ownership, and
+                    delete the organization.
                   </p>
                   <p>
                     <span className="font-medium text-foreground">Admin:</span>{" "}
-                    Can update org settings, invite/remove members, and view audit
-                    logs. Cannot change roles or transfer ownership.
+                    Can update org settings, invite/remove members, and view
+                    audit logs. Cannot change roles or transfer ownership.
                   </p>
                   <p>
                     <span className="font-medium text-foreground">Member:</span>{" "}
@@ -509,7 +512,8 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                           isRoleUpdating={roleUpdatingEmail === member.email}
                           onRoleChange={
                             isOwner && memberRole !== "owner"
-                              ? (role) => void handleChangeMemberRole(member, role)
+                              ? (role) =>
+                                  void handleChangeMemberRole(member, role)
                               : undefined
                           }
                           onTransferOwnership={
@@ -674,7 +678,9 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Transfer organization ownership?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Transfer organization ownership?
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {transferTargetMember
                 ? `You are about to transfer ownership of "${organization.name}" to ${transferTargetMember.email}. You will become an admin.`

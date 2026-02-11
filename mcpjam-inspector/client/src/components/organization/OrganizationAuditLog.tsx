@@ -1,6 +1,9 @@
 import { Download, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { type AuditEvent, useOrganizationAudit } from "@/hooks/useOrganizationAudit";
+import {
+  type AuditEvent,
+  useOrganizationAudit,
+} from "@/hooks/useOrganizationAudit";
 
 interface OrganizationAuditLogProps {
   organizationId: string;
@@ -22,7 +25,12 @@ const CSV_INJECTION_RE = /^[=+\-@]/;
 function toCsvCell(value: unknown): string {
   const raw = value === undefined || value === null ? "" : String(value);
   const sanitized = CSV_INJECTION_RE.test(raw) ? `\t${raw}` : raw;
-  if (sanitized.includes(",") || sanitized.includes('"') || sanitized.includes("\n") || sanitized.includes("\t")) {
+  if (
+    sanitized.includes(",") ||
+    sanitized.includes('"') ||
+    sanitized.includes("\n") ||
+    sanitized.includes("\t")
+  ) {
     return `"${sanitized.replace(/"/g, '""')}"`;
   }
   return sanitized;
@@ -86,7 +94,9 @@ function buildCsvRows(events: AuditEvent[]) {
     safeStringify(event.metadata),
   ]);
 
-  return [headers, ...rows].map((row) => row.map(toCsvCell).join(",")).join("\n");
+  return [headers, ...rows]
+    .map((row) => row.map(toCsvCell).join(","))
+    .join("\n");
 }
 
 function downloadCsv(events: AuditEvent[], organizationName: string) {
@@ -134,7 +144,7 @@ export function OrganizationAuditLog({
       ? "Audit export is unavailable because the backend audit function is not deployed yet."
       : errorType === "permission"
         ? "You don't have permission to access organization audit events."
-        : error?.message ?? null;
+        : (error?.message ?? null);
 
   const hasEvents = events.length > 0;
   const showHint = !hasEvents && !isLoading && !errorMessage;
@@ -149,11 +159,21 @@ export function OrganizationAuditLog({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => void refresh()} disabled={isLoading}>
-            <RefreshCw className={`mr-2 size-4 ${isLoading ? "animate-spin" : ""}`} />
+          <Button
+            variant="outline"
+            onClick={() => void refresh()}
+            disabled={isLoading}
+          >
+            <RefreshCw
+              className={`mr-2 size-4 ${isLoading ? "animate-spin" : ""}`}
+            />
             Refresh
           </Button>
-          <Button variant="outline" onClick={() => void handleExportCsv()} disabled={isLoading}>
+          <Button
+            variant="outline"
+            onClick={() => void handleExportCsv()}
+            disabled={isLoading}
+          >
             <Download className="mr-2 size-4" />
             Export CSV
           </Button>

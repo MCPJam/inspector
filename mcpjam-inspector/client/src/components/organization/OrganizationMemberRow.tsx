@@ -104,7 +104,9 @@ export function OrganizationMemberRow({
 
       <div className="flex items-center gap-2">
         {showRoleBadge && (
-          <Badge variant={roleBadgeVariant(effectiveRole)}>{effectiveRole}</Badge>
+          <Badge variant={roleBadgeVariant(effectiveRole)}>
+            {effectiveRole}
+          </Badge>
         )}
         {canChangeRole && (
           <Select

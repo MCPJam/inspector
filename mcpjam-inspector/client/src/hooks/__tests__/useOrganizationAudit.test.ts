@@ -1,9 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  type AuditEvent,
-  useOrganizationAudit,
-} from "../useOrganizationAudit";
+import { type AuditEvent, useOrganizationAudit } from "../useOrganizationAudit";
 
 const mockQuery = vi.fn();
 

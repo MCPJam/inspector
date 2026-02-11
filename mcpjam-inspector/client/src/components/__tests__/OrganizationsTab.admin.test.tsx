@@ -25,9 +25,9 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/useOrganizations", async () => {
-  const actual = await vi.importActual<typeof import("@/hooks/useOrganizations")>(
-    "@/hooks/useOrganizations",
-  );
+  const actual = await vi.importActual<
+    typeof import("@/hooks/useOrganizations")
+  >("@/hooks/useOrganizations");
 
   return {
     ...actual,
@@ -83,7 +83,9 @@ vi.mock("../organization/OrganizationMemberRow", () => ({
         {onTransferOwnership ? (
           <button onClick={onTransferOwnership}>transfer-{member.email}</button>
         ) : null}
-        {onRemove ? <button onClick={onRemove}>remove-{member.email}</button> : null}
+        {onRemove ? (
+          <button onClick={onRemove}>remove-{member.email}</button>
+        ) : null}
       </div>
     );
   },
@@ -144,7 +146,11 @@ describe("OrganizationsTab admin console", () => {
     vi.clearAllMocks();
     currentUserEmail = "owner@example.com";
     activeMembers = [
-      createMember({ email: "owner@example.com", role: "owner", isOwner: true }),
+      createMember({
+        email: "owner@example.com",
+        role: "owner",
+        isOwner: true,
+      }),
       createMember({ email: "admin@example.com", role: "admin" }),
       createMember({ email: "member@example.com", role: "member" }),
     ];

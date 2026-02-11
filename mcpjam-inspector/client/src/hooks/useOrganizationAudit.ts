@@ -63,20 +63,17 @@ export function useOrganizationAudit({
     convexRef.current = convex;
   }, [convex]);
 
-  const fetchPage = useCallback(
-    async (): Promise<AuditEvent[]> => {
-      if (!organizationId || !isAuthenticated) return [];
+  const fetchPage = useCallback(async (): Promise<AuditEvent[]> => {
+    if (!organizationId || !isAuthenticated) return [];
 
-      return (await convexRef.current.query(
-        "auditEvents:listByOrganization" as any,
-        {
-          organizationId,
-          limit,
-        } as any,
-      )) as AuditEvent[];
-    },
-    [isAuthenticated, limit, organizationId],
-  );
+    return (await convexRef.current.query(
+      "auditEvents:listByOrganization" as any,
+      {
+        organizationId,
+        limit,
+      } as any,
+    )) as AuditEvent[];
+  }, [isAuthenticated, limit, organizationId]);
 
   const refresh = useCallback(async () => {
     if (!organizationId || !isAuthenticated) {

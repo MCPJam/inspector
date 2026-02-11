@@ -106,9 +106,7 @@ export function useOrganizationMutations() {
     "organizations:deleteOrganization" as any,
   );
   const addMember = useMutation("organizations:addMember" as any);
-  const changeMemberRole = useMutation(
-    "organizations:changeMemberRole" as any,
-  );
+  const changeMemberRole = useMutation("organizations:changeMemberRole" as any);
   const transferOrganizationOwnership = useMutation(
     "organizations:transferOrganizationOwnership" as any,
   );

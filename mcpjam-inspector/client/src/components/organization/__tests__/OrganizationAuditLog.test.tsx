@@ -6,7 +6,8 @@ import type { AuditEvent } from "@/hooks/useOrganizationAudit";
 const mockUseOrganizationAudit = vi.fn();
 
 vi.mock("@/hooks/useOrganizationAudit", () => ({
-  useOrganizationAudit: (...args: unknown[]) => mockUseOrganizationAudit(...args),
+  useOrganizationAudit: (...args: unknown[]) =>
+    mockUseOrganizationAudit(...args),
 }));
 
 function createEvent(overrides: Partial<AuditEvent> = {}): AuditEvent {
@@ -44,7 +45,9 @@ describe("OrganizationAuditLog", () => {
     );
 
     expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Export CSV" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Export CSV" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Click Refresh to load events, then Export CSV."),
     ).toBeInTheDocument();
