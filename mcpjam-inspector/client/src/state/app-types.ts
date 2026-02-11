@@ -41,8 +41,6 @@ export interface ServerWithName {
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
-  /** Position in the server list for drag-and-drop reordering (lower = higher in list) */
-  order?: number;
 }
 
 export interface Workspace {
@@ -105,8 +103,7 @@ export type AppAction =
   | { type: "SWITCH_WORKSPACE"; workspaceId: string }
   | { type: "SET_DEFAULT_WORKSPACE"; workspaceId: string }
   | { type: "IMPORT_WORKSPACE"; workspace: Workspace }
-  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string }
-  | { type: "REORDER_SERVERS"; orderedNames: string[] };
+  | { type: "DUPLICATE_WORKSPACE"; workspaceId: string; newName: string };
 
 export const initialAppState: AppState = {
   workspaces: {

@@ -40,10 +40,7 @@ import {
 } from "@/state/oauth-orchestrator";
 import type { ServerFormData } from "@/shared/types.js";
 import { toMCPConfig } from "@/state/server-helpers";
-import {
-  saveServerOrder,
-  deleteWorkspaceOrder,
-} from "@/state/server-order-storage";
+import { deleteWorkspaceOrder } from "@/state/server-order-storage";
 import {
   handleOAuthCallback,
   getStoredTokens,
@@ -455,9 +452,6 @@ export function useAppState() {
         lastConnectionTime:
           runtimeState?.lastConnectionTime || server.lastConnectionTime,
         retryCount: runtimeState?.retryCount || 0,
-        // Preserve drag-and-drop order from runtime state (localStorage) when
-        // the workspace source (e.g. Convex) doesn't carry it yet.
-        order: server.order ?? runtimeState?.order,
       };
     }
 
@@ -1436,18 +1430,6 @@ export function useAppState() {
     [logger, removeServerFromConvex],
   );
 
-  const handleReorderServers = useCallback(
-    (orderedNames: string[]) => {
-      dispatch({ type: "REORDER_SERVERS", orderedNames });
-
-      // Persist order to localStorage for instant restore on refresh.
-      // Order is intentionally local-only (not synced to Convex) so that
-      // reordering doesn't affect other members in the same workspace.
-      saveServerOrder(effectiveActiveWorkspaceId, orderedNames);
-    },
-    [dispatch, effectiveActiveWorkspaceId],
-  );
-
   const handleReconnect = useCallback(
     async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
       logger.info("Reconnecting to server", { serverName, options });
@@ -2085,7 +2067,6 @@ export function useAppState() {
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
-    handleReorderServers,
     setSelectedServer,
     setSelectedMCPConfigs,
     toggleMultiSelectMode,

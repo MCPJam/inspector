@@ -31,8 +31,6 @@ export interface RemoteServer {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
-  // Ordering
-  order?: number;
   createdAt: number;
   updatedAt: number;
 }

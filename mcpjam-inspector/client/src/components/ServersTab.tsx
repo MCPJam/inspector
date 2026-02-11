@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   closestCenter,
@@ -17,6 +17,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { loadServerOrder, saveServerOrder } from "@/state/server-order-storage";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import {
@@ -140,9 +141,8 @@ interface ServersTabProps {
     skipAutoConnect?: boolean,
   ) => void;
   onRemove: (serverName: string) => void;
-  onReorder: (orderedNames: string[]) => void;
   isLoadingWorkspaces?: boolean;
-  savedServerOrder?: string[];
+  workspaceId: string;
 }
 
 export function ServersTab({
@@ -152,9 +152,8 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
-  onReorder,
   isLoadingWorkspaces,
-  savedServerOrder,
+  workspaceId,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
@@ -201,58 +200,42 @@ export function ServersTab({
 
   const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
 
-  const defaultOrderedNames = useMemo(() => {
-    const allNames = Object.keys(connectedOrConnectingServerConfigs);
-
-    if (savedServerOrder && savedServerOrder.length > 0) {
-      // Use saved order, filtering to only servers that still exist
-      const existing = savedServerOrder.filter((name) =>
-        allNames.includes(name),
-      );
-      // Append any new servers not in the saved order
-      const newServers = allNames
-        .filter((name) => !existing.includes(name))
-        .sort((a, b) => {
-          const orderA =
-            connectedOrConnectingServerConfigs[a].order ??
-            Number.MAX_SAFE_INTEGER;
-          const orderB =
-            connectedOrConnectingServerConfigs[b].order ??
-            Number.MAX_SAFE_INTEGER;
-          if (orderA !== orderB) return orderA - orderB;
-          return a.localeCompare(b);
-        });
-      return [...existing, ...newServers];
-    }
-
-    // Fallback: sort by order field, then alphabetically
-    return Object.entries(connectedOrConnectingServerConfigs)
-      .map(([name, server]) => ({ name, order: server.order }))
-      .sort((a, b) => {
-        const orderA = a.order ?? Number.MAX_SAFE_INTEGER;
-        const orderB = b.order ?? Number.MAX_SAFE_INTEGER;
-        if (orderA !== orderB) return orderA - orderB;
-        return a.name.localeCompare(b.name);
-      })
-      .map((s) => s.name);
-  }, [connectedOrConnectingServerConfigs, savedServerOrder]);
-
-  // Keep a local ordering so drag-and-drop works even when the upstream source of truth
-  // (e.g. Convex workspaces) does not immediately reflect ordering updates.
-  const [orderedServerNames, setOrderedServerNames] = useState<string[]>(
-    () => defaultOrderedNames,
+  // -- Self-contained local ordering (localStorage only) --
+  // Load saved order fresh on every workspace switch so we never show stale data.
+  const savedOrder = useRef<string[] | undefined>(undefined);
+  savedOrder.current = useMemo(
+    () => loadServerOrder(workspaceId),
+    [workspaceId],
   );
+
+  const allNames = useMemo(
+    () => Object.keys(connectedOrConnectingServerConfigs),
+    [connectedOrConnectingServerConfigs],
+  );
+
+  // Compute the ordered list: saved order first, then any new servers appended in source order.
+  const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
+    const saved = savedOrder.current;
+    if (saved && saved.length > 0) {
+      const existing = saved.filter((n) => allNames.includes(n));
+      const added = allNames.filter((n) => !existing.includes(n));
+      return [...existing, ...added];
+    }
+    return allNames;
+  });
+
+  // Reconcile when servers are added/removed or workspace changes.
   useEffect(() => {
     setOrderedServerNames((prev) => {
-      if (prev.length === 0) return defaultOrderedNames;
+      // Re-read saved order on workspace switch
+      const saved = loadServerOrder(workspaceId);
+      const base = saved && saved.length > 0 ? saved : prev;
 
-      const next = prev.filter((name) => defaultOrderedNames.includes(name));
-      const missing = defaultOrderedNames.filter(
-        (name) => !next.includes(name),
-      );
-      return missing.length > 0 ? [...next, ...missing] : next;
+      const existing = base.filter((n) => allNames.includes(n));
+      const added = allNames.filter((n) => !existing.includes(n));
+      return [...existing, ...added];
     });
-  }, [defaultOrderedNames.join("|")]);
+  }, [allNames.join(","), workspaceId]);
 
   const orderedServers = useMemo(() => {
     return orderedServerNames
@@ -292,7 +275,7 @@ export function ServersTab({
       if (oldIndex !== -1 && newIndex !== -1) {
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
         setOrderedServerNames(newOrder);
-        onReorder(newOrder);
+        saveServerOrder(workspaceId, newOrder);
       }
     }
     setActiveId(null);
