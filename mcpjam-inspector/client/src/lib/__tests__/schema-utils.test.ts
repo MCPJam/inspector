@@ -166,6 +166,55 @@ describe("validateToolOutput", () => {
     });
   });
 
+  describe("x- extension key stripping", () => {
+    const fastmcpSchema = {
+      type: "object",
+      properties: {
+        result: { type: "number" },
+      },
+      required: ["result"],
+      "x-fastmcp-wrap-result": true,
+    };
+
+    it("validates structured content with x- keys in schema", () => {
+      const result = {
+        content: [{ type: "text", text: '{"result": 6}' }],
+        structuredContent: { result: 6 },
+      };
+
+      const report = validateToolOutput(result, fastmcpSchema);
+      expect(report.structuredErrors).toBeNull();
+    });
+
+    it("validates unstructured content with x- keys in schema", () => {
+      const result = {
+        content: [{ type: "text", text: '{"result": 6}' }],
+      };
+
+      const report = validateToolOutput(result, fastmcpSchema);
+      expect(report.unstructuredStatus).toBe("valid");
+    });
+
+    it("handles nested x- keys in properties", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          data: { type: "string", "x-custom-annotation": "hello" },
+        },
+        "x-vendor-info": { version: 2 },
+      };
+
+      const result = {
+        content: [{ type: "text", text: '{"data": "test"}' }],
+        structuredContent: { data: "test" },
+      };
+
+      const report = validateToolOutput(result, schema);
+      expect(report.structuredErrors).toBeNull();
+      expect(report.unstructuredStatus).toBe("valid");
+    });
+  });
+
   describe("edge cases", () => {
     it("throws when content array is empty (accessing undefined index)", () => {
       const result = { content: [] };
