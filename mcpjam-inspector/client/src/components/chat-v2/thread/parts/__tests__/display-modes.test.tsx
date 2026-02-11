@@ -60,15 +60,6 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   UIType: { MCP_APPS: "mcp-apps", OPENAI_SDK: "openai-apps" },
 }));
 
-// Mock tooltip components to render children directly
-vi.mock("@/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: any) => <>{children}</>,
-  TooltipTrigger: ({ children }: any) => <>{children}</>,
-  TooltipContent: ({ children }: any) => (
-    <span data-testid="tooltip-content">{children}</span>
-  ),
-}));
-
 vi.mock("@/components/ui/badge", () => ({
   Badge: ({ children, ...props }: any) => <span {...props}>{children}</span>,
 }));
@@ -179,13 +170,15 @@ describe("ToolPart display mode controls", () => {
     expect(onDisplayModeChange).toHaveBeenCalled();
   });
 
-  it("shows 'not supported' in tooltip for disabled modes", () => {
+  it("marks unsupported modes as disabled with aria-labels", () => {
     renderWithDisplayModes(["inline"]);
 
-    const tooltips = screen.getAllByTestId("tooltip-content");
-    const unsupportedTooltips = tooltips.filter((t) =>
-      t.textContent?.includes("not supported by this app"),
-    );
-    expect(unsupportedTooltips).toHaveLength(2);
+    const buttons = screen.getAllByRole("button");
+    const disabledButtons = buttons.filter((b) => b.disabled);
+    expect(disabledButtons).toHaveLength(2);
+    // Disabled buttons should still have descriptive aria-labels
+    const labels = disabledButtons.map((b) => b.getAttribute("aria-label"));
+    expect(labels).toContain("PiP");
+    expect(labels).toContain("Fullscreen");
   });
 });
