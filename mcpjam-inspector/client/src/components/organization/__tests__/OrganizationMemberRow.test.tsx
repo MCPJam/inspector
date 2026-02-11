@@ -62,7 +62,9 @@ describe("OrganizationMemberRow", () => {
       isOwner: false,
     };
 
-    render(<OrganizationMemberRow member={inconsistentOwner} onRemove={vi.fn()} />);
+    render(
+      <OrganizationMemberRow member={inconsistentOwner} onRemove={vi.fn()} />,
+    );
 
     expect(screen.getByText(/^owner$/i)).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
