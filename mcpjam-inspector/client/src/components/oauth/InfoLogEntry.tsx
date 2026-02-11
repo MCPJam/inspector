@@ -112,7 +112,12 @@ export function InfoLogEntry({
               </div>
             )}
             <div className="rounded-sm bg-background/60 p-2 max-h-[36vh] overflow-auto">
-              <JsonEditor value={data} readOnly showToolbar={false} />
+              <JsonEditor
+                height="100%"
+                value={data}
+                readOnly
+                showToolbar={false}
+              />
             </div>
           </div>
         </div>

@@ -153,7 +153,7 @@ export function TraceViewer({
       </div>
 
       {viewMode === "raw" ? (
-        <JsonEditor viewOnly value={trace} />
+        <JsonEditor height="100%" viewOnly value={trace} />
       ) : (
         <div className="space-y-6">
           {groupedMessages.map((group, idx) => {
@@ -359,7 +359,7 @@ function TracePart({ part }: { part: ContentPart }) {
       <div className="text-xs font-semibold text-muted-foreground mb-1">
         Unknown part type: {part.type}
       </div>
-      <JsonEditor viewOnly value={part} />
+      <JsonEditor height="100%" viewOnly value={part} />
     </div>
   );
 }
@@ -469,7 +469,7 @@ function CombinedToolPart({
               <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
                 Input
               </div>
-              <JsonEditor viewOnly value={toolCall!.input} />
+              <JsonEditor height="100%" viewOnly value={toolCall!.input} />
             </div>
           )}
 
@@ -496,7 +496,7 @@ function CombinedToolPart({
                       : ""
                   }
                 >
-                  <JsonEditor viewOnly value={displayOutput} />
+                  <JsonEditor height="100%" viewOnly value={displayOutput} />
                 </div>
               )}
             </div>

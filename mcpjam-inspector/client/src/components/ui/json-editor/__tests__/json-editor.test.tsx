@@ -9,6 +9,7 @@ describe("JsonEditor", () => {
 
       const { rerender } = render(
         <JsonEditor
+          height="100%"
           rawContent='{"a":1}'
           onRawChange={onRawChange}
           mode="view"
@@ -20,6 +21,7 @@ describe("JsonEditor", () => {
 
       rerender(
         <JsonEditor
+          height="100%"
           rawContent='{"a":1}'
           onRawChange={onRawChange}
           mode="edit"
@@ -37,6 +39,7 @@ describe("JsonEditor", () => {
 
       const { rerender } = render(
         <JsonEditor
+          height="100%"
           rawContent="{invalid"
           onRawChange={onRawChange}
           mode="view"
@@ -46,6 +49,7 @@ describe("JsonEditor", () => {
 
       rerender(
         <JsonEditor
+          height="100%"
           rawContent="{invalid"
           onRawChange={onRawChange}
           mode="edit"
@@ -63,6 +67,7 @@ describe("JsonEditor", () => {
 
       const { rerender } = render(
         <JsonEditor
+          height="100%"
           rawContent='{"a":1}'
           onRawChange={onRawChange}
           mode="view"
@@ -73,6 +78,7 @@ describe("JsonEditor", () => {
 
       rerender(
         <JsonEditor
+          height="100%"
           rawContent='{"a":1}'
           onRawChange={onRawChange}
           mode="edit"
@@ -91,6 +97,7 @@ describe("JsonEditor", () => {
     it("enables soft wrapping in edit mode when configured", () => {
       render(
         <JsonEditor
+          height="100%"
           rawContent='{"text":"long long long long long long"}'
           mode="edit"
           showToolbar={false}
@@ -105,6 +112,7 @@ describe("JsonEditor", () => {
     it("keeps wrapping disabled by default", () => {
       render(
         <JsonEditor
+          height="100%"
           rawContent='{"text":"long long long long long long"}'
           mode="edit"
           showToolbar={false}

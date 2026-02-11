@@ -55,6 +55,7 @@ export function JsonEditor({
   expandJsonStrings = false,
   autoFormatOnEdit = true,
   wrapLongLinesInEdit = false,
+  showLineNumbers = true,
   toolbarLeftContent,
   toolbarRightContent,
 }: JsonEditorProps) {
@@ -168,12 +169,13 @@ export function JsonEditor({
         <JsonEditorView
           value={value}
           className={className}
-          height={height}
+          height={height ?? "100%"}
           maxHeight={maxHeight}
           collapsible={collapsible}
           defaultExpandDepth={defaultExpandDepth}
           collapsedPaths={collapsedPaths}
           onCollapseChange={onCollapseChange}
+          showLineNumbers={showLineNumbers}
           collapseStringsAfterLength={collapseStringsAfterLength}
         />
       </ErrorBoundary>
@@ -191,7 +193,7 @@ export function JsonEditor({
         zIndex: 50,
       }
     : {
-        height: height ?? "auto",
+        height: height ?? "100%",
         maxHeight: maxHeight ?? "none",
       };
 
@@ -232,11 +234,12 @@ export function JsonEditor({
           {mode === "view" ? (
             <JsonEditorView
               value={isRawMode ? editor.getParsedValue() : value}
-              height="100%"
+              height={height ?? "100%"}
               collapsible={collapsible}
               defaultExpandDepth={defaultExpandDepth}
               collapsedPaths={collapsedPaths}
               onCollapseChange={onCollapseChange}
+              showLineNumbers={showLineNumbers}
               collapseStringsAfterLength={collapseStringsAfterLength}
             />
           ) : (
@@ -248,8 +251,9 @@ export function JsonEditor({
               onRedo={editor.redo}
               onEscape={handleEscape}
               isValid={editor.isValid}
-              height="100%"
+              height={height ?? "100%"}
               maxHeight={isMaximized ? undefined : maxHeight}
+              showLineNumbers={showLineNumbers}
               wrapLongLinesInEdit={wrapLongLinesInEdit}
             />
           )}

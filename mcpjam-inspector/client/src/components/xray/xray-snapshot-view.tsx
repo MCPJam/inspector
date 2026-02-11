@@ -245,6 +245,7 @@ export function XRaySnapshotView({
         <div className="p-4">
           <div className="rounded-lg border border-border bg-muted/20">
             <JsonEditor
+              height="100%"
               value={payload as object}
               viewOnly
               collapsible

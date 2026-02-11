@@ -422,6 +422,7 @@ export function ToolPart({
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                     <JsonEditor
+                      height="100%"
                       viewOnly
                       value={inputData}
                       className="p-2 text-[11px]"
@@ -438,6 +439,7 @@ export function ToolPart({
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                     <JsonEditor
+                      height="100%"
                       viewOnly
                       value={outputData}
                       className="p-2 text-[11px]"
@@ -478,6 +480,7 @@ export function ToolPart({
               <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                 {widgetDebugInfo.widgetState ? (
                   <JsonEditor
+                    height="100%"
                     viewOnly
                     value={widgetDebugInfo.widgetState}
                     className="p-2 text-[11px]"
@@ -527,6 +530,7 @@ export function ToolPart({
                       </div>
                       <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
                         <JsonEditor
+                          height="100%"
                           viewOnly
                           value={widgetDebugInfo.modelContext.content}
                           className="p-2 text-[11px]"
@@ -544,6 +548,7 @@ export function ToolPart({
                       </div>
                       <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
                         <JsonEditor
+                          height="100%"
                           viewOnly
                           value={widgetDebugInfo.modelContext.structuredContent}
                           className="p-2 text-[11px]"
@@ -576,6 +581,7 @@ export function ToolPart({
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                     <JsonEditor
+                      height="100%"
                       viewOnly
                       value={inputData}
                       className="p-2 text-[11px]"
@@ -593,6 +599,7 @@ export function ToolPart({
                   </div>
                   <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                     <JsonEditor
+                      height="100%"
                       viewOnly
                       value={outputData}
                       className="p-2 text-[11px]"

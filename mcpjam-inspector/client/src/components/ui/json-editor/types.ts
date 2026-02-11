@@ -43,6 +43,9 @@ export interface JsonEditorProps {
   // Soft-wrap long lines in edit mode while preserving logical line numbers
   wrapLongLinesInEdit?: boolean;
 
+  // Show or hide the line number gutter
+  showLineNumbers?: boolean;
+
   // Custom toolbar content
   toolbarLeftContent?: ReactNode;
   toolbarRightContent?: ReactNode;

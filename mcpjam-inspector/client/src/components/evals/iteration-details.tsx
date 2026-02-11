@@ -226,6 +226,7 @@ export function IterationDetails({
                 <div className="rounded border border-destructive/30 bg-background/50 p-2">
                   {errorDetailsJson ? (
                     <JsonEditor
+                      height="100%"
                       value={errorDetailsJson}
                       readOnly
                       showToolbar={false}

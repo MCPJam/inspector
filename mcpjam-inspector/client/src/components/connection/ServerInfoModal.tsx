@@ -151,7 +151,13 @@ export function ServerInfoModal({
             </button>
             {expandedTokens.has(`${tokenKey}Decoded`) && (
               <div className="mt-1">
-                <JsonEditor value={decoded} readOnly showToolbar={false} />
+                <JsonEditor
+                  showLineNumbers={false}
+                  height="100%"
+                  value={decoded}
+                  readOnly
+                  showToolbar={false}
+                />
               </div>
             )}
           </div>
@@ -308,6 +314,8 @@ export function ServerInfoModal({
                     Server Capabilities
                   </div>
                   <JsonEditor
+                    showLineNumbers={false}
+                    height="100%"
                     value={serverCapabilities}
                     readOnly
                     showToolbar={false}
@@ -322,6 +330,8 @@ export function ServerInfoModal({
                     Client Capabilities
                   </div>
                   <JsonEditor
+                    showLineNumbers={false}
+                    height="100%"
                     value={clientCapabilities}
                     readOnly
                     showToolbar={false}
@@ -424,7 +434,12 @@ export function ServerInfoModal({
                               <div className="text-xs text-muted-foreground font-medium mb-3">
                                 ANNOTATIONS
                               </div>
-                              <JsonEditor value={annotations} viewOnly />
+                              <JsonEditor
+                                showLineNumbers={false}
+                                height="100%"
+                                value={annotations}
+                                viewOnly
+                              />
                             </div>
                           )}
                         </div>
@@ -505,6 +520,8 @@ export function ServerInfoModal({
                   Server Capabilities
                 </div>
                 <JsonEditor
+                  showLineNumbers={false}
+                  height="100%"
                   value={serverCapabilities}
                   readOnly
                   showToolbar={false}
@@ -519,6 +536,8 @@ export function ServerInfoModal({
                   Client Capabilities
                 </div>
                 <JsonEditor
+                  showLineNumbers={false}
+                  height="100%"
                   value={clientCapabilities}
                   readOnly
                   showToolbar={false}
