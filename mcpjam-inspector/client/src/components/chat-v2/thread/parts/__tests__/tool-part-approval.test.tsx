@@ -146,7 +146,7 @@ describe("ToolPart approval expansion", () => {
       />,
     );
 
-    expect(screen.getByText("Like how it looks? Save it")).toBeInTheDocument();
+    expect(screen.getByText("Like how it looks? Save it.")).toBeInTheDocument();
   });
 
   it("marks save button as used and redirects to Views once after first successful save", async () => {
