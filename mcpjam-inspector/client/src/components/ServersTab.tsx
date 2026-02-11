@@ -368,6 +368,7 @@ export function ServersTab({
             collisionDetection={closestCenter}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
+            onDragCancel={() => setActiveId(null)}
           >
             <SortableContext
               items={orderedServerNames}
