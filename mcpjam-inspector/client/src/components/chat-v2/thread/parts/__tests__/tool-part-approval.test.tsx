@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToolPart } from "../tool-part";
@@ -10,6 +10,8 @@ vi.mock("lucide-react", () => {
     Check: s,
     ChevronDown: s,
     Database: s,
+    Layers: s,
+    Loader2: s,
     Maximize2: s,
     MessageCircle: s,
     PictureInPicture2: s,
@@ -80,6 +82,11 @@ const getHeaderButton = () =>
     .find((button) => button.getAttribute("aria-expanded") !== null);
 
 describe("ToolPart approval expansion", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.location.hash = "";
+  });
+
   it("auto-expands once approval is requested after mount", async () => {
     const { rerender } = render(
       <ToolPart part={basePart as any} uiType="mcp-apps" />,
@@ -127,5 +134,69 @@ describe("ToolPart approval expansion", () => {
     await waitFor(() => {
       expect(getHeaderButton()).toHaveAttribute("aria-expanded", "false");
     });
+  });
+
+  it("shows one-time save hint before save view is used", () => {
+    render(
+      <ToolPart
+        part={basePart as any}
+        uiType="mcp-apps"
+        onSaveView={() => {}}
+        canSaveView
+      />,
+    );
+
+    expect(screen.getByText("Like how it looks? Save it.")).toBeInTheDocument();
+  });
+
+  it("marks save button as used and redirects to Views once after first successful save", async () => {
+    const user = userEvent.setup();
+
+    const onSaveView = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <ToolPart
+        part={basePart as any}
+        uiType="mcp-apps"
+        onSaveView={onSaveView}
+        canSaveView
+      />,
+    );
+
+    const saveButton = screen
+      .getAllByRole("button")
+      .find((button) => button.getAttribute("aria-expanded") === null);
+    expect(saveButton).toBeTruthy();
+    if (saveButton) {
+      await user.click(saveButton);
+    }
+
+    await waitFor(() => {
+      expect(onSaveView).toHaveBeenCalledTimes(1);
+    });
+    expect(localStorage.getItem("mcpjam-save-view-button-used")).toBe("true");
+    expect(window.location.hash).toBe("#views");
+
+    window.location.hash = "#chat-v2";
+    rerender(
+      <ToolPart
+        part={basePart as any}
+        uiType="mcp-apps"
+        onSaveView={onSaveView}
+        canSaveView
+      />,
+    );
+
+    const saveButtonAgain = screen
+      .getAllByRole("button")
+      .find((button) => button.getAttribute("aria-expanded") === null);
+    expect(saveButtonAgain).toBeTruthy();
+    if (saveButtonAgain) {
+      await user.click(saveButtonAgain);
+    }
+
+    await waitFor(() => {
+      expect(onSaveView).toHaveBeenCalledTimes(2);
+    });
+    expect(window.location.hash).toBe("#chat-v2");
   });
 });

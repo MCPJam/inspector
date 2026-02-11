@@ -27,8 +27,6 @@ import {
 } from "@/components/ui/chatgpt-sandboxed-iframe";
 import { toast } from "sonner";
 import { type DisplayMode } from "@/stores/ui-playground-store";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
 import { authFetch } from "@/lib/session-token";
@@ -39,6 +37,7 @@ type ToolState =
   | "output-available"
   | "output-error"
   | "output-denied"
+  | "approval-requested"
   | string;
 
 /**

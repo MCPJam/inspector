@@ -1,5 +1,5 @@
 /**
- * UIPlaygroundTab
+ * AppBuilderTab
  *
  * Main orchestrator component for the UI Playground tab.
  * Combines deterministic tool execution with ChatTabV2-style chat,
@@ -34,15 +34,15 @@ import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
 import { PANEL_SIZES } from "./constants";
 import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
-interface UIPlaygroundTabProps {
+interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
 }
 
-export function UIPlaygroundTab({
+export function AppBuilderTab({
   serverConfig,
   serverName,
-}: UIPlaygroundTabProps) {
+}: AppBuilderTabProps) {
   const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Compute server key for saved requests storage

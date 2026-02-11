@@ -40,6 +40,7 @@ import {
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 
 export function PartSwitch({
   part,
@@ -60,6 +61,8 @@ export function PartSwitch({
   selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
   onToolApprovalResponse,
   messageParts,
+  toolRenderOverrides,
+  showSaveViewButton = true,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -85,6 +88,8 @@ export function PartSwitch({
   selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   messageParts?: AnyPart[];
+  toolRenderOverrides?: Record<string, ToolRenderOverride>;
+  showSaveViewButton?: boolean;
 }) {
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
@@ -200,12 +205,20 @@ export function PartSwitch({
             onToolApprovalResponse?.({ id, approved: false }),
         }
       : {};
+    const renderOverride = toolInfo.toolCallId
+      ? toolRenderOverrides?.[toolInfo.toolCallId]
+      : undefined;
     const partToolMeta = toolsMetadata[toolInfo.toolName];
-    const uiType = detectUIType(partToolMeta, toolInfo.rawOutput);
-    const uiResourceUri = getUIResourceUri(uiType, partToolMeta);
+    const effectiveToolMeta = renderOverride?.toolMetadata ?? partToolMeta;
+    const uiType = detectUIType(effectiveToolMeta, toolInfo.rawOutput);
+    const uiResourceUri =
+      renderOverride?.resourceUri ??
+      getUIResourceUri(uiType, effectiveToolMeta);
     const uiResource =
       uiType === UIType.MCP_UI ? extractUIResource(toolInfo.rawOutput) : null;
-    const serverId = getToolServerId(toolInfo.toolName, toolServerMap);
+    const serverId =
+      renderOverride?.serverId ??
+      getToolServerId(toolInfo.toolName, toolServerMap);
 
     // Determine why save might be disabled
     const hasOutput =
@@ -231,7 +244,7 @@ export function PartSwitch({
     // Use rawOutput as fallback if output is undefined
     const outputToSave = toolInfo.output ?? toolInfo.rawOutput;
     // OpenAI outputTemplate is stored under "openai/outputTemplate" key
-    const outputTemplate = partToolMeta?.["openai/outputTemplate"] as
+    const outputTemplate = effectiveToolMeta?.["openai/outputTemplate"] as
       | string
       | undefined;
     const handleSaveView = createSaveViewHandler(
@@ -245,7 +258,7 @@ export function PartSwitch({
       uiType || UIType.MCP_APPS,
       uiResourceUri ?? undefined,
       outputTemplate,
-      partToolMeta as Record<string, unknown> | undefined,
+      effectiveToolMeta as Record<string, unknown> | undefined,
     );
 
     if (uiResource) {
@@ -254,9 +267,11 @@ export function PartSwitch({
           <ToolPart
             part={toolPart}
             uiType={uiType}
-            onSaveView={handleSaveView}
-            canSaveView={canSaveView}
-            saveDisabledReason={saveDisabledReason}
+            onSaveView={showSaveViewButton ? handleSaveView : undefined}
+            canSaveView={showSaveViewButton ? canSaveView : undefined}
+            saveDisabledReason={
+              showSaveViewButton ? saveDisabledReason : undefined
+            }
             isSaving={isSaving}
             {...approvalProps}
           />
@@ -267,6 +282,8 @@ export function PartSwitch({
         </>
       );
     }
+    const hasCachedHtmlForOffline = !!renderOverride?.cachedWidgetHtmlUrl;
+
     if (
       uiType === UIType.OPENAI_SDK ||
       (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
@@ -282,7 +299,7 @@ export function PartSwitch({
             <ToolPart
               part={toolPart}
               uiType={uiType}
-              onSaveView={handleSaveView}
+              onSaveView={showSaveViewButton ? handleSaveView : undefined}
               canSaveView={false}
               isSaving={isSaving}
               {...approvalProps}
@@ -294,15 +311,17 @@ export function PartSwitch({
         );
       }
 
-      if (!serverId) {
+      if (!serverId && !hasCachedHtmlForOffline) {
         return (
           <>
             <ToolPart
               part={toolPart}
               uiType={uiType}
-              onSaveView={handleSaveView}
-              canSaveView={canSaveView}
-              saveDisabledReason={saveDisabledReason}
+              onSaveView={showSaveViewButton ? handleSaveView : undefined}
+              canSaveView={showSaveViewButton ? canSaveView : undefined}
+              saveDisabledReason={
+                showSaveViewButton ? saveDisabledReason : undefined
+              }
               isSaving={isSaving}
               {...approvalProps}
             />
@@ -326,23 +345,25 @@ export function PartSwitch({
             onExitFullscreen={onExitFullscreen}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
-            onSaveView={handleSaveView}
-            canSaveView={canSaveView}
-            saveDisabledReason={saveDisabledReason}
+            onSaveView={showSaveViewButton ? handleSaveView : undefined}
+            canSaveView={showSaveViewButton ? canSaveView : undefined}
+            saveDisabledReason={
+              showSaveViewButton ? saveDisabledReason : undefined
+            }
             isSaving={isSaving}
             {...approvalProps}
           />
           <ChatGPTAppRenderer
-            serverId={serverId}
+            serverId={serverId ?? "offline-view"}
             toolCallId={toolInfo.toolCallId}
             toolName={toolInfo.toolName}
             toolState={toolInfo.toolState}
             toolInput={toolInfo.input ?? null}
             toolOutput={toolInfo.output ?? null}
-            toolMetadata={toolsMetadata[toolInfo.toolName] ?? undefined}
+            toolMetadata={effectiveToolMeta ?? undefined}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
-              callTool(serverId, toolName, params)
+              callTool(serverId ?? "offline-view", toolName, params)
             }
             onWidgetStateChange={onWidgetStateChange}
             pipWidgetId={pipWidgetId}
@@ -353,6 +374,9 @@ export function PartSwitch({
             onExitFullscreen={onExitFullscreen}
             displayMode={displayMode}
             onDisplayModeChange={onDisplayModeChange}
+            initialWidgetState={renderOverride?.initialWidgetState}
+            isOffline={renderOverride?.isOffline}
+            cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
           />
         </>
       );
@@ -363,15 +387,21 @@ export function PartSwitch({
       (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
         selectedProtocolOverrideIfBothExists === UIType.MCP_APPS)
     ) {
-      if (!serverId || !uiResourceUri || !toolInfo.toolCallId) {
+      if (
+        (!serverId && !hasCachedHtmlForOffline) ||
+        (!uiResourceUri && !hasCachedHtmlForOffline) ||
+        !toolInfo.toolCallId
+      ) {
         return (
           <>
             <ToolPart
               part={toolPart}
               uiType={uiType}
-              onSaveView={handleSaveView}
-              canSaveView={canSaveView}
-              saveDisabledReason={saveDisabledReason}
+              onSaveView={showSaveViewButton ? handleSaveView : undefined}
+              canSaveView={showSaveViewButton ? canSaveView : undefined}
+              saveDisabledReason={
+                showSaveViewButton ? saveDisabledReason : undefined
+              }
               isSaving={isSaving}
               {...approvalProps}
             />
@@ -396,26 +426,28 @@ export function PartSwitch({
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
             appSupportedDisplayModes={appSupportedDisplayModes}
-            onSaveView={handleSaveView}
-            canSaveView={canSaveView}
-            saveDisabledReason={saveDisabledReason}
+            onSaveView={showSaveViewButton ? handleSaveView : undefined}
+            canSaveView={showSaveViewButton ? canSaveView : undefined}
+            saveDisabledReason={
+              showSaveViewButton ? saveDisabledReason : undefined
+            }
             isSaving={isSaving}
             {...approvalProps}
           />
           <MCPAppsRenderer
-            serverId={serverId}
+            serverId={serverId ?? "offline-view"}
             toolCallId={toolInfo.toolCallId}
             toolName={toolInfo.toolName}
             toolState={toolInfo.toolState}
             toolInput={toolInfo.input}
             toolOutput={toolInfo.output}
             toolErrorText={toolInfo.errorText}
-            resourceUri={uiResourceUri}
-            toolMetadata={partToolMeta}
+            resourceUri={uiResourceUri ?? "mcp://offline/view"}
+            toolMetadata={effectiveToolMeta}
             toolsMetadata={toolsMetadata}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
-              callTool(serverId, toolName, params)
+              callTool(serverId ?? "offline-view", toolName, params)
             }
             onWidgetStateChange={onWidgetStateChange}
             onModelContextUpdate={onModelContextUpdate}
@@ -428,6 +460,8 @@ export function PartSwitch({
             onRequestFullscreen={onRequestFullscreen}
             onExitFullscreen={onExitFullscreen}
             onAppSupportedDisplayModesChange={setAppSupportedDisplayModes}
+            isOffline={renderOverride?.isOffline}
+            cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
           />
         </>
       );
@@ -436,9 +470,9 @@ export function PartSwitch({
       <ToolPart
         part={toolPart}
         uiType={uiType}
-        onSaveView={handleSaveView}
-        canSaveView={canSaveView}
-        saveDisabledReason={saveDisabledReason}
+        onSaveView={showSaveViewButton ? handleSaveView : undefined}
+        canSaveView={showSaveViewButton ? canSaveView : undefined}
+        saveDisabledReason={showSaveViewButton ? saveDisabledReason : undefined}
         isSaving={isSaving}
         {...approvalProps}
       />

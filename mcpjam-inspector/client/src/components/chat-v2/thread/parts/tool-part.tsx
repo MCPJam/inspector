@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   Box,
   Check,
@@ -27,11 +27,6 @@ import {
   type ToolState,
   isDynamicTool,
 } from "../thread-helpers";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CspDebugPanel } from "../csp-debug-panel";
@@ -39,6 +34,8 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
+const SAVE_VIEW_BUTTON_USED_KEY = "mcpjam-save-view-button-used";
+const SAVE_VIEW_REDIRECTED_KEY = "mcpjam-save-view-redirected";
 
 export function ToolPart({
   part,
@@ -76,7 +73,7 @@ export function ToolPart({
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
   /** Callback to save this tool execution as a view */
-  onSaveView?: () => void;
+  onSaveView?: () => void | Promise<void>;
   /** Whether the save view button should be enabled */
   canSaveView?: boolean;
   /** Reason why save is disabled (for tooltip) */
@@ -124,6 +121,7 @@ export function ToolPart({
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "csp" | "context" | null
   >("data");
+  const [hasUsedSaveViewButton, setHasUsedSaveViewButton] = useState(true);
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
@@ -219,6 +217,147 @@ export function ToolPart({
     onDisplayModeChange?.(mode);
   };
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setHasUsedSaveViewButton(
+      localStorage.getItem(SAVE_VIEW_BUTTON_USED_KEY) === "true",
+    );
+  }, []);
+
+  const handleSaveViewClick = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!onSaveView || !canSaveView || isSaving) return;
+
+    if (typeof window === "undefined") {
+      void Promise.resolve(onSaveView());
+      return;
+    }
+
+    const shouldRedirectAfterSave =
+      localStorage.getItem(SAVE_VIEW_REDIRECTED_KEY) !== "true";
+
+    if (!hasUsedSaveViewButton) {
+      setHasUsedSaveViewButton(true);
+      localStorage.setItem(SAVE_VIEW_BUTTON_USED_KEY, "true");
+    }
+
+    void Promise.resolve(onSaveView()).then(() => {
+      if (!shouldRedirectAfterSave) return;
+      localStorage.setItem(SAVE_VIEW_REDIRECTED_KEY, "true");
+      window.location.hash = "views";
+    });
+  };
+
+  const renderDisplayModeOptionButtons = () =>
+    displayModeOptions.map(({ mode, icon: Icon }) => {
+      const isActive = displayMode === mode;
+      const isDisabled =
+        appSupportedDisplayModes !== undefined &&
+        !appSupportedDisplayModes.includes(mode);
+      const buttonLabel =
+        mode === "inline" ? "Inline" : mode === "pip" ? "PiP" : "Fullscreen";
+      return (
+        <button
+          key={mode}
+          type="button"
+          aria-label={buttonLabel}
+          disabled={isDisabled}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isDisabled) return;
+            handleDisplayModeChange(mode);
+          }}
+          className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors ${
+            isDisabled
+              ? "text-muted-foreground/30 cursor-not-allowed"
+              : isActive
+                ? "bg-background text-foreground shadow-sm cursor-pointer"
+                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+          }`}
+        >
+          <Icon className="h-3.5 w-3.5" />
+          <span className="text-[9px] leading-none">{buttonLabel}</span>
+        </button>
+      );
+    });
+
+  const renderDebugOptionButtons = () =>
+    debugOptions.map(({ tab, icon: Icon, badge }) => {
+      const buttonLabel =
+        tab === "data"
+          ? "Data"
+          : tab === "state"
+            ? "State"
+            : tab === "csp"
+              ? "CSP"
+              : "Context";
+
+      return (
+        <button
+          key={tab}
+          type="button"
+          aria-label={buttonLabel}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDebugClick(tab);
+          }}
+          className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors cursor-pointer relative ${
+            activeDebugTab === tab
+              ? "bg-background text-foreground shadow-sm"
+              : badge && badge > 0
+                ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+          }`}
+        >
+          <Icon className="h-3.5 w-3.5" />
+          <span className="text-[9px] leading-none">{buttonLabel}</span>
+          {badge !== undefined && badge > 0 && (
+            <Badge
+              variant="destructive"
+              className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none text-white"
+            >
+              {badge}
+            </Badge>
+          )}
+        </button>
+      );
+    });
+
+  const saveViewAriaLabel = isSaving
+    ? "Saving view"
+    : canSaveView
+      ? "Save as View"
+      : saveDisabledReason || "No output to save";
+
+  const renderSaveViewButton = () => (
+    <span className="relative inline-flex items-center">
+      {canSaveView && !isSaving && !hasUsedSaveViewButton && (
+        <span className="absolute right-0 top-full z-50 mt-2 whitespace-nowrap rounded-xl border border-primary/70 bg-primary px-2.5 py-1 text-[10px] font-semibold normal-case text-primary-foreground shadow-md shadow-primary/30 ring-1 ring-primary/40">
+          <span className="absolute -top-1 right-2 z-50 h-2.5 w-2.5 rotate-45 border-l border-t border-primary/70 bg-primary" />
+          <span className="relative z-10">Like how it looks? Save it.</span>
+        </span>
+      )}
+      <button
+        type="button"
+        aria-label={saveViewAriaLabel}
+        disabled={!canSaveView || isSaving}
+        onClick={handleSaveViewClick}
+        className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors ${
+          canSaveView && !isSaving
+            ? "border border-border/50 bg-background text-foreground shadow-sm hover:bg-background/80 cursor-pointer"
+            : "border border-border/30 text-muted-foreground/30 cursor-not-allowed"
+        }`}
+      >
+        {isSaving ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Layers className="h-3.5 w-3.5" />
+        )}
+        <span className="text-[9px] leading-none">Save View</span>
+      </button>
+    </span>
+  );
+
   return (
     <div
       className={cn(
@@ -276,41 +415,7 @@ export function ToolPart({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="inline-flex items-center gap-0.5">
-                {displayModeOptions.map(({ mode, icon: Icon, label }) => {
-                  const isActive = displayMode === mode;
-                  const isDisabled =
-                    appSupportedDisplayModes !== undefined &&
-                    !appSupportedDisplayModes.includes(mode);
-                  return (
-                    <Tooltip key={mode}>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          disabled={isDisabled}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (isDisabled) return;
-                            handleDisplayModeChange(mode);
-                          }}
-                          className={`p-1 rounded transition-colors ${
-                            isDisabled
-                              ? "text-muted-foreground/30 cursor-not-allowed"
-                              : isActive
-                                ? "bg-background text-foreground shadow-sm cursor-pointer"
-                                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
-                          }`}
-                        >
-                          <Icon className="h-3.5 w-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {isDisabled
-                          ? `${label} (not supported by this app)`
-                          : label}
-                      </TooltipContent>
-                    </Tooltip>
-                  );
-                })}
+                {renderDisplayModeOptionButtons()}
               </div>
             </span>
           )}
@@ -323,73 +428,14 @@ export function ToolPart({
                 className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
                 onClick={(e) => e.stopPropagation()}
               >
-                {debugOptions.map(({ tab, icon: Icon, label, badge }) => (
-                  <Tooltip key={tab}>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDebugClick(tab);
-                        }}
-                        className={`p-1 rounded transition-colors cursor-pointer relative ${
-                          activeDebugTab === tab
-                            ? "bg-background text-foreground shadow-sm"
-                            : badge && badge > 0
-                              ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                              : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-                        }`}
-                      >
-                        <Icon className="h-3.5 w-3.5" />
-                        {badge !== undefined && badge > 0 && (
-                          <Badge
-                            variant="destructive"
-                            className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none text-white"
-                          >
-                            {badge}
-                          </Badge>
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>{label}</TooltipContent>
-                  </Tooltip>
-                ))}
+                {renderDebugOptionButtons()}
               </span>
             </>
           )}
           {onSaveView && uiType && uiType !== UIType.MCP_UI && (
             <>
               {hasWidgetDebug && <div className="h-4 w-px bg-border/40" />}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    disabled={!canSaveView || isSaving}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSaveView();
-                    }}
-                    className={`p-1 rounded transition-colors ${
-                      canSaveView && !isSaving
-                        ? "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
-                        : "text-muted-foreground/30 cursor-not-allowed"
-                    }`}
-                  >
-                    {isSaving ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Layers className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isSaving
-                    ? "Saving..."
-                    : canSaveView
-                      ? "Save as View"
-                      : saveDisabledReason || "No output to save"}
-                </TooltipContent>
-              </Tooltip>
+              {renderSaveViewButton()}
             </>
           )}
           {toolState && StatusIcon && (
