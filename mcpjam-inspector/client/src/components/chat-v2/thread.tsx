@@ -9,6 +9,7 @@ import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicator";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -33,6 +34,8 @@ interface ThreadProps {
   fullscreenChatDisabled?: boolean;
   selectedProtocolOverrideIfBothExists?: UIType;
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
+  toolRenderOverrides?: Record<string, ToolRenderOverride>;
+  showSaveViewButton?: boolean;
 }
 
 export function Thread({
@@ -52,6 +55,8 @@ export function Thread({
   fullscreenChatDisabled = false,
   selectedProtocolOverrideIfBothExists,
   onToolApprovalResponse,
+  toolRenderOverrides,
+  showSaveViewButton = true,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -124,6 +129,8 @@ export function Thread({
               selectedProtocolOverrideIfBothExists
             }
             onToolApprovalResponse={onToolApprovalResponse}
+            toolRenderOverrides={toolRenderOverrides}
+            showSaveViewButton={showSaveViewButton}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}

@@ -55,6 +55,7 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { useSharedAppState } from "@/state/app-state-context";
 import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 import { Settings2 } from "lucide-react";
+import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -75,8 +76,14 @@ interface PlaygroundMainProps {
     params: Record<string, unknown>;
     result: unknown;
     toolMeta: Record<string, unknown> | undefined;
+    state?: "output-available" | "output-error";
+    errorText?: string;
+    renderOverride?: ToolRenderOverride;
+    toolCallId?: string;
+    replaceExisting?: boolean;
   } | null;
-  onExecutionInjected: () => void;
+  onExecutionInjected: (toolCallId?: string) => void;
+  toolRenderOverrides?: Record<string, ToolRenderOverride>;
   // Device emulation
   deviceType?: DeviceType;
   onDeviceTypeChange?: (type: DeviceType) => void;
@@ -88,6 +95,10 @@ interface PlaygroundMainProps {
   // Timezone (IANA) per SEP-1865
   timeZone?: string;
   onTimeZoneChange?: (timeZone: string) => void;
+  // View-mode controls
+  disableChatInput?: boolean;
+  hideSaveViewButton?: boolean;
+  disabledInputPlaceholder?: string;
 }
 
 function ScrollToBottomButton() {
@@ -142,6 +153,7 @@ export function PlaygroundMain({
   invokingMessage,
   pendingExecution,
   onExecutionInjected,
+  toolRenderOverrides: externalToolRenderOverrides = {},
   // Device/locale/timezone props are now managed via the store by DisplayContextHeader
   // These are kept for backward compatibility but are no longer used
   deviceType: _deviceType = "mobile",
@@ -153,6 +165,9 @@ export function PlaygroundMain({
   timeZone: _timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ||
     "UTC",
   onTimeZoneChange: _onTimeZoneChange,
+  disableChatInput = false,
+  hideSaveViewButton = false,
+  disabledInputPlaceholder = "Input disabled in Views",
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
@@ -176,6 +191,8 @@ export function PlaygroundMain({
   const [xrayMode, setXrayMode] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [isFullscreenChatOpen, setIsFullscreenChatOpen] = useState(false);
+  const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
+    useState<Record<string, ToolRenderOverride>>({});
   // Device config from store (managed by DisplayContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
@@ -274,15 +291,54 @@ export function PlaygroundMain({
     if (!pendingExecution) return;
 
     const { toolName, params, result, toolMeta } = pendingExecution;
-    const { messages: newMessages } = createDeterministicToolMessages(
+    const deterministicOptions =
+      pendingExecution.state === "output-error"
+        ? {
+            state: "output-error" as const,
+            errorText: pendingExecution.errorText,
+            toolCallId: pendingExecution.toolCallId,
+          }
+        : pendingExecution.toolCallId
+          ? { toolCallId: pendingExecution.toolCallId }
+          : undefined;
+    const { messages: newMessages, toolCallId } = createDeterministicToolMessages(
       toolName,
       params,
       result,
       toolMeta,
+      deterministicOptions,
     );
 
-    setMessages((prev) => [...prev, ...newMessages]);
-    onExecutionInjected();
+    if (pendingExecution.renderOverride) {
+      setInjectedToolRenderOverrides((prev) => ({
+        ...prev,
+        [toolCallId]: pendingExecution.renderOverride!,
+      }));
+    }
+
+    const upsertById = (
+      current: typeof newMessages,
+      nextMessage: (typeof newMessages)[number],
+    ) => {
+      const idx = current.findIndex((m) => m.id === nextMessage.id);
+      if (idx === -1) return [...current, nextMessage];
+      const copy = [...current];
+      copy[idx] = nextMessage;
+      return copy;
+    };
+
+    if (pendingExecution.replaceExisting && pendingExecution.toolCallId) {
+      setMessages((prev) => {
+        let next = [...prev];
+        for (const msg of newMessages) {
+          next = upsertById(next as typeof newMessages, msg) as typeof prev;
+        }
+        return next;
+      });
+    } else {
+      setMessages((prev) => [...prev, ...newMessages]);
+    }
+    onExecutionInjected(toolCallId);
   }, [pendingExecution, setMessages, onExecutionInjected]);
 
   // Handle widget state changes
@@ -324,11 +380,23 @@ export function PlaygroundMain({
   const handleClearChat = useCallback(() => {
     resetChat();
     clearLogs();
+    setInjectedToolRenderOverrides({});
     setShowClearConfirm(false);
   }, [resetChat, clearLogs]);
 
+  const mergedToolRenderOverrides = useMemo(
+    () => ({
+      ...injectedToolRenderOverrides,
+      ...externalToolRenderOverrides,
+    }),
+    [injectedToolRenderOverrides, externalToolRenderOverrides],
+  );
+
   // Placeholder text
   let placeholder = "Ask something to render UI...";
+  if (disableChatInput) {
+    placeholder = disabledInputPlaceholder;
+  }
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -403,7 +471,7 @@ export function PlaygroundMain({
   };
 
   const errorMessage = formatErrorMessage(error);
-  const inputDisabled = status !== "ready" || submitBlocked;
+  const inputDisabled = disableChatInput || status !== "ready" || submitBlocked;
 
   // Compact mode for smaller devices or narrow custom viewports
   const isCompact = useMemo(() => {
@@ -521,6 +589,8 @@ export function PlaygroundMain({
                   selectedProtocol ?? undefined
                 }
                 onToolApprovalResponse={addToolApprovalResponse}
+                toolRenderOverrides={mergedToolRenderOverrides}
+                showSaveViewButton={!hideSaveViewButton}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -573,7 +643,10 @@ export function PlaygroundMain({
           placeholder={placeholder}
           disabled={inputDisabled}
           canSend={
-            status === "ready" && !submitBlocked && input.trim().length > 0
+            !disableChatInput &&
+            status === "ready" &&
+            !submitBlocked &&
+            input.trim().length > 0
           }
           isThinking={status === "submitted"}
           onSend={() => {
