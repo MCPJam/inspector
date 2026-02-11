@@ -7,7 +7,14 @@ import React from "react";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────
 // vi.hoisted runs before imports, letting us capture bridge instances.
-const { mockBridge, mockPostMessageTransport, triggerReady, stableStoreFns } =
+const {
+  mockBridge,
+  mockPostMessageTransport,
+  triggerReady,
+  stableStoreFns,
+  mockSandboxPostMessage,
+  sandboxedIframePropsRef,
+} =
   vi.hoisted(() => {
     const bridge = {
       sendToolInput: vi.fn(),
@@ -50,6 +57,8 @@ const { mockBridge, mockPostMessageTransport, triggerReady, stableStoreFns } =
     return {
       mockBridge: bridge,
       mockPostMessageTransport: vi.fn(),
+      mockSandboxPostMessage: vi.fn(),
+      sandboxedIframePropsRef: { current: null as any },
       stableStoreFns: stableFns,
       /** Simulate the widget completing initialization. */
       triggerReady: () => {
@@ -69,11 +78,12 @@ vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
 // Mock SandboxedIframe using forwardRef so the parent's useRef gets populated
 vi.mock("@/components/ui/sandboxed-iframe", () => ({
   SandboxedIframe: React.forwardRef((props: any, ref: any) => {
+    sandboxedIframePropsRef.current = props;
     const iframeElementRef = React.useRef<HTMLElement | null>(null);
     if (!iframeElementRef.current) {
       const el = document.createElement("div");
       Object.defineProperty(el, "contentWindow", {
-        value: { postMessage: vi.fn() },
+        value: { postMessage: mockSandboxPostMessage },
       });
       Object.defineProperty(el, "offsetHeight", { value: 400 });
       (el as HTMLElement & { animate: ReturnType<typeof vi.fn> }).animate =
@@ -83,6 +93,9 @@ vi.mock("@/components/ui/sandboxed-iframe", () => ({
 
     React.useImperativeHandle(ref, () => ({
       getIframeElement: () => iframeElementRef.current,
+      postMessage: (message: unknown) => {
+        mockSandboxPostMessage(message);
+      },
     }));
     return (
       <div
@@ -179,6 +192,8 @@ describe("MCPAppsRenderer tool input streaming", () => {
     mockBridge.close.mockClear().mockResolvedValue(undefined);
     mockBridge.teardownResource.mockClear().mockResolvedValue({});
     mockBridge.oninitialized = null;
+    mockSandboxPostMessage.mockClear();
+    sandboxedIframePropsRef.current = null;
 
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
@@ -531,6 +546,33 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.sendToolInput).toHaveBeenLastCalledWith({
         arguments: { elements: '[{"type":"ellipse"}]' },
       });
+    });
+  });
+
+  it("rejects invalid fileId in getFileDownloadUrl widget messages", async () => {
+    render(
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "openai:getFileDownloadUrl",
+          callId: 42,
+          fileId: "../../other-endpoint",
+        },
+      } as MessageEvent);
+    });
+
+    expect(mockSandboxPostMessage).toHaveBeenCalledWith({
+      type: "openai:getFileDownloadUrl:response",
+      callId: 42,
+      error: "Invalid fileId",
     });
   });
 });

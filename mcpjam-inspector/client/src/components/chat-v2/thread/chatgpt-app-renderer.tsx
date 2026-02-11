@@ -30,6 +30,7 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
 import { authFetch } from "@/lib/session-token";
+import { isValidUploadedFileId } from "./uploaded-file-id";
 
 type ToolState =
   | "input-streaming"
@@ -1241,6 +1242,14 @@ export function ChatGPTAppRenderer({
         case "openai:getFileDownloadUrl": {
           const dlCallId = event.data.callId;
           const fileId = event.data.fileId;
+          if (!isValidUploadedFileId(fileId)) {
+            postToWidget({
+              type: "openai:getFileDownloadUrl:response",
+              callId: dlCallId,
+              error: "Invalid fileId",
+            });
+            break;
+          }
           // Construct URL on the widget's origin (127.0.0.1) so it can fetch the file.
           // The widget runs on a swapped origin (localhost ↔ 127.0.0.1), so we build
           // the URL using the current page's protocol and port but with 127.0.0.1 host.
@@ -1454,6 +1463,17 @@ export function ChatGPTAppRenderer({
       if (event.data?.type === "openai:getFileDownloadUrl") {
         const dlCallId = event.data.callId;
         const fileId = event.data.fileId;
+        if (!isValidUploadedFileId(fileId)) {
+          postToWidget(
+            {
+              type: "openai:getFileDownloadUrl:response",
+              callId: dlCallId,
+              error: "Invalid fileId",
+            },
+            true,
+          );
+          return;
+        }
         const loc = window.location;
         const widgetHost =
           loc.hostname === "localhost" ? "127.0.0.1" : "localhost";

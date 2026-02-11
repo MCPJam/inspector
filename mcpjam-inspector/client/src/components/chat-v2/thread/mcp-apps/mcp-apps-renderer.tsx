@@ -53,6 +53,7 @@ import {
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
+import { isValidUploadedFileId } from "../uploaded-file-id";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -1306,6 +1307,14 @@ export function MCPAppsRenderer({
     if (data.type === "openai:getFileDownloadUrl") {
       const dlCallId = data.callId;
       const fileId = data.fileId;
+      if (!isValidUploadedFileId(fileId)) {
+        sandboxRef.current?.postMessage({
+          type: "openai:getFileDownloadUrl:response",
+          callId: dlCallId,
+          error: "Invalid fileId",
+        });
+        return;
+      }
       const loc = window.location;
       const widgetHost =
         loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
