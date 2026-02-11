@@ -137,7 +137,9 @@ describe("useOrganizationAudit", () => {
     const deferred = createDeferred<AuditEvent[]>();
     mockQuery
       .mockReturnValueOnce(deferred.promise)
-      .mockResolvedValueOnce([createAuditEvent("evt-new", 200, { organizationId: "org-2" })]);
+      .mockResolvedValueOnce([
+        createAuditEvent("evt-new", 200, { organizationId: "org-2" }),
+      ]);
 
     const { result, rerender } = renderHook(
       ({ organizationId, isAuthenticated }) =>
@@ -168,7 +170,9 @@ describe("useOrganizationAudit", () => {
     expect(result.current.error).toBeNull();
     expect(result.current.events).toEqual([]);
 
-    deferred.resolve([createAuditEvent("evt-old", 100, { organizationId: "org-1" })]);
+    deferred.resolve([
+      createAuditEvent("evt-old", 100, { organizationId: "org-1" }),
+    ]);
 
     await waitFor(() => {
       expect(result.current.events).toEqual([]);
@@ -178,10 +182,15 @@ describe("useOrganizationAudit", () => {
       await result.current.refresh();
     });
 
-    expect(mockQuery).toHaveBeenLastCalledWith("auditEvents:listByOrganization", {
-      organizationId: "org-2",
-      limit: 2,
-    });
-    expect(result.current.events.map((event) => event._id)).toEqual(["evt-new"]);
+    expect(mockQuery).toHaveBeenLastCalledWith(
+      "auditEvents:listByOrganization",
+      {
+        organizationId: "org-2",
+        limit: 2,
+      },
+    );
+    expect(result.current.events.map((event) => event._id)).toEqual([
+      "evt-new",
+    ]);
   });
 });
