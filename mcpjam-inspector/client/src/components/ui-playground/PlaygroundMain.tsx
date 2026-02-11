@@ -301,13 +301,14 @@ export function PlaygroundMain({
         : pendingExecution.toolCallId
           ? { toolCallId: pendingExecution.toolCallId }
           : undefined;
-    const { messages: newMessages, toolCallId } = createDeterministicToolMessages(
-      toolName,
-      params,
-      result,
-      toolMeta,
-      deterministicOptions,
-    );
+    const { messages: newMessages, toolCallId } =
+      createDeterministicToolMessages(
+        toolName,
+        params,
+        result,
+        toolMeta,
+        deterministicOptions,
+      );
 
     if (pendingExecution.renderOverride) {
       setInjectedToolRenderOverrides((prev) => ({
