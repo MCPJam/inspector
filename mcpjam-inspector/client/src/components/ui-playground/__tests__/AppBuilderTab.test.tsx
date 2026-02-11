@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { UIPlaygroundTab } from "../UIPlaygroundTab";
+import { AppBuilderTab } from "../AppBuilderTab";
 import type { MCPServerConfig } from "@mcpjam/sdk";
 
 // Mock posthog
@@ -187,7 +187,7 @@ vi.mock("../../ui/collapsed-panel-strip", () => ({
   ),
 }));
 
-describe("UIPlaygroundTab", () => {
+describe("AppBuilderTab", () => {
   const createServerConfig = (): MCPServerConfig =>
     ({
       transportType: "stdio",
@@ -211,7 +211,7 @@ describe("UIPlaygroundTab", () => {
 
   describe("empty state", () => {
     it("shows empty state when no server config provided", () => {
-      render(<UIPlaygroundTab />);
+      render(<AppBuilderTab />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
@@ -222,7 +222,7 @@ describe("UIPlaygroundTab", () => {
     });
 
     it("shows empty state when serverConfig is undefined", () => {
-      render(<UIPlaygroundTab serverConfig={undefined} serverName="test" />);
+      render(<AppBuilderTab serverConfig={undefined} serverName="test" />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
@@ -240,10 +240,7 @@ describe("UIPlaygroundTab", () => {
       });
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -255,10 +252,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -278,10 +272,7 @@ describe("UIPlaygroundTab", () => {
       });
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -295,10 +286,7 @@ describe("UIPlaygroundTab", () => {
       mockListTools.mockRejectedValue(new Error("Network error"));
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -315,10 +303,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = true;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -331,10 +316,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = false;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -346,10 +328,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -361,7 +340,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <UIPlaygroundTab serverConfig={serverConfig} serverName="my-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" />,
       );
 
       await waitFor(() => {
@@ -380,10 +359,7 @@ describe("UIPlaygroundTab", () => {
       };
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -404,10 +380,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = true;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -424,10 +397,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = false;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -446,10 +416,7 @@ describe("UIPlaygroundTab", () => {
       mockUIPlaygroundStore.isExecuting = true;
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -463,10 +430,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <UIPlaygroundTab
-          serverConfig={serverConfig}
-          serverName="test-server"
-        />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
       await waitFor(() => {
@@ -483,7 +447,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       const { rerender } = render(
-        <UIPlaygroundTab serverConfig={serverConfig} serverName="server-1" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="server-1" />,
       );
 
       await waitFor(() => {
@@ -493,7 +457,7 @@ describe("UIPlaygroundTab", () => {
       });
 
       rerender(
-        <UIPlaygroundTab serverConfig={serverConfig} serverName="server-2" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="server-2" />,
       );
 
       await waitFor(() => {
@@ -507,7 +471,7 @@ describe("UIPlaygroundTab", () => {
       const serverConfig = createServerConfig();
 
       const { rerender } = render(
-        <UIPlaygroundTab serverConfig={serverConfig} serverName="server-1" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="server-1" />,
       );
 
       await waitFor(() => {
@@ -515,7 +479,7 @@ describe("UIPlaygroundTab", () => {
       });
 
       rerender(
-        <UIPlaygroundTab serverConfig={undefined} serverName={undefined} />,
+        <AppBuilderTab serverConfig={undefined} serverName={undefined} />,
       );
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
