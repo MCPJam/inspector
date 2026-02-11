@@ -124,7 +124,7 @@ export function McpAppsModal({
         urlParams.set("view_mode", "modal");
         urlParams.set("view_params", JSON.stringify(params));
 
-        const contentResponse = await fetch(
+        const contentResponse = await authFetch(
           `/api/mcp/apps/widget-content/${toolCallId}?${urlParams.toString()}`,
         );
         if (!contentResponse.ok) {
