@@ -15,6 +15,8 @@ interface DeterministicToolOptions {
   state?: DeterministicToolState;
   /** Error text - required when state is 'output-error' */
   errorText?: string;
+  /** Optional fixed toolCallId for in-place updates */
+  toolCallId?: string;
 }
 
 function extractTextFromToolResult(result: unknown): string | null {
@@ -67,7 +69,7 @@ export function createDeterministicToolMessages(
     throw new Error("toolName is required");
   }
 
-  const toolCallId = `playground-${generateId()}`;
+  const toolCallId = options?.toolCallId ?? `playground-${generateId()}`;
   const state = options?.state ?? "output-available";
 
   // Get custom invoked message from tool metadata if available
