@@ -28,6 +28,8 @@ import {
 import { toast } from "sonner";
 import {
   Organization,
+  OrganizationMember,
+  type OrganizationMembershipRole,
   useOrganizationQueries,
   useOrganizationMembers,
   useOrganizationMutations,
@@ -102,6 +104,13 @@ interface OrganizationPageProps {
   organization: Organization;
 }
 
+function resolveOrganizationRole(
+  member: Pick<OrganizationMember, "role" | "isOwner">,
+): OrganizationMembershipRole {
+  if (member.role) return member.role;
+  return member.isOwner ? "owner" : "member";
+}
+
 function OrganizationPage({ organization }: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -126,14 +135,35 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     updateOrganizationLogo,
   } = useOrganizationMutations();
 
-  // All members can edit the organization
-  const canEdit = true;
-
-  // Determine if current user is the creator (for delete vs leave)
   const currentMember = activeMembers.find(
     (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
-  const isCreator = currentMember?.userId === organization.createdBy;
+  const currentRole: OrganizationMembershipRole | null = currentMember
+    ? resolveOrganizationRole(currentMember)
+    : null;
+  const isOwner = currentRole === "owner";
+  const canEdit = currentRole === "owner" || currentRole === "admin";
+  const canInvite = canEdit;
+
+  const canRemoveMember = (member: OrganizationMember): boolean => {
+    if (!currentRole) return false;
+    const isSelf = member.email.toLowerCase() === currentUserEmail?.toLowerCase();
+    if (isSelf) return false;
+
+    const targetRole = resolveOrganizationRole(member);
+    if (currentRole === "owner") {
+      return targetRole !== "owner";
+    }
+    if (currentRole === "admin") {
+      return targetRole === "member";
+    }
+    return false;
+  };
+
+  const canRemovePendingMember = (): boolean => {
+    if (!currentRole) return false;
+    return currentRole === "owner" || currentRole === "admin";
+  };
 
   // Logo upload state
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -222,7 +252,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   };
 
   const handleInvite = async () => {
-    if (!inviteEmail.trim()) return;
+    if (!inviteEmail.trim() || !canInvite) return;
     setIsInviting(true);
     try {
       const result = await addMember({
@@ -350,7 +380,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
         <h2 className="text-xl font-semibold mb-6">Members</h2>
 
         {/* Invite Member */}
-        {canEdit && (
+        {canInvite && (
           <div className="mb-6">
             <label className="text-sm font-medium text-muted-foreground block mb-2">
               Invite New Member
@@ -392,8 +422,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                   member={member}
                   currentUserEmail={currentUserEmail}
                   onRemove={
-                    // Can't remove the owner (creator)
-                    !member.isOwner
+                    canRemoveMember(member)
                       ? () => handleRemoveMember(member.email)
                       : undefined
                   }
@@ -416,7 +445,11 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                   member={member}
                   currentUserEmail={currentUserEmail}
                   isPending
-                  onRemove={() => handleRemoveMember(member.email)}
+                  onRemove={
+                    canRemovePendingMember()
+                      ? () => handleRemoveMember(member.email)
+                      : undefined
+                  }
                 />
               ))}
             </div>
@@ -435,7 +468,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
         </p>
 
         <div className="border border-destructive/50 rounded-lg p-6 space-y-6">
-          {!isCreator && (
+          {!membersLoading && !isOwner && (
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-medium">Leave Organization</h3>
@@ -455,7 +488,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
             </div>
           )}
 
-          {isCreator && (
+          {!membersLoading && isOwner && (
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-medium">Delete Organization</h3>

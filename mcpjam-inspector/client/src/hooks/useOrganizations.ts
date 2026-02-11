@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 
+export type OrganizationMembershipRole = "owner" | "admin" | "member";
+
 export interface Organization {
   _id: string;
   name: string;
@@ -17,6 +19,7 @@ export interface OrganizationMember {
   organizationId: string;
   userId?: string;
   email: string;
+  role?: OrganizationMembershipRole;
   isOwner: boolean;
   addedBy: string;
   addedAt: number;
@@ -94,6 +97,12 @@ export function useOrganizationMutations() {
     "organizations:deleteOrganization" as any,
   );
   const addMember = useMutation("organizations:addMember" as any);
+  const changeMemberRole = useMutation(
+    "organizations:changeMemberRole" as any,
+  );
+  const transferOrganizationOwnership = useMutation(
+    "organizations:transferOrganizationOwnership" as any,
+  );
   const removeMember = useMutation("organizations:removeMember" as any);
   const generateLogoUploadUrl = useAction(
     "organizations:generateOrganizationLogoUploadUrl" as any,
@@ -107,6 +116,8 @@ export function useOrganizationMutations() {
     updateOrganization,
     deleteOrganization,
     addMember,
+    changeMemberRole,
+    transferOrganizationOwnership,
     removeMember,
     generateLogoUploadUrl,
     updateOrganizationLogo,
