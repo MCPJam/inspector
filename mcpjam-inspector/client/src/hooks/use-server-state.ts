@@ -208,46 +208,77 @@ export function useServerState({
         config?.url instanceof URL ? config.url.href : config?.url || undefined;
       const headers = config?.requestInit?.headers || undefined;
 
+      const payload = {
+        name: serverName,
+        enabled: serverEntry.enabled ?? false,
+        transportType,
+        command: config?.command,
+        args: config?.args,
+        url,
+        headers,
+        timeout: config?.timeout,
+        useOAuth: serverEntry.useOAuth,
+        oauthScopes: serverEntry.oauthFlowProfile?.scopes
+          ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
+          : undefined,
+        clientId: serverEntry.oauthFlowProfile?.clientId,
+      } as const;
+
       try {
         if (existingServer) {
           await convexUpdateServer({
             serverId: existingServer._id,
-            name: serverName,
-            enabled: serverEntry.enabled ?? false,
-            transportType,
-            command: config?.command,
-            args: config?.args,
-            url,
-            headers,
-            timeout: config?.timeout,
-            useOAuth: serverEntry.useOAuth,
-            oauthScopes: serverEntry.oauthFlowProfile?.scopes
-              ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
-              : undefined,
-            clientId: serverEntry.oauthFlowProfile?.clientId,
+            ...payload,
           });
-        } else {
-          await convexCreateServer({
-            workspaceId: effectiveActiveWorkspaceId,
-            name: serverName,
-            enabled: serverEntry.enabled ?? false,
-            transportType,
-            command: config?.command,
-            args: config?.args,
-            url,
-            headers,
-            timeout: config?.timeout,
-            useOAuth: serverEntry.useOAuth,
-            oauthScopes: serverEntry.oauthFlowProfile?.scopes
-              ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
-              : undefined,
-            clientId: serverEntry.oauthFlowProfile?.clientId,
-          });
+          return;
         }
-      } catch (error) {
+
+        await convexCreateServer({
+          workspaceId: effectiveActiveWorkspaceId,
+          ...payload,
+        });
+      } catch (primaryError) {
+        // Best-effort fallback for stale query snapshots:
+        // if update failed, try create; if create failed, try update when possible.
+        try {
+          if (existingServer) {
+            await convexCreateServer({
+              workspaceId: effectiveActiveWorkspaceId,
+              ...payload,
+            });
+            return;
+          }
+          const retryExisting = activeWorkspaceServersFlat?.find(
+            (s) => s.name === serverName,
+          );
+          if (retryExisting) {
+            await convexUpdateServer({
+              serverId: retryExisting._id,
+              ...payload,
+            });
+            return;
+          }
+        } catch (fallbackError) {
+          logger.error("Failed to sync server to Convex", {
+            serverName,
+            primaryError:
+              primaryError instanceof Error
+                ? primaryError.message
+                : "Unknown error",
+            fallbackError:
+              fallbackError instanceof Error
+                ? fallbackError.message
+                : "Unknown error",
+          });
+          return;
+        }
+
         logger.error("Failed to sync server to Convex", {
           serverName,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error:
+            primaryError instanceof Error
+              ? primaryError.message
+              : "Unknown error",
         });
       }
     },
@@ -1058,15 +1089,27 @@ export function useServerState({
     [dispatch, logger],
   );
 
-  const handleRemoveServer = useCallback(
+  const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
+    clearOAuthData(serverName);
+    localStorage.removeItem(`mcp-env-${serverName}`);
+  }, []);
+
+  const removeServerFromStateAndCloud = useCallback(
     async (serverName: string) => {
-      logger.info("Removing server", { serverName });
-      clearOAuthData(serverName);
-      localStorage.removeItem(`mcp-env-${serverName}`);
+      cleanupServerLocalArtifacts(serverName);
       dispatch({ type: "REMOVE_SERVER", name: serverName });
       await removeServerFromConvex(serverName);
     },
-    [logger, dispatch, removeServerFromConvex],
+    [cleanupServerLocalArtifacts, dispatch, removeServerFromConvex],
+  );
+
+  const handleRemoveServer = useCallback(
+    async (serverName: string) => {
+      logger.info("Removing server", { serverName });
+      await handleDisconnect(serverName);
+      await removeServerFromStateAndCloud(serverName);
+    },
+    [logger, handleDisconnect, removeServerFromStateAndCloud],
   );
 
   const handleReconnect = useCallback(
@@ -1257,16 +1300,76 @@ export function useServerState({
       formData: ServerFormData,
       skipAutoConnect?: boolean,
     ) => {
-      const originalServer = appState.servers[originalServerName];
+      const nextServerName = formData.name.trim();
+      if (!nextServerName) {
+        toast.error("Server name is required");
+        return;
+      }
+      const isRename = nextServerName !== originalServerName;
+      const activeWorkspaceServers =
+        effectiveWorkspaces[effectiveActiveWorkspaceId]?.servers ?? {};
+      if (isRename && activeWorkspaceServers[nextServerName]) {
+        toast.error(
+          `A server named "${nextServerName}" already exists. Choose a different name.`,
+        );
+        return;
+      }
+      const originalServer =
+        appState.servers[originalServerName] ??
+        effectiveServers[originalServerName];
 
       if (skipAutoConnect) {
         const mcpConfig = toMCPConfig(formData);
-        dispatch({
-          type: "CONNECT_SUCCESS",
-          name: originalServerName,
+        if (isRename) {
+          await handleDisconnect(originalServerName);
+          await removeServerFromStateAndCloud(originalServerName);
+        }
+
+        const updatedServer: ServerWithName = {
+          ...(originalServer ?? {}),
+          name: nextServerName,
           config: mcpConfig,
+          lastConnectionTime: originalServer?.lastConnectionTime ?? new Date(),
+          connectionStatus: originalServer?.connectionStatus ?? "disconnected",
+          retryCount: originalServer?.retryCount ?? 0,
+          enabled: originalServer?.enabled ?? false,
+          oauthTokens: originalServer?.oauthTokens,
+          oauthFlowProfile: originalServer?.oauthFlowProfile,
+          initializationInfo: originalServer?.initializationInfo,
+          useOAuth: formData.useOAuth ?? false,
+        } as ServerWithName;
+
+        if (!formData.useOAuth) {
+          clearOAuthData(nextServerName);
+        }
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: nextServerName,
+          server: updatedServer,
         });
+
+        if (!isAuthenticated) {
+          const workspace = appState.workspaces[appState.activeWorkspaceId];
+          if (workspace) {
+            const nextServers = { ...workspace.servers };
+            if (isRename) {
+              delete nextServers[originalServerName];
+            }
+            nextServers[nextServerName] = updatedServer;
+            dispatch({
+              type: "UPDATE_WORKSPACE",
+              workspaceId: appState.activeWorkspaceId,
+              updates: { servers: nextServers },
+            });
+          }
+        } else {
+          await syncServerToConvex(nextServerName, updatedServer);
+        }
+
         saveOAuthConfigToLocalStorage(formData);
+        if (appState.selectedServer === originalServerName && isRename) {
+          setSelectedServer(nextServerName);
+        }
         toast.success("Server configuration updated");
         return;
       }
@@ -1275,7 +1378,7 @@ export function useServerState({
       const shouldPreserveOAuth =
         hadOAuthTokens &&
         formData.useOAuth &&
-        formData.name === originalServerName &&
+        nextServerName === originalServerName &&
         formData.type === "http" &&
         formData.url === (originalServer?.config as any).url?.toString();
 
@@ -1319,23 +1422,36 @@ export function useServerState({
 
       saveOAuthConfigToLocalStorage(formData);
 
-      await handleDisconnect(originalServerName);
+      if (isRename) {
+        await handleDisconnect(originalServerName);
+        await removeServerFromStateAndCloud(originalServerName);
+      } else {
+        await handleDisconnect(originalServerName);
+      }
       await handleConnect(formData);
       if (
         appState.selectedServer === originalServerName &&
-        formData.name !== originalServerName
+        nextServerName !== originalServerName
       ) {
-        setSelectedServer(formData.name);
+        setSelectedServer(nextServerName);
       }
     },
     [
       appState.servers,
+      appState.activeWorkspaceId,
+      appState.workspaces,
       appState.selectedServer,
       dispatch,
+      effectiveWorkspaces,
+      effectiveActiveWorkspaceId,
+      effectiveServers,
       fetchAndStoreInitInfo,
       handleDisconnect,
       handleConnect,
+      isAuthenticated,
+      removeServerFromStateAndCloud,
       setSelectedServer,
+      syncServerToConvex,
     ],
   );
 

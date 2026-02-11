@@ -351,6 +351,7 @@ export function ServersTab({
             onUpdate(originalName, formData)
           }
           server={serverToEdit}
+          existingServerNames={Object.keys(connectedOrConnectingServerConfigs)}
         />
       )}
 
