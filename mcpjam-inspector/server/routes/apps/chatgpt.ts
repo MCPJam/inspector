@@ -770,7 +770,9 @@ chatgpt.post("/upload-file", async (c) => {
     }
     if (buffer.length > MAX_FILE_SIZE) {
       return c.json(
-        { error: `File too large. Maximum size: ${MAX_FILE_SIZE / 1024 / 1024}MB` },
+        {
+          error: `File too large. Maximum size: ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+        },
         400,
       );
     }

@@ -70,7 +70,9 @@ type OpenAIAPI = {
   sendFollowupTurn(message: any): void;
   requestCheckout(session: CheckoutSession): Promise<any>;
   uploadFile(file: File): Promise<{ fileId: string }>;
-  getFileDownloadUrl(options: { fileId: string }): Promise<{ downloadUrl: string }>;
+  getFileDownloadUrl(options: {
+    fileId: string;
+  }): Promise<{ downloadUrl: string }>;
   requestDisplayMode(options?: { mode?: string; maxHeight?: number | null }): {
     mode: string;
   };
@@ -358,7 +360,11 @@ const clampNumber = (value: unknown): number | null => {
     view: { mode: viewMode, params: viewParams },
     widgetState: null,
     ...(useMapPendingCalls
-      ? { _pendingCalls: new Map(), _pendingCheckoutCalls: new Map(), _pendingFileCalls: new Map() }
+      ? {
+          _pendingCalls: new Map(),
+          _pendingCheckoutCalls: new Map(),
+          _pendingFileCalls: new Map(),
+        }
       : {}),
     _callId: 0,
 
@@ -522,7 +528,9 @@ const clampNumber = (value: unknown): number | null => {
       }
       if (file.size > MAX_SIZE) {
         return Promise.reject(
-          new Error(`File too large. Maximum size: ${MAX_SIZE / 1024 / 1024}MB`),
+          new Error(
+            `File too large. Maximum size: ${MAX_SIZE / 1024 / 1024}MB`,
+          ),
         );
       }
 
@@ -585,7 +593,9 @@ const clampNumber = (value: unknown): number | null => {
       });
     },
 
-    getFileDownloadUrl(options: { fileId: string }): Promise<{ downloadUrl: string }> {
+    getFileDownloadUrl(options: {
+      fileId: string;
+    }): Promise<{ downloadUrl: string }> {
       if (!options || !options.fileId) {
         return Promise.reject(new Error("fileId is required"));
       }

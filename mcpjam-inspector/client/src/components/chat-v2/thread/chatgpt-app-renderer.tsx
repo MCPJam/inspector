@@ -1203,20 +1203,19 @@ export function ChatGPTAppRenderer({
           const uploadCallId = event.data.callId;
           (async () => {
             try {
-              const resp = await authFetch(
-                "/api/apps/chatgpt/upload-file",
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    data: event.data.data,
-                    mimeType: event.data.mimeType,
-                    fileName: event.data.fileName,
-                  }),
-                },
-              );
+              const resp = await authFetch("/api/apps/chatgpt/upload-file", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  data: event.data.data,
+                  mimeType: event.data.mimeType,
+                  fileName: event.data.fileName,
+                }),
+              });
               if (!resp.ok) {
-                const body = await resp.json().catch(() => ({ error: resp.statusText }));
+                const body = await resp
+                  .json()
+                  .catch(() => ({ error: resp.statusText }));
                 postToWidget({
                   type: "openai:uploadFile:response",
                   callId: uploadCallId,
@@ -1408,20 +1407,19 @@ export function ChatGPTAppRenderer({
         const uploadCallId = event.data.callId;
         (async () => {
           try {
-            const resp = await authFetch(
-              "/api/apps/chatgpt/upload-file",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  data: event.data.data,
-                  mimeType: event.data.mimeType,
-                  fileName: event.data.fileName,
-                }),
-              },
-            );
+            const resp = await authFetch("/api/apps/chatgpt/upload-file", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                data: event.data.data,
+                mimeType: event.data.mimeType,
+                fileName: event.data.fileName,
+              }),
+            });
             if (!resp.ok) {
-              const body = await resp.json().catch(() => ({ error: resp.statusText }));
+              const body = await resp
+                .json()
+                .catch(() => ({ error: resp.statusText }));
               postToWidget(
                 {
                   type: "openai:uploadFile:response",
