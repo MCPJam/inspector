@@ -28,7 +28,11 @@ import {
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
 import { authFetch } from "@/lib/session-token";
-import { useTrafficLogStore, extractMethod } from "@/stores/traffic-log-store";
+import {
+  useTrafficLogStore,
+  extractMethod,
+  UiProtocol,
+} from "@/stores/traffic-log-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import {
   AppBridge,
@@ -38,7 +42,6 @@ import {
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
-  JSONRPCMessage,
   CallToolResult,
   ContentBlock,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -72,9 +75,10 @@ type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
   | "input-streaming"
   | "input-available"
+  | "approval-requested"
   | "output-available"
-  | "output-error"
-  | "output-denied";
+  | "output-denied"
+  | "output-error";
 
 // CSP and permissions metadata types are now imported from SDK
 
@@ -1457,7 +1461,12 @@ export function MCPAppsRenderer({
         toolInputRef={toolInputRef}
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}
-        addUiLog={addUiLog}
+        addUiLog={(log) =>
+          addUiLog({
+            ...log,
+            protocol: "mcp-apps" as UiProtocol,
+          })
+        }
         onCspViolation={handleCspViolation}
       />
     </div>

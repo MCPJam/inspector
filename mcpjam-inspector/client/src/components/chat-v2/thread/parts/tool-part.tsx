@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   Box,
   Check,
@@ -39,6 +39,8 @@ import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
+const SAVE_VIEW_BUTTON_USED_KEY = "mcpjam-save-view-button-used";
+const SAVE_VIEW_REDIRECTED_KEY = "mcpjam-save-view-redirected";
 
 export function ToolPart({
   part,
@@ -76,7 +78,7 @@ export function ToolPart({
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
   /** Callback to save this tool execution as a view */
-  onSaveView?: () => void;
+  onSaveView?: () => void | Promise<void>;
   /** Whether the save view button should be enabled */
   canSaveView?: boolean;
   /** Reason why save is disabled (for tooltip) */
@@ -124,6 +126,7 @@ export function ToolPart({
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "csp" | "context" | null
   >("data");
+  const [hasUsedSaveViewButton, setHasUsedSaveViewButton] = useState(true);
 
   const inputData = (part as any).input;
   const outputData = (part as any).output;
@@ -217,6 +220,37 @@ export function ToolPart({
     }
 
     onDisplayModeChange?.(mode);
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setHasUsedSaveViewButton(
+      localStorage.getItem(SAVE_VIEW_BUTTON_USED_KEY) === "true",
+    );
+  }, []);
+
+  const handleSaveViewClick = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!onSaveView || !canSaveView || isSaving) return;
+
+    if (typeof window === "undefined") {
+      void Promise.resolve(onSaveView());
+      return;
+    }
+
+    const shouldRedirectAfterSave =
+      localStorage.getItem(SAVE_VIEW_REDIRECTED_KEY) !== "true";
+
+    if (!hasUsedSaveViewButton) {
+      setHasUsedSaveViewButton(true);
+      localStorage.setItem(SAVE_VIEW_BUTTON_USED_KEY, "true");
+    }
+
+    void Promise.resolve(onSaveView()).then(() => {
+      if (!shouldRedirectAfterSave) return;
+      localStorage.setItem(SAVE_VIEW_REDIRECTED_KEY, "true");
+      window.location.hash = "views";
+    });
   };
 
   return (
@@ -360,36 +394,43 @@ export function ToolPart({
           {onSaveView && uiType && uiType !== UIType.MCP_UI && (
             <>
               {hasWidgetDebug && <div className="h-4 w-px bg-border/40" />}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    disabled={!canSaveView || isSaving}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSaveView();
-                    }}
-                    className={`p-1 rounded transition-colors ${
-                      canSaveView && !isSaving
-                        ? "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
-                        : "text-muted-foreground/30 cursor-not-allowed"
-                    }`}
-                  >
-                    {isSaving ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Layers className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isSaving
-                    ? "Saving..."
-                    : canSaveView
-                      ? "Save as View"
-                      : saveDisabledReason || "No output to save"}
-                </TooltipContent>
-              </Tooltip>
+              <span className="relative inline-flex items-center">
+                {canSaveView && !isSaving && !hasUsedSaveViewButton && (
+                  <span className="absolute right-0 top-full z-50 mt-2 whitespace-nowrap rounded-xl border border-primary/70 bg-primary px-2.5 py-1 text-[10px] font-semibold normal-case text-primary-foreground shadow-md shadow-primary/30 ring-1 ring-primary/40">
+                    <span className="absolute -top-1 right-2 z-50 h-2.5 w-2.5 rotate-45 border-l border-t border-primary/70 bg-primary" />
+                    <span className="relative z-10">
+                      Like how it looks? Save it.
+                    </span>
+                  </span>
+                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={!canSaveView || isSaving}
+                      onClick={handleSaveViewClick}
+                      className={`p-1 rounded transition-colors ${
+                        canSaveView && !isSaving
+                          ? "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                          : "text-muted-foreground/30 cursor-not-allowed"
+                      }`}
+                    >
+                      {isSaving ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Layers className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {isSaving
+                      ? "Saving..."
+                      : canSaveView
+                        ? "Save as View"
+                        : saveDisabledReason || "No output to save"}
+                  </TooltipContent>
+                </Tooltip>
+              </span>
             </>
           )}
           {toolState && StatusIcon && (
