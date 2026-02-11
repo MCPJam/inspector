@@ -1199,6 +1199,64 @@ export function ChatGPTAppRenderer({
           setCheckoutOpen(true);
           break;
         }
+        case "openai:uploadFile": {
+          const uploadCallId = event.data.callId;
+          (async () => {
+            try {
+              const resp = await authFetch(
+                "/api/apps/chatgpt/upload-file",
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    data: event.data.data,
+                    mimeType: event.data.mimeType,
+                    fileName: event.data.fileName,
+                  }),
+                },
+              );
+              if (!resp.ok) {
+                const body = await resp.json().catch(() => ({ error: resp.statusText }));
+                postToWidget({
+                  type: "openai:uploadFile:response",
+                  callId: uploadCallId,
+                  error: body.error || "Upload failed",
+                });
+                return;
+              }
+              const { fileId } = await resp.json();
+              postToWidget({
+                type: "openai:uploadFile:response",
+                callId: uploadCallId,
+                result: { fileId },
+              });
+            } catch (err) {
+              postToWidget({
+                type: "openai:uploadFile:response",
+                callId: uploadCallId,
+                error: err instanceof Error ? err.message : "Upload failed",
+              });
+            }
+          })();
+          break;
+        }
+        case "openai:getFileDownloadUrl": {
+          const dlCallId = event.data.callId;
+          const fileId = event.data.fileId;
+          // Construct URL on the widget's origin (127.0.0.1) so it can fetch the file.
+          // The widget runs on a swapped origin (localhost ↔ 127.0.0.1), so we build
+          // the URL using the current page's protocol and port but with 127.0.0.1 host.
+          const loc = window.location;
+          const widgetHost =
+            loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
+          const downloadUrl = `${loc.protocol}//${widgetHost}:${loc.port}/api/apps/chatgpt/file/${fileId}`;
+          postToWidget({
+            type: "openai:getFileDownloadUrl:response",
+            callId: dlCallId,
+            result: { downloadUrl },
+          });
+          break;
+        }
         case "openai:requestModal": {
           setModalTitle(event.data.title || "Modal");
           setModalParams(event.data.params || {});
@@ -1344,6 +1402,73 @@ export function ChatGPTAppRenderer({
             );
           }
         })();
+      }
+
+      if (event.data?.type === "openai:uploadFile") {
+        const uploadCallId = event.data.callId;
+        (async () => {
+          try {
+            const resp = await authFetch(
+              "/api/apps/chatgpt/upload-file",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  data: event.data.data,
+                  mimeType: event.data.mimeType,
+                  fileName: event.data.fileName,
+                }),
+              },
+            );
+            if (!resp.ok) {
+              const body = await resp.json().catch(() => ({ error: resp.statusText }));
+              postToWidget(
+                {
+                  type: "openai:uploadFile:response",
+                  callId: uploadCallId,
+                  error: body.error || "Upload failed",
+                },
+                true,
+              );
+              return;
+            }
+            const { fileId } = await resp.json();
+            postToWidget(
+              {
+                type: "openai:uploadFile:response",
+                callId: uploadCallId,
+                result: { fileId },
+              },
+              true,
+            );
+          } catch (err) {
+            postToWidget(
+              {
+                type: "openai:uploadFile:response",
+                callId: uploadCallId,
+                error: err instanceof Error ? err.message : "Upload failed",
+              },
+              true,
+            );
+          }
+        })();
+      }
+
+      if (event.data?.type === "openai:getFileDownloadUrl") {
+        const dlCallId = event.data.callId;
+        const fileId = event.data.fileId;
+        const loc = window.location;
+        const widgetHost =
+          loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
+        const downloadUrl = `${loc.protocol}//${widgetHost}:${loc.port}/api/apps/chatgpt/file/${fileId}`;
+        postToWidget(
+          {
+            type: "openai:getFileDownloadUrl:response",
+            callId: dlCallId,
+            result: { downloadUrl },
+          },
+          true,
+        );
       }
     },
     [

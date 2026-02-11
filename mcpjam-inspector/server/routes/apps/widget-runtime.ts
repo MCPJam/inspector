@@ -62,12 +62,15 @@ type OpenAIAPI = {
   widgetState: any;
   _pendingCalls?: Map<number, PendingCall>;
   _pendingCheckoutCalls?: Map<number, PendingCall>;
+  _pendingFileCalls?: Map<number, PendingCall>;
   _callId: number;
   setWidgetState(state: any): void;
   callTool(toolName: string, args?: Record<string, any>): Promise<any>;
   sendFollowUpMessage(opts: any): void;
   sendFollowupTurn(message: any): void;
   requestCheckout(session: CheckoutSession): Promise<any>;
+  uploadFile(file: File): Promise<{ fileId: string }>;
+  getFileDownloadUrl(options: { fileId: string }): Promise<{ downloadUrl: string }>;
   requestDisplayMode(options?: { mode?: string; maxHeight?: number | null }): {
     mode: string;
   };
@@ -355,7 +358,7 @@ const clampNumber = (value: unknown): number | null => {
     view: { mode: viewMode, params: viewParams },
     widgetState: null,
     ...(useMapPendingCalls
-      ? { _pendingCalls: new Map(), _pendingCheckoutCalls: new Map() }
+      ? { _pendingCalls: new Map(), _pendingCheckoutCalls: new Map(), _pendingFileCalls: new Map() }
       : {}),
     _callId: 0,
 
@@ -499,6 +502,142 @@ const clampNumber = (value: unknown): number | null => {
         setTimeout(() => {
           window.removeEventListener("message", handler);
           reject(new Error("Checkout timeout"));
+        }, 30000);
+      });
+    },
+
+    uploadFile(file: File): Promise<{ fileId: string }> {
+      const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+      const MAX_SIZE = 20 * 1024 * 1024; // 20MB
+
+      if (!(file instanceof File)) {
+        return Promise.reject(new Error("uploadFile requires a File object"));
+      }
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        return Promise.reject(
+          new Error(
+            `Unsupported file type: ${file.type}. Allowed: ${ALLOWED_TYPES.join(", ")}`,
+          ),
+        );
+      }
+      if (file.size > MAX_SIZE) {
+        return Promise.reject(
+          new Error(`File too large. Maximum size: ${MAX_SIZE / 1024 / 1024}MB`),
+        );
+      }
+
+      const callId = ++this._callId;
+
+      return new Promise((resolve, reject) => {
+        if (useMapPendingCalls) {
+          this._pendingFileCalls.set(callId, { resolve, reject });
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          // Strip the "data:<mime>;base64," prefix
+          const base64 = dataUrl.split(",")[1];
+          window.parent.postMessage(
+            {
+              type: "openai:uploadFile",
+              callId,
+              toolId,
+              data: base64,
+              mimeType: file.type,
+              fileName: file.name,
+            },
+            "*",
+          );
+        };
+        reader.onerror = () => {
+          if (useMapPendingCalls) this._pendingFileCalls.delete(callId);
+          reject(new Error("Failed to read file"));
+        };
+        reader.readAsDataURL(file);
+
+        if (useMapPendingCalls) {
+          setTimeout(() => {
+            if (this._pendingFileCalls.has(callId)) {
+              this._pendingFileCalls.delete(callId);
+              reject(new Error("Upload timeout"));
+            }
+          }, 60000);
+        } else {
+          // Fallback: per-call message listener
+          const handler = (event: MessageEvent<any>) => {
+            if (
+              event.data?.type === "openai:uploadFile:response" &&
+              event.data.callId === callId
+            ) {
+              window.removeEventListener("message", handler);
+              event.data.error
+                ? reject(new Error(event.data.error))
+                : resolve(event.data.result);
+            }
+          };
+          window.addEventListener("message", handler);
+          setTimeout(() => {
+            window.removeEventListener("message", handler);
+            reject(new Error("Upload timeout"));
+          }, 60000);
+        }
+      });
+    },
+
+    getFileDownloadUrl(options: { fileId: string }): Promise<{ downloadUrl: string }> {
+      if (!options || !options.fileId) {
+        return Promise.reject(new Error("fileId is required"));
+      }
+
+      const callId = ++this._callId;
+
+      if (useMapPendingCalls) {
+        return new Promise((resolve, reject) => {
+          this._pendingFileCalls.set(callId, { resolve, reject });
+          window.parent.postMessage(
+            {
+              type: "openai:getFileDownloadUrl",
+              callId,
+              toolId,
+              fileId: options.fileId,
+            },
+            "*",
+          );
+          setTimeout(() => {
+            if (this._pendingFileCalls.has(callId)) {
+              this._pendingFileCalls.delete(callId);
+              reject(new Error("getFileDownloadUrl timeout"));
+            }
+          }, 30000);
+        });
+      }
+
+      return new Promise((resolve, reject) => {
+        const handler = (event: MessageEvent<any>) => {
+          if (
+            event.data?.type === "openai:getFileDownloadUrl:response" &&
+            event.data.callId === callId
+          ) {
+            window.removeEventListener("message", handler);
+            event.data.error
+              ? reject(new Error(event.data.error))
+              : resolve(event.data.result);
+          }
+        };
+        window.addEventListener("message", handler);
+        window.parent.postMessage(
+          {
+            type: "openai:getFileDownloadUrl",
+            callId,
+            toolId,
+            fileId: options.fileId,
+          },
+          "*",
+        );
+        setTimeout(() => {
+          window.removeEventListener("message", handler);
+          reject(new Error("getFileDownloadUrl timeout"));
         }, 30000);
       });
     },
@@ -652,6 +791,18 @@ const clampNumber = (value: unknown): number | null => {
         if (pending) {
           window.openai._pendingCheckoutCalls?.delete(callId);
           error ? pending.reject(new Error(error)) : pending.resolve(result);
+        }
+        break;
+      }
+      case "openai:uploadFile:response":
+      case "openai:getFileDownloadUrl:response": {
+        if (!useMapPendingCalls) break;
+        const filePending = window.openai._pendingFileCalls?.get(callId);
+        if (filePending) {
+          window.openai._pendingFileCalls?.delete(callId);
+          error
+            ? filePending.reject(new Error(error))
+            : filePending.resolve(result);
         }
         break;
       }
