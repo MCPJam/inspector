@@ -1257,6 +1257,63 @@ export function MCPAppsRenderer({
       return;
     }
 
+    // Handle file upload messages (non-JSON-RPC, same protocol as ChatGPT widget)
+    if (data.type === "openai:uploadFile") {
+      const uploadCallId = data.callId;
+      (async () => {
+        try {
+          const resp = await authFetch("/api/apps/chatgpt/upload-file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              data: data.data,
+              mimeType: data.mimeType,
+              fileName: data.fileName,
+            }),
+          });
+          if (!resp.ok) {
+            const body = await resp
+              .json()
+              .catch(() => ({ error: resp.statusText }));
+            sandboxRef.current?.postMessage({
+              type: "openai:uploadFile:response",
+              callId: uploadCallId,
+              error: body.error || "Upload failed",
+            });
+            return;
+          }
+          const { fileId } = await resp.json();
+          sandboxRef.current?.postMessage({
+            type: "openai:uploadFile:response",
+            callId: uploadCallId,
+            result: { fileId },
+          });
+        } catch (err) {
+          sandboxRef.current?.postMessage({
+            type: "openai:uploadFile:response",
+            callId: uploadCallId,
+            error: err instanceof Error ? err.message : "Upload failed",
+          });
+        }
+      })();
+      return;
+    }
+
+    if (data.type === "openai:getFileDownloadUrl") {
+      const dlCallId = data.callId;
+      const fileId = data.fileId;
+      const loc = window.location;
+      const widgetHost =
+        loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
+      const downloadUrl = `${loc.protocol}//${widgetHost}:${loc.port}/api/apps/chatgpt/file/${fileId}`;
+      sandboxRef.current?.postMessage({
+        type: "openai:getFileDownloadUrl:response",
+        callId: dlCallId,
+        result: { downloadUrl },
+      });
+      return;
+    }
+
     // Handle openai/* JSON-RPC notifications from the compat layer
     if (
       data.jsonrpc === "2.0" &&
