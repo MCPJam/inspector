@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Plus, FileText } from "lucide-react";
@@ -46,6 +46,7 @@ import {
   rectSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+
 const ORDER_STORAGE_KEY = "mcp-server-order";
 
 function loadServerOrder(workspaceId: string): string[] | undefined {
@@ -166,21 +167,15 @@ export function ServersTab({
   const [activeId, setActiveId] = useState<string | null>(null);
 
   // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
-  const savedOrder = useRef<string[] | undefined>(undefined);
-  savedOrder.current = useMemo(
-    () => loadServerOrder(activeWorkspaceId),
-    [activeWorkspaceId],
-  );
-
   const allNames = useMemo(
     () => Object.keys(connectedOrConnectingServerConfigs),
     [connectedOrConnectingServerConfigs],
   );
 
   const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
-    const saved = savedOrder.current;
+    const saved = loadServerOrder(activeWorkspaceId);
     if (saved && saved.length > 0) {
-      const existing = saved.filter((n) => allNames.includes(n));
+      const existing = saved.filter((n: string) => allNames.includes(n));
       const added = allNames.filter((n) => !existing.includes(n));
       return [...existing, ...added];
     }
