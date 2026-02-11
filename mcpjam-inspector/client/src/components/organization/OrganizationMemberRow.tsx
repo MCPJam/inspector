@@ -58,7 +58,7 @@ export function OrganizationMemberRow({
     effectiveRole !== "owner" && !!onTransferOwnership;
   const showRoleBadge = !canChangeRole;
 
-  const canRemove = !isSelf && !member.isOwner && !!onRemove;
+  const canRemove = !isSelf && effectiveRole !== "owner" && !!onRemove;
 
   if (isPending) {
     return (

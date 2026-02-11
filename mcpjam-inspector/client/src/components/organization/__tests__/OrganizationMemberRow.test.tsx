@@ -54,4 +54,17 @@ describe("OrganizationMemberRow", () => {
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.getByText(/^member$/i)).toBeInTheDocument();
   });
+
+  it("does not show remove control for owner role even if legacy isOwner is false", () => {
+    const inconsistentOwner = {
+      ...createMember("member"),
+      role: "owner" as const,
+      isOwner: false,
+    };
+
+    render(<OrganizationMemberRow member={inconsistentOwner} onRemove={vi.fn()} />);
+
+    expect(screen.getByText(/^owner$/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
 });
