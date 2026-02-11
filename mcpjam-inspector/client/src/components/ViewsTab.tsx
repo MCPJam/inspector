@@ -769,10 +769,7 @@ export function ViewsTab({
       const previewToolCallId = `view-preview-${selectedView._id}`;
       const previewWidgetDebugInfo = widgetsMap.get(previewToolCallId);
       const widgetHtml = previewWidgetDebugInfo?.widgetHtml;
-      if (
-        widgetHtml &&
-        widgetHtml !== lastUploadedWidgetHtmlRef.current
-      ) {
+      if (widgetHtml && widgetHtml !== lastUploadedWidgetHtmlRef.current) {
         // Upload new widget HTML blob
         const uploadUrl =
           selectedView.protocol === "mcp-apps"
