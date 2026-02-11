@@ -32,6 +32,14 @@ function createAuditEvent(
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe("useOrganizationAudit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -123,5 +131,57 @@ describe("useOrganizationAudit", () => {
 
     expect(mockQuery).not.toHaveBeenCalled();
     expect(result.current.events).toEqual([]);
+  });
+
+  it("clears stale state and cancels in-flight request when organization changes", async () => {
+    const deferred = createDeferred<AuditEvent[]>();
+    mockQuery
+      .mockReturnValueOnce(deferred.promise)
+      .mockResolvedValueOnce([createAuditEvent("evt-new", 200, { organizationId: "org-2" })]);
+
+    const { result, rerender } = renderHook(
+      ({ organizationId, isAuthenticated }) =>
+        useOrganizationAudit({
+          organizationId,
+          isAuthenticated,
+          initialLimit: 2,
+        }),
+      {
+        initialProps: {
+          organizationId: "org-1" as string | null,
+          isAuthenticated: true,
+        },
+      },
+    );
+
+    act(() => {
+      void result.current.refresh();
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(true);
+    });
+
+    rerender({ organizationId: "org-2", isAuthenticated: true });
+
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.error).toBeNull();
+    expect(result.current.events).toEqual([]);
+
+    deferred.resolve([createAuditEvent("evt-old", 100, { organizationId: "org-1" })]);
+
+    await waitFor(() => {
+      expect(result.current.events).toEqual([]);
+    });
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(mockQuery).toHaveBeenLastCalledWith("auditEvents:listByOrganization", {
+      organizationId: "org-2",
+      limit: 2,
+    });
+    expect(result.current.events.map((event) => event._id)).toEqual(["evt-new"]);
   });
 });

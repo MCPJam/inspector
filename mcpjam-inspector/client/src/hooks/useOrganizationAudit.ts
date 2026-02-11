@@ -63,6 +63,13 @@ export function useOrganizationAudit({
     convexRef.current = convex;
   }, [convex]);
 
+  useEffect(() => {
+    requestSequenceRef.current += 1;
+    setEvents([]);
+    setError(null);
+    setIsLoading(false);
+  }, [organizationId, isAuthenticated]);
+
   const fetchPage = useCallback(async (): Promise<AuditEvent[]> => {
     if (!organizationId || !isAuthenticated) return [];
 
