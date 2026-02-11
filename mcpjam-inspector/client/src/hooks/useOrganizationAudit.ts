@@ -26,10 +26,7 @@ export interface UseOrganizationAuditOptions {
 export interface UseOrganizationAuditResult {
   events: AuditEvent[];
   isLoading: boolean;
-  isLoadingMore: boolean;
   error: Error | null;
-  hasMore: boolean;
-  loadMore: () => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -57,9 +54,7 @@ export function useOrganizationAudit({
   const convexRef = useRef(convex);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [hasMore, setHasMore] = useState(false);
 
   const requestSequenceRef = useRef(0);
   const limit = Math.max(1, initialLimit);
@@ -69,25 +64,15 @@ export function useOrganizationAudit({
   }, [convex]);
 
   const fetchPage = useCallback(
-    async (before?: number): Promise<AuditEvent[]> => {
+    async (): Promise<AuditEvent[]> => {
       if (!organizationId || !isAuthenticated) return [];
-
-      const args: {
-        organizationId: string;
-        limit: number;
-        before?: number;
-      } = {
-        organizationId,
-        limit,
-      };
-
-      if (before !== undefined) {
-        args.before = before;
-      }
 
       return (await convexRef.current.query(
         "auditEvents:listByOrganization" as any,
-        args as any,
+        {
+          organizationId,
+          limit,
+        } as any,
       )) as AuditEvent[];
     },
     [isAuthenticated, limit, organizationId],
@@ -96,7 +81,6 @@ export function useOrganizationAudit({
   const refresh = useCallback(async () => {
     if (!organizationId || !isAuthenticated) {
       setEvents([]);
-      setHasMore(false);
       setError(null);
       return;
     }
@@ -110,79 +94,24 @@ export function useOrganizationAudit({
       if (requestSequenceRef.current !== requestId) return;
 
       setEvents(dedupeAndSort(page));
-      setHasMore(page.length >= limit);
     } catch (nextError) {
       if (requestSequenceRef.current !== requestId) return;
       setError(toError(nextError));
       setEvents([]);
-      setHasMore(false);
     } finally {
       if (requestSequenceRef.current === requestId) {
         setIsLoading(false);
       }
     }
-  }, [fetchPage, isAuthenticated, limit, organizationId]);
-
-  const loadMore = useCallback(async () => {
-    if (
-      !organizationId ||
-      !isAuthenticated ||
-      isLoading ||
-      isLoadingMore ||
-      !hasMore
-    ) {
-      return;
-    }
-
-    const oldestTimestamp = events[events.length - 1]?.timestamp;
-    if (!oldestTimestamp) {
-      setHasMore(false);
-      return;
-    }
-
-    const requestId = ++requestSequenceRef.current;
-    setIsLoadingMore(true);
-    setError(null);
-
-    try {
-      const page = await fetchPage(oldestTimestamp);
-      if (requestSequenceRef.current !== requestId) return;
-
-      setEvents((current) => dedupeAndSort([...current, ...page]));
-      setHasMore(page.length >= limit);
-    } catch (nextError) {
-      if (requestSequenceRef.current !== requestId) return;
-      setError(toError(nextError));
-    } finally {
-      if (requestSequenceRef.current === requestId) {
-        setIsLoadingMore(false);
-      }
-    }
-  }, [
-    events,
-    fetchPage,
-    hasMore,
-    isAuthenticated,
-    isLoading,
-    isLoadingMore,
-    limit,
-    organizationId,
-  ]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  }, [fetchPage, isAuthenticated, organizationId]);
 
   return useMemo(
     () => ({
       events,
       isLoading,
-      isLoadingMore,
       error,
-      hasMore,
-      loadMore,
       refresh,
     }),
-    [error, events, hasMore, isLoading, isLoadingMore, loadMore, refresh],
+    [error, events, isLoading, refresh],
   );
 }

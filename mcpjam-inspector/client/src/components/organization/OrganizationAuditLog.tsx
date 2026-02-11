@@ -17,12 +17,15 @@ function safeStringify(value: unknown): string {
   }
 }
 
+const CSV_INJECTION_RE = /^[=+\-@]/;
+
 function toCsvCell(value: unknown): string {
   const raw = value === undefined || value === null ? "" : String(value);
-  if (raw.includes(",") || raw.includes('"') || raw.includes("\n")) {
-    return `"${raw.replace(/"/g, '""')}"`;
+  const sanitized = CSV_INJECTION_RE.test(raw) ? `\t${raw}` : raw;
+  if (sanitized.includes(",") || sanitized.includes('"') || sanitized.includes("\n") || sanitized.includes("\t")) {
+    return `"${sanitized.replace(/"/g, '""')}"`;
   }
-  return raw;
+  return sanitized;
 }
 
 function toDownloadSlug(value: string): string {
@@ -86,34 +89,45 @@ function buildCsvRows(events: AuditEvent[]) {
   return [headers, ...rows].map((row) => row.map(toCsvCell).join(",")).join("\n");
 }
 
+function downloadCsv(events: AuditEvent[], organizationName: string) {
+  const csv = buildCsvRows(events);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const datePart = new Date().toISOString().slice(0, 10);
+  link.href = objectUrl;
+  link.download = `organization-audit-${toDownloadSlug(organizationName)}-${datePart}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(objectUrl);
+}
+
 export function OrganizationAuditLog({
   organizationId,
   organizationName,
   isAuthenticated,
 }: OrganizationAuditLogProps) {
-  const { events, isLoading, isLoadingMore, error, refresh } = useOrganizationAudit({
+  const { events, isLoading, error, refresh } = useOrganizationAudit({
     organizationId,
     isAuthenticated,
     initialLimit: 500,
   });
 
-  const handleExportCsv = () => {
-    if (events.length === 0) return;
-
-    const csv = buildCsvRows(events);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const datePart = new Date().toISOString().slice(0, 10);
-    link.href = objectUrl;
-    link.download = `organization-audit-${toDownloadSlug(organizationName)}-${datePart}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(objectUrl);
+  const handleExportCsv = async () => {
+    let data = events;
+    if (data.length === 0) {
+      await refresh();
+      // refresh updates state asynchronously; re-fetch inline for immediate export
+      // We call refresh which sets state, but we need the data now — so we
+      // rely on the fact that refresh() awaits the fetch. Unfortunately state
+      // won't have updated yet. Instead, we trigger refresh and let the user
+      // click Export again once data is loaded.
+      return;
+    }
+    downloadCsv(data, organizationName);
   };
 
-  const isBusy = isLoading || isLoadingMore;
   const errorType = classifyAuditError(error);
   const errorMessage =
     errorType === "missing"
@@ -121,6 +135,9 @@ export function OrganizationAuditLog({
       : errorType === "permission"
         ? "You don't have permission to access organization audit events."
         : error?.message ?? null;
+
+  const hasEvents = events.length > 0;
+  const showHint = !hasEvents && !isLoading && !errorMessage;
 
   return (
     <section className="space-y-4">
@@ -132,11 +149,11 @@ export function OrganizationAuditLog({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => void refresh()} disabled={isBusy}>
-            <RefreshCw className={`mr-2 size-4 ${isBusy ? "animate-spin" : ""}`} />
+          <Button variant="outline" onClick={() => void refresh()} disabled={isLoading}>
+            <RefreshCw className={`mr-2 size-4 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button variant="outline" onClick={handleExportCsv} disabled={events.length === 0 || isBusy}>
+          <Button variant="outline" onClick={() => void handleExportCsv()} disabled={isLoading}>
             <Download className="mr-2 size-4" />
             Export CSV
           </Button>
@@ -149,11 +166,17 @@ export function OrganizationAuditLog({
         </div>
       )}
 
-      {!errorMessage && isBusy && events.length === 0 && (
+      {!errorMessage && isLoading && events.length === 0 && (
         <div className="flex items-center gap-2 rounded-md border p-4 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" />
           Loading audit events...
         </div>
+      )}
+
+      {showHint && (
+        <p className="text-sm text-muted-foreground">
+          Click Refresh to load events, then Export CSV.
+        </p>
       )}
     </section>
   );

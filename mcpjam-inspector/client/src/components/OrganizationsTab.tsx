@@ -30,6 +30,7 @@ import {
   Organization,
   OrganizationMember,
   type OrganizationMembershipRole,
+  resolveOrganizationRole,
   useOrganizationQueries,
   useOrganizationMembers,
   useOrganizationMutations,
@@ -103,13 +104,6 @@ export function OrganizationsTab({ organizationId }: OrganizationsTabProps) {
 
 interface OrganizationPageProps {
   organization: Organization;
-}
-
-function resolveOrganizationRole(
-  member: Pick<OrganizationMember, "role" | "isOwner">,
-): OrganizationMembershipRole {
-  if (member.role) return member.role;
-  return member.isOwner ? "owner" : "member";
 }
 
 function OrganizationPage({ organization }: OrganizationPageProps) {

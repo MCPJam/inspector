@@ -30,6 +30,15 @@ export interface OrganizationMember {
   } | null;
 }
 
+export function resolveOrganizationRole(
+  member: Pick<OrganizationMember, "role" | "isOwner">,
+  role?: OrganizationMembershipRole,
+): OrganizationMembershipRole {
+  if (role) return role;
+  if (member.role) return member.role;
+  return member.isOwner ? "owner" : "member";
+}
+
 export function useOrganizationQueries({
   isAuthenticated,
 }: {

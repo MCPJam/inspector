@@ -40,7 +40,25 @@ describe("useOrganizationAudit", () => {
     vi.clearAllMocks();
   });
 
-  it("loads initial events with configured page size", async () => {
+  it("does not auto-fetch on mount — starts idle", async () => {
+    const { result } = renderHook(() =>
+      useOrganizationAudit({
+        organizationId: "org-1",
+        isAuthenticated: true,
+        initialLimit: 2,
+      }),
+    );
+
+    // Give it a tick to ensure nothing fires
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(mockQuery).not.toHaveBeenCalled();
+    expect(result.current.events).toEqual([]);
+  });
+
+  it("loads events when refresh is called explicitly", async () => {
     mockQuery.mockResolvedValueOnce([
       createAuditEvent("evt-3", 300),
       createAuditEvent("evt-2", 200),
@@ -54,58 +72,15 @@ describe("useOrganizationAudit", () => {
       }),
     );
 
-    await waitFor(() => {
-      expect(result.current.events).toHaveLength(2);
+    await act(async () => {
+      await result.current.refresh();
     });
 
+    expect(result.current.events).toHaveLength(2);
     expect(mockQuery).toHaveBeenCalledWith("auditEvents:listByOrganization", {
       organizationId: "org-1",
       limit: 2,
     });
-    expect(result.current.hasMore).toBe(true);
-  });
-
-  it("appends older pages and de-duplicates by event id", async () => {
-    mockQuery
-      .mockResolvedValueOnce([
-        createAuditEvent("evt-3", 300),
-        createAuditEvent("evt-2", 200),
-      ])
-      .mockResolvedValueOnce([
-        createAuditEvent("evt-2", 200),
-        createAuditEvent("evt-1", 100),
-      ]);
-
-    const { result } = renderHook(() =>
-      useOrganizationAudit({
-        organizationId: "org-1",
-        isAuthenticated: true,
-        initialLimit: 2,
-      }),
-    );
-
-    await waitFor(() => {
-      expect(result.current.events).toHaveLength(2);
-    });
-
-    await act(async () => {
-      await result.current.loadMore();
-    });
-
-    expect(mockQuery).toHaveBeenNthCalledWith(
-      2,
-      "auditEvents:listByOrganization",
-      {
-        organizationId: "org-1",
-        limit: 2,
-        before: 200,
-      },
-    );
-    expect(result.current.events.map((event) => event._id)).toEqual([
-      "evt-3",
-      "evt-2",
-      "evt-1",
-    ]);
   });
 
   it("exposes query errors and recovers after refresh", async () => {
@@ -122,18 +97,18 @@ describe("useOrganizationAudit", () => {
       }),
     );
 
-    await waitFor(() => {
-      expect(result.current.error?.message).toContain("requires admin");
+    await act(async () => {
+      await result.current.refresh();
     });
+
+    expect(result.current.error?.message).toContain("requires admin");
     expect(result.current.events).toHaveLength(0);
 
     await act(async () => {
       await result.current.refresh();
     });
 
-    await waitFor(() => {
-      expect(result.current.error).toBeNull();
-    });
+    expect(result.current.error).toBeNull();
     expect(result.current.events).toHaveLength(1);
   });
 
@@ -145,8 +120,8 @@ describe("useOrganizationAudit", () => {
       }),
     );
 
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
+    await act(async () => {
+      await result.current.refresh();
     });
 
     expect(mockQuery).not.toHaveBeenCalled();

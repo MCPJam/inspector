@@ -29,15 +29,12 @@ describe("OrganizationAuditLog", () => {
     mockUseOrganizationAudit.mockReturnValue({
       events: [],
       isLoading: false,
-      isLoadingMore: false,
       error: null,
-      hasMore: false,
-      loadMore: vi.fn(),
       refresh: vi.fn(),
     });
   });
 
-  it("renders compact export-only UI", () => {
+  it("renders compact export-only UI with idle hint", () => {
     render(
       <OrganizationAuditLog
         organizationId="org-1"
@@ -48,10 +45,9 @@ describe("OrganizationAuditLog", () => {
 
     expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export CSV" })).toBeInTheDocument();
-    expect(screen.queryByText("Time range")).not.toBeInTheDocument();
     expect(
-      screen.queryByPlaceholderText(/search action, actor, target, metadata/i),
-    ).not.toBeInTheDocument();
+      screen.getByText("Click Refresh to load events, then Export CSV."),
+    ).toBeInTheDocument();
 
     expect(mockUseOrganizationAudit).toHaveBeenCalledWith({
       organizationId: "org-1",
@@ -64,10 +60,7 @@ describe("OrganizationAuditLog", () => {
     mockUseOrganizationAudit.mockReturnValue({
       events: [createEvent()],
       isLoading: false,
-      isLoadingMore: false,
       error: null,
-      hasMore: false,
-      loadMore: vi.fn(),
       refresh: vi.fn(),
     });
 
@@ -106,12 +99,9 @@ describe("OrganizationAuditLog", () => {
     mockUseOrganizationAudit.mockReturnValue({
       events: [],
       isLoading: false,
-      isLoadingMore: false,
       error: new Error(
         "Could not find public function for 'auditEvents:listByOrganization'",
       ),
-      hasMore: false,
-      loadMore: vi.fn(),
       refresh: vi.fn(),
     });
 

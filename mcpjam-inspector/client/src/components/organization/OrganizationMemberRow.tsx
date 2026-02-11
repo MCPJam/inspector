@@ -13,6 +13,7 @@ import { Clock, Loader2, X } from "lucide-react";
 import {
   type OrganizationMember,
   type OrganizationMembershipRole,
+  resolveOrganizationRole,
 } from "@/hooks/useOrganizations";
 
 interface OrganizationMemberRowProps {
@@ -26,15 +27,6 @@ interface OrganizationMemberRowProps {
   onTransferOwnership?: () => void;
   isTransferringOwnership?: boolean;
   onRemove?: () => void;
-}
-
-function resolveRole(
-  member: OrganizationMember,
-  role?: OrganizationMembershipRole,
-): OrganizationMembershipRole {
-  if (role) return role;
-  if (member.role) return member.role;
-  return member.isOwner ? "owner" : "member";
 }
 
 function roleBadgeVariant(role: OrganizationMembershipRole) {
@@ -59,7 +51,7 @@ export function OrganizationMemberRow({
   const email = member.email;
   const initials = getInitials(name);
   const isSelf = email.toLowerCase() === currentUserEmail?.toLowerCase();
-  const effectiveRole = resolveRole(member, role);
+  const effectiveRole = resolveOrganizationRole(member, role);
   const canChangeRole =
     canEditRole && effectiveRole !== "owner" && !!onRoleChange;
   const canTransferOwnership =
