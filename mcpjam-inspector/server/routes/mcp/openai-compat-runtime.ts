@@ -409,6 +409,9 @@ declare global {
   // ── Listen for incoming JSON-RPC responses & notifications ─────────
 
   window.addEventListener("message", (event: MessageEvent) => {
+    // Only accept messages from our parent (sandbox proxy)
+    if (event.source !== window.parent) return;
+
     const data = event.data;
     if (!data || data.jsonrpc !== "2.0") return;
 
@@ -463,6 +466,9 @@ declare global {
   // ── Listen for file operation responses (non-JSON-RPC) ─────────────
 
   window.addEventListener("message", (event: MessageEvent) => {
+    // Only accept messages from our parent (sandbox proxy)
+    if (event.source !== window.parent) return;
+
     const data = event.data;
     if (!data) return;
 

@@ -59,7 +59,9 @@ export async function handleUploadFileMessage(
       }),
     });
     if (!resp.ok) {
-      const body = (await resp.json().catch(() => ({ error: resp.statusText }))) as {
+      const body = (await resp
+        .json()
+        .catch(() => ({ error: resp.statusText }))) as {
         error?: string;
       };
       sendResponse({

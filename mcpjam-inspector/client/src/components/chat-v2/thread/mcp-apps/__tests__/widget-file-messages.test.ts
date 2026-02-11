@@ -18,7 +18,9 @@ describe("widget-file-messages", () => {
     const sendResponse = vi.fn();
     vi.mocked(authFetch).mockResolvedValue({
       ok: true,
-      json: async () => ({ fileId: "file_550e8400-e29b-41d4-a716-446655440000" }),
+      json: async () => ({
+        fileId: "file_550e8400-e29b-41d4-a716-446655440000",
+      }),
     } as Response);
 
     await handleUploadFileMessage(

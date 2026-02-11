@@ -14,60 +14,59 @@ const {
   stableStoreFns,
   mockSandboxPostMessage,
   sandboxedIframePropsRef,
-} =
-  vi.hoisted(() => {
-    const bridge = {
-      sendToolInput: vi.fn(),
-      sendToolInputPartial: vi.fn(),
-      sendToolResult: vi.fn(),
-      sendToolCancelled: vi.fn(),
-      setHostContext: vi.fn(),
-      teardownResource: vi.fn().mockResolvedValue({}),
-      close: vi.fn().mockResolvedValue(undefined),
-      connect: vi.fn().mockResolvedValue(undefined),
-      getAppCapabilities: vi.fn().mockReturnValue(undefined),
-      // These callbacks get set by registerBridgeHandlers
-      oninitialized: null as (() => void) | null,
-      onmessage: null as any,
-      onopenlink: null as any,
-      oncalltool: null as any,
-      onreadresource: null as any,
-      onlistresources: null as any,
-      onlistresourcetemplates: null as any,
-      onlistprompts: null as any,
-      onloggingmessage: null as any,
-      onsizechange: null as any,
-      onrequestdisplaymode: null as any,
-      onupdatemodelcontext: null as any,
-    };
+} = vi.hoisted(() => {
+  const bridge = {
+    sendToolInput: vi.fn(),
+    sendToolInputPartial: vi.fn(),
+    sendToolResult: vi.fn(),
+    sendToolCancelled: vi.fn(),
+    setHostContext: vi.fn(),
+    teardownResource: vi.fn().mockResolvedValue({}),
+    close: vi.fn().mockResolvedValue(undefined),
+    connect: vi.fn().mockResolvedValue(undefined),
+    getAppCapabilities: vi.fn().mockReturnValue(undefined),
+    // These callbacks get set by registerBridgeHandlers
+    oninitialized: null as (() => void) | null,
+    onmessage: null as any,
+    onopenlink: null as any,
+    oncalltool: null as any,
+    onreadresource: null as any,
+    onlistresources: null as any,
+    onlistresourcetemplates: null as any,
+    onlistprompts: null as any,
+    onloggingmessage: null as any,
+    onsizechange: null as any,
+    onrequestdisplaymode: null as any,
+    onupdatemodelcontext: null as any,
+  };
 
-    // Stable function references for store selectors — prevents useEffect deps
-    // from changing on every render, which would teardown/reinitialize the bridge.
-    const stableFns = {
-      addLog: vi.fn(),
-      setWidgetDebugInfo: vi.fn(),
-      setWidgetGlobals: vi.fn(),
-      setWidgetCsp: vi.fn(),
-      addCspViolation: vi.fn(),
-      clearCspViolations: vi.fn(),
-      setWidgetModelContext: vi.fn(),
-      setWidgetHtml: vi.fn(),
-    };
+  // Stable function references for store selectors — prevents useEffect deps
+  // from changing on every render, which would teardown/reinitialize the bridge.
+  const stableFns = {
+    addLog: vi.fn(),
+    setWidgetDebugInfo: vi.fn(),
+    setWidgetGlobals: vi.fn(),
+    setWidgetCsp: vi.fn(),
+    addCspViolation: vi.fn(),
+    clearCspViolations: vi.fn(),
+    setWidgetModelContext: vi.fn(),
+    setWidgetHtml: vi.fn(),
+  };
 
-    return {
-      mockBridge: bridge,
-      mockPostMessageTransport: vi.fn(),
-      mockSandboxPostMessage: vi.fn(),
-      sandboxedIframePropsRef: { current: null as any },
-      stableStoreFns: stableFns,
-      /** Simulate the widget completing initialization. */
-      triggerReady: () => {
-        if (!bridge.oninitialized)
-          throw new Error("oninitialized was never set on the bridge");
-        bridge.oninitialized();
-      },
-    };
-  });
+  return {
+    mockBridge: bridge,
+    mockPostMessageTransport: vi.fn(),
+    mockSandboxPostMessage: vi.fn(),
+    sandboxedIframePropsRef: { current: null as any },
+    stableStoreFns: stableFns,
+    /** Simulate the widget completing initialization. */
+    triggerReady: () => {
+      if (!bridge.oninitialized)
+        throw new Error("oninitialized was never set on the bridge");
+      bridge.oninitialized();
+    },
+  };
+});
 
 // ── Module mocks ───────────────────────────────────────────────────────────
 vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
