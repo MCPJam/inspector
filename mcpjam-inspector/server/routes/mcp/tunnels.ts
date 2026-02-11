@@ -238,8 +238,13 @@ tunnels.post("/create/:serverId", async (c) => {
       authHeader,
     );
 
+    const serverTunnelUrl = tunnelManager.getServerTunnelUrl(serverId);
+    if (!serverTunnelUrl) {
+      throw new Error("Failed to build server tunnel URL");
+    }
+
     return c.json({
-      url: `${baseUrl}/api/mcp/adapter-http/${serverId}`,
+      url: serverTunnelUrl,
       serverId,
       existed: false,
     });

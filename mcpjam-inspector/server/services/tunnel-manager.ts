@@ -110,8 +110,9 @@ class TunnelManager {
 
   getServerTunnelUrl(serverId: string): string | null {
     const perServerTunnelUrl = this.getTunnelUrl(serverId);
+    const encodedServerId = encodeURIComponent(serverId);
     return perServerTunnelUrl
-      ? `${perServerTunnelUrl}/api/mcp/adapter-http/${serverId}`
+      ? `${perServerTunnelUrl}/api/mcp/adapter-http/${encodedServerId}`
       : null;
   }
 
