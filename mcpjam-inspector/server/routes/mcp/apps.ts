@@ -14,8 +14,64 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
+import { OPENAI_COMPAT_RUNTIME_SCRIPT } from "./openai-compat-runtime.bundled";
 
 const apps = new Hono();
+
+// ── OpenAI compat injection helpers ─────────────────────────────────
+
+/**
+ * Escape characters that could break inline <script> content.
+ * Same approach as chatgpt.ts serializeForInlineScript.
+ */
+const serializeForInlineScript = (value: unknown) =>
+  JSON.stringify(value ?? null)
+    .replace(/</g, "\\u003C")
+    .replace(/>/g, "\\u003E")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+
+/**
+ * Inject the OpenAI compatibility runtime into MCP App HTML.
+ * Adds a JSON config element + the bundled IIFE script into <head>.
+ * If no <head> tag exists, wraps the content in a full HTML document.
+ */
+function injectOpenAICompat(
+  html: string,
+  widgetData: {
+    toolId: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+    toolOutput: unknown;
+    theme?: string;
+    viewMode?: string;
+    viewParams?: Record<string, unknown>;
+  },
+): string {
+  const configJson = serializeForInlineScript({
+    toolId: widgetData.toolId,
+    toolName: widgetData.toolName,
+    toolInput: widgetData.toolInput,
+    toolOutput: widgetData.toolOutput,
+    theme: widgetData.theme ?? "dark",
+    viewMode: widgetData.viewMode ?? "inline",
+    viewParams: widgetData.viewParams ?? {},
+  });
+
+  const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
+  // Escape </ sequences to prevent a literal "</script>" in the bundled code
+  // from prematurely closing the tag (XSS vector). In JS, \/ is just /.
+  const escapedRuntime = OPENAI_COMPAT_RUNTIME_SCRIPT.replace(/<\//g, "<\\/");
+  const runtimeScript = `<script>${escapedRuntime}</script>`;
+  const headContent = `${configScript}${runtimeScript}`;
+
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, `$&${headContent}`);
+  }
+  // No <head> tag — wrap in a full HTML document
+  return `<!DOCTYPE html><html><head>${headContent}<meta charset="UTF-8"></head><body>${html}</body></html>`;
+}
 
 /**
  * SEP-1865 mandated mimetype for MCP Apps
@@ -125,7 +181,14 @@ apps.get("/widget-content/:toolId", async (c) => {
     // Read CSP mode from query param (allows override for testing)
     const cspModeParam = c.req.query("csp_mode") as CspMode | undefined;
 
-    const { serverId, resourceUri, cspMode: storedCspMode } = widgetData;
+    // Support template query param for modal views (overrides resource URI)
+    const templateUri = c.req.query("template");
+    if (templateUri && !templateUri.startsWith("ui://")) {
+      return c.json({ error: "Template must use ui:// protocol" }, 400);
+    }
+
+    const { serverId, cspMode: storedCspMode } = widgetData;
+    const resourceUri = templateUri || widgetData.resourceUri;
 
     // Use query param override if provided, otherwise use stored mode
     const effectiveCspMode = cspModeParam ?? storedCspMode ?? "widget-declared";
@@ -199,6 +262,20 @@ apps.get("/widget-content/:toolId", async (c) => {
     // When in permissive mode, skip CSP entirely (for testing/debugging)
     // When in widget-declared mode, use the widget's CSP metadata (or restrictive defaults)
     const isPermissive = effectiveCspMode === "permissive";
+
+    // Inject window.openai compat layer into every MCP App iframe
+    // Pass through view_mode/view_params query params for modal support
+    const viewMode = c.req.query("view_mode");
+    const viewParamsRaw = c.req.query("view_params");
+    let viewParams: Record<string, unknown> | undefined;
+    if (viewParamsRaw) {
+      try {
+        viewParams = JSON.parse(viewParamsRaw);
+      } catch {
+        // Ignore invalid JSON
+      }
+    }
+    html = injectOpenAICompat(html, { ...widgetData, viewMode, viewParams });
 
     // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");

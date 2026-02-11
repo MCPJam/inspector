@@ -39,20 +39,17 @@ import {
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   JSONRPCMessage,
-  MessageExtraInfo,
   CallToolResult,
   ContentBlock,
 } from "@modelcontextprotocol/sdk/types.js";
-import type {
-  Transport,
-  TransportSendOptions,
-} from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   getClaudeDesktopStyleVariables,
   CLAUDE_DESKTOP_FONT_CSS,
   CLAUDE_DESKTOP_PLATFORM,
 } from "@/config/claude-desktop-host-context";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
+import { LoggingTransport } from "./mcp-apps-logging-transport";
+import { McpAppsModal } from "./mcp-apps-modal";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -216,65 +213,6 @@ function getToolInputSignature(
   return getValueSignature(input, 0);
 }
 
-class LoggingTransport implements Transport {
-  private inner: Transport;
-  private onSend?: (message: JSONRPCMessage) => void;
-  private onReceive?: (message: JSONRPCMessage) => void;
-  private _sessionId?: string;
-
-  onclose?: () => void;
-  onerror?: (error: Error) => void;
-  onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
-  setProtocolVersion?: (version: string) => void;
-
-  constructor(
-    inner: Transport,
-    handlers: {
-      onSend?: (message: JSONRPCMessage) => void;
-      onReceive?: (message: JSONRPCMessage) => void;
-    },
-  ) {
-    this.inner = inner;
-    this.onSend = handlers.onSend;
-    this.onReceive = handlers.onReceive;
-  }
-
-  get sessionId() {
-    return this._sessionId ?? this.inner.sessionId;
-  }
-
-  set sessionId(value: string | undefined) {
-    this._sessionId = value;
-    this.inner.sessionId = value;
-  }
-
-  async start() {
-    this.inner.onmessage = (message, extra) => {
-      this.onReceive?.(message);
-      this.onmessage?.(message, extra);
-    };
-    this.inner.onerror = (error) => {
-      this.onerror?.(error);
-    };
-    this.inner.onclose = () => {
-      this.onclose?.();
-    };
-    this.inner.setProtocolVersion = (version) => {
-      this.setProtocolVersion?.(version);
-    };
-    await this.inner.start();
-  }
-
-  async send(message: JSONRPCMessage, options?: TransportSendOptions) {
-    this.onSend?.(message);
-    await this.inner.send(message, options);
-  }
-
-  async close() {
-    await this.inner.close();
-  }
-}
-
 export function MCPAppsRenderer({
   serverId,
   toolCallId,
@@ -402,6 +340,12 @@ export function MCPAppsRenderer({
   const [streamingRenderSignaled, setStreamingRenderSignaled] = useState(false);
   const [hasDeliveredStreamingInput, setHasDeliveredStreamingInput] =
     useState(false);
+
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
+  const [modalTitle, setModalTitle] = useState("");
+  const [modalTemplate, setModalTemplate] = useState<string | null>(null);
 
   // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
   useEffect(() => {
@@ -1261,41 +1205,83 @@ export function MCPAppsRenderer({
     return () => resetStreamingState();
   }, [resetStreamingState]);
 
+  const handleCspViolation = useCallback(
+    (event: MessageEvent) => {
+      const data = event.data;
+      if (!data) return;
+
+      const {
+        directive,
+        blockedUri,
+        sourceFile,
+        lineNumber,
+        columnNumber,
+        effectiveDirective,
+        timestamp,
+      } = data;
+
+      addUiLog({
+        widgetId: toolCallId,
+        serverId,
+        direction: "ui-to-host",
+        protocol: "mcp-apps",
+        method: "csp-violation",
+        message: data,
+      });
+
+      addCspViolation(toolCallId, {
+        directive,
+        effectiveDirective,
+        blockedUri,
+        sourceFile,
+        lineNumber,
+        columnNumber,
+        timestamp: timestamp || Date.now(),
+      });
+
+      console.warn(
+        `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
+        sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
+      );
+    },
+    [addUiLog, toolCallId, serverId, addCspViolation],
+  );
+
   const handleSandboxMessage = (event: MessageEvent) => {
-    if (event.data?.type !== "mcp-apps:csp-violation") return;
-    const {
-      directive,
-      blockedUri,
-      sourceFile,
-      lineNumber,
-      columnNumber,
-      effectiveDirective,
-      timestamp,
-    } = event.data;
+    const data = event.data;
+    if (!data) return;
 
-    addUiLog({
-      widgetId: toolCallId,
-      serverId,
-      direction: "ui-to-host",
-      protocol: "mcp-apps",
-      method: "csp-violation",
-      message: event.data,
-    });
+    // Handle CSP violation messages (custom type)
+    if (data.type === "mcp-apps:csp-violation") {
+      handleCspViolation(event);
+      return;
+    }
 
-    addCspViolation(toolCallId, {
-      directive,
-      effectiveDirective,
-      blockedUri,
-      sourceFile,
-      lineNumber,
-      columnNumber,
-      timestamp: timestamp || Date.now(),
-    });
+    // Handle openai/* JSON-RPC notifications from the compat layer
+    if (
+      data.jsonrpc === "2.0" &&
+      typeof data.method === "string" &&
+      data.method.startsWith("openai/")
+    ) {
+      addUiLog({
+        widgetId: toolCallId,
+        serverId,
+        direction: "ui-to-host",
+        protocol: "mcp-apps",
+        method: data.method,
+        message: data,
+      });
 
-    console.warn(
-      `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
-      sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
-    );
+      if (data.method === "openai/requestModal") {
+        const params = data.params ?? {};
+        setModalTitle(params.title || "Modal");
+        setModalParams(params.params || {});
+        setModalTemplate(params.template || null);
+        setModalOpen(true);
+      } else if (data.method === "openai/requestClose") {
+        setModalOpen(false);
+      }
+    }
   };
 
   // Denied state
@@ -1451,6 +1437,29 @@ export function MCPAppsRenderer({
       <div className="text-[11px] text-muted-foreground/70">
         MCP App: <code>{resourceUri}</code>
       </div>
+
+      <McpAppsModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        title={modalTitle}
+        template={modalTemplate}
+        params={modalParams}
+        registerBridgeHandlers={registerBridgeHandlers}
+        widgetCsp={widgetCsp}
+        widgetPermissions={widgetPermissions}
+        widgetPermissive={widgetPermissive}
+        hostContextRef={hostContextRef}
+        serverId={serverId}
+        resourceUri={resourceUri}
+        toolCallId={toolCallId}
+        toolName={toolName}
+        cspMode={cspMode}
+        toolInputRef={toolInputRef}
+        toolOutputRef={toolOutputRef}
+        themeModeRef={themeModeRef}
+        addUiLog={addUiLog}
+        onCspViolation={handleCspViolation}
+      />
     </div>
   );
 }

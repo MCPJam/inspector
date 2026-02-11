@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Loader2, AlertCircle } from "lucide-react";
-import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps-renderer";
+import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps/mcp-apps-renderer";
 import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import {

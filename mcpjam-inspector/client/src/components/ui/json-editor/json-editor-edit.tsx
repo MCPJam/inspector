@@ -24,6 +24,7 @@ interface JsonEditorEditProps {
   className?: string;
   height?: string | number;
   maxHeight?: string | number;
+  showLineNumbers?: boolean;
   collapseStringsAfterLength?: number;
   wrapLongLinesInEdit?: boolean;
 }
@@ -186,6 +187,7 @@ export function JsonEditorEdit({
   className,
   height,
   maxHeight,
+  showLineNumbers = true,
   collapseStringsAfterLength,
   wrapLongLinesInEdit = false,
 }: JsonEditorEditProps) {
@@ -503,43 +505,45 @@ export function JsonEditorEdit({
       style={containerStyle}
     >
       {/* Line numbers - virtualized for performance */}
-      <div
-        ref={lineNumbersRef}
-        className="flex-shrink-0 h-full overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
-        style={{ width: "3rem" }}
-      >
+      {showLineNumbers && (
         <div
-          className="py-3 pr-2 text-xs text-muted-foreground leading-5 relative"
-          style={{
-            ...fontStyle,
-            height: `${lineNumberVirtualizer.getTotalSize()}px`,
-          }}
+          ref={lineNumbersRef}
+          className="flex-shrink-0 h-full overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
+          style={{ width: "3rem" }}
         >
-          {lineNumberVirtualizer.getVirtualItems().map((virtualRow) => {
-            const lineNum = virtualRow.index + 1;
-            const lineHeight =
-              lineLayouts[virtualRow.index]?.height ?? LINE_HEIGHT;
-            return (
-              <div
-                key={virtualRow.index}
-                className={cn(
-                  "leading-5 transition-colors duration-150 absolute left-0 right-0 pr-2",
-                  !readOnly &&
-                    lineNum === activeLine &&
-                    isFocused &&
-                    "text-foreground font-medium",
-                )}
-                style={{
-                  transform: `translateY(${virtualRow.start}px)`,
-                  height: `${lineHeight}px`,
-                }}
-              >
-                {lineNum}
-              </div>
-            );
-          })}
+          <div
+            className="py-3 pr-2 text-xs text-muted-foreground leading-5 relative"
+            style={{
+              ...fontStyle,
+              height: `${lineNumberVirtualizer.getTotalSize()}px`,
+            }}
+          >
+            {lineNumberVirtualizer.getVirtualItems().map((virtualRow) => {
+              const lineNum = virtualRow.index + 1;
+              const lineHeight =
+                lineLayouts[virtualRow.index]?.height ?? LINE_HEIGHT;
+              return (
+                <div
+                  key={virtualRow.index}
+                  className={cn(
+                    "leading-5 transition-colors duration-150 absolute left-0 right-0 pr-2",
+                    !readOnly &&
+                      lineNum === activeLine &&
+                      isFocused &&
+                      "text-foreground font-medium",
+                  )}
+                  style={{
+                    transform: `translateY(${virtualRow.start}px)`,
+                    height: `${lineHeight}px`,
+                  }}
+                >
+                  {lineNum}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Editor area with overlay */}
       <div className="relative flex-1 min-w-0 h-full overflow-hidden">
@@ -548,7 +552,7 @@ export function JsonEditorEdit({
           <pre
             ref={highlightRef}
             className={cn(
-              "p-3 text-xs leading-5 whitespace-pre overflow-auto m-0 min-h-full",
+              "h-full p-3 text-xs leading-5 whitespace-pre overflow-auto m-0",
               "select-text cursor-text",
             )}
             style={fontStyle}

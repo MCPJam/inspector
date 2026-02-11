@@ -148,6 +148,10 @@ vi.mock("lucide-react", () => ({
   X: (props: any) => <div {...props} />,
 }));
 
+vi.mock("../mcp-apps-modal", () => ({
+  McpAppsModal: () => null,
+}));
+
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
 

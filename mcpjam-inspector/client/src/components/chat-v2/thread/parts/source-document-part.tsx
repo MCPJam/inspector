@@ -10,6 +10,7 @@ export function SourceDocumentPart({
     <div className="space-y-1 text-xs">
       <div className="font-medium">📄 {part.title}</div>
       <JsonEditor
+        height="100%"
         viewOnly
         value={{
           sourceId: part.sourceId,

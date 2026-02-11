@@ -7,6 +7,7 @@ interface JsonEditorViewProps {
   className?: string;
   height?: string | number;
   maxHeight?: string | number;
+  showLineNumbers?: boolean;
   collapseStringsAfterLength?: number;
   collapsible?: boolean;
   defaultExpandDepth?: number;
@@ -19,6 +20,7 @@ export function JsonEditorView({
   className,
   height,
   maxHeight,
+  showLineNumbers = true,
   collapseStringsAfterLength,
   collapsible = false,
   defaultExpandDepth,
@@ -56,8 +58,9 @@ export function JsonEditorView({
       content={content}
       readOnly
       className={className}
-      height={height}
+      height={height ?? "100%"}
       maxHeight={maxHeight}
+      showLineNumbers={showLineNumbers}
       collapseStringsAfterLength={collapseStringsAfterLength}
     />
   );

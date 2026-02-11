@@ -496,6 +496,7 @@ export function LoggerView({
                       <div className="p-3">
                         <div className="max-h-[40vh] overflow-auto rounded-sm bg-background/60 p-2">
                           <JsonEditor
+                            height="100%"
                             value={normalizePayload(it.payload) as object}
                             readOnly
                             showToolbar={false}
