@@ -29,16 +29,12 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 # These are baked into the client bundle during build
 # On Railway: set VITE_MCPJAM_HOSTED_MODE=true as a build-time variable
 ARG VITE_MCPJAM_HOSTED_MODE
-ENV VITE_MCPJAM_HOSTED_MODE=${VITE_MCPJAM_HOSTED_MODE}
 
 ARG VITE_WORKOS_API_HOSTNAME
-ENV VITE_WORKOS_API_HOSTNAME=${VITE_WORKOS_API_HOSTNAME}
 
 ARG VITE_CONVEX_URL
-ENV VITE_CONVEX_URL=${VITE_CONVEX_URL}
 
 ARG VITE_WORKOS_CLIENT_ID
-ENV VITE_WORKOS_CLIENT_ID=${VITE_WORKOS_CLIENT_ID}
 
 # Layer 1: Copy configuration files (rarely change)
 COPY mcpjam-inspector/tsconfig.json mcpjam-inspector/package.json ./
@@ -67,7 +63,11 @@ RUN npm run build:server
 # Layer 7: Build client (changes most frequently, depends on SDK and shared)
 COPY mcpjam-inspector/client ./client
 COPY mcpjam-inspector/.env.production ./
-RUN npm run build:client
+RUN if [ -n "$VITE_MCPJAM_HOSTED_MODE" ]; then export VITE_MCPJAM_HOSTED_MODE; fi; \
+    if [ -n "$VITE_WORKOS_API_HOSTNAME" ]; then export VITE_WORKOS_API_HOSTNAME; fi; \
+    if [ -n "$VITE_CONVEX_URL" ]; then export VITE_CONVEX_URL; fi; \
+    if [ -n "$VITE_WORKOS_CLIENT_ID" ]; then export VITE_WORKOS_CLIENT_ID; fi; \
+    npm run build:client
 
 ################################################################################
 # Create a new stage to run the application with minimal runtime dependencies
