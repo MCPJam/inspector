@@ -1,35 +1,47 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useEffect, useState } from "react";
+import { AppShell } from "./components/layout/AppShell";
+import { PlaygroundPage } from "./pages/PlaygroundPage";
+import { ServerConnectionsPage } from "./pages/ServerConnectionsPage";
 
-function App() {
-  const [count, setCount] = useState(0)
+export type AppRoute = "servers" | "playground";
 
-  return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+const DEFAULT_ROUTE: AppRoute = "servers";
+
+function getRouteFromHash(hash: string): AppRoute {
+  const normalized = hash.replace(/^#/, "");
+  if (normalized === "playground") {
+    return "playground";
+  }
+  return DEFAULT_ROUTE;
 }
 
-export default App
+function App() {
+  const [route, setRoute] = useState<AppRoute>(() =>
+    getRouteFromHash(window.location.hash),
+  );
+
+  useEffect(() => {
+    if (!window.location.hash) {
+      window.location.hash = DEFAULT_ROUTE;
+    }
+
+    const onHashChange = () => {
+      setRoute(getRouteFromHash(window.location.hash));
+    };
+
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const handleNavigate = (nextRoute: AppRoute) => {
+    window.location.hash = nextRoute;
+  };
+
+  return (
+    <AppShell route={route} onNavigate={handleNavigate}>
+      {route === "servers" ? <ServerConnectionsPage /> : <PlaygroundPage />}
+    </AppShell>
+  );
+}
+
+export default App;
