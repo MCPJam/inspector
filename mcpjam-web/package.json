@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@mcpjam/sdk": "file:../sdk",
+    "@mcpjam/sdk": "0.8.5",
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "i": "^0.3.7",
