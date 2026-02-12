@@ -18,3 +18,18 @@ Eventually the LLM playground should have full parity to handle ChatGPT apps ren
 - Use Vercel AI-SDK to manage text streaming. 
 
 ## Instructions for AI: Feel free to write more planning below here.
+
+
+## Personal note on CORS pre-flight 
+Web app path (fails): browser uses @mcpjam/sdk/browser directly in McpConnectionsProvider.tsx (line 1) and calls manager.connectToServer(...) at McpConnectionsProvider.tsx (line 246).
+Inspector path (works): browser posts config to local API (/api/mcp/connect) at mcp-api.ts (line 37), then backend calls mcpClientManager.connectToServer(...) at connect.ts (line 71), with manager created on the Node server in app.ts (line 86).
+Why that matters:
+
+Browser direct calls hit CORS/preflight rules.
+For https://excalidraw-mcp-app.vercel.app/mcp, OPTIONS returns 405, so streamable fetch fails in browser (Failed to fetch).
+Then SDK fallback tries SSE GET, and that endpoint returns 405, producing your SSE error.
+Node backend (inspector) is not blocked by browser CORS preflight, so it can do the valid streamable POST and connect.
+Extra proof from inspector design:
+
+It also exposes its own bridge endpoints with explicit OPTIONS 204 for browser clients in http-adapters.ts (line 21).
+So the behavior difference is expected: direct browser transport vs backend-proxied transport.

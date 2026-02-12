@@ -241,6 +241,8 @@ export function McpConnectionsProvider({ children }: { children: ReactNode }) {
             });
           }
 
+          console.log("config", config);
+
           await manager.connectToServer(id, config);
           await manager.listTools(id).catch(() => undefined);
 
