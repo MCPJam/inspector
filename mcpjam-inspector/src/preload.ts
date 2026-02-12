@@ -47,7 +47,7 @@ interface ElectronAPI {
     onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
     removeUpdateReadyListener: () => void;
     restartAndInstall: () => void;
-    simulateUpdate: () => void; // Dev only - for testing
+    simulateUpdate?: () => void; // Dev only - for testing
   };
 }
 
@@ -96,10 +96,13 @@ const electronAPI: ElectronAPI = {
     restartAndInstall: () => {
       ipcRenderer.send("app:restart-for-update");
     },
-    simulateUpdate: () => {
-      // Dev only - sends a fake update event for testing
-      ipcRenderer.send("app:simulate-update");
-    },
+    ...(process.env.NODE_ENV === "development"
+      ? {
+          simulateUpdate: () => {
+            ipcRenderer.send("app:simulate-update");
+          },
+        }
+      : {}),
   },
 };
 

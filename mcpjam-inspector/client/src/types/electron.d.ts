@@ -43,7 +43,7 @@ export interface ElectronAPI {
     onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
     removeUpdateReadyListener: () => void;
     restartAndInstall: () => void;
-    simulateUpdate: () => void;
+    simulateUpdate?: () => void;
   };
 }
 

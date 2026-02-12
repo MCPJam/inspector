@@ -5,14 +5,26 @@ const isDev = process.env.NODE_ENV === "development";
 
 export function registerUpdateListeners(mainWindow: BrowserWindow): void {
   // Handle restart request from renderer
-  ipcMain.on("app:restart-for-update", () => {
+  ipcMain.on("app:restart-for-update", (event) => {
+    if (event.sender.id !== mainWindow.webContents.id) {
+      log.warn(
+        `Ignoring restart-for-update from untrusted sender (id: ${event.sender.id})`,
+      );
+      return;
+    }
     log.info("Restarting app to install update...");
     autoUpdater.quitAndInstall();
   });
 
   // Dev only: simulate update for testing UI
   if (isDev) {
-    ipcMain.on("app:simulate-update", () => {
+    ipcMain.on("app:simulate-update", (event) => {
+      if (event.sender.id !== mainWindow.webContents.id) {
+        log.warn(
+          `Ignoring simulate-update from untrusted sender (id: ${event.sender.id})`,
+        );
+        return;
+      }
       log.info("Simulating update available (dev mode)");
       if (mainWindow && mainWindow.webContents) {
         mainWindow.webContents.send("update-ready", {

@@ -51,7 +51,7 @@ export function useUpdateNotification() {
 
   const simulateUpdate = useCallback(() => {
     if (window.electronAPI?.update) {
-      window.electronAPI.update.simulateUpdate();
+      window.electronAPI.update.simulateUpdate?.();
     }
   }, []);
 
