@@ -176,7 +176,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
     for (const key of aKeys) {
       if (
-        !Object.prototype.hasOwnProperty.call(b, key) ||
+        !Object.hasOwn(b, key) ||
         !deepEqual(
           (a as Record<string, unknown>)[key],
           (b as Record<string, unknown>)[key]

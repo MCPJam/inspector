@@ -430,7 +430,7 @@ export class MCPClientManager {
    */
   async getToolsForAiSdk(
     serverIds?: string[] | string,
-    options: { schemas?: ToolSchemaOverrides | "automatic" } = {}
+    options: { schemas?: ToolSchemaOverrides | "automatic"; needsApproval?: boolean } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
       ? serverIds
@@ -446,6 +446,7 @@ export class MCPClientManager {
 
           const tools = await convertMCPToolsToVercelTools(listToolsResult, {
             schemas: options.schemas,
+            needsApproval: options.needsApproval,
             callTool: async ({ name, args, options: callOptions }) => {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }

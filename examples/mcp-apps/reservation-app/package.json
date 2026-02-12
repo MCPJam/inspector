@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^0.3.1",
-    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@vitejs/plugin-react": "^5.1.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Eye,
   Pencil,
@@ -26,7 +26,7 @@ interface JsonEditorToolbarProps {
   showModeToggle?: boolean;
   readOnly?: boolean;
   onFormat?: () => void;
-  onCopy?: () => void;
+  onCopy?: () => boolean | void | Promise<boolean | void>;
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
@@ -71,11 +71,36 @@ export function JsonEditorToolbar({
   rightContent,
 }: JsonEditorToolbarProps) {
   const [copied, setCopied] = useState(false);
+  const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
-  const handleCopy = () => {
-    onCopy?.();
+  useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current) {
+        clearTimeout(copyResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async () => {
+    let copyResult: boolean | void;
+    try {
+      copyResult = await onCopy?.();
+    } catch {
+      return;
+    }
+
+    if (copyResult === false) {
+      return;
+    }
+
+    if (copyResetTimeoutRef.current) {
+      clearTimeout(copyResetTimeoutRef.current);
+    }
+
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    copyResetTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
   };
 
   return (

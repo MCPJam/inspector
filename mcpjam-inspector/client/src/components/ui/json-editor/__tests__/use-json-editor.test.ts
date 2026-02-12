@@ -71,6 +71,15 @@ describe("useJsonEditor", () => {
       );
       expect(boolResult.current.content).toBe("true");
     });
+
+    it("falls back to null for undefined initial value", () => {
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue: undefined }),
+      );
+
+      expect(result.current.content).toBe("null");
+      expect(result.current.isValid).toBe(true);
+    });
   });
 
   describe("onChange and onRawChange callbacks", () => {
@@ -125,23 +134,62 @@ describe("useJsonEditor", () => {
 
       expect(onRawChange).toHaveBeenCalledWith('{"valid": true}');
     });
+
+    it("does not call onChange for whitespace-only valid edits", () => {
+      const onChange = vi.fn();
+      const onRawChange = vi.fn();
+      const { result } = renderHook(() =>
+        useJsonEditor({
+          initialContent: '{"unchanged": true}',
+          onChange,
+          onRawChange,
+        }),
+      );
+
+      act(() => {
+        result.current.setContent('{\n  "unchanged": true\n}\n');
+      });
+
+      expect(onRawChange).toHaveBeenCalledWith('{\n  "unchanged": true\n}\n');
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("still calls onChange when parsed JSON changes after whitespace edits", () => {
+      const onChange = vi.fn();
+      const { result } = renderHook(() =>
+        useJsonEditor({
+          initialContent: '{"count": 1}',
+          onChange,
+        }),
+      );
+
+      act(() => {
+        result.current.setContent('{\n  "count": 1\n}\n');
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+
+      act(() => {
+        result.current.setContent('{\n  "count": 2\n}\n');
+      });
+
+      expect(onChange).toHaveBeenCalledWith({ count: 2 });
+    });
   });
 
   describe("validation", () => {
-    it("starts with isValid true (validation happens on edit)", () => {
-      // Note: The hook doesn't validate on initial mount - only when content changes
+    it("validates initial content immediately", () => {
       const { result: validResult } = renderHook(() =>
         useJsonEditor({ initialContent: '{"valid": true}' }),
       );
       expect(validResult.current.isValid).toBe(true);
       expect(validResult.current.validationError).toBeNull();
 
-      // Even invalid initial content starts as "valid" until edited
       const { result: invalidResult } = renderHook(() =>
         useJsonEditor({ initialContent: "{invalid" }),
       );
-      // Initial state is valid=true since validation error is null on mount
-      expect(invalidResult.current.isValid).toBe(true);
+      expect(invalidResult.current.isValid).toBe(false);
+      expect(invalidResult.current.validationError).toEqual(expect.any(String));
     });
 
     it("calls onValidationError callback with error", () => {
@@ -222,6 +270,23 @@ describe("useJsonEditor", () => {
       expect(result.current.content).toBe(expectedContent);
     });
 
+    it("resets content to initial raw content when provided", () => {
+      const initialContent = '{"raw": "original"}';
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialContent, initialValue: { ignored: true } }),
+      );
+
+      act(() => {
+        result.current.setContent('{"raw": "changed"}');
+      });
+
+      act(() => {
+        result.current.reset();
+      });
+
+      expect(result.current.content).toBe(initialContent);
+    });
+
     it("clears validation error on reset", () => {
       const onValidationError = vi.fn();
       const { result } = renderHook(() =>
@@ -263,6 +328,30 @@ describe("useJsonEditor", () => {
       });
 
       expect(onValidationError).toHaveBeenCalledWith(null);
+    });
+
+    it("notifies change callbacks on reset", () => {
+      const onChange = vi.fn();
+      const onRawChange = vi.fn();
+      const initialValue = { original: true };
+      const expectedContent = JSON.stringify(initialValue, null, 2);
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, onChange, onRawChange }),
+      );
+
+      act(() => {
+        result.current.setContent('{"changed": true}');
+      });
+
+      onChange.mockClear();
+      onRawChange.mockClear();
+
+      act(() => {
+        result.current.reset();
+      });
+
+      expect(onRawChange).toHaveBeenCalledWith(expectedContent);
+      expect(onChange).toHaveBeenCalledWith(initialValue);
     });
   });
 
@@ -417,6 +506,257 @@ describe("useJsonEditor", () => {
 
       // After undo, we're back to valid content
       expect(result.current.isValid).toBe(true);
+    });
+
+    it("undo and redo notify parent callbacks with restored state", () => {
+      const onChange = vi.fn();
+      const onRawChange = vi.fn();
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialContent: '{"v": 1}', onChange, onRawChange }),
+      );
+
+      act(() => {
+        result.current.setContent('{"v": 2}');
+      });
+
+      onChange.mockClear();
+      onRawChange.mockClear();
+
+      act(() => {
+        result.current.undo();
+      });
+
+      expect(onRawChange).toHaveBeenCalledWith('{"v": 1}');
+      expect(onChange).toHaveBeenCalledWith({ v: 1 });
+
+      onChange.mockClear();
+      onRawChange.mockClear();
+
+      act(() => {
+        result.current.redo();
+      });
+
+      expect(onRawChange).toHaveBeenCalledWith('{"v": 2}');
+      expect(onChange).toHaveBeenCalledWith({ v: 2 });
+    });
+  });
+
+  describe("expandJsonStrings", () => {
+    it("expands JSON string fields into objects on init", () => {
+      const initialValue = {
+        toolInput: { elements: '[{"type":"ellipse","x":10}]' },
+      };
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, expandJsonStrings: true }),
+      );
+
+      const parsed = JSON.parse(result.current.content);
+      expect(parsed.toolInput.elements).toEqual([{ type: "ellipse", x: 10 }]);
+    });
+
+    it("collapses expanded fields back to strings on onChange", () => {
+      const onChange = vi.fn();
+      const initialValue = {
+        toolInput: { elements: '[{"type":"ellipse"}]' },
+      };
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, onChange, expandJsonStrings: true }),
+      );
+
+      // Modify an unrelated field to trigger onChange
+      const parsed = JSON.parse(result.current.content);
+      parsed.toolInput.elements[0].type = "rectangle";
+      act(() => {
+        result.current.setContent(JSON.stringify(parsed, null, 2));
+      });
+
+      expect(onChange).toHaveBeenCalled();
+      const emitted = onChange.mock.calls[0][0];
+      // elements should be collapsed back to a string
+      expect(typeof emitted.toolInput.elements).toBe("string");
+      expect(JSON.parse(emitted.toolInput.elements)).toEqual([
+        { type: "rectangle" },
+      ]);
+    });
+
+    it("does not fire onChange when content is unchanged (dedup)", () => {
+      const onChange = vi.fn();
+      const initialValue = {
+        toolInput: { elements: '[{"type":"ellipse"}]' },
+      };
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, onChange, expandJsonStrings: true }),
+      );
+
+      // Re-set same expanded content
+      act(() => {
+        result.current.setContent(result.current.content);
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("format preserves expansion", () => {
+      const initialValue = {
+        data: '{"nested":"value"}',
+      };
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, expandJsonStrings: true }),
+      );
+
+      // Compact the content manually
+      const parsed = JSON.parse(result.current.content);
+      act(() => {
+        result.current.setContent(JSON.stringify(parsed));
+      });
+
+      // Format should re-expand
+      act(() => {
+        result.current.format();
+      });
+
+      const formatted = JSON.parse(result.current.content);
+      expect(formatted.data).toEqual({ nested: "value" });
+    });
+
+    it("reset re-expands from original value", () => {
+      const initialValue = {
+        items: "[1,2,3]",
+      };
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, expandJsonStrings: true }),
+      );
+
+      // Edit content
+      act(() => {
+        result.current.setContent('{"items": [99]}');
+      });
+
+      // Reset
+      act(() => {
+        result.current.reset();
+      });
+
+      const parsed = JSON.parse(result.current.content);
+      expect(parsed.items).toEqual([1, 2, 3]);
+    });
+
+    it("re-expands when value changes externally", () => {
+      const { result, rerender } = renderHook(
+        ({ value }) =>
+          useJsonEditor({ initialValue: value, expandJsonStrings: true }),
+        {
+          initialProps: {
+            value: { data: '{"v":1}' } as unknown,
+          },
+        },
+      );
+
+      let parsed = JSON.parse(result.current.content);
+      expect(parsed.data).toEqual({ v: 1 });
+
+      rerender({ value: { data: '{"v":2}' } });
+
+      parsed = JSON.parse(result.current.content);
+      expect(parsed.data).toEqual({ v: 2 });
+    });
+
+    it("keeps primitive JSON strings as strings", () => {
+      const initialValue = {
+        count: "42",
+        flag: "true",
+        name: "hello",
+      };
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, expandJsonStrings: true }),
+      );
+
+      const parsed = JSON.parse(result.current.content);
+      // Primitives should NOT be expanded
+      expect(parsed.count).toBe("42");
+      expect(parsed.flag).toBe("true");
+      expect(parsed.name).toBe("hello");
+    });
+
+    it("does not double-stringify when user changes type", () => {
+      const onChange = vi.fn();
+      const initialValue = {
+        data: '{"key":"val"}',
+      };
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, onChange, expandJsonStrings: true }),
+      );
+
+      // User replaces the expanded object with a string
+      act(() => {
+        result.current.setContent('{\n  "data": "plain string"\n}');
+      });
+
+      expect(onChange).toHaveBeenCalled();
+      const emitted = onChange.mock.calls[0][0];
+      // Since original was a string and current is also a string, no collapse needed
+      expect(emitted.data).toBe("plain string");
+    });
+
+    it("sourceContent matches content on init", () => {
+      const initialValue = {
+        toolInput: { elements: '[{"type":"ellipse"}]' },
+      };
+      const { result } = renderHook(() =>
+        useJsonEditor({ initialValue, expandJsonStrings: true }),
+      );
+
+      expect(result.current.sourceContent).toBe(result.current.content);
+    });
+
+    it("sourceContent updates on round-trip (parent echoes onChange)", () => {
+      const onChange = vi.fn();
+      const initialValue = {
+        toolInput: { elements: '[{"type":"ellipse"}]' },
+      };
+      const { result, rerender } = renderHook(
+        ({ value }) =>
+          useJsonEditor({
+            initialValue: value,
+            onChange,
+            expandJsonStrings: true,
+          }),
+        { initialProps: { value: initialValue as unknown } },
+      );
+
+      // Edit content
+      const parsed = JSON.parse(result.current.content);
+      parsed.toolInput.elements[0].type = "rectangle";
+      act(() => {
+        result.current.setContent(JSON.stringify(parsed, null, 2));
+      });
+
+      // Simulate parent echoing back the collapsed onChange value
+      const collapsedValue = onChange.mock.calls[0][0];
+      rerender({ value: collapsedValue });
+
+      // sourceContent should track current editor content after round-trip
+      expect(result.current.sourceContent).toBe(result.current.content);
+    });
+
+    it("sourceContent updates on genuine external change", () => {
+      const { result, rerender } = renderHook(
+        ({ value }) =>
+          useJsonEditor({ initialValue: value, expandJsonStrings: true }),
+        {
+          initialProps: {
+            value: { data: '{"v":1}' } as unknown,
+          },
+        },
+      );
+
+      const initialSourceContent = result.current.sourceContent;
+
+      // External change (not a round-trip)
+      rerender({ value: { data: '{"v":2}' } });
+
+      expect(result.current.sourceContent).not.toBe(initialSourceContent);
+      expect(result.current.sourceContent).toBe(result.current.content);
     });
   });
 

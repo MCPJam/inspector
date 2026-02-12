@@ -65,93 +65,73 @@ export function ToolList({
               const tool = tools[name];
               const isSelected = selectedToolName === name;
               const uiType = detectUIType(tool._meta, undefined);
-              const isUICapable = uiType !== null;
 
               return (
-                <Tooltip key={name}>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => {
-                        if (!isUICapable) return;
-                        if (isSelected) {
-                          onCollapseList();
-                        } else {
-                          onSelectTool(name);
-                        }
-                      }}
-                      disabled={!isUICapable}
-                      className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
-                        !isUICapable
-                          ? "opacity-40 cursor-not-allowed border border-transparent"
-                          : isSelected
-                            ? "bg-primary/10 border border-primary/30 cursor-pointer"
-                            : "hover:bg-muted/50 border border-transparent cursor-pointer"
-                      }`}
-                    >
-                      <code className="text-xs font-mono font-medium truncate block">
-                        {name}
-                      </code>
-                      {tool.description && (
-                        <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
-                          {tool.description}
-                        </p>
-                      )}
-                      {uiType && (
-                        <div className="flex items-center gap-1.5 mt-2">
-                          {(uiType === UIType.OPENAI_SDK ||
-                            uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <div className="flex items-center">
-                                  <img
-                                    src="/openai_logo.png"
-                                    alt="ChatGPT Apps"
-                                    className="h-3.5 w-3.5 object-contain opacity-60"
-                                  />
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="text-xs">ChatGPT Apps</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                          {(uiType === UIType.MCP_APPS ||
-                            uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
-                            uiType === UIType.MCP_UI) && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <div className="flex items-center">
-                                  <img
-                                    src="/mcp.svg"
-                                    alt="MCP Apps"
-                                    className="h-3.5 w-3.5 object-contain opacity-60"
-                                  />
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="text-xs">
-                                  {uiType === UIType.MCP_UI
-                                    ? "MCP UI"
-                                    : "MCP Apps"}
-                                </p>
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                        </div>
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  {!isUICapable && (
-                    <TooltipContent>
-                      <p className="text-xs">
-                        This tool doesn't support UI rendering
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        (No ChatGPT Apps or MCP Apps metadata)
-                      </p>
-                    </TooltipContent>
+                <button
+                  key={name}
+                  onClick={() => {
+                    if (isSelected) {
+                      onCollapseList();
+                    } else {
+                      onSelectTool(name);
+                    }
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
+                    isSelected
+                      ? "bg-primary/10 border border-primary/30 cursor-pointer"
+                      : "hover:bg-muted/50 border border-transparent cursor-pointer"
+                  }`}
+                >
+                  <code className="text-xs font-mono font-medium truncate block">
+                    {name}
+                  </code>
+                  {tool.description && (
+                    <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">
+                      {tool.description}
+                    </p>
                   )}
-                </Tooltip>
+                  {uiType && (
+                    <div className="flex items-center gap-1.5 mt-2">
+                      {(uiType === UIType.OPENAI_SDK ||
+                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center">
+                              <img
+                                src="/openai_logo.png"
+                                alt="ChatGPT Apps"
+                                className="h-3.5 w-3.5 object-contain opacity-60"
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">ChatGPT Apps</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {(uiType === UIType.MCP_APPS ||
+                        uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
+                        uiType === UIType.MCP_UI) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center">
+                              <img
+                                src="/mcp.svg"
+                                alt="MCP Apps"
+                                className="h-3.5 w-3.5 object-contain opacity-60"
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">
+                              {uiType === UIType.MCP_UI ? "MCP UI" : "MCP Apps"}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                  )}
+                </button>
               );
             })}
           </div>

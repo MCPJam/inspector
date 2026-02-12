@@ -55,7 +55,7 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "gemini-2.0-flash-exp": "google/gemini-2.0-flash",
 
   // Meta models
-  "meta-llama/llama-3.3-70b-instruct": "meta/llama-3.3-70b",
+  "meta-llama/llama-4-scout": "meta/llama-4-scout",
 
   // Mistral models
   "mistral-large-latest": "mistral/mistral-large",
@@ -70,15 +70,23 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "grok-code-fast-1": "xai/grok-code-fast-1",
   "grok-4-fast-non-reasoning": "xai/grok-4-fast-non-reasoning",
   "grok-4-fast-reasoning": "xai/grok-4-fast-reasoning",
-  "x-ai/grok-4-fast": "xai/grok-4-fast-reasoning",
+  "x-ai/grok-4.1-fast": "xai/grok-4.1-fast",
   "x-ai/grok-code-fast-1": "xai/grok-code-fast-1",
 
   // Moonshot models
   "moonshotai/kimi-k2-thinking": "moonshotai/kimi-k2-thinking",
   "moonshotai/kimi-k2-0905": "moonshotai/kimi-k2-0905",
+  "moonshotai/kimi-k2.5": "moonshotai/kimi-k2.5",
+
+  // Google Gemini models (constructed IDs)
+  "google/gemini-3-flash-preview": "google/gemini-3-flash-preview",
 
   // ZAI models (normalize z-ai to zai)
-  "z-ai/glm-4.6": "zai/glm-4.5", // Map to closest available
+  "z-ai/glm-4.7": "zai/glm-4.7",
+  "z-ai/glm-4.7-flash": "zai/glm-4.7-flash",
+
+  // MiniMax models
+  "minimax/minimax-m2.1": "minimax/minimax-m2.1",
 };
 
 /**

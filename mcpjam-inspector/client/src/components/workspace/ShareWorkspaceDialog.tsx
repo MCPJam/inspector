@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import posthog from "posthog-js";
+import { usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   Dialog,
@@ -14,28 +14,31 @@ import { getInitials } from "@/lib/utils";
 import { Clock, X, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import {
+  type WorkspaceMember,
+  type WorkspaceMembershipRole,
   useWorkspaceMutations,
   useWorkspaceMembers,
 } from "@/hooks/useWorkspaces";
 import { useConvexAuth } from "convex/react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { serializeServersForSharing } from "@/lib/workspace-serialization";
-
-interface CurrentUser {
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-}
-
+import { User } from "@workos-inc/authkit-js";
 interface ShareWorkspaceDialogProps {
   isOpen: boolean;
   onClose: () => void;
   workspaceName: string;
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
-  currentUser: CurrentUser;
+  currentUser: User;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
   onLeaveWorkspace?: () => void;
+}
+
+function resolveWorkspaceRole(
+  member: Pick<WorkspaceMember, "role" | "isOwner">,
+): WorkspaceMembershipRole {
+  if (member.role) return member.role;
+  return member.isOwner ? "owner" : "member";
 }
 
 export function ShareWorkspaceDialog({
@@ -48,6 +51,7 @@ export function ShareWorkspaceDialog({
   onWorkspaceShared,
   onLeaveWorkspace,
 }: ShareWorkspaceDialogProps) {
+  const posthog = usePostHog();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
@@ -56,17 +60,44 @@ export function ShareWorkspaceDialog({
   const { profilePictureUrl } = useProfilePicture();
   const { createWorkspace, addMember, removeMember } = useWorkspaceMutations();
 
-  const { activeMembers, pendingMembers } = useWorkspaceMembers({
+  const { activeMembers, pendingMembers, isLoading } = useWorkspaceMembers({
     isAuthenticated,
     workspaceId: sharedWorkspaceId || null,
   });
 
-  const isOwner =
-    !sharedWorkspaceId ||
-    activeMembers.some(
-      (m) =>
-        m.email.toLowerCase() === currentUser.email?.toLowerCase() && m.isOwner,
-    );
+  const currentMember = activeMembers.find(
+    (m) => m.email.toLowerCase() === currentUser.email?.toLowerCase(),
+  );
+  const currentRole: WorkspaceMembershipRole | null = !sharedWorkspaceId
+    ? "owner"
+    : currentMember
+      ? resolveWorkspaceRole(currentMember)
+      : null;
+  const canInviteMembers = !sharedWorkspaceId
+    ? true
+    : currentRole === "owner" || currentRole === "admin";
+
+  const canRemoveActiveMember = (member: WorkspaceMember): boolean => {
+    if (!currentRole) return false;
+
+    const isSelf =
+      member.email.toLowerCase() === currentUser.email?.toLowerCase();
+    if (isSelf) return false;
+
+    const memberRole = resolveWorkspaceRole(member);
+    if (currentRole === "owner") {
+      return memberRole !== "owner";
+    }
+    if (currentRole === "admin") {
+      return memberRole === "member";
+    }
+    return false;
+  };
+
+  const canRemovePendingMember = (): boolean => {
+    if (!currentRole) return false;
+    return currentRole === "owner" || currentRole === "admin";
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -81,7 +112,7 @@ export function ShareWorkspaceDialog({
   }, [isOpen]);
 
   const handleInvite = async () => {
-    if (!email.trim()) return;
+    if (!email.trim() || !canInviteMembers) return;
 
     setIsInviting(true);
     try {
@@ -176,28 +207,35 @@ export function ShareWorkspaceDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>Share "{workspaceName}"</DialogTitle>
+          <DialogTitle>Share "{workspaceName}" Workspace</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Invite with email</label>
-            <div className="flex gap-2">
-              <Input
-                placeholder="Enter email address"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleInvite()}
-                className="flex-1"
-              />
-              <Button
-                onClick={handleInvite}
-                disabled={!email.trim() || isInviting}
-              >
-                {isInviting ? "..." : "Invite"}
-              </Button>
+          {canInviteMembers && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Invite with email</label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Enter email address"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleInvite()}
+                  className="flex-1"
+                />
+                <Button
+                  onClick={handleInvite}
+                  disabled={!email.trim() || isInviting}
+                >
+                  {isInviting ? "..." : "Invite"}
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
+          {!canInviteMembers && sharedWorkspaceId && !isLoading && (
+            <p className="text-xs text-muted-foreground">
+              Only workspace owners and admins can invite members.
+            </p>
+          )}
 
           <div className="space-y-2">
             <label className="text-sm font-medium">
@@ -237,7 +275,7 @@ export function ShareWorkspaceDialog({
                 const isSelf =
                   memberEmail.toLowerCase() ===
                   currentUser.email?.toLowerCase();
-                const canRemove = isOwner && !isSelf;
+                const canRemove = canRemoveActiveMember(member);
 
                 return (
                   <div
@@ -303,7 +341,7 @@ export function ShareWorkspaceDialog({
                           Invited - waiting for signup
                         </p>
                       </div>
-                      {isOwner && (
+                      {canRemovePendingMember() && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -321,7 +359,7 @@ export function ShareWorkspaceDialog({
           </div>
 
           {/* Show leave button for non-owners of shared workspaces */}
-          {sharedWorkspaceId && !isOwner && (
+          {sharedWorkspaceId && currentRole !== "owner" && !!currentRole && (
             <Button
               variant="outline"
               className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"

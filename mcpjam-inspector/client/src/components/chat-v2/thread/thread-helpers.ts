@@ -10,6 +10,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Loader2,
+  ShieldAlert,
+  ShieldX,
   type LucideIcon,
 } from "lucide-react";
 
@@ -17,7 +19,9 @@ export type AnyPart = UIMessagePart<UIDataTypes, UITools>;
 export type ToolState =
   | "input-streaming"
   | "input-available"
+  | "approval-requested"
   | "output-available"
+  | "output-denied"
   | "output-error";
 
 type ToolInfo = {
@@ -56,6 +60,19 @@ export function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
   return groups.length > 0
     ? groups
     : [parts.filter((p) => (p as any).type !== "step-start")];
+}
+
+export function isToolApprovalRequest(part: AnyPart): boolean {
+  // The AI SDK stores approval state on the tool part itself
+  // (state: "approval-requested"). This can appear on both dynamic-tool parts
+  // and typed tool-{name} parts depending on the stream source.
+  if (isDynamicTool(part)) {
+    return (part as DynamicToolUIPart).state === "approval-requested";
+  }
+  if (isToolPart(part)) {
+    return (part as any).state === "approval-requested";
+  }
+  return false;
 }
 
 export function isToolPart(part: AnyPart): part is ToolUIPart<UITools> {
@@ -153,6 +170,18 @@ export function getToolStateMeta(
         Icon: CheckCircle2,
         label: "Output available",
         className: "h-4 w-4 text-emerald-500",
+      };
+    case "approval-requested":
+      return {
+        Icon: ShieldAlert,
+        label: "Approval requested",
+        className: "h-4 w-4 text-amber-500",
+      };
+    case "output-denied":
+      return {
+        Icon: ShieldX,
+        label: "Denied",
+        className: "h-4 w-4 text-destructive",
       };
     case "output-error":
       return {

@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { Layers } from "lucide-react";
 import { toast } from "sonner";
@@ -18,7 +19,6 @@ import {
 } from "@/hooks/useViews";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ViewsListSidebar } from "./views/ViewsListSidebar";
-import { ViewDetailPanel } from "./views/ViewDetailPanel";
 import { ViewEditorPanel } from "./views/ViewEditorPanel";
 import { executeToolApi } from "@/lib/apis/mcp-tools-api";
 import {
@@ -26,13 +26,38 @@ import {
   areDisplayContextsEqual,
 } from "@/lib/display-context-utils";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
+import { PlaygroundMain } from "./ui-playground/PlaygroundMain";
+import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
+import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 
 interface ViewsTabProps {
   selectedServer?: string;
+  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onLeaveWorkspace?: () => void;
 }
 
-export function ViewsTab({ selectedServer }: ViewsTabProps) {
+interface EditSignatures {
+  toolInput: string;
+  toolOutput: string;
+  widgetState: string;
+}
+
+function safeSerializeForCompare(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return `__nonserializable__:${Object.prototype.toString.call(value)}`;
+  }
+}
+
+export function ViewsTab({
+  selectedServer,
+  onWorkspaceShared,
+  onLeaveWorkspace,
+}: ViewsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const { user } = useAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
 
@@ -51,11 +76,37 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
   // Live editing state for toolInput/toolOutput
   const [liveToolInput, setLiveToolInput] = useState<unknown>(null);
   const [liveToolOutput, setLiveToolOutput] = useState<unknown>(null);
+  const [liveWidgetState, setLiveWidgetState] = useState<unknown>(null);
   const [originalToolOutput, setOriginalToolOutput] = useState<unknown>(null);
   const [toolOutputError, setToolOutputError] = useState<string | null>(null);
   const [isLoadingToolOutput, setIsLoadingToolOutput] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [pendingExecution, setPendingExecution] = useState<{
+    toolName: string;
+    params: Record<string, unknown>;
+    result: unknown;
+    toolMeta: Record<string, unknown> | undefined;
+    state?: "output-available" | "output-error";
+    errorText?: string;
+    renderOverride?: ToolRenderOverride;
+    toolCallId?: string;
+    replaceExisting?: boolean;
+  } | null>(null);
+  const [toolRenderOverrides, setToolRenderOverrides] = useState<
+    Record<string, ToolRenderOverride>
+  >({});
+  const [liveToolOutputVersion, setLiveToolOutputVersion] = useState(0);
+  const [baselineSignatures, setBaselineSignatures] = useState<EditSignatures>({
+    toolInput: safeSerializeForCompare(null),
+    toolOutput: safeSerializeForCompare(null),
+    widgetState: safeSerializeForCompare(null),
+  });
+  const [currentSignatures, setCurrentSignatures] = useState<EditSignatures>({
+    toolInput: safeSerializeForCompare(null),
+    toolOutput: safeSerializeForCompare(null),
+    widgetState: safeSerializeForCompare(null),
+  });
 
   // Get current display context from UI Playground store
   const currentDisplayContext = useCurrentDisplayContext();
@@ -65,6 +116,39 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
   // Track the view ID we loaded output for to avoid stale data
   const loadedToolOutputForViewId = useRef<string | null>(null);
+  const lastInjectedViewSignature = useRef<string | null>(null);
+  const lastUploadedWidgetHtmlRef = useRef<string | null>(null);
+
+  const setSelectedProtocol = useUIPlaygroundStore(
+    (s) => s.setSelectedProtocol,
+  );
+  const setDeviceType = useUIPlaygroundStore((s) => s.setDeviceType);
+  const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
+  const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
+  const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
+  const setSafeAreaInsets = useUIPlaygroundStore((s) => s.setSafeAreaInsets);
+
+  const buildSignatures = useCallback(
+    (
+      toolInput: unknown,
+      toolOutput: unknown,
+      widgetState: unknown,
+      protocol: AnyView["protocol"] | undefined,
+    ): EditSignatures => ({
+      toolInput: safeSerializeForCompare(toolInput),
+      toolOutput: safeSerializeForCompare(toolOutput),
+      widgetState:
+        protocol === "openai-apps"
+          ? safeSerializeForCompare(widgetState ?? null)
+          : safeSerializeForCompare(null),
+    }),
+    [],
+  );
+
+  const setLiveToolOutputAndBumpVersion = useCallback((value: unknown) => {
+    setLiveToolOutput(value);
+    setLiveToolOutputVersion((v) => v + 1);
+  }, []);
 
   // Fetch views
   const { sortedViews, isLoading: isViewsLoading } = useViewQueries({
@@ -104,6 +188,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         // Reset live editing state
         setLiveToolInput(null);
         setLiveToolOutput(null);
+        setLiveWidgetState(null);
         setOriginalToolOutput(null);
         setToolOutputError(null);
         setIsLoadingToolOutput(false);
@@ -139,16 +224,53 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     return filteredViews.find((v) => v._id === selectedViewId) ?? null;
   }, [selectedViewId, filteredViews]);
 
+  useEffect(() => {
+    setPendingExecution(null);
+    setToolRenderOverrides({});
+    lastInjectedViewSignature.current = null;
+    lastUploadedWidgetHtmlRef.current = null;
+  }, [selectedView?._id]);
+
+  // Keep playground protocol and display context aligned to selected view
+  useEffect(() => {
+    if (!selectedView) return;
+    setSelectedProtocol(
+      selectedView.protocol === "mcp-apps"
+        ? UIType.MCP_APPS
+        : UIType.OPENAI_SDK,
+    );
+    if (!selectedView.defaultContext) return;
+    const ctx = selectedView.defaultContext;
+    if (ctx.deviceType) setDeviceType(ctx.deviceType);
+    if (ctx.viewport) setCustomViewport(ctx.viewport);
+    if (ctx.locale) updateGlobal("locale", ctx.locale);
+    if (ctx.timeZone) updateGlobal("timeZone", ctx.timeZone);
+    if (ctx.capabilities) setCapabilities(ctx.capabilities);
+    if (ctx.safeAreaInsets) setSafeAreaInsets(ctx.safeAreaInsets);
+  }, [
+    selectedView,
+    setSelectedProtocol,
+    setDeviceType,
+    setCustomViewport,
+    updateGlobal,
+    setCapabilities,
+    setSafeAreaInsets,
+  ]);
+
   // Load toolOutput from blob when view is selected
   useEffect(() => {
     if (!selectedView) {
       // Reset live state when no view selected
       setLiveToolInput(null);
-      setLiveToolOutput(null);
+      setLiveToolOutputAndBumpVersion(null);
+      setLiveWidgetState(null);
       setOriginalToolOutput(null);
       setToolOutputError(null);
       setIsLoadingToolOutput(false);
       loadedToolOutputForViewId.current = null;
+      const resetSigs = buildSignatures(null, null, null, undefined);
+      setBaselineSignatures(resetSigs);
+      setCurrentSignatures(resetSigs);
       return;
     }
 
@@ -164,12 +286,27 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     // SYNCHRONOUSLY reset live state BEFORE async load to prevent stale data from old view
     // This ensures the UI immediately reflects the new view's data (or loading state)
     setLiveToolInput(selectedView.toolInput);
-    setLiveToolOutput(null);
+    setLiveToolOutputAndBumpVersion(null);
+    setLiveWidgetState(
+      selectedView.protocol === "openai-apps"
+        ? (selectedView.widgetState ?? null)
+        : null,
+    );
     setOriginalToolOutput(null);
     setToolOutputError(null);
     // Set loading state immediately if there's a URL to fetch
     const hasOutputToLoad = !!selectedView.toolOutputUrl;
     setIsLoadingToolOutput(hasOutputToLoad);
+    const initialSigs = buildSignatures(
+      selectedView.toolInput,
+      null,
+      selectedView.protocol === "openai-apps"
+        ? (selectedView.widgetState ?? null)
+        : null,
+      selectedView.protocol,
+    );
+    setBaselineSignatures(initialSigs);
+    setCurrentSignatures(initialSigs);
 
     async function loadToolOutput() {
       if (!selectedView?.toolOutputUrl) {
@@ -186,8 +323,18 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         }
         const data = await response.json();
         if (!isActive) return;
-        setLiveToolOutput(data);
+        setLiveToolOutputAndBumpVersion(data);
         setOriginalToolOutput(data);
+        const loadedSigs = buildSignatures(
+          selectedView.toolInput,
+          data,
+          selectedView.protocol === "openai-apps"
+            ? (selectedView.widgetState ?? null)
+            : null,
+          selectedView.protocol,
+        );
+        setBaselineSignatures(loadedSigs);
+        setCurrentSignatures(loadedSigs);
         loadedToolOutputForViewId.current = viewId;
       } catch (err) {
         if (!isActive) return;
@@ -212,7 +359,73 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       isActive = false;
       controller.abort();
     };
-  }, [selectedView]);
+  }, [selectedView, buildSignatures, setLiveToolOutputAndBumpVersion]);
+
+  // Seed PlaygroundMain with the selected view's saved execution so the right pane
+  // uses the exact same chat+renderer surface as App Builder.
+  useEffect(() => {
+    if (!selectedView || isLoadingToolOutput || !!toolOutputError) return;
+    const isErrorView = selectedView.toolState === "output-error";
+    if (
+      !isErrorView &&
+      (liveToolOutput === null || liveToolOutput === undefined)
+    )
+      return;
+
+    const serverNameForView = serversById.get(selectedView.serverId);
+    if (!serverNameForView) return;
+
+    const signature = isErrorView
+      ? `${selectedView._id}:error:${selectedView.toolErrorText ?? ""}`
+      : `${selectedView._id}:output-v${liveToolOutputVersion}`;
+    if (lastInjectedViewSignature.current === signature) return;
+    lastInjectedViewSignature.current = signature;
+
+    setPendingExecution({
+      toolName: selectedView.toolName,
+      params: (liveToolInput ?? selectedView.toolInput ?? {}) as Record<
+        string,
+        unknown
+      >,
+      result: liveToolOutput,
+      toolMeta:
+        (selectedView.toolMetadata as Record<string, unknown> | undefined) ??
+        undefined,
+      state:
+        selectedView.toolState === "output-error"
+          ? "output-error"
+          : "output-available",
+      errorText: selectedView.toolErrorText,
+      renderOverride: {
+        serverId: serverNameForView || selectedView.serverId,
+        isOffline: getServerConnectionStatus(serverNameForView) !== "connected",
+        cachedWidgetHtmlUrl: selectedView.widgetHtmlUrl ?? undefined,
+        initialWidgetState:
+          selectedView.protocol === "openai-apps"
+            ? (liveWidgetState ?? selectedView.widgetState)
+            : undefined,
+        resourceUri:
+          selectedView.protocol === "mcp-apps"
+            ? selectedView.resourceUri
+            : undefined,
+        toolMetadata:
+          (selectedView.toolMetadata as Record<string, unknown> | undefined) ??
+          undefined,
+      },
+      toolCallId: `view-preview-${selectedView._id}`,
+      replaceExisting: true,
+    });
+  }, [
+    selectedView,
+    isLoadingToolOutput,
+    toolOutputError,
+    liveToolOutput,
+    liveToolInput,
+    liveWidgetState,
+    liveToolOutputVersion,
+    serversById,
+    getServerConnectionStatus,
+  ]);
 
   // Track views tab viewed
   useEffect(() => {
@@ -427,6 +640,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
             category: view.category,
             defaultContext: view.defaultContext,
             serverInfo: (view as any).serverInfo,
+            widgetState: view.widgetState,
           });
         }
 
@@ -457,11 +671,27 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
   // Handle live data changes from editor (for real-time preview)
   const handleEditorDataChange = useCallback(
-    (data: { toolInput: unknown; toolOutput: unknown }) => {
+    (data: {
+      toolInput: unknown;
+      toolOutput: unknown;
+      widgetState?: unknown;
+    }) => {
       setLiveToolInput(data.toolInput);
-      setLiveToolOutput(data.toolOutput);
+      setLiveToolOutputAndBumpVersion(data.toolOutput);
+      if ("widgetState" in data) {
+        setLiveWidgetState(data.widgetState);
+      }
+      setCurrentSignatures((prev) => ({
+        ...prev,
+        toolInput: safeSerializeForCompare(data.toolInput),
+        toolOutput: safeSerializeForCompare(data.toolOutput),
+        widgetState:
+          selectedView?.protocol === "openai-apps"
+            ? safeSerializeForCompare(data.widgetState ?? null)
+            : prev.widgetState,
+      }));
     },
-    [],
+    [selectedView?.protocol, setLiveToolOutputAndBumpVersion],
   );
 
   // Check if there are unsaved changes in the live editor
@@ -469,20 +699,27 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     if (!selectedView) return false;
 
     const toolInputChanged =
-      JSON.stringify(liveToolInput) !== JSON.stringify(selectedView.toolInput);
+      currentSignatures.toolInput !== baselineSignatures.toolInput;
     const toolOutputChanged =
-      JSON.stringify(liveToolOutput) !== JSON.stringify(originalToolOutput);
+      currentSignatures.toolOutput !== baselineSignatures.toolOutput;
     const contextChanged = !areDisplayContextsEqual(
       currentDisplayContext,
       selectedView.defaultContext,
     );
+    const widgetStateChanged =
+      selectedView.protocol === "openai-apps" &&
+      currentSignatures.widgetState !== baselineSignatures.widgetState;
 
-    return toolInputChanged || toolOutputChanged || contextChanged;
+    return (
+      toolInputChanged ||
+      toolOutputChanged ||
+      contextChanged ||
+      widgetStateChanged
+    );
   }, [
     selectedView,
-    liveToolInput,
-    liveToolOutput,
-    originalToolOutput,
+    currentSignatures,
+    baselineSignatures,
     currentDisplayContext,
   ]);
 
@@ -492,12 +729,17 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
     setIsSaving(true);
     try {
+      const toolInputChanged =
+        currentSignatures.toolInput !== baselineSignatures.toolInput;
       const toolOutputChanged =
-        JSON.stringify(liveToolOutput) !== JSON.stringify(originalToolOutput);
+        currentSignatures.toolOutput !== baselineSignatures.toolOutput;
       const contextChanged = !areDisplayContextsEqual(
         currentDisplayContext,
         selectedView.defaultContext,
       );
+      const widgetStateChanged =
+        selectedView.protocol === "openai-apps" &&
+        currentSignatures.widgetState !== baselineSignatures.widgetState;
 
       let toolOutputBlobId: string | undefined;
       let widgetHtmlBlobId: string | undefined;
@@ -525,8 +767,9 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
       // Get the current widget HTML from the debug store (captured by the renderer)
       const previewToolCallId = `view-preview-${selectedView._id}`;
-      const widgetHtml = widgetsMap.get(previewToolCallId)?.widgetHtml;
-      if (widgetHtml) {
+      const previewWidgetDebugInfo = widgetsMap.get(previewToolCallId);
+      const widgetHtml = previewWidgetDebugInfo?.widgetHtml;
+      if (widgetHtml && widgetHtml !== lastUploadedWidgetHtmlRef.current) {
         // Upload new widget HTML blob
         const uploadUrl =
           selectedView.protocol === "mcp-apps"
@@ -545,12 +788,13 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
         const { storageId } = await response.json();
         widgetHtmlBlobId = storageId;
+        lastUploadedWidgetHtmlRef.current = widgetHtml;
       }
 
       // Update view with toolInput and optionally new toolOutputBlobId/widgetHtmlBlobId
       const updates: Record<string, unknown> = {
         viewId: selectedView._id,
-        toolInput: liveToolInput,
+        ...(toolInputChanged ? { toolInput: liveToolInput } : {}),
       };
 
       if (toolOutputBlobId) {
@@ -565,6 +809,14 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
         updates.defaultContext = currentDisplayContext;
       }
 
+      if (selectedView.protocol === "openai-apps") {
+        if (widgetStateChanged) {
+          updates.widgetState = liveWidgetState ?? null;
+        } else if (previewWidgetDebugInfo !== undefined) {
+          updates.widgetState = previewWidgetDebugInfo.widgetState;
+        }
+      }
+
       if (selectedView.protocol === "mcp-apps") {
         await updateMcpView(updates);
       } else {
@@ -573,6 +825,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
       // Update original values to reflect saved state
       setOriginalToolOutput(liveToolOutput);
+      setBaselineSignatures(currentSignatures);
 
       toast.success("View saved successfully");
 
@@ -592,7 +845,9 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     hasLiveUnsavedChanges,
     liveToolInput,
     liveToolOutput,
-    originalToolOutput,
+    liveWidgetState,
+    currentSignatures,
+    baselineSignatures,
     currentDisplayContext,
     generateMcpUploadUrl,
     generateOpenaiUploadUrl,
@@ -638,7 +893,11 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       }
 
       // Success - update liveToolOutput with new result
-      setLiveToolOutput(response.result);
+      setLiveToolOutputAndBumpVersion(response.result);
+      setCurrentSignatures((prev) => ({
+        ...prev,
+        toolOutput: safeSerializeForCompare(response.result),
+      }));
       toast.success("Tool executed successfully");
 
       posthog.capture("view_tool_executed", {
@@ -658,7 +917,21 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     selectedServer,
     getServerConnectionStatus,
     posthog,
+    setLiveToolOutputAndBumpVersion,
   ]);
+
+  const handleExecutionInjected = useCallback(
+    (toolCallId?: string) => {
+      if (toolCallId && pendingExecution?.renderOverride) {
+        setToolRenderOverrides((prev) => ({
+          ...prev,
+          [toolCallId]: pendingExecution.renderOverride!,
+        }));
+      }
+      setPendingExecution(null);
+    },
+    [pendingExecution],
+  );
 
   // Handler to go back to views list
   const handleBackToList = useCallback(() => {
@@ -666,10 +939,18 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     setIsEditing(false);
     // Reset live editing state
     setLiveToolInput(null);
-    setLiveToolOutput(null);
+    setLiveToolOutputAndBumpVersion(null);
+    setLiveWidgetState(null);
     setOriginalToolOutput(null);
     loadedToolOutputForViewId.current = null;
-  }, []);
+    lastInjectedViewSignature.current = null;
+    lastUploadedWidgetHtmlRef.current = null;
+    setPendingExecution(null);
+    setToolRenderOverrides({});
+    const resetSigs = buildSignatures(null, null, null, undefined);
+    setBaselineSignatures(resetSigs);
+    setCurrentSignatures(resetSigs);
+  }, [buildSignatures, setLiveToolOutputAndBumpVersion]);
 
   // Loading state
   if (isLoading) {
@@ -746,6 +1027,16 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               onBack={handleBackToList}
               initialToolOutput={originalToolOutput}
               liveToolOutput={liveToolOutput}
+              initialWidgetState={
+                selectedView.protocol === "openai-apps"
+                  ? selectedView.widgetState
+                  : undefined
+              }
+              liveWidgetState={
+                selectedView.protocol === "openai-apps"
+                  ? liveWidgetState
+                  : undefined
+              }
               isLoadingToolOutput={isLoadingToolOutput}
               onDataChange={handleEditorDataChange}
               isSaving={isSaving}
@@ -764,10 +1055,16 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               onEditView={handleEditView}
               onDuplicateView={handleDuplicateView}
               onDeleteView={handleDeleteView}
-              onRenameView={handleRenameView}
               deletingViewId={deletingViewId}
               duplicatingViewId={duplicatingViewId}
               isLoading={isViewsLoading}
+              workspaceName={activeWorkspace?.name || "Workspace"}
+              workspaceServers={activeWorkspace?.servers || {}}
+              sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
+              currentUser={user}
+              isAuthenticated={isAuthenticated}
+              onWorkspaceShared={onWorkspaceShared}
+              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
         </ResizablePanel>
@@ -802,17 +1099,21 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
               </div>
             </div>
           ) : (
-            <ViewDetailPanel
-              view={selectedView}
-              serverName={serversById.get(selectedView.serverId)}
-              serverConnectionStatus={getServerConnectionStatus(
-                serversById.get(selectedView.serverId),
-              )}
-              toolInputOverride={liveToolInput}
-              isLoadingOverride={isLoadingToolOutput}
-              toolOutputErrorOverride={toolOutputError}
-              toolOutputOverride={liveToolOutput}
-              isEditing={isEditing}
+            <PlaygroundMain
+              key={selectedView._id}
+              serverName={serversById.get(selectedView.serverId) || ""}
+              pendingExecution={pendingExecution}
+              onExecutionInjected={handleExecutionInjected}
+              isExecuting={false}
+              executingToolName={null}
+              invokingMessage={null}
+              onWidgetStateChange={(_toolCallId, state) =>
+                setLiveWidgetState(state)
+              }
+              toolRenderOverrides={toolRenderOverrides}
+              disableChatInput
+              hideSaveViewButton
+              disabledInputPlaceholder="Chat is disabled in Views"
             />
           )}
         </ResizablePanel>

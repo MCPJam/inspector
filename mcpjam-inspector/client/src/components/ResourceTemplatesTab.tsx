@@ -502,6 +502,7 @@ export function ResourceTemplatesTab({
                                       ) : (
                                         <div className="p-4">
                                           <JsonEditor
+                                            height="100%"
                                             value={content}
                                             readOnly
                                             showToolbar={false}

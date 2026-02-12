@@ -1,8 +1,10 @@
 import { Trash2, Pencil, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { InlineEditableText } from "@/components/ui/inline-editable-text";
 import { cn } from "@/lib/utils";
 import { type AnyView } from "@/hooks/useViews";
+import { User } from "@workos-inc/authkit-js";
+import { WorkspaceMembersFacepile } from "@/components/workspace/WorkspaceMembersFacepile";
+import { WorkspaceShareButton } from "@/components/workspace/WorkspaceShareButton";
 
 interface ViewsListSidebarProps {
   views: AnyView[];
@@ -11,10 +13,17 @@ interface ViewsListSidebarProps {
   onEditView: (view: AnyView) => void;
   onDuplicateView: (view: AnyView) => void;
   onDeleteView: (view: AnyView) => void;
-  onRenameView?: (view: AnyView, newName: string) => Promise<void>;
+
   deletingViewId: string | null;
   duplicatingViewId: string | null;
   isLoading: boolean;
+  workspaceName: string;
+  workspaceServers: Record<string, any>;
+  sharedWorkspaceId?: string | null;
+  currentUser?: User | null;
+  isAuthenticated?: boolean;
+  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onLeaveWorkspace?: () => void;
 }
 
 export function ViewsListSidebar({
@@ -24,16 +33,41 @@ export function ViewsListSidebar({
   onEditView,
   onDuplicateView,
   onDeleteView,
-  onRenameView,
   deletingViewId,
   duplicatingViewId,
   isLoading,
+  workspaceName,
+  workspaceServers,
+  sharedWorkspaceId,
+  currentUser,
+  isAuthenticated,
+  onWorkspaceShared,
+  onLeaveWorkspace,
 }: ViewsListSidebarProps) {
   return (
     <>
       {/* Header */}
-      <div className="p-4 border-b">
+      <div className="p-4 border-b flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Views</h2>
+        <div className="flex items-center gap-2">
+          {isAuthenticated && currentUser && (
+            <WorkspaceMembersFacepile
+              workspaceName={workspaceName}
+              workspaceServers={workspaceServers}
+              currentUser={currentUser}
+              sharedWorkspaceId={sharedWorkspaceId}
+              onWorkspaceShared={onWorkspaceShared}
+              onLeaveWorkspace={onLeaveWorkspace}
+            />
+          )}
+          <WorkspaceShareButton
+            workspaceName={workspaceName}
+            workspaceServers={workspaceServers}
+            sharedWorkspaceId={sharedWorkspaceId}
+            onWorkspaceShared={onWorkspaceShared}
+            onLeaveWorkspace={onLeaveWorkspace}
+          />
+        </div>
       </div>
 
       {/* Views List */}
@@ -63,20 +97,14 @@ export function ViewsListSidebar({
                   )}
                 >
                   <div className="flex-1 min-w-0 flex items-center gap-2">
-                    <InlineEditableText
-                      value={view.name}
-                      onSave={
-                        onRenameView
-                          ? (newName) => onRenameView(view, newName)
-                          : undefined
-                      }
-                      disabled={!onRenameView}
-                      onClick={(e) => e.stopPropagation()}
+                    <span
                       className={cn(
-                        "text-sm",
+                        "text-sm truncate",
                         isSelected ? "font-medium" : "font-normal",
                       )}
-                    />
+                    >
+                      {view.name}
+                    </span>
                     <span className="text-xs text-muted-foreground truncate shrink-0">
                       {view.toolName}
                     </span>

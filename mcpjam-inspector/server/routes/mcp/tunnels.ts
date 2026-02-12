@@ -175,9 +175,13 @@ tunnels.post("/create", async (c) => {
 
     const { token, credentialId, domain, domainId } =
       await fetchNgrokToken(authHeader);
-    tunnelManager.setNgrokToken(token, credentialId, domainId, domain);
-
-    const url = await tunnelManager.createTunnel(LOCAL_SERVER_ADDR);
+    const url = await tunnelManager.createTunnel("shared", {
+      localAddr: LOCAL_SERVER_ADDR,
+      ngrokToken: token,
+      credentialId,
+      domainId,
+      domain,
+    });
     await recordTunnel(
       "shared",
       url,
@@ -196,6 +200,59 @@ tunnels.post("/create", async (c) => {
     return c.json(
       {
         error: error.message || "Failed to create tunnel",
+      },
+      500,
+    );
+  }
+});
+
+// Create a server-specific tunnel
+tunnels.post("/create/:serverId", async (c) => {
+  const authHeader = c.req.header("authorization");
+  const serverId = c.req.param("serverId");
+
+  try {
+    const existingUrl = tunnelManager.getServerTunnelUrl(serverId);
+    if (existingUrl) {
+      return c.json({
+        url: existingUrl,
+        existed: true,
+      });
+    }
+
+    const { token, credentialId, domain, domainId } =
+      await fetchNgrokToken(authHeader);
+    const baseUrl = await tunnelManager.createTunnel(serverId, {
+      localAddr: LOCAL_SERVER_ADDR,
+      ngrokToken: token,
+      credentialId,
+      domainId,
+      domain,
+    });
+    await recordTunnel(
+      serverId,
+      baseUrl,
+      credentialId,
+      domainId,
+      domain,
+      authHeader,
+    );
+
+    const serverTunnelUrl = tunnelManager.getServerTunnelUrl(serverId);
+    if (!serverTunnelUrl) {
+      throw new Error("Failed to build server tunnel URL");
+    }
+
+    return c.json({
+      url: serverTunnelUrl,
+      serverId,
+      existed: false,
+    });
+  } catch (error: any) {
+    logger.error("Error creating server-specific tunnel", error, { serverId });
+    return c.json(
+      {
+        error: error.message || "Failed to create server-specific tunnel",
       },
       500,
     );
@@ -230,23 +287,52 @@ tunnels.delete("/", async (c) => {
   const authHeader = c.req.header("authorization");
 
   try {
-    const credentialId = tunnelManager.getCredentialId();
-    const domainId = tunnelManager.getDomainId();
+    const credentialId = tunnelManager.getCredentialId("shared");
+    const domainId = tunnelManager.getDomainId("shared");
 
-    await tunnelManager.closeTunnel();
+    await tunnelManager.closeTunnel("shared");
     await reportTunnelClosure("shared", authHeader);
 
     if (credentialId) {
       await cleanupCredential(credentialId, domainId || undefined, authHeader);
     }
 
-    tunnelManager.clearCredentials();
+    tunnelManager.clearCredentials("shared");
     return c.json({ success: true });
   } catch (error: any) {
     logger.error("Error closing tunnel", error);
     return c.json(
       {
         error: error.message || "Failed to close tunnel",
+      },
+      500,
+    );
+  }
+});
+
+// Close a server-specific tunnel
+tunnels.delete("/server/:serverId", async (c) => {
+  const authHeader = c.req.header("authorization");
+  const serverId = c.req.param("serverId");
+
+  try {
+    const credentialId = tunnelManager.getCredentialId(serverId);
+    const domainId = tunnelManager.getDomainId(serverId);
+
+    await tunnelManager.closeTunnel(serverId);
+    await reportTunnelClosure(serverId, authHeader);
+
+    if (credentialId) {
+      await cleanupCredential(credentialId, domainId || undefined, authHeader);
+    }
+
+    tunnelManager.clearCredentials(serverId);
+    return c.json({ success: true, serverId });
+  } catch (error: any) {
+    logger.error("Error closing server-specific tunnel", error, { serverId });
+    return c.json(
+      {
+        error: error.message || "Failed to close server-specific tunnel",
       },
       500,
     );

@@ -35,6 +35,7 @@ interface EditServerModalProps {
   ) => void;
   server: ServerWithName;
   skipAutoConnect?: boolean;
+  existingServerNames?: string[];
 }
 
 export function EditServerModal({
@@ -43,14 +44,26 @@ export function EditServerModal({
   onSubmit,
   server,
   skipAutoConnect = false,
+  existingServerNames = [],
 }: EditServerModalProps) {
   const posthog = usePostHog();
 
   // Use the shared form hook
   const formState = useServerForm(server);
+  const trimmedName = formState.name.trim();
+  const isDuplicateServerName =
+    trimmedName !== "" &&
+    trimmedName !== server.name &&
+    existingServerNames.includes(trimmedName);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isDuplicateServerName) {
+      toast.error(
+        `A server named "${trimmedName}" already exists. Choose a different name.`,
+      );
+      return;
+    }
 
     // Validate Client ID if using custom configuration
     if (formState.authType === "oauth" && formState.useCustomClientId) {
@@ -115,6 +128,11 @@ export function EditServerModal({
               required
               className="h-10"
             />
+            {isDuplicateServerName && (
+              <p className="text-xs text-destructive">
+                A server with this name already exists in this workspace.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -276,7 +294,11 @@ export function EditServerModal({
             >
               Cancel
             </Button>
-            <Button type="submit" className="px-4">
+            <Button
+              type="submit"
+              className="px-4"
+              disabled={isDuplicateServerName}
+            >
               Update Server
             </Button>
           </div>

@@ -13,9 +13,10 @@ import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
+import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
+import { SupportTab } from "./components/SupportTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
@@ -325,18 +326,7 @@ export default function App() {
         servers={workspaceServers}
       />
       <SidebarInset className="flex flex-col min-h-0">
-        <Header
-          workspaces={workspaces}
-          activeWorkspaceId={activeWorkspaceId}
-          onSwitchWorkspace={handleSwitchWorkspace}
-          onCreateWorkspace={handleCreateWorkspace}
-          onUpdateWorkspace={handleUpdateWorkspace}
-          onDeleteWorkspace={handleDeleteWorkspace}
-          onLeaveWorkspace={handleLeaveWorkspace}
-          onWorkspaceShared={handleWorkspaceShared}
-          activeServerSelectorProps={activeServerSelectorProps}
-          isLoadingWorkspaces={isLoadingRemoteWorkspaces}
-        />
+        <Header activeServerSelectorProps={activeServerSelectorProps} />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {/* Content Areas */}
           {activeTab === "servers" && (
@@ -347,7 +337,15 @@ export default function App() {
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              onSwitchWorkspace={handleSwitchWorkspace}
+              onCreateWorkspace={handleCreateWorkspace}
+              onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+              onWorkspaceShared={handleWorkspaceShared}
+              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
           {activeTab === "tools" && (
@@ -362,7 +360,11 @@ export default function App() {
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "views" && (
-            <ViewsTab selectedServer={appState.selectedServer} />
+            <ViewsTab
+              selectedServer={appState.selectedServer}
+              onWorkspaceShared={handleWorkspaceShared}
+              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
+            />
           )}
           {activeTab === "resources" && (
             <div className="h-full overflow-hidden">
@@ -425,12 +427,13 @@ export default function App() {
           )}
           {activeTab === "tracing" && <TracingTab />}
           {activeTab === "app-builder" && (
-            <UIPlaygroundTab
+            <AppBuilderTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
             />
           )}
           {activeTab === "settings" && <SettingsTab />}
+          {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
             <OrganizationsTab organizationId={activeOrganizationId} />

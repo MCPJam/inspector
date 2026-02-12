@@ -14,4 +14,5 @@ export interface ChatV2Request {
   anthropicBaseUrl?: string;
   openaiBaseUrl?: string;
   selectedServers?: string[];
+  requireToolApproval?: boolean;
 }

@@ -1,5 +1,5 @@
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type { HttpServerDefinition } from "@/shared/types.js";
+import type { HttpServerConfig } from "@mcpjam/sdk";
 import {
   EMPTY_OAUTH_TEST_PROFILE,
   type OAuthTestProfile,
@@ -21,7 +21,7 @@ export const deriveOAuthProfileFromServer = (
   if (!server) return EMPTY_OAUTH_TEST_PROFILE;
 
   const httpConfig =
-    "url" in server.config ? (server.config as HttpServerDefinition) : null;
+    "url" in server.config ? (server.config as HttpServerConfig) : null;
   const baseProfile = server.oauthFlowProfile ?? EMPTY_OAUTH_TEST_PROFILE;
 
   if (!httpConfig) {

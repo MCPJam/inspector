@@ -8,6 +8,9 @@ import { AzureOpenAIConfigDialog } from "./setting/AzureOpenAIConfigDialog";
 import { SettingsSection } from "./setting/SettingsSection";
 import { SettingsRow } from "./setting/SettingsRow";
 import { ProviderRow } from "./setting/ProviderRow";
+import { Switch } from "./ui/switch";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { updateThemeMode } from "@/lib/theme-utils";
 
 interface ProviderConfig {
   id: string;
@@ -21,6 +24,8 @@ interface ProviderConfig {
 }
 
 export function SettingsTab() {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
   const {
     tokens,
     setToken,
@@ -286,6 +291,12 @@ export function SettingsTab() {
     setAzureApiKey("");
   };
 
+  const handleThemeToggle = (checked: boolean) => {
+    const newTheme = checked ? "dark" : "light";
+    updateThemeMode(newTheme);
+    setThemeMode(newTheme);
+  };
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-10 space-y-8 max-w-3xl">
@@ -294,6 +305,25 @@ export function SettingsTab() {
         {/* About */}
         <SettingsSection title="About">
           <SettingsRow label="Version" value={`v${__APP_VERSION__}`} />
+        </SettingsSection>
+
+        {/* Appearance */}
+        <SettingsSection title="Appearance">
+          <SettingsRow
+            label="Theme"
+            value={
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {themeMode === "dark" ? "Dark" : "Light"}
+                </span>
+                <Switch
+                  checked={themeMode === "dark"}
+                  onCheckedChange={handleThemeToggle}
+                  aria-label="Toggle dark mode"
+                />
+              </div>
+            }
+          />
         </SettingsSection>
 
         {/* LLM Providers */}

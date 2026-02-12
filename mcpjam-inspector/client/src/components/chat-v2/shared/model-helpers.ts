@@ -83,8 +83,8 @@ export const getDefaultModel = (
 ): ModelDefinition => {
   const modelIdsByPriority: Array<Model | string> = [
     "anthropic/claude-haiku-4.5",
-    "openai/gpt-5",
-    "meta-llama/llama-3.3-70b-instruct",
+    "openai/gpt-5-mini",
+    "meta-llama/llama-4-scout",
     Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
     Model.GPT_4_1, // openai
     Model.GEMINI_2_5_PRO, // google

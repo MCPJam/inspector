@@ -18,6 +18,7 @@ import openrouterLogo from "/openrouter_logo.png";
 import moonshotLightLogo from "/moonshot_light.png";
 import moonshotDarkLogo from "/moonshot_dark.png";
 import zAiLogo from "/z-ai.png";
+import minimaxLogo from "/minimax_logo.svg";
 
 export const getProviderLogoFromProvider = (
   provider: string,
@@ -74,6 +75,8 @@ export const getProviderLogoFromProvider = (
       return moonshotLightLogo;
     case "z-ai":
       return zAiLogo;
+    case "minimax":
+      return minimaxLogo;
     default:
       return null;
   }
@@ -110,6 +113,8 @@ export const getProviderColor = (provider: string) => {
       return "text-cyan-600 dark:text-cyan-400";
     case "z-ai":
       return "text-indigo-600 dark:text-indigo-400";
+    case "minimax":
+      return "text-pink-600 dark:text-pink-400";
     case "meta":
       return "text-blue-500 dark:text-blue-400";
     default:

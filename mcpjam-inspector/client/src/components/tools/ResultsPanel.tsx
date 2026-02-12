@@ -69,7 +69,12 @@ export function ResultsPanel({
             Validation Errors
           </h3>
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-            <JsonEditor value={validationErrors} readOnly showToolbar={false} />
+            <JsonEditor
+              height="100%"
+              value={validationErrors}
+              readOnly
+              showToolbar={false}
+            />
             {Array.isArray(validationErrors) && validationErrors.length > 0 && (
               <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath?.slice(1) ?? ""} ${validationErrors[0].message ?? ""}`}</span>
             )}

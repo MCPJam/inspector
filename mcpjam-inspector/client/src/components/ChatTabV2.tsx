@@ -141,6 +141,9 @@ export function ChatTabV2({
     isStreaming,
     disableForAuthentication,
     submitBlocked: baseSubmitBlocked,
+    requireToolApproval,
+    setRequireToolApproval,
+    addToolApprovalResponse,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     onReset: () => {
@@ -511,6 +514,8 @@ export function ChatTabV2({
     onChangeSkillResults: setSkillResults,
     xrayMode,
     onXrayModeChange: setXrayMode,
+    requireToolApproval,
+    onRequireToolApprovalChange: setRequireToolApproval,
   };
 
   const showStarterPrompts =
@@ -533,8 +538,8 @@ export function ChatTabV2({
               transform: isWidgetFullscreen ? "none" : "translateZ(0)",
             }}
           >
-            {xrayMode ? (
-              // X-Ray mode: show raw JSON view of AI payload
+            {/* X-Ray mode: show raw JSON view of AI payload */}
+            {xrayMode && (
               <StickToBottom
                 className="relative flex flex-1 flex-col min-h-0"
                 resize="smooth"
@@ -561,7 +566,65 @@ export function ChatTabV2({
                   </div>
                 </div>
               </StickToBottom>
-            ) : isThreadEmpty ? (
+            )}
+
+            {/* Thread: kept mounted (but hidden) during X-Ray to preserve
+                MCPAppsRenderer iframes and bridge connections */}
+            {!isThreadEmpty && (
+              <StickToBottom
+                className="relative flex flex-1 flex-col min-h-0 animate-in fade-in duration-300"
+                style={xrayMode ? { display: "none" } : undefined}
+                resize="smooth"
+                initial="smooth"
+              >
+                <div className="relative flex-1 min-h-0">
+                  <StickToBottom.Content className="flex flex-col min-h-0">
+                    <Thread
+                      messages={messages}
+                      sendFollowUpMessage={(text: string) =>
+                        sendMessage({ text })
+                      }
+                      model={selectedModel}
+                      isLoading={status === "submitted"}
+                      toolsMetadata={toolsMetadata}
+                      toolServerMap={toolServerMap}
+                      onWidgetStateChange={handleWidgetStateChange}
+                      onModelContextUpdate={handleModelContextUpdate}
+                      onFullscreenChange={setIsWidgetFullscreen}
+                      enableFullscreenChatOverlay
+                      fullscreenChatPlaceholder={placeholder}
+                      fullscreenChatDisabled={inputDisabled}
+                      onToolApprovalResponse={addToolApprovalResponse}
+                    />
+                  </StickToBottom.Content>
+                  <ScrollToBottomButton />
+                </div>
+
+                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                  {errorMessage && (
+                    <div className="max-w-4xl mx-auto px-4 pt-4">
+                      <ErrorBox
+                        message={errorMessage.message}
+                        errorDetails={errorMessage.details}
+                        code={errorMessage.code}
+                        statusCode={errorMessage.statusCode}
+                        isRetryable={errorMessage.isRetryable}
+                        isMCPJamPlatformError={
+                          errorMessage.isMCPJamPlatformError
+                        }
+                        onResetChat={baseResetChat}
+                      />
+                    </div>
+                  )}
+                  <div className="max-w-4xl mx-auto p-4">
+                    <ChatInput {...sharedChatInputProps} hasMessages />
+                  </div>
+                </div>
+              </StickToBottom>
+            )}
+
+            {/* Empty state: only shown when thread is empty and not in X-Ray mode */}
+            {!xrayMode && isThreadEmpty && (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
                   {isAuthLoading ? (
@@ -607,55 +670,6 @@ export function ChatTabV2({
                   </div>
                 </div>
               </div>
-            ) : (
-              <StickToBottom
-                className="relative flex flex-1 flex-col min-h-0 animate-in fade-in duration-300"
-                resize="smooth"
-                initial="smooth"
-              >
-                <div className="relative flex-1 min-h-0">
-                  <StickToBottom.Content className="flex flex-col min-h-0">
-                    <Thread
-                      messages={messages}
-                      sendFollowUpMessage={(text: string) =>
-                        sendMessage({ text })
-                      }
-                      model={selectedModel}
-                      isLoading={status === "submitted"}
-                      toolsMetadata={toolsMetadata}
-                      toolServerMap={toolServerMap}
-                      onWidgetStateChange={handleWidgetStateChange}
-                      onModelContextUpdate={handleModelContextUpdate}
-                      onFullscreenChange={setIsWidgetFullscreen}
-                      enableFullscreenChatOverlay
-                      fullscreenChatPlaceholder={placeholder}
-                      fullscreenChatDisabled={inputDisabled}
-                    />
-                  </StickToBottom.Content>
-                  <ScrollToBottomButton />
-                </div>
-
-                <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
-                  {errorMessage && (
-                    <div className="max-w-4xl mx-auto px-4 pt-4">
-                      <ErrorBox
-                        message={errorMessage.message}
-                        errorDetails={errorMessage.details}
-                        code={errorMessage.code}
-                        statusCode={errorMessage.statusCode}
-                        isRetryable={errorMessage.isRetryable}
-                        isMCPJamPlatformError={
-                          errorMessage.isMCPJamPlatformError
-                        }
-                        onResetChat={baseResetChat}
-                      />
-                    </div>
-                  )}
-                  <div className="max-w-4xl mx-auto p-4">
-                    <ChatInput {...sharedChatInputProps} hasMessages />
-                  </div>
-                </div>
-              </StickToBottom>
             )}
 
             <ElicitationDialog

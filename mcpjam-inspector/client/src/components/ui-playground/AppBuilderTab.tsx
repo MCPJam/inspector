@@ -1,5 +1,5 @@
 /**
- * UIPlaygroundTab
+ * AppBuilderTab
  *
  * Main orchestrator component for the UI Playground tab.
  * Combines deterministic tool execution with ChatTabV2-style chat,
@@ -34,15 +34,15 @@ import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
 import { PANEL_SIZES } from "./constants";
 import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
-interface UIPlaygroundTabProps {
+interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
 }
 
-export function UIPlaygroundTab({
+export function AppBuilderTab({
   serverConfig,
   serverName,
-}: UIPlaygroundTabProps) {
+}: AppBuilderTabProps) {
   const posthog = usePostHog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   // Compute server key for saved requests storage
@@ -58,6 +58,7 @@ export function UIPlaygroundTab({
     displayMode,
     globals,
     isSidebarVisible,
+    selectedProtocol,
     setTools,
     setSelectedTool,
     setFormFields,
@@ -106,7 +107,7 @@ export function UIPlaygroundTab({
     });
   }, []);
 
-  // Tools metadata for filtering OpenAI apps
+  // Tools metadata used for deterministic injection and invocation messaging
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -116,6 +117,7 @@ export function UIPlaygroundTab({
     useToolExecution({
       serverName,
       selectedTool,
+      toolsMetadata,
       formFields,
       setIsExecuting,
       setExecutionError,
@@ -181,20 +183,20 @@ export function UIPlaygroundTab({
       const tool = tools[selectedTool];
       const uiType = detectUiTypeFromTool(tool);
       if (uiType === UIType.OPENAI_SDK_AND_MCP_APPS) {
-        setSelectedProtocol(UIType.OPENAI_SDK);
+        // Tool supports both protocols - only set default if no stored preference
+        const validProtocols = [UIType.MCP_APPS, UIType.OPENAI_SDK];
+        if (!selectedProtocol || !validProtocols.includes(selectedProtocol)) {
+          setSelectedProtocol(UIType.OPENAI_SDK);
+        }
       } else {
         setSelectedProtocol(uiType);
       }
       return;
     }
 
-    // No tool selected - detect predominant protocol from all tools
-    const toolMetaEntries = Object.values(toolsMetadata);
-    if (toolMetaEntries.length === 0) {
-      setSelectedProtocol(null);
-      return;
-    }
-  }, [selectedTool, toolsMetadata, setSelectedProtocol]);
+    // No tool selected - keep the stored protocol preference
+    // Don't reset to null here as it would clear the persisted user preference
+  }, [selectedTool, tools, setSelectedProtocol, selectedProtocol]);
 
   // Get invoking message from tool metadata
   const invokingMessage = useMemo(() => {

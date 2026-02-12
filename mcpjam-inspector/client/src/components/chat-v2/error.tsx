@@ -135,6 +135,7 @@ export function ErrorBox({
             >
               {errorDetailsJson ? (
                 <JsonEditor
+                  height="100%"
                   value={errorDetailsJson}
                   readOnly
                   showToolbar={false}

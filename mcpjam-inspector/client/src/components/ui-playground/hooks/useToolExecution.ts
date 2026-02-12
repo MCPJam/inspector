@@ -29,6 +29,7 @@ export interface PendingExecution {
 export interface UseToolExecutionOptions {
   serverName: string | undefined;
   selectedTool: string | null;
+  toolsMetadata: Record<string, Record<string, unknown>>;
   formFields: FormField[];
   setIsExecuting: (executing: boolean) => void;
   setExecutionError: (error: string | null) => void;
@@ -60,6 +61,7 @@ function extractMetadata(result: unknown): ToolResponseMeta | undefined {
 export function useToolExecution({
   serverName,
   selectedTool,
+  toolsMetadata,
   formFields,
   setIsExecuting,
   setExecutionError,
@@ -118,15 +120,26 @@ export function useToolExecution({
       setToolOutput(result);
 
       // Extract metadata safely
-      const meta = extractMetadata(result);
-      setToolResponseMetadata(meta || null);
+      const resultMeta = extractMetadata(result);
+      setToolResponseMetadata(resultMeta || null);
+
+      const definitionMeta = selectedTool
+        ? toolsMetadata[selectedTool]
+        : undefined;
+      const mergedMeta =
+        definitionMeta || resultMeta
+          ? {
+              ...(definitionMeta ?? {}),
+              ...(resultMeta ?? {}),
+            }
+          : undefined;
 
       // Set pending execution for chat thread to inject
       setPendingExecution({
         toolName: selectedTool,
         params,
         result,
-        toolMeta: meta,
+        toolMeta: mergedMeta,
       });
 
       // Log successful tool execution
@@ -157,6 +170,7 @@ export function useToolExecution({
     }
   }, [
     selectedTool,
+    toolsMetadata,
     serverName,
     formFields,
     setIsExecuting,

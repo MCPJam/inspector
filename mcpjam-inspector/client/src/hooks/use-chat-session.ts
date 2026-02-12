@@ -21,7 +21,11 @@ import {
   useLayoutEffect,
 } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
-import { DefaultChatTransport, generateId } from "ai";
+import {
+  DefaultChatTransport,
+  generateId,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
+} from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { ModelDefinition, isGPT5Model } from "@/shared/types";
@@ -108,6 +112,15 @@ export interface UseChatSessionReturn {
   systemPromptTokenCount: number | null;
   systemPromptTokenCountLoading: boolean;
 
+  // Tool approval
+  requireToolApproval: boolean;
+  setRequireToolApproval: (value: boolean) => void;
+  addToolApprovalResponse: (options: {
+    id: string;
+    approved: boolean;
+    reason?: string;
+  }) => void;
+
   // Actions
   resetChat: () => void;
 
@@ -166,6 +179,9 @@ export function useChatSession({
   >(null);
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
+  const [requireToolApproval, setRequireToolApproval] = useState(false);
+  const requireToolApprovalRef = useRef(requireToolApproval);
+  requireToolApprovalRef.current = requireToolApproval;
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -224,13 +240,14 @@ export function useChatSession({
 
     return new DefaultChatTransport({
       api: "/api/mcp/chat-v2",
-      body: {
+      body: () => ({
         model: selectedModel,
         apiKey: apiKey,
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
         selectedServers,
-      },
+        requireToolApproval: requireToolApprovalRef.current,
+      }),
       headers:
         Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
     });
@@ -241,6 +258,7 @@ export function useChatSession({
     temperature,
     systemPrompt,
     selectedServers,
+    // requireToolApproval read from ref at request time
   ]);
 
   // useChat hook
@@ -251,9 +269,13 @@ export function useChatSession({
     status,
     error,
     setMessages,
+    addToolApprovalResponse,
   } = useChat({
     id: chatSessionId,
     transport: transport!,
+    sendAutomaticallyWhen: requireToolApproval
+      ? lastAssistantMessageIsCompleteWithApprovalResponses
+      : undefined,
   });
 
   // Wrapped sendMessage that accepts FileUIPart[]
@@ -510,6 +532,11 @@ export function useChatSession({
     mcpToolsTokenCountLoading,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
+
+    // Tool approval
+    requireToolApproval,
+    setRequireToolApproval,
+    addToolApprovalResponse,
 
     // Actions
     resetChat,

@@ -22,12 +22,11 @@
     "serve:production": "bun --env-file=.env.production --watch server.ts",
     "start": "cross-env NODE_ENV=development npm run build && npm run serve",
     "start:production": "cross-env NODE_ENV=production npm run build && npm run serve:production",
-    "dev": "cross-env NODE_ENV=development concurrently 'npm run watch' 'npm run serve'",
-    "prepublishOnly": "npm run build"
+    "dev": "cross-env NODE_ENV=development concurrently 'npm run watch' 'npm run serve'"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^0.4.0",
-    "@modelcontextprotocol/sdk": "^1.24.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@workos-inc/node": "^8.0.0",
     "convex": "^1.31.4",
     "jose": "^6.1.0",

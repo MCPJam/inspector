@@ -160,7 +160,12 @@ export function HTTPHistoryEntry({
                 URL
               </div>
               <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                <JsonEditor value={{ url }} readOnly showToolbar={false} />
+                <JsonEditor
+                  height="100%"
+                  value={{ url }}
+                  readOnly
+                  showToolbar={false}
+                />
               </div>
             </div>
 
@@ -172,6 +177,7 @@ export function HTTPHistoryEntry({
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
                   <JsonEditor
+                    height="100%"
                     value={requestHeaders}
                     readOnly
                     showToolbar={false}
@@ -188,6 +194,7 @@ export function HTTPHistoryEntry({
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[300px] overflow-auto">
                   <JsonEditor
+                    height="100%"
                     value={requestBody}
                     readOnly
                     showToolbar={false}
@@ -204,6 +211,7 @@ export function HTTPHistoryEntry({
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
                   <JsonEditor
+                    height="100%"
                     value={responseHeaders}
                     readOnly
                     showToolbar={false}
@@ -220,6 +228,7 @@ export function HTTPHistoryEntry({
                 </div>
                 <div className="rounded-sm bg-background/60 p-2 max-h-[300px] overflow-auto">
                   <JsonEditor
+                    height="100%"
                     value={responseBody}
                     readOnly
                     showToolbar={false}

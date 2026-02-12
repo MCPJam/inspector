@@ -6,7 +6,7 @@ import {
   auth,
   OAuthClientProvider,
 } from "@modelcontextprotocol/sdk/client/auth.js";
-import { HttpServerDefinition } from "@/shared/types.js";
+import type { HttpServerConfig } from "@mcpjam/sdk";
 import { generateRandomString } from "./state-machines/shared/helpers";
 import { authFetch } from "@/lib/session-token";
 
@@ -103,7 +103,7 @@ export interface MCPOAuthOptions {
 
 export interface OAuthResult {
   success: boolean;
-  serverConfig?: HttpServerDefinition;
+  serverConfig?: HttpServerConfig;
   error?: string;
 }
 
@@ -612,19 +612,13 @@ export function clearOAuthData(serverName: string): void {
 /**
  * Creates MCP server configuration with OAuth tokens
  */
-function createServerConfig(
-  serverUrl: string,
-  tokens: any,
-): HttpServerDefinition {
-  // Preserve full URL including query and hash to support servers configured with query params
-  const fullUrl = new URL(serverUrl);
-
+function createServerConfig(serverUrl: string, tokens: any): HttpServerConfig {
   // Note: We don't include authProvider in the config because it can't be serialized
   // when sent to the backend via JSON. The backend will use the Authorization header instead.
   // Token refresh should be handled separately if the token expires.
 
   return {
-    url: fullUrl,
+    url: serverUrl,
     requestInit: {
       headers: tokens.access_token
         ? {
@@ -632,6 +626,5 @@ function createServerConfig(
           }
         : {},
     },
-    oauth: tokens,
   };
 }

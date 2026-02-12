@@ -347,7 +347,6 @@ The host responds with `McpUiInitializeResult`:
   hostContext: {
     theme: "dark",
     displayMode: "inline",
-    containerDimensions: { maxHeight: 800, maxWidth: 1200 },
     locale: "en-US",
     timeZone: "America/New_York",
     platform: "web",
@@ -586,10 +585,10 @@ Host                    Sandbox Proxy              Guest UI
 
 ### Guest UI → Host Notifications
 
-| Message                         | Description                            |
-| ------------------------------- | -------------------------------------- |
-| `ui/notifications/initialized`  | Guest UI is ready                      |
-| `ui/notifications/size-changed` | Content size changed (for auto-resize) |
+| Message                         | Description                              |
+| ------------------------------- | ---------------------------------------- |
+| `ui/notifications/initialized`  | Guest UI is ready                        |
+| `ui/notifications/size-changed` | Content height changed (for auto-resize) |
 
 ---
 
@@ -602,7 +601,6 @@ interface McpUiHostContext {
   theme?: "light" | "dark";
   displayMode?: "inline" | "fullscreen" | "pip";
   availableDisplayModes?: string[];
-  containerDimensions?: { maxHeight?: number; maxWidth?: number };
   locale?: string; // BCP 47, e.g., "en-US"
   timeZone?: string; // IANA, e.g., "America/New_York"
   userAgent?: string;
@@ -619,6 +617,8 @@ interface McpUiHostContext {
   };
 }
 ```
+
+For this host implementation, `containerDimensions` is intentionally omitted and inline app width remains host-controlled (`w-full`). Width values from `ui/notifications/size-changed` are ignored; only height is applied.
 
 ---
 

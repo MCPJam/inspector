@@ -1,9 +1,5 @@
 // Shared types between client and server
 
-import { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
-
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
   id: string;
@@ -109,29 +105,30 @@ export type ModelProvider =
   | "mistral"
   | "moonshotai"
   | "openrouter"
-  | "z-ai";
+  | "z-ai"
+  | "minimax";
 
+// Premium models (e.g. claude-sonnet-4.5, gpt-5, gpt-5.1) were removed to reduce free tier costs.
+// See: https://github.com/MCPJam/inspector/pull/1391
+// We may add them back as a premium offering in the future.
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
-  "meta-llama/llama-3.3-70b-instruct",
   "openai/gpt-oss-120b",
-  "x-ai/grok-4-fast",
   "openai/gpt-5-nano",
-  "anthropic/claude-sonnet-4.5",
   "anthropic/claude-haiku-4.5",
-  "openai/gpt-5.1",
-  "openai/gpt-5.1-codex",
   "openai/gpt-5.1-codex-mini",
-  "openai/gpt-5-codex",
-  "openai/gpt-5",
   "openai/gpt-5-mini",
-  "google/gemini-2.5-flash-preview-09-2025",
   "moonshotai/kimi-k2-thinking",
   "moonshotai/kimi-k2-0905",
   "google/gemini-2.5-flash",
-  "z-ai/glm-4.6",
-  "openai/gpt-5.2-chat",
   "x-ai/grok-code-fast-1",
   "deepseek/deepseek-v3.2",
+  "google/gemini-3-flash-preview",
+  "meta-llama/llama-4-scout",
+  "moonshotai/kimi-k2.5",
+  "x-ai/grok-4.1-fast",
+  "z-ai/glm-4.7",
+  "z-ai/glm-4.7-flash",
+  "minimax/minimax-m2.1",
 ];
 
 export const isMCPJamProvidedModel = (modelId: string): boolean => {
@@ -286,12 +283,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 400000,
   },
-  {
-    id: "openai/gpt-5.1-codex-mini",
-    name: "GPT-5.1 Codex Mini (Free)",
-    provider: "openai",
-    contextLength: 200000,
-  },
   { id: Model.GPT_5, name: "GPT-5", provider: "openai", contextLength: 400000 },
   {
     id: Model.GPT_5_MINI,
@@ -385,22 +376,10 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 1048576,
   },
   {
-    id: "meta-llama/llama-3.3-70b-instruct",
-    name: "Llama 3.3 70B (Free)",
-    provider: "meta",
-    contextLength: 128000,
-  },
-  {
     id: "openai/gpt-oss-120b",
     name: "GPT-OSS 120B (Free)",
     provider: "openai",
     contextLength: 131072,
-  },
-  {
-    id: "x-ai/grok-4-fast",
-    name: "Grok 4 Fast (Free)",
-    provider: "xai",
-    contextLength: 2000000,
   },
   {
     id: "openai/gpt-5-nano",
@@ -409,26 +388,14 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 16000,
   },
   {
-    id: "anthropic/claude-sonnet-4.5",
-    name: "Claude Sonnet 4.5 (Free)",
-    provider: "anthropic",
-    contextLength: 1000000,
-  },
-  {
     id: "anthropic/claude-haiku-4.5",
     name: "Claude Haiku 4.5 (Free)",
     provider: "anthropic",
     contextLength: 200000,
   },
   {
-    id: "openai/gpt-5-codex",
-    name: "GPT-5 Codex (Free)",
-    provider: "openai",
-    contextLength: 400000,
-  },
-  {
-    id: "openai/gpt-5",
-    name: "GPT-5 (Free)",
+    id: "openai/gpt-5.1-codex-mini",
+    name: "GPT-5.1 Codex Mini (Free)",
     provider: "openai",
     contextLength: 400000,
   },
@@ -437,12 +404,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "GPT-5 Mini (Free)",
     provider: "openai",
     contextLength: 128000,
-  },
-  {
-    id: "google/gemini-2.5-flash-preview-09-2025",
-    name: "Gemini 2.5 Flash Preview (Free)",
-    provider: "google",
-    contextLength: 1048576,
   },
   {
     id: "moonshotai/kimi-k2-thinking",
@@ -463,18 +424,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 1048576,
   },
   {
-    id: "z-ai/glm-4.6",
-    name: "GLM 4.6 (Free)",
-    provider: "z-ai",
-    contextLength: 200000,
-  },
-  {
-    id: "openai/gpt-5.2-chat",
-    name: "GPT-5.2 Chat (Free)",
-    provider: "openai",
-    contextLength: 400000,
-  },
-  {
     id: "x-ai/grok-code-fast-1",
     name: "Grok Code Fast 1 (Free)",
     provider: "xai",
@@ -484,6 +433,48 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     id: "deepseek/deepseek-v3.2",
     name: "DeepSeek V3.2 (Free)",
     provider: "deepseek",
+    contextLength: 128000,
+  },
+  {
+    id: "google/gemini-3-flash-preview",
+    name: "Gemini 3 Flash Preview (Free)",
+    provider: "google",
+    contextLength: 1048576,
+  },
+  {
+    id: "meta-llama/llama-4-scout",
+    name: "Llama 4 Scout (Free)",
+    provider: "meta",
+    contextLength: 512000,
+  },
+  {
+    id: "moonshotai/kimi-k2.5",
+    name: "Kimi K2.5 (Free)",
+    provider: "moonshotai",
+    contextLength: 262144,
+  },
+  {
+    id: "x-ai/grok-4.1-fast",
+    name: "Grok 4.1 Fast (Free)",
+    provider: "xai",
+    contextLength: 2000000,
+  },
+  {
+    id: "z-ai/glm-4.7",
+    name: "GLM 4.7 (Free)",
+    provider: "z-ai",
+    contextLength: 200000,
+  },
+  {
+    id: "z-ai/glm-4.7-flash",
+    name: "GLM 4.7 Flash (Free)",
+    provider: "z-ai",
+    contextLength: 200000,
+  },
+  {
+    id: "minimax/minimax-m2.1",
+    name: "MiniMax M2.1 (Free)",
+    provider: "minimax",
     contextLength: 128000,
   },
   // Mistral models
@@ -577,43 +568,6 @@ export const getModelById = (id: string): ModelDefinition | undefined => {
 
 export const isModelSupported = (id: string): boolean => {
   return SUPPORTED_MODELS.some((model) => model.id === id);
-};
-
-// MCP Server Definition Types
-export type BaseServerOptions = {
-  name?: string;
-  timeout?: number;
-  capabilities?: ClientCapabilities;
-  enableServerLogs?: boolean;
-};
-
-export type StdioServerDefinition = BaseServerOptions & {
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: never;
-  requestInit?: never;
-  eventSourceInit?: never;
-  reconnectionOptions?: never;
-  sessionId?: never;
-  oauth?: never;
-};
-
-export type HttpServerDefinition = BaseServerOptions & {
-  url: URL;
-  command?: never;
-  args?: never;
-  env?: never;
-  requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
-  eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
-  // Note: authProvider is intentionally not included because it can't be serialized
-  // when sending configs over HTTP. OAuth tokens should be in requestInit headers.
-  reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
-  sessionId?: StreamableHTTPClientTransportOptions["sessionId"];
-  oauth?: any;
-  oauthScopes?: string[]; // Persist OAuth scopes in config
-  clientId?: string; // Persist OAuth client ID in config
-  clientSecret?: string; // Persist OAuth client secret in config
 };
 
 export interface ServerFormData {

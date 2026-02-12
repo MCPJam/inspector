@@ -11,6 +11,7 @@ import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpe
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 
 export function MessageView({
   message,
@@ -29,6 +30,9 @@ export function MessageView({
   displayMode,
   onDisplayModeChange,
   selectedProtocolOverrideIfBothExists,
+  onToolApprovalResponse,
+  toolRenderOverrides,
+  showSaveViewButton = true,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -52,6 +56,9 @@ export function MessageView({
   displayMode?: DisplayMode;
   onDisplayModeChange?: (mode: DisplayMode) => void;
   selectedProtocolOverrideIfBothExists?: UIType;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
+  toolRenderOverrides?: Record<string, ToolRenderOverride>;
+  showSaveViewButton?: boolean;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -95,6 +102,8 @@ export function MessageView({
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocolOverrideIfBothExists
                 }
+                toolRenderOverrides={toolRenderOverrides}
+                showSaveViewButton={showSaveViewButton}
               />
             ))}
           </div>
@@ -123,6 +132,8 @@ export function MessageView({
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocolOverrideIfBothExists
                 }
+                toolRenderOverrides={toolRenderOverrides}
+                showSaveViewButton={showSaveViewButton}
               />
             ))}
           </UserMessageBubble>
@@ -170,6 +181,10 @@ export function MessageView({
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocolOverrideIfBothExists
                 }
+                onToolApprovalResponse={onToolApprovalResponse}
+                messageParts={message.parts}
+                toolRenderOverrides={toolRenderOverrides}
+                showSaveViewButton={showSaveViewButton}
               />
             ))}
           </div>
