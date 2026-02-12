@@ -314,7 +314,7 @@ declare global {
      */
     requestCheckout(session: Record<string, unknown>): Promise<unknown> {
       const id = ++callId;
-      sendNotification("openai/requestCheckout", { callId: id, ...session });
+      sendNotification("openai/requestCheckout", { ...session, callId: id });
 
       return new Promise((resolve, reject) => {
         pendingCheckoutCalls.set(id, { resolve, reject });
