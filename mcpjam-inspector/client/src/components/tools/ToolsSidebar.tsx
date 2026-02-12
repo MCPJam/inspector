@@ -6,7 +6,7 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "../ui/accordion";
-import { type RefObject, useMemo } from "react";
+import { type RefObject, useMemo, useState, useEffect } from "react";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
@@ -18,6 +18,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
 import { ParametersForm } from "../ui-playground/ParametersForm";
+import { JsonEditor } from "@/components/ui/json-editor";
 import type { FormField } from "@/lib/tool-form";
 
 interface ToolsSidebarProps {
@@ -102,10 +103,11 @@ export function ToolsSidebar({
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
 
   const hasParameters = formFields && formFields.length > 0;
-  const defaultOpenSections = useMemo(
-    () => (hasParameters ? ["parameters"] : ["description"]),
-    [hasParameters],
-  );
+  const [openSections, setOpenSections] = useState<string[]>(["description"]);
+
+  useEffect(() => {
+    setOpenSections(hasParameters ? ["parameters"] : ["description"]);
+  }, [selectedToolName, hasParameters]);
   const canExecute = !!selectedToolName && !!onExecute;
   const canSave = !!selectedToolName && !!onSave;
 
@@ -245,9 +247,9 @@ export function ToolsSidebar({
           <div className="flex-1 overflow-hidden">
             <ScrollArea className="h-full">
               <Accordion
-                key={`${selectedToolName}-${hasParameters}`}
                 type="multiple"
-                defaultValue={defaultOpenSections}
+                value={openSections}
+                onValueChange={setOpenSections}
                 className="px-3"
               >
                 {selectedTool?.description && (
@@ -268,9 +270,14 @@ export function ToolsSidebar({
                       Output Schema
                     </AccordionTrigger>
                     <AccordionContent>
-                      <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all">
-                        {JSON.stringify(selectedTool.outputSchema, null, 2)}
-                      </pre>
+                      <div className="overflow-hidden rounded-md [&_.h-full]:h-auto">
+                        <JsonEditor
+                          value={selectedTool.outputSchema}
+                          readOnly
+                          showToolbar={false}
+                          height="auto"
+                        />
+                      </div>
                     </AccordionContent>
                   </AccordionItem>
                 )}

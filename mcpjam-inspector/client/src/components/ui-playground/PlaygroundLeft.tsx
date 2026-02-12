@@ -21,6 +21,7 @@ import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
 import { LoggerView } from "../logger-view";
+import { JsonEditor } from "@/components/ui/json-editor";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -313,10 +314,11 @@ function ToolParametersView({
   shouldRenderUiTypeOverrideSelector,
 }: ToolParametersViewProps) {
   const hasParameters = formFields && formFields.length > 0;
-  const defaultOpenSections = useMemo(
-    () => (hasParameters ? ["parameters"] : ["description"]),
-    [hasParameters],
-  );
+  const [openSections, setOpenSections] = useState<string[]>(["description"]);
+
+  useEffect(() => {
+    setOpenSections(hasParameters ? ["parameters"] : ["description"]);
+  }, [selectedToolName, hasParameters]);
 
   return (
     <div className="h-full flex flex-col">
@@ -328,9 +330,9 @@ function ToolParametersView({
       />
       <ScrollArea className="flex-1 min-h-0">
         <Accordion
-          key={`${selectedToolName}-${hasParameters}`}
           type="multiple"
-          defaultValue={defaultOpenSections}
+          value={openSections}
+          onValueChange={setOpenSections}
           className="px-3"
         >
           {selectedTool?.description && (
@@ -351,9 +353,14 @@ function ToolParametersView({
                 Output Schema
               </AccordionTrigger>
               <AccordionContent>
-                <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all">
-                  {JSON.stringify(selectedTool.outputSchema, null, 2)}
-                </pre>
+                <div className="overflow-hidden rounded-md [&_.h-full]:h-auto">
+                  <JsonEditor
+                    value={selectedTool.outputSchema}
+                    readOnly
+                    showToolbar={false}
+                    height="auto"
+                  />
+                </div>
               </AccordionContent>
             </AccordionItem>
           )}
