@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 
+export type WorkspaceMembershipRole = "owner" | "admin" | "member";
+
 export interface RemoteWorkspace {
   _id: string;
   name: string;
@@ -40,6 +42,7 @@ export interface WorkspaceMember {
   workspaceId: string;
   userId?: string;
   email: string;
+  role?: WorkspaceMembershipRole;
   addedBy: string;
   addedAt: number;
   isOwner: boolean;
@@ -115,6 +118,10 @@ export function useWorkspaceMutations() {
   const updateWorkspace = useMutation("workspaces:updateWorkspace" as any);
   const deleteWorkspace = useMutation("workspaces:deleteWorkspace" as any);
   const addMember = useMutation("workspaces:addMember" as any);
+  const changeMemberRole = useMutation("workspaces:changeMemberRole" as any);
+  const transferWorkspaceOwnership = useMutation(
+    "workspaces:transferWorkspaceOwnership" as any,
+  );
   const removeMember = useMutation("workspaces:removeMember" as any);
 
   return {
@@ -122,6 +129,8 @@ export function useWorkspaceMutations() {
     updateWorkspace,
     deleteWorkspace,
     addMember,
+    changeMemberRole,
+    transferWorkspaceOwnership,
     removeMember,
   };
 }

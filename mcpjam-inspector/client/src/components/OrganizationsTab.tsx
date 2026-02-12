@@ -28,11 +28,15 @@ import {
 import { toast } from "sonner";
 import {
   Organization,
+  OrganizationMember,
+  type OrganizationMembershipRole,
+  resolveOrganizationRole,
   useOrganizationQueries,
   useOrganizationMembers,
   useOrganizationMutations,
 } from "@/hooks/useOrganizations";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
+import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -121,19 +125,44 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     updateOrganization,
     deleteOrganization,
     addMember,
+    changeMemberRole,
+    transferOrganizationOwnership,
     removeMember,
     generateLogoUploadUrl,
     updateOrganizationLogo,
   } = useOrganizationMutations();
 
-  // All members can edit the organization
-  const canEdit = true;
-
-  // Determine if current user is the creator (for delete vs leave)
   const currentMember = activeMembers.find(
     (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
-  const isCreator = currentMember?.userId === organization.createdBy;
+  const currentRole: OrganizationMembershipRole | null = currentMember
+    ? resolveOrganizationRole(currentMember)
+    : null;
+  const isOwner = currentRole === "owner";
+  const canAccessAdminConsole = isOwner || currentRole === "admin";
+  const canEdit = currentRole === "owner" || currentRole === "admin";
+  const canInvite = canEdit;
+
+  const canRemoveMember = (member: OrganizationMember): boolean => {
+    if (!currentRole) return false;
+    const isSelf =
+      member.email.toLowerCase() === currentUserEmail?.toLowerCase();
+    if (isSelf) return false;
+
+    const targetRole = resolveOrganizationRole(member);
+    if (currentRole === "owner") {
+      return targetRole !== "owner";
+    }
+    if (currentRole === "admin") {
+      return targetRole === "member";
+    }
+    return false;
+  };
+
+  const canRemovePendingMember = (): boolean => {
+    if (!currentRole) return false;
+    return currentRole === "owner" || currentRole === "admin";
+  };
 
   // Logo upload state
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -141,6 +170,12 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   // Invite state
   const [inviteEmail, setInviteEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
+  const [roleUpdatingEmail, setRoleUpdatingEmail] = useState<string | null>(
+    null,
+  );
+  const [transferTargetMember, setTransferTargetMember] =
+    useState<OrganizationMember | null>(null);
+  const [isTransferringOwnership, setIsTransferringOwnership] = useState(false);
 
   // Delete/Leave state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -222,7 +257,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   };
 
   const handleInvite = async () => {
-    if (!inviteEmail.trim()) return;
+    if (!inviteEmail.trim() || !canInvite) return;
     setIsInviting(true);
     try {
       const result = await addMember({
@@ -253,6 +288,58 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
       toast.success("Member removed");
     } catch (error) {
       toast.error((error as Error).message || "Failed to remove member");
+    }
+  };
+
+  const handleChangeMemberRole = async (
+    member: OrganizationMember,
+    role: "admin" | "member",
+  ) => {
+    if (!isOwner) return;
+
+    const currentTargetRole = resolveOrganizationRole(member);
+    if (currentTargetRole === "owner" || currentTargetRole === role) {
+      return;
+    }
+
+    setRoleUpdatingEmail(member.email);
+    try {
+      await changeMemberRole({
+        organizationId: organization._id,
+        email: member.email,
+        role,
+      });
+      toast.success(`Updated role for ${member.email}`);
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to update member role");
+    } finally {
+      setRoleUpdatingEmail(null);
+    }
+  };
+
+  const handleTransferOwnership = async () => {
+    if (!isOwner || !transferTargetMember) return;
+
+    setIsTransferringOwnership(true);
+    try {
+      const result = (await transferOrganizationOwnership({
+        organizationId: organization._id,
+        newOwnerEmail: transferTargetMember.email,
+      })) as { changed?: boolean } | undefined;
+
+      if (result?.changed === false) {
+        toast.success("Ownership is already assigned to that member");
+      } else {
+        toast.success(`Ownership transferred to ${transferTargetMember.email}`);
+      }
+
+      setTransferTargetMember(null);
+    } catch (error) {
+      toast.error(
+        (error as Error).message || "Failed to transfer organization ownership",
+      );
+    } finally {
+      setIsTransferringOwnership(false);
     }
   };
 
@@ -345,84 +432,188 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
         </div>
       </div>
 
-      {/* Members Section */}
-      <div className="mb-12">
-        <h2 className="text-xl font-semibold mb-6">Members</h2>
+      {canAccessAdminConsole ? (
+        <div className="mb-12">
+          <h2 className="text-xl font-semibold">Admin Console</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Manage organization membership and inspect audit activity.
+          </p>
 
-        {/* Invite Member */}
-        {canEdit && (
+          <div className="space-y-8 mt-6">
+            <section>
+              <h3 className="text-lg font-semibold mb-4">
+                Member Administration
+              </h3>
+
+              <div className="mb-6 rounded-lg border bg-muted/20 p-4">
+                <h4 className="text-sm font-semibold mb-2">Roles</h4>
+                <div className="space-y-1 text-sm text-muted-foreground">
+                  <p>
+                    <span className="font-medium text-foreground">Owner:</span>{" "}
+                    Full control. Can change roles, transfer ownership, and
+                    delete the organization.
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Admin:</span>{" "}
+                    Can update org settings, invite/remove members, and view
+                    audit logs. Cannot change roles or transfer ownership.
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Member:</span>{" "}
+                    Standard access. No admin console access.
+                  </p>
+                </div>
+              </div>
+
+              {canInvite && (
+                <div className="mb-6">
+                  <label className="text-sm font-medium text-muted-foreground block mb-2">
+                    Invite New Member
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Email address"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleInvite()}
+                      className="max-w-sm"
+                    />
+                    <Button
+                      onClick={handleInvite}
+                      disabled={!inviteEmail.trim() || isInviting}
+                    >
+                      <UserPlus className="size-4 mr-2" />
+                      {isInviting ? "Inviting..." : "Invite"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-6">
+                <label className="text-sm font-medium text-muted-foreground block mb-2">
+                  Active Members ({activeMembers.length})
+                </label>
+                {membersLoading ? (
+                  <div className="flex items-center gap-2 text-muted-foreground py-4">
+                    <RefreshCw className="size-4 animate-spin" />
+                    Loading members...
+                  </div>
+                ) : (
+                  <div className="space-y-1 border rounded-lg p-2">
+                    {activeMembers.map((member) => {
+                      const memberRole = resolveOrganizationRole(member);
+                      return (
+                        <OrganizationMemberRow
+                          key={member._id}
+                          member={member}
+                          role={memberRole}
+                          currentUserEmail={currentUserEmail}
+                          canEditRole={isOwner && memberRole !== "owner"}
+                          isRoleUpdating={roleUpdatingEmail === member.email}
+                          onRoleChange={
+                            isOwner && memberRole !== "owner"
+                              ? (role) =>
+                                  void handleChangeMemberRole(member, role)
+                              : undefined
+                          }
+                          onTransferOwnership={
+                            isOwner && memberRole !== "owner"
+                              ? () => setTransferTargetMember(member)
+                              : undefined
+                          }
+                          isTransferringOwnership={
+                            isTransferringOwnership &&
+                            transferTargetMember?.email === member.email
+                          }
+                          onRemove={
+                            canRemoveMember(member)
+                              ? () => handleRemoveMember(member.email)
+                              : undefined
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {pendingMembers.length > 0 && (
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground block mb-2">
+                    Pending Invitations ({pendingMembers.length})
+                  </label>
+                  <div className="space-y-1 border rounded-lg p-2 border-dashed">
+                    {pendingMembers.map((member) => (
+                      <OrganizationMemberRow
+                        key={member._id}
+                        member={member}
+                        currentUserEmail={currentUserEmail}
+                        isPending
+                        onRemove={
+                          canRemovePendingMember()
+                            ? () => handleRemoveMember(member.email)
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <OrganizationAuditLog
+              organizationId={organization._id}
+              organizationName={organization.name}
+              isAuthenticated={isAuthenticated}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="mb-12">
+          <h2 className="text-xl font-semibold mb-6">Members</h2>
+
           <div className="mb-6">
             <label className="text-sm font-medium text-muted-foreground block mb-2">
-              Invite New Member
+              Active Members ({activeMembers.length})
             </label>
-            <div className="flex gap-2">
-              <Input
-                placeholder="Email address"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleInvite()}
-                className="max-w-sm"
-              />
-              <Button
-                onClick={handleInvite}
-                disabled={!inviteEmail.trim() || isInviting}
-              >
-                <UserPlus className="size-4 mr-2" />
-                {isInviting ? "Inviting..." : "Invite"}
-              </Button>
-            </div>
+            {membersLoading ? (
+              <div className="flex items-center gap-2 text-muted-foreground py-4">
+                <RefreshCw className="size-4 animate-spin" />
+                Loading members...
+              </div>
+            ) : (
+              <div className="space-y-1 border rounded-lg p-2">
+                {activeMembers.map((member) => (
+                  <OrganizationMemberRow
+                    key={member._id}
+                    member={member}
+                    role={resolveOrganizationRole(member)}
+                    currentUserEmail={currentUserEmail}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-        )}
 
-        {/* Active Members */}
-        <div className="mb-6">
-          <label className="text-sm font-medium text-muted-foreground block mb-2">
-            Active Members ({activeMembers.length})
-          </label>
-          {membersLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground py-4">
-              <RefreshCw className="size-4 animate-spin" />
-              Loading members...
-            </div>
-          ) : (
-            <div className="space-y-1 border rounded-lg p-2">
-              {activeMembers.map((member) => (
-                <OrganizationMemberRow
-                  key={member._id}
-                  member={member}
-                  currentUserEmail={currentUserEmail}
-                  onRemove={
-                    // Can't remove the owner (creator)
-                    !member.isOwner
-                      ? () => handleRemoveMember(member.email)
-                      : undefined
-                  }
-                />
-              ))}
+          {pendingMembers.length > 0 && (
+            <div>
+              <label className="text-sm font-medium text-muted-foreground block mb-2">
+                Pending Invitations ({pendingMembers.length})
+              </label>
+              <div className="space-y-1 border rounded-lg p-2 border-dashed">
+                {pendingMembers.map((member) => (
+                  <OrganizationMemberRow
+                    key={member._id}
+                    member={member}
+                    currentUserEmail={currentUserEmail}
+                    isPending
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>
-
-        {/* Pending Invitations */}
-        {pendingMembers.length > 0 && (
-          <div>
-            <label className="text-sm font-medium text-muted-foreground block mb-2">
-              Pending Invitations ({pendingMembers.length})
-            </label>
-            <div className="space-y-1 border rounded-lg p-2 border-dashed">
-              {pendingMembers.map((member) => (
-                <OrganizationMemberRow
-                  key={member._id}
-                  member={member}
-                  currentUserEmail={currentUserEmail}
-                  isPending
-                  onRemove={() => handleRemoveMember(member.email)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Danger Zone */}
       <div>
@@ -435,7 +626,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
         </p>
 
         <div className="border border-destructive/50 rounded-lg p-6 space-y-6">
-          {!isCreator && (
+          {!membersLoading && !isOwner && (
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-medium">Leave Organization</h3>
@@ -455,7 +646,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
             </div>
           )}
 
-          {isCreator && (
+          {!membersLoading && isOwner && (
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-medium">Delete Organization</h3>
@@ -475,6 +666,45 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
           )}
         </div>
       </div>
+
+      {/* Ownership Transfer Confirmation */}
+      <AlertDialog
+        open={!!transferTargetMember}
+        onOpenChange={(open) => {
+          if (!open && !isTransferringOwnership) {
+            setTransferTargetMember(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Transfer organization ownership?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {transferTargetMember
+                ? `You are about to transfer ownership of "${organization.name}" to ${transferTargetMember.email}. You will become an admin.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isTransferringOwnership}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleTransferOwnership();
+              }}
+              disabled={isTransferringOwnership}
+            >
+              {isTransferringOwnership
+                ? "Transferring..."
+                : "Transfer ownership"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Confirmation */}
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>

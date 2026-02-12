@@ -57,8 +57,8 @@ export function createServer(options: ServerFactoryOptions = {}): McpServer {
     "get-cocktail",
     {
       title: "Get Cocktail",
-      description: "Fetch a cocktail by id with ingredients and images. If the id is unknown, use the 'Get All Cocktails' tool to get a list of all cocktails.",
-      inputSchema: z.object({ id: z.string().describe("The id of the cocktail to fetch. ex. 'margarita' or 'bloody_mary'. Ids are lower case and snake case.") }),
+      description: "This tool renders a UI that displays a cocktail recipe. No need to render any other UI views.",
+      inputSchema: z.object({ id: z.string().describe("The id of the cocktail to fetch. ex. 'margarita' or 'bloody_mary'. Ids are lower case and snake case. If the id is unknown, use the 'Get All Cocktails' tool to get a list of all cocktails.") }),
       _meta: {
         ui: { resourceUri: cocktailRecipeWidgetResourceUri },
         visibility: ["model", "app"],

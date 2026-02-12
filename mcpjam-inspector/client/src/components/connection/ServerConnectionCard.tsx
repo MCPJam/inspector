@@ -289,7 +289,7 @@ export function ServerConnectionCard({
 
   return (
     <>
-      <Card className="group rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-all duration-200 hover:border-border hover:shadow-md">
+      <Card className="group h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-all duration-200 hover:border-border hover:shadow-md">
         <div className="p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">

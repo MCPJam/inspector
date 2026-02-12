@@ -13,7 +13,7 @@ import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
-import { UIPlaygroundTab } from "./components/ui-playground/UIPlaygroundTab";
+import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
@@ -427,7 +427,7 @@ export default function App() {
           )}
           {activeTab === "tracing" && <TracingTab />}
           {activeTab === "app-builder" && (
-            <UIPlaygroundTab
+            <AppBuilderTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
             />
