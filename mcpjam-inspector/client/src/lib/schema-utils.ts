@@ -3,11 +3,7 @@ import type { ErrorObject } from "ajv";
 
 const ajv = new Ajv();
 
-export type UnstructuredValidationStatus =
-  | "not_applicable"
-  | "valid"
-  | "invalid_json"
-  | "schema_mismatch";
+export type UnstructuredValidationStatus = "not_applicable" | "schema_mismatch";
 
 export interface ValidationReport {
   structuredErrors: ErrorObject[] | null | undefined;
@@ -47,17 +43,10 @@ export function validateToolOutput(
     }
   }
 
-  //  Validate raw content string (if it's a string)
-  if (typeof result.content[0].text === "string") {
-    try {
-      const parsedContent = JSON.parse(result.content[0].text);
-      const validate = ajv.compile(outputSchema);
-      const isValid = validate(parsedContent);
-      report.unstructuredStatus = isValid ? "valid" : "schema_mismatch";
-    } catch (e) {
-      // This will catch errors from JSON.parse if content is not valid JSON
-      report.unstructuredStatus = "invalid_json";
-    }
+  // The outputSchema applies to structuredContent only, not content.
+  // The official SDK enforces this (error -32600), but third-party servers may not.
+  if (!result.structuredContent && !result.isError) {
+    report.unstructuredStatus = "schema_mismatch";
   }
 
   return report;

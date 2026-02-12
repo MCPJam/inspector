@@ -101,9 +101,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     any[] | null | undefined
   >(undefined);
   const [unstructuredValidationResult, setUnstructuredValidationResult] =
-    useState<"not_applicable" | "valid" | "invalid_json" | "schema_mismatch">(
-      "not_applicable",
-    );
+    useState<"not_applicable" | "schema_mismatch">("not_applicable");
   const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");

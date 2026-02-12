@@ -12,76 +12,6 @@ describe("validateToolOutput", () => {
     });
   });
 
-  describe("unstructured content validation", () => {
-    const stringSchema = {
-      type: "object",
-      properties: {
-        message: { type: "string" },
-        count: { type: "number" },
-      },
-      required: ["message"],
-    };
-
-    it("returns valid when content matches schema", () => {
-      const result = {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ message: "hello", count: 42 }),
-          },
-        ],
-      };
-
-      const report = validateToolOutput(result, stringSchema);
-      expect(report.unstructuredStatus).toBe("valid");
-    });
-
-    it("returns schema_mismatch when content does not match schema", () => {
-      const result = {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ wrong: "property" }), // missing required "message"
-          },
-        ],
-      };
-
-      const report = validateToolOutput(result, stringSchema);
-      expect(report.unstructuredStatus).toBe("schema_mismatch");
-    });
-
-    it("returns invalid_json when content is not valid JSON", () => {
-      const result = {
-        content: [{ type: "text", text: "not valid json {}" }],
-      };
-
-      const report = validateToolOutput(result, stringSchema);
-      expect(report.unstructuredStatus).toBe("invalid_json");
-    });
-
-    it("handles empty JSON object", () => {
-      const result = {
-        content: [{ type: "text", text: "{}" }],
-      };
-
-      const report = validateToolOutput(result, stringSchema);
-      expect(report.unstructuredStatus).toBe("schema_mismatch"); // missing required "message"
-    });
-
-    it("handles JSON array in content", () => {
-      const arraySchema = {
-        type: "array",
-        items: { type: "string" },
-      };
-      const result = {
-        content: [{ type: "text", text: '["a", "b", "c"]' }],
-      };
-
-      const report = validateToolOutput(result, arraySchema);
-      expect(report.unstructuredStatus).toBe("valid");
-    });
-  });
-
   describe("structured content validation", () => {
     const schema = {
       type: "object",
@@ -99,6 +29,7 @@ describe("validateToolOutput", () => {
 
       const report = validateToolOutput(result, schema);
       expect(report.structuredErrors).toBeNull(); // null means valid
+      expect(report.unstructuredStatus).toBe("not_applicable");
     });
 
     it("returns validation errors when structuredContent is invalid", () => {
@@ -111,6 +42,8 @@ describe("validateToolOutput", () => {
       expect(report.structuredErrors).toBeDefined();
       expect(report.structuredErrors).not.toBeNull();
       expect(report.structuredErrors!.length).toBeGreaterThan(0);
+      // unstructured is still not_applicable because structuredContent exists
+      expect(report.unstructuredStatus).toBe("not_applicable");
     });
 
     it("returns schema-compilation error when outputSchema is invalid", () => {
@@ -131,7 +64,49 @@ describe("validateToolOutput", () => {
     });
   });
 
-  describe("combined validation", () => {
+  describe("missing structuredContent", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        message: { type: "string" },
+      },
+      required: ["message"],
+    };
+
+    it("flags as schema_mismatch when outputSchema exists but no structuredContent", () => {
+      const result = {
+        content: [{ type: "text", text: JSON.stringify({ message: "hello" }) }],
+      };
+
+      const report = validateToolOutput(result, schema);
+      expect(report.structuredErrors).toBeUndefined();
+      expect(report.unstructuredStatus).toBe("schema_mismatch");
+    });
+
+    it("does not flag error responses as schema_mismatch", () => {
+      const result = {
+        content: [{ type: "text", text: "Something went wrong" }],
+        isError: true,
+      };
+
+      const report = validateToolOutput(result, schema);
+      expect(report.unstructuredStatus).toBe("not_applicable");
+    });
+
+    it("does not validate content[0].text against the schema", () => {
+      // Even though the text content matches the schema shape,
+      // we only care about structuredContent
+      const result = {
+        content: [{ type: "text", text: JSON.stringify({ message: "valid" }) }],
+      };
+
+      const report = validateToolOutput(result, schema);
+      // Still flagged because structuredContent is missing
+      expect(report.unstructuredStatus).toBe("schema_mismatch");
+    });
+  });
+
+  describe("content is never validated against outputSchema", () => {
     const schema = {
       type: "object",
       properties: {
@@ -139,83 +114,53 @@ describe("validateToolOutput", () => {
       },
     };
 
-    it("validates both structured and unstructured content independently", () => {
+    it("ignores content[0].text shape when structuredContent is valid", () => {
+      // FastMCP scenario: structured = { value: 42 }, text = something else
       const result = {
         content: [{ type: "text", text: '{"value": "not a number"}' }],
         structuredContent: { value: 42 },
       };
 
       const report = validateToolOutput(result, schema);
-
-      // Structured content is valid
       expect(report.structuredErrors).toBeNull();
-
-      // Unstructured content has wrong type
-      expect(report.unstructuredStatus).toBe("schema_mismatch");
+      expect(report.unstructuredStatus).toBe("not_applicable");
     });
 
-    it("handles result with both valid structured and unstructured content", () => {
+    it("ignores content[0].text shape when structuredContent is invalid", () => {
       const result = {
         content: [{ type: "text", text: '{"value": 123}' }],
-        structuredContent: { value: 123 },
+        structuredContent: { value: "wrong type" },
       };
 
       const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeNull();
-      expect(report.unstructuredStatus).toBe("valid");
+      expect(report.structuredErrors).not.toBeNull();
+      expect(report.unstructuredStatus).toBe("not_applicable");
     });
   });
 
   describe("edge cases", () => {
-    it("throws when content array is empty (accessing undefined index)", () => {
+    it("handles empty content array without throwing", () => {
       const result = { content: [] };
       const schema = { type: "object" };
 
-      // The implementation throws when trying to access content[0].text on empty array
-      expect(() => validateToolOutput(result, schema)).toThrow();
+      // No longer accesses content[0], so shouldn't throw
+      const report = validateToolOutput(result, schema);
+      expect(report.unstructuredStatus).toBe("schema_mismatch");
     });
 
-    it("handles null schema values", () => {
-      const result = {
-        content: [{ type: "text", text: '{"key": null}' }],
-      };
+    it("handles result with structuredContent and empty content", () => {
       const schema = {
         type: "object",
-        properties: {
-          key: { type: "null" },
-        },
+        properties: { key: { type: "null" } },
+      };
+      const result = {
+        content: [],
+        structuredContent: { key: null },
       };
 
       const report = validateToolOutput(result, schema);
-      expect(report.unstructuredStatus).toBe("valid");
-    });
-
-    it("handles nested objects in content", () => {
-      const nestedSchema = {
-        type: "object",
-        properties: {
-          user: {
-            type: "object",
-            properties: {
-              name: { type: "string" },
-            },
-            required: ["name"],
-          },
-        },
-      };
-
-      // Note: The content must be properly stringified JSON
-      const result = {
-        content: [
-          {
-            type: "text",
-            text: '{"user":{"name":"John"}}',
-          },
-        ],
-      };
-
-      const report = validateToolOutput(result, nestedSchema);
-      expect(report.unstructuredStatus).toBe("valid");
+      expect(report.structuredErrors).toBeNull();
+      expect(report.unstructuredStatus).toBe("not_applicable");
     });
   });
 });
