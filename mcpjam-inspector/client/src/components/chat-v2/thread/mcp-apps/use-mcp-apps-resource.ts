@@ -129,7 +129,9 @@ export function useMcpAppsResource({
         });
 
         if (!storeResponse.ok) {
-          throw new Error(`Failed to store widget: ${storeResponse.statusText}`);
+          throw new Error(
+            `Failed to store widget: ${storeResponse.statusText}`,
+          );
         }
 
         const contentResponse = await fetch(

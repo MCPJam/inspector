@@ -457,7 +457,8 @@ export function MCPAppsRenderer({
 
         if (isBorderBox) {
           adjustedHeight +=
-            parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+            parseFloat(style.borderTopWidth) +
+            parseFloat(style.borderBottomWidth);
         }
 
         from.height = `${iframe.offsetHeight}px`;
@@ -492,12 +493,16 @@ export function MCPAppsRenderer({
       bridge.onupdatemodelcontext = async ({ content, structuredContent }) => {
         setWidgetModelContext(toolCallId, {
           content: content as ContentBlock[] | undefined,
-          structuredContent: structuredContent as Record<string, unknown> | undefined,
+          structuredContent: structuredContent as
+            | Record<string, unknown>
+            | undefined,
         });
 
         onModelContextUpdateRef.current?.(toolCallId, {
           content: content as ContentBlock[] | undefined,
-          structuredContent: structuredContent as Record<string, unknown> | undefined,
+          structuredContent: structuredContent as
+            | Record<string, unknown>
+            | undefined,
         });
 
         return {};

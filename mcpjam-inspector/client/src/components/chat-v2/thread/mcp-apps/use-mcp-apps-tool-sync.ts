@@ -233,9 +233,9 @@ export function useMcpAppsToolSync({
       lastToolInputPartialSentAtRef.current = Date.now();
       setHasDeliveredStreamingInput(true);
       setStreamingRenderSignaled(true);
-      Promise.resolve(bridge.sendToolInputPartial({ arguments: pending })).catch(
-        () => {},
-      );
+      Promise.resolve(
+        bridge.sendToolInputPartial({ arguments: pending }),
+      ).catch(() => {});
     };
 
     const now = Date.now();
@@ -294,12 +294,12 @@ export function useMcpAppsToolSync({
     lastToolInputRef.current = serialized;
     toolInputSentRef.current = true;
 
-    Promise.resolve(bridge.sendToolInput({ arguments: resolvedToolInput })).catch(
-      () => {
-        toolInputSentRef.current = false;
-        lastToolInputRef.current = null;
-      },
-    );
+    Promise.resolve(
+      bridge.sendToolInput({ arguments: resolvedToolInput }),
+    ).catch(() => {
+      toolInputSentRef.current = false;
+      lastToolInputRef.current = null;
+    });
   }, [bridgeRef, isReady, toolInput, toolState]);
 
   useEffect(() => {

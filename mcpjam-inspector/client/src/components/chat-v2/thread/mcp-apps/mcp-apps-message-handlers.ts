@@ -12,7 +12,11 @@ interface CspViolationPayload {
 
 interface HandleCompatMessageArgs {
   data: unknown;
-  onOpenModal: (title: string, params: Record<string, unknown>, template: string | null) => void;
+  onOpenModal: (
+    title: string,
+    params: Record<string, unknown>,
+    template: string | null,
+  ) => void;
   onCloseModal: () => void;
 }
 
@@ -43,7 +47,11 @@ export function handleOpenAiCompatMessage({
 
   if (payload.method === "openai/requestModal") {
     const params = payload.params ?? {};
-    onOpenModal(params.title || "Modal", params.params || {}, params.template || null);
+    onOpenModal(
+      params.title || "Modal",
+      params.params || {},
+      params.template || null,
+    );
     return true;
   } else if (payload.method === "openai/requestClose") {
     onCloseModal();
@@ -64,10 +72,7 @@ interface BuildCspViolationHandlerArgs {
     method: string;
     message: unknown;
   }) => void;
-  addCspViolation: (
-    toolCallId: string,
-    violation: CspViolation,
-  ) => void;
+  addCspViolation: (toolCallId: string, violation: CspViolation) => void;
 }
 
 export function buildCspViolationHandler({

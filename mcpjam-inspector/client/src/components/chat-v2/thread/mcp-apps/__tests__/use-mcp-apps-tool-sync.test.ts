@@ -13,13 +13,17 @@ describe("getToolInputSignature", () => {
     const first = { config: { width: 100, height: 200 } };
     const second = { config: { width: 500, height: 200 } };
 
-    expect(getToolInputSignature(first)).not.toBe(getToolInputSignature(second));
+    expect(getToolInputSignature(first)).not.toBe(
+      getToolInputSignature(second),
+    );
   });
 
   it("changes when same-length primitive arrays change", () => {
     const first = { points: [1, 2, 3] };
     const second = { points: [1, 9, 3] };
 
-    expect(getToolInputSignature(first)).not.toBe(getToolInputSignature(second));
+    expect(getToolInputSignature(first)).not.toBe(
+      getToolInputSignature(second),
+    );
   });
 });
