@@ -34,7 +34,8 @@ export interface MCPServerConnection {
   connectionStatus: MCPConnectionStatus;
   createdAt: string;
   lastConnectedAt?: string;
-  wasConnected?: boolean;
+  retryCount: number;
+  initializationInfo?: unknown;
   serverCapabilities?: unknown;
   lastError?: MCPConnectionError;
 }

@@ -19,8 +19,10 @@ import {
 const STORAGE_SERVERS_KEY = "mcpjam-web-servers";
 const STORAGE_ACTIVE_SERVER_KEY = "mcpjam-web-active-server-id";
 
-function createServerId(url: string) {
-  return `server-${url.replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-")}`;
+function createServerId(name: string, url: string) {
+  return `server-${name}-${url}`
+    .replace(/[^a-zA-Z0-9]/g, "-")
+    .replace(/-+/g, "-");
 }
 
 function isLocalAddress(hostname: string): boolean {
@@ -85,8 +87,7 @@ function loadServersFromStorage(): MCPServerConnection[] {
       ...server,
       connectionStatus: "disconnected",
       lastError: undefined,
-      wasConnected:
-        server.wasConnected === true || server.connectionStatus === "connected",
+      retryCount: server.retryCount ?? 0,
     }));
   } catch {
     return [];
@@ -100,7 +101,6 @@ function loadActiveServerFromStorage(): string | null {
 export function McpConnectionsProvider({ children }: { children: ReactNode }) {
   const managerRef = useRef<MCPClientManager | null>(null);
   const inFlightConnectionsRef = useRef<Map<string, Promise<void>>>(new Map());
-  const reconnectRunRef = useRef(false);
   const serverConfigsRef = useRef<Map<string, ConnectServerInput>>(new Map());
 
   if (!managerRef.current) {
@@ -162,7 +162,7 @@ export function McpConnectionsProvider({ children }: { children: ReactNode }) {
       }
 
       const url = validateInput(input);
-      const id = input.id ?? createServerId(url.toString());
+      const id = input.id ?? createServerId(input.name.trim(), url.toString());
 
       const existing = servers.find((server) => server.id === id);
       const mergedInput: ConnectServerInput = {
@@ -191,7 +191,8 @@ export function McpConnectionsProvider({ children }: { children: ReactNode }) {
         createdAt: existing?.createdAt ?? new Date().toISOString(),
         connectionStatus: "connecting",
         lastError: undefined,
-        wasConnected: existing?.wasConnected ?? false,
+        retryCount: existing?.retryCount ?? 0,
+        initializationInfo: existing?.initializationInfo,
         serverCapabilities: existing?.serverCapabilities,
         lastConnectedAt: existing?.lastConnectedAt,
       };
@@ -244,6 +245,7 @@ export function McpConnectionsProvider({ children }: { children: ReactNode }) {
           await manager.listTools(id).catch(() => undefined);
 
           const capabilities = manager.getServerCapabilities(id);
+          const initializationInfo = manager.getInitializationInfo(id);
           const sessionId = (() => {
             try {
               return manager.getSessionIdByServer(id);
@@ -255,9 +257,10 @@ export function McpConnectionsProvider({ children }: { children: ReactNode }) {
           patchServer(id, {
             connectionStatus: "connected",
             lastError: undefined,
+            retryCount: 0,
+            initializationInfo,
             serverCapabilities: capabilities,
             sessionId,
-            wasConnected: true,
             lastConnectedAt: new Date().toISOString(),
           });
           setActiveServerId(id);
@@ -277,6 +280,7 @@ export function McpConnectionsProvider({ children }: { children: ReactNode }) {
           patchServer(id, {
             connectionStatus: "error",
             lastError: toConnectionError(error),
+            retryCount: (existing?.retryCount ?? 0) + 1,
           });
           throw error;
         } finally {
@@ -342,7 +346,9 @@ export function McpConnectionsProvider({ children }: { children: ReactNode }) {
         await manager.listTools(serverId);
         patchServer(serverId, {
           serverCapabilities: manager.getServerCapabilities(serverId),
+          initializationInfo: manager.getInitializationInfo(serverId),
           lastError: undefined,
+          retryCount: 0,
         });
       } catch (error) {
         patchServer(serverId, {
@@ -380,16 +386,6 @@ export function McpConnectionsProvider({ children }: { children: ReactNode }) {
       });
     }
   }, [servers]);
-
-  useEffect(() => {
-    if (reconnectRunRef.current) return;
-    reconnectRunRef.current = true;
-
-    const reconnectTargets = servers.filter((server) => server.wasConnected);
-    reconnectTargets.forEach((server) => {
-      void reconnectServer(server.id).catch(() => undefined);
-    });
-  }, [reconnectServer, servers]);
 
   useEffect(() => {
     const manager = managerRef.current;
