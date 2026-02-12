@@ -68,10 +68,7 @@ const SIGNATURE_MAX_DEPTH = 4;
 const SIGNATURE_MAX_ARRAY_ITEMS = 24;
 const SIGNATURE_MAX_OBJECT_KEYS = 32;
 const SIGNATURE_STRING_EDGE_LENGTH = 24;
-const SUPPRESSED_UI_LOG_METHODS = new Set([
-  "ui/notifications/tool-input-partial",
-  "ui/notifications/size-changed",
-]);
+const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
