@@ -78,8 +78,14 @@ declare global {
   // Pending calls awaiting responses (for callTool)
   const pendingCalls = new Map<number, PendingCall>();
 
+  // Pending checkout calls awaiting responses (notification + callId pattern)
+  const pendingCheckoutCalls = new Map<number, PendingCall>();
+
   // Timeout for pending calls (30 seconds)
   const CALL_TIMEOUT_MS = 30_000;
+
+  // Timeout for checkout calls (60 seconds — checkout flows take longer)
+  const CHECKOUT_TIMEOUT_MS = 60_000;
 
   /**
    * Send a JSON-RPC 2.0 request (expects a response matched by id)
@@ -300,6 +306,26 @@ declare global {
     requestClose(): void {
       sendNotification("openai/requestClose", { toolId });
     },
+
+    /**
+     * Request a checkout flow (ACP — Agentic Checkout Protocol).
+     * Uses notification + callId pattern (same as requestModal) to avoid
+     * conflicts with AppBridge's JSON-RPC request handling.
+     */
+    requestCheckout(session: Record<string, unknown>): Promise<unknown> {
+      const id = ++callId;
+      sendNotification("openai/requestCheckout", { callId: id, ...session });
+
+      return new Promise((resolve, reject) => {
+        pendingCheckoutCalls.set(id, { resolve, reject });
+        setTimeout(() => {
+          if (pendingCheckoutCalls.has(id)) {
+            pendingCheckoutCalls.delete(id);
+            reject(new Error("Checkout request timeout"));
+          }
+        }, CHECKOUT_TIMEOUT_MS);
+      });
+    },
   };
 
   // ── Listen for incoming JSON-RPC responses & notifications ─────────
@@ -352,6 +378,24 @@ declare global {
           if (params.theme) openaiAPI.theme = params.theme;
           if (params.displayMode) openaiAPI.displayMode = params.displayMode;
           break;
+        case "openai/requestCheckout:response": {
+          const pending = pendingCheckoutCalls.get(params.callId as number);
+          if (pending) {
+            pendingCheckoutCalls.delete(params.callId as number);
+            if (params.error) {
+              pending.reject(
+                new Error(
+                  typeof params.error === "string"
+                    ? params.error
+                    : "Checkout failed",
+                ),
+              );
+            } else {
+              pending.resolve(params.result);
+            }
+          }
+          break;
+        }
       }
     }
   });
