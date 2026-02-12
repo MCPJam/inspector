@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, type RefObject } from "react";
 import {
   Dialog,
   DialogContent,
@@ -10,20 +10,18 @@ import {
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
 import { authFetch } from "@/lib/session-token";
-import { extractMethod } from "@/stores/traffic-log-store";
 import {
   AppBridge,
-  PostMessageTransport,
   type McpUiHostContext,
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { CspMode } from "@/stores/ui-playground-store";
-import { LoggingTransport } from "./mcp-apps-logging-transport";
-
-// Injected by Vite at build time from package.json
-declare const __APP_VERSION__: string;
+import {
+  createMcpAppsBridge,
+  createMcpAppsLoggingTransport,
+} from "./use-mcp-apps-bridge";
 
 export interface McpAppsModalProps {
   open: boolean;
@@ -35,15 +33,15 @@ export interface McpAppsModalProps {
   widgetCsp: McpUiResourceCsp | undefined;
   widgetPermissions: McpUiResourcePermissions | undefined;
   widgetPermissive: boolean;
-  hostContextRef: React.RefObject<McpUiHostContext | null>;
+  hostContextRef: RefObject<McpUiHostContext | null>;
   serverId: string;
   resourceUri: string;
   toolCallId: string;
   toolName: string;
   cspMode: CspMode;
-  toolInputRef: React.RefObject<Record<string, unknown> | undefined>;
-  toolOutputRef: React.RefObject<unknown>;
-  themeModeRef: React.RefObject<string>;
+  toolInputRef: RefObject<Record<string, unknown> | undefined>;
+  toolOutputRef: RefObject<unknown>;
+  themeModeRef: RefObject<string>;
   addUiLog: (log: {
     widgetId: string;
     serverId: string;
@@ -162,21 +160,12 @@ export function McpAppsModal({
     const iframe = modalSandboxRef.current?.getIframeElement();
     if (!iframe?.contentWindow) return;
 
-    const bridge = new AppBridge(
-      null,
-      { name: "mcpjam-inspector", version: __APP_VERSION__ },
-      {
-        openLinks: {},
-        serverTools: {},
-        serverResources: {},
-        logging: {},
-        sandbox: {
-          csp: widgetPermissive ? undefined : widgetCsp,
-          permissions: widgetPermissions,
-        },
-      },
-      { hostContext: hostContextRef.current ?? {} },
-    );
+    const bridge = createMcpAppsBridge({
+      hostContext: hostContextRef.current ?? {},
+      csp: widgetCsp,
+      permissions: widgetPermissions,
+      permissive: widgetPermissive,
+    });
 
     // Reuse the same handlers as the inline bridge
     registerBridgeHandlers(bridge);
@@ -217,31 +206,29 @@ export function McpAppsModal({
 
     modalBridgeRef.current = bridge;
 
-    const transport = new LoggingTransport(
-      new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
-      {
-        onSend: (message) => {
-          addUiLog({
-            widgetId: `${toolCallId}-modal`,
-            serverId,
-            direction: "host-to-ui",
-            protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
-            message,
-          });
-        },
-        onReceive: (message) => {
-          addUiLog({
-            widgetId: `${toolCallId}-modal`,
-            serverId,
-            direction: "ui-to-host",
-            protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
-            message,
-          });
-        },
+    const transport = createMcpAppsLoggingTransport({
+      contentWindow: iframe.contentWindow,
+      onSend: (message, method) => {
+        addUiLog({
+          widgetId: `${toolCallId}-modal`,
+          serverId,
+          direction: "host-to-ui",
+          protocol: "mcp-apps",
+          method,
+          message,
+        });
       },
-    );
+      onReceive: (message, method) => {
+        addUiLog({
+          widgetId: `${toolCallId}-modal`,
+          serverId,
+          direction: "ui-to-host",
+          protocol: "mcp-apps",
+          method,
+          message,
+        });
+      },
+    });
 
     let isActive = true;
     bridge.connect(transport).catch((error) => {
