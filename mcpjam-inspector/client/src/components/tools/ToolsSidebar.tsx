@@ -1,6 +1,12 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { RefreshCw, Play, Clock, PanelLeftClose, Save } from "lucide-react";
-import type { RefObject } from "react";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "../ui/accordion";
+import { type RefObject, useMemo } from "react";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
@@ -95,6 +101,11 @@ export function ToolsSidebar({
   const posthog = usePostHog();
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
 
+  const hasParameters = formFields && formFields.length > 0;
+  const defaultOpenSections = useMemo(
+    () => (hasParameters ? ["parameters"] : ["description"]),
+    [hasParameters],
+  );
   const canExecute = !!selectedToolName && !!onExecute;
   const canSave = !!selectedToolName && !!onSave;
 
@@ -233,19 +244,52 @@ export function ToolsSidebar({
 
           <div className="flex-1 overflow-hidden">
             <ScrollArea className="h-full">
-              {selectedTool?.description && (
-                <div className="px-3 py-2 border-b border-border">
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    {selectedTool.description}
-                  </p>
-                </div>
-              )}
-              <ParametersForm
-                fields={formFields}
-                onFieldChange={onFieldChange}
-                onToggleField={onToggleField ?? (() => {})}
-                onExecute={onExecute}
-              />
+              <Accordion
+                key={`${selectedToolName}-${hasParameters}`}
+                type="multiple"
+                defaultValue={defaultOpenSections}
+                className="px-3"
+              >
+                {selectedTool?.description && (
+                  <AccordionItem value="description">
+                    <AccordionTrigger className="text-xs">
+                      Description
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {selectedTool.description}
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+                {selectedTool?.outputSchema && (
+                  <AccordionItem value="output-schema">
+                    <AccordionTrigger className="text-xs">
+                      Output Schema
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all">
+                        {JSON.stringify(selectedTool.outputSchema, null, 2)}
+                      </pre>
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+                {formFields && formFields.length > 0 && (
+                  <AccordionItem value="parameters">
+                    <AccordionTrigger className="text-xs">
+                      Parameters
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <ParametersForm
+                        fields={formFields}
+                        onFieldChange={onFieldChange}
+                        onToggleField={onToggleField ?? (() => {})}
+                        onExecute={onExecute}
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+              </Accordion>
 
               {/* Task execution options */}
               {serverSupportsTaskToolCalls && (
