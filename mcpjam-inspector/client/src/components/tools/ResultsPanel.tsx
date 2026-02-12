@@ -1,15 +1,17 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { CheckCircle, XCircle, Info, ExternalLink } from "lucide-react";
+import {
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  Info,
+  ExternalLink,
+} from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 
-type UnstructuredStatus =
-  | "not_applicable"
-  | "valid"
-  | "invalid_json"
-  | "schema_mismatch";
+type UnstructuredStatus = "not_applicable" | "schema_mismatch";
 
 interface ResultsPanelProps {
   error: string;
@@ -107,28 +109,14 @@ export function ResultsPanel({
               </Button>
             </div>
           )}
-          {unstructuredValidationResult === "valid" && (
-            <Badge
-              variant="default"
-              className="flex-shrink-0 w-fit bg-green-600 hover:bg-green-700"
-            >
-              <CheckCircle className="h-3 w-3 mr-1.5" />
-              Success: Content matches the output schema.
-            </Badge>
-          )}
           {unstructuredValidationResult === "schema_mismatch" && (
-            <Badge variant="destructive" className="flex-shrink-0 w-fit">
-              <XCircle className="h-3 w-3 mr-1.5" />
-              Error: Content does not match the output schema.
-            </Badge>
-          )}
-          {unstructuredValidationResult === "invalid_json" && (
             <Badge
               variant="destructive"
               className="flex-shrink-0 w-fit bg-amber-600 hover:bg-amber-700"
             >
-              <XCircle className="h-3 w-3 mr-1.5" />
-              Warning: Output schema provided by the tool is invalid.
+              <AlertTriangle className="h-3 w-3 mr-1.5" />
+              Warning: Tool declares an output schema but returned no
+              structuredContent.
             </Badge>
           )}
           {/* JSON Editor - fills ALL remaining space */}
