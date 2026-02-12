@@ -28,10 +28,8 @@ const UI_ERROR_CODES = new Set(["payment_declined", "requires_3ds"]);
  * The result from onCallTool is an MCP CallToolResult envelope:
  *   { content: ContentBlock[], structuredContent?: { ... } }
  *
- * The ACP checkout data may appear in:
- *  - structuredContent.checkout_session.messages (wrapped format)
- *  - structuredContent.messages (flat ACP format)
- *  - content[0].text parsed as JSON (either shape)
+ * Per the ACP spec, structuredContent contains checkout session fields
+ * directly (flat format), so messages live at structuredContent.messages.
  */
 function extractCheckoutMessages(
   result: unknown,
@@ -39,45 +37,13 @@ function extractCheckoutMessages(
   const obj = result as Record<string, unknown> | null;
   if (!obj) return undefined;
 
-  // Try structuredContent first
   const structured = obj.structuredContent as
     | Record<string, unknown>
     | undefined;
-  if (structured) {
-    const msgs = messagesFromCheckoutData(structured);
-    if (msgs) return msgs;
+  if (structured && Array.isArray(structured.messages)) {
+    return structured.messages as Message[];
   }
 
-  // Fall back to parsing text content blocks
-  const content = obj.content as
-    | Array<{ type?: string; text?: string }>
-    | undefined;
-  if (Array.isArray(content)) {
-    for (const block of content) {
-      if (block.type === "text" && block.text) {
-        try {
-          const parsed = JSON.parse(block.text) as Record<string, unknown>;
-          const msgs = messagesFromCheckoutData(parsed);
-          if (msgs) return msgs;
-        } catch {
-          /* not JSON, skip */
-        }
-      }
-    }
-  }
-
-  return undefined;
-}
-
-/** Look for messages in either wrapped ({ checkout_session: { messages } }) or flat ({ messages }) format. */
-function messagesFromCheckoutData(
-  data: Record<string, unknown>,
-): Message[] | undefined {
-  // Wrapped: { checkout_session: { messages: [...] } }
-  const cs = data.checkout_session as Record<string, unknown> | undefined;
-  if (cs && Array.isArray(cs.messages)) return cs.messages as Message[];
-  // Flat ACP: { messages: [...] }
-  if (Array.isArray(data.messages)) return data.messages as Message[];
   return undefined;
 }
 
