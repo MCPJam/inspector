@@ -480,7 +480,7 @@ export function MCPAppsRenderer({
         }
 
         const contentResponse = await authFetch(
-          "/api/mcp/apps/widget-content",
+          "/api/apps/mcp-apps/widget-content",
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
