@@ -109,7 +109,7 @@ export const SandboxedIframe = forwardRef<
     }
 
     const portSuffix = currentPort ? `:${currentPort}` : "";
-    return `${protocol}//${sandboxHost}${portSuffix}/api/mcp/sandbox-proxy?v=${Date.now()}`;
+    return `${protocol}//${sandboxHost}${portSuffix}/api/apps/mcp-apps/sandbox-proxy?v=${Date.now()}`;
   });
 
   const sandboxProxyOrigin = useMemo(() => {

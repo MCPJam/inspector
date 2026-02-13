@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { API_RUNTIME_SCRIPT } from "./chatgpt.bundled";
-import "../../types/hono";
-import { logger } from "../../utils/logger";
+import { API_RUNTIME_SCRIPT } from "./OpenAIRuntime.bundled";
+import "../../../types/hono";
+import { logger } from "../../../utils/logger";
 
 const chatgpt = new Hono();
 
@@ -437,10 +437,7 @@ chatgpt.post("/widget/store", async (c) => {
 });
 
 chatgpt.get("/sandbox-proxy", (c) => {
-  const html = readFileSync(
-    join(__dirname, "chatgpt-sandbox-proxy.html"),
-    "utf-8",
-  );
+  const html = readFileSync(join(__dirname, "sandbox-proxy.html"), "utf-8");
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "public, max-age=3600");
   // Allow cross-origin framing between localhost and 127.0.0.1 for triple-iframe architecture
@@ -571,7 +568,7 @@ chatgpt.get("/widget/:toolId", async (c) => {
 (async function() {
   const searchParams = window.location.search;
   history.replaceState(null, '', '/');
-  const response = await fetch('/api/apps/chatgpt/widget-content/${toolId}' + searchParams);
+  const response = await fetch('/api/apps/chatgpt-apps/widget-content/${toolId}' + searchParams);
   const html = await response.text();
   document.open(); document.write(html); document.close();
 })();
@@ -813,7 +810,7 @@ chatgpt.get("/file/:fileId", (c) => {
   c.header("Cache-Control", "private, max-age=3600");
   // Allow cross-origin access so the widget iframe (127.0.0.1) can fetch
   c.header("Access-Control-Allow-Origin", "*");
-  return c.body(stored.buffer);
+  return c.body(new Uint8Array(stored.buffer));
 });
 
 export default chatgpt;

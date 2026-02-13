@@ -1,7 +1,4 @@
 import { Hono } from "hono";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import connect from "./connect";
 import servers from "./servers";
 import tools from "./tools";
@@ -14,7 +11,6 @@ import exporter from "./export";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
-import apps from "./apps";
 import models from "./models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
@@ -23,13 +19,6 @@ import logLevel from "./log-level";
 import tasks from "./tasks";
 import skills from "./skills";
 import xrayPayload from "./xray-payload";
-
-// ES module equivalent of __dirname
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Path to sandbox proxy HTML
-const sandboxProxyPath = path.join(__dirname, "sandbox-proxy.html");
 
 const mcp = new Hono();
 
@@ -68,25 +57,6 @@ mcp.route("/resources", resources);
 
 // Resource Templates endpoints - REAL IMPLEMENTATION
 mcp.route("/resource-templates", resourceTemplates);
-
-// MCP Apps (SEP-1865) widget endpoints
-mcp.route("/apps", apps);
-
-// Sandbox proxy for MCP Apps double-iframe architecture (SEP-1865)
-// Read file on each request in dev mode to support hot reload
-mcp.get("/sandbox-proxy", (c) => {
-  const sandboxProxyHtml = fs.readFileSync(sandboxProxyPath, "utf-8");
-  c.header("Content-Type", "text/html; charset=utf-8");
-  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-  // Allow cross-origin framing between localhost and 127.0.0.1 for double-iframe architecture
-  c.header(
-    "Content-Security-Policy",
-    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
-  );
-  // Remove X-Frame-Options as it doesn't support multiple origins (CSP frame-ancestors takes precedence)
-  c.res.headers.delete("X-Frame-Options");
-  return c.body(sandboxProxyHtml);
-});
 
 // Prompts endpoints - REAL IMPLEMENTATION
 mcp.route("/prompts", prompts);
