@@ -276,7 +276,7 @@ export function ToolPart({
           }`}
         >
           <Icon className="h-3.5 w-3.5" />
-          <span className="text-[9px] leading-none hidden @[24rem]:inline">{buttonLabel}</span>
+          <span className="text-[9px] leading-none hidden @[32rem]:inline">{buttonLabel}</span>
         </button>
       );
     });
@@ -310,7 +310,7 @@ export function ToolPart({
           }`}
         >
           <Icon className="h-3.5 w-3.5" />
-          <span className="text-[9px] leading-none hidden @[24rem]:inline">{buttonLabel}</span>
+          <span className="text-[9px] leading-none hidden @[32rem]:inline">{buttonLabel}</span>
           {badge !== undefined && badge > 0 && (
             <Badge
               variant="destructive"
@@ -356,7 +356,7 @@ export function ToolPart({
         ) : (
           <Layers className="h-3.5 w-3.5" />
         )}
-        <span className="text-[9px] leading-none hidden @[24rem]:inline">Save View</span>
+        <span className="text-[9px] leading-none hidden @[32rem]:inline">Save View</span>
       </button>
     </span>
   );
@@ -377,13 +377,7 @@ export function ToolPart({
       <button
         type="button"
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer overflow-hidden"
-        onClick={() => {
-          const nextExpanded = !userExpanded;
-          if (nextExpanded && activeDebugTab === null) {
-            setActiveDebugTab("data");
-          }
-          setUserExpanded(nextExpanded);
-        }}
+        onClick={() => setUserExpanded((prev) => !prev)}
         aria-expanded={isExpanded}
       >
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
