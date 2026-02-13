@@ -14,7 +14,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
-import { OPENAI_COMPAT_RUNTIME_SCRIPT } from "./openai-compat-runtime.bundled";
+import { MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT } from "./McpAppsOpenAICompatibleRuntime.bundled";
 
 const apps = new Hono();
 
@@ -62,7 +62,10 @@ function injectOpenAICompat(
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
   // Escape </ sequences to prevent a literal "</script>" in the bundled code
   // from prematurely closing the tag (XSS vector). In JS, \/ is just /.
-  const escapedRuntime = OPENAI_COMPAT_RUNTIME_SCRIPT.replace(/<\//g, "<\\/");
+  const escapedRuntime = MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT.replace(
+    /<\//g,
+    "<\\/",
+  );
   const runtimeScript = `<script>${escapedRuntime}</script>`;
   const headContent = `${configScript}${runtimeScript}`;
 
