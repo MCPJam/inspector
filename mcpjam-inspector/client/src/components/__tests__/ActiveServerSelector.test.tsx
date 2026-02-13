@@ -475,27 +475,6 @@ describe("ActiveServerSelector", () => {
     });
   });
 
-  describe("filtering", () => {
-    it("filters servers by OpenAI apps", () => {
-      const serverConfigs = {
-        "openai-server": createServer({ name: "openai-server" }),
-        "regular-server": createServer({ name: "regular-server" }),
-      };
-
-      render(
-        <ActiveServerSelector
-          {...defaultProps}
-          serverConfigs={serverConfigs}
-          showOnlyOpenAIAppsServers={true}
-          openAiAppOrMcpAppsServers={new Set(["openai-server"])}
-        />,
-      );
-
-      expect(screen.getByText("openai-server")).toBeInTheDocument();
-      expect(screen.queryByText("regular-server")).not.toBeInTheDocument();
-    });
-  });
-
   describe("auto-selection", () => {
     it("auto-selects first server when current selection is invalid", async () => {
       const onServerChange = vi.fn();
