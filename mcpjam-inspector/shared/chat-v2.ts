@@ -9,10 +9,14 @@ export interface ChatV2Request {
   temperature?: number;
   apiKey?: string;
   ollamaBaseUrl?: string;
-  litellmBaseUrl?: string;
   azureBaseUrl?: string;
-  anthropicBaseUrl?: string;
-  openaiBaseUrl?: string;
+  customProviders?: Array<{
+    name: string;
+    protocol: string;
+    baseUrl: string;
+    modelIds: string[];
+    apiKey?: string;
+  }>;
   selectedServers?: string[];
   requireToolApproval?: boolean;
 }
