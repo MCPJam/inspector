@@ -28,7 +28,7 @@ function createSandboxProxyTestApp(): Hono {
   app.use("*", securityHeadersMiddleware);
 
   // Sandbox proxy route (mirrors server/routes/mcp/index.ts)
-  app.get("/api/mcp/sandbox-proxy", (c) => {
+  app.get("/api/apps/mcp-apps/sandbox-proxy", (c) => {
     c.header("Content-Type", "text/html; charset=utf-8");
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
     // Allow cross-origin framing between localhost and 127.0.0.1 for double-iframe architecture
@@ -54,9 +54,9 @@ describe("Sandbox Proxy CSP Headers", () => {
     app = createSandboxProxyTestApp();
   });
 
-  describe("GET /api/mcp/sandbox-proxy", () => {
+  describe("GET /api/apps/mcp-apps/sandbox-proxy", () => {
     it("sets Content-Security-Policy with frame-ancestors for localhost origins", async () => {
-      const res = await app.request("/api/mcp/sandbox-proxy");
+      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
 
       const csp = res.headers.get("Content-Security-Policy");
       expect(csp).toBe(
@@ -65,20 +65,20 @@ describe("Sandbox Proxy CSP Headers", () => {
     });
 
     it("removes X-Frame-Options header to avoid conflict with CSP", async () => {
-      const res = await app.request("/api/mcp/sandbox-proxy");
+      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
 
       // X-Frame-Options should be removed (CSP frame-ancestors takes precedence)
       expect(res.headers.get("X-Frame-Options")).toBeNull();
     });
 
     it("sets correct Content-Type for HTML", async () => {
-      const res = await app.request("/api/mcp/sandbox-proxy");
+      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
 
       expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
     });
 
     it("sets Cache-Control to prevent caching", async () => {
-      const res = await app.request("/api/mcp/sandbox-proxy");
+      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
 
       expect(res.headers.get("Cache-Control")).toBe(
         "no-cache, no-store, must-revalidate",
@@ -86,7 +86,7 @@ describe("Sandbox Proxy CSP Headers", () => {
     });
 
     it("returns HTML content", async () => {
-      const res = await app.request("/api/mcp/sandbox-proxy");
+      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy");
 
       expect(res.status).toBe(200);
       const body = await res.text();

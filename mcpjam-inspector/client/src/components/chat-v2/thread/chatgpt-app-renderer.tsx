@@ -436,7 +436,7 @@ function useWidgetFetch(
       widgetUrl &&
       ((canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
         (!canUseCachedHtml &&
-          widgetUrl.includes("/api/apps/chatgpt/widget-content/")));
+          widgetUrl.includes("/api/apps/chatgpt-apps/widget-content/")));
 
     if (
       toolState !== "output-available" ||
@@ -489,7 +489,7 @@ function useWidgetFetch(
         const userLocation = await getUserLocation(); // Coarse IP-based location
 
         const storeResponse = await authFetch(
-          "/api/apps/chatgpt/widget/store",
+          "/api/apps/chatgpt-apps/widget/store",
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -519,7 +519,7 @@ function useWidgetFetch(
 
         // Check if widget should close and get CSP config
         const htmlResponse = await fetch(
-          `/api/apps/chatgpt/widget-html/${resolvedToolCallId}`,
+          `/api/apps/chatgpt-apps/widget-html/${resolvedToolCallId}`,
         );
         if (htmlResponse.ok) {
           const data = await htmlResponse.json();
@@ -547,7 +547,7 @@ function useWidgetFetch(
         }
 
         // Fetch and cache the widget HTML for later saving
-        const widgetContentUrl = `/api/apps/chatgpt/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
+        const widgetContentUrl = `/api/apps/chatgpt-apps/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
         if (onWidgetHtmlCaptured) {
           try {
             const contentResponse = await fetch(widgetContentUrl);
