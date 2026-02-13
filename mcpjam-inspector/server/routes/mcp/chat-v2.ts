@@ -112,13 +112,15 @@ chatV2.post("/", async (c) => {
     }
 
     // User-provided models: direct streamText
-    const llmModel = createLlmModel(modelDefinition, apiKey ?? "", {
-      ollama: body.ollamaBaseUrl,
-      litellm: body.litellmBaseUrl,
-      azure: body.azureBaseUrl,
-      anthropic: body.anthropicBaseUrl,
-      openai: body.openaiBaseUrl,
-    });
+    const llmModel = createLlmModel(
+      modelDefinition,
+      apiKey ?? "",
+      {
+        ollama: body.ollamaBaseUrl,
+        azure: body.azureBaseUrl,
+      },
+      body.customProviders,
+    );
 
     const modelMessages = await convertToModelMessages(messages);
 

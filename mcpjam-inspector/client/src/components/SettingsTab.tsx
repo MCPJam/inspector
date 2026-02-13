@@ -1,16 +1,20 @@
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
+import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { useState } from "react";
 import { ProviderConfigDialog } from "./setting/ProviderConfigDialog";
 import { OllamaConfigDialog } from "./setting/OllamaConfigDialog";
-import { LiteLLMConfigDialog } from "./setting/LiteLLMConfigDialog";
+import { CustomProviderConfigDialog } from "./setting/CustomProviderConfigDialog";
 import { OpenRouterConfigDialog } from "./setting/OpenRouterConfigDialog";
 import { AzureOpenAIConfigDialog } from "./setting/AzureOpenAIConfigDialog";
 import { SettingsSection } from "./setting/SettingsSection";
 import { SettingsRow } from "./setting/SettingsRow";
 import { ProviderRow } from "./setting/ProviderRow";
 import { Switch } from "./ui/switch";
+import { Button } from "./ui/button";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
+import { Plus, Pencil, Trash2 } from "lucide-react";
+import type { CustomProvider } from "@mcpjam/sdk";
 
 interface ProviderConfig {
   id: string;
@@ -20,7 +24,6 @@ interface ProviderConfig {
   description: string;
   placeholder: string;
   getApiKeyUrl: string;
-  defaultBaseUrl?: string;
 }
 
 export function SettingsTab() {
@@ -33,19 +36,17 @@ export function SettingsTab() {
     hasToken,
     getOllamaBaseUrl,
     setOllamaBaseUrl,
-    getLiteLLMBaseUrl,
-    setLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
-    setLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     setOpenRouterSelectedModels,
     getAzureBaseUrl,
     setAzureBaseUrl,
-    getAnthropicBaseUrl,
-    setAnthropicBaseUrl,
-    getOpenAIBaseUrl,
-    setOpenAIBaseUrl,
   } = useAiProviderKeys();
+  const {
+    customProviders,
+    addCustomProvider,
+    updateCustomProvider,
+    removeCustomProvider,
+  } = useCustomProviders();
 
   const [editingValue, setEditingValue] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -53,10 +54,6 @@ export function SettingsTab() {
     useState<ProviderConfig | null>(null);
   const [ollamaDialogOpen, setOllamaDialogOpen] = useState(false);
   const [ollamaUrl, setOllamaUrl] = useState("");
-  const [litellmDialogOpen, setLitellmDialogOpen] = useState(false);
-  const [litellmUrl, setLitellmUrl] = useState("");
-  const [litellmApiKey, setLitellmApiKey] = useState("");
-  const [litellmModelAlias, setLitellmModelAlias] = useState("");
   const [openRouterDialogOpen, setOpenRouterDialogOpen] = useState(false);
   const [openRouterApiKeyInput, setOpenRouterApiKeyInput] = useState("");
   const [openRouterSelectedModelsInput, setOpenRouterSelectedModelsInput] =
@@ -64,7 +61,13 @@ export function SettingsTab() {
   const [azureDialogOpen, setAzureDialogOpen] = useState(false);
   const [azureUrl, setAzureUrl] = useState("");
   const [azureApiKey, setAzureApiKey] = useState("");
-  const [editingBaseUrl, setEditingBaseUrl] = useState("");
+
+  // Custom provider dialog state
+  const [customProviderDialogOpen, setCustomProviderDialogOpen] =
+    useState(false);
+  const [editingCustomProviderIndex, setEditingCustomProviderIndex] = useState<
+    number | null
+  >(null);
 
   const providerConfigs: ProviderConfig[] = [
     {
@@ -75,7 +78,6 @@ export function SettingsTab() {
       description: "GPT-4, GPT-4o, GPT-4o-mini, GPT-4.1, GPT-5",
       placeholder: "sk-...",
       getApiKeyUrl: "https://platform.openai.com/api-keys",
-      defaultBaseUrl: "https://api.openai.com/v1",
     },
     {
       id: "anthropic",
@@ -85,7 +87,6 @@ export function SettingsTab() {
       description: "Claude 3.5, Claude 3.7, Claude Opus 4",
       placeholder: "sk-ant-...",
       getApiKeyUrl: "https://console.anthropic.com/",
-      defaultBaseUrl: "https://api.anthropic.com/v1",
     },
     {
       id: "google",
@@ -145,19 +146,6 @@ export function SettingsTab() {
       },
     },
     {
-      id: "litellm",
-      name: "LiteLLM",
-      logo: "/litellm_logo.png",
-      isConfigured: Boolean(getLiteLLMBaseUrl()),
-      configType: "base-url",
-      onEdit: () => {
-        setLitellmUrl(getLiteLLMBaseUrl());
-        setLitellmApiKey(tokens.litellm || "");
-        setLitellmModelAlias(getLiteLLMModelAlias());
-        setLitellmDialogOpen(true);
-      },
-    },
-    {
       id: "openrouter",
       name: "OpenRouter",
       logo: "/openrouter_logo.png",
@@ -182,28 +170,6 @@ export function SettingsTab() {
     },
   ];
 
-  const getBaseUrlForProvider = (providerId: string): string => {
-    switch (providerId) {
-      case "anthropic":
-        return getAnthropicBaseUrl();
-      case "openai":
-        return getOpenAIBaseUrl();
-      default:
-        return "";
-    }
-  };
-
-  const setBaseUrlForProvider = (providerId: string, url: string) => {
-    switch (providerId) {
-      case "anthropic":
-        setAnthropicBaseUrl(url);
-        break;
-      case "openai":
-        setOpenAIBaseUrl(url);
-        break;
-    }
-  };
-
   const handleEdit = (providerId: string) => {
     const provider = providerConfigs.find((p) => p.id === providerId);
     if (provider) {
@@ -212,7 +178,6 @@ export function SettingsTab() {
       setEditingValue(
         Array.isArray(tokenValue) ? tokenValue.join(", ") : tokenValue || "",
       );
-      setEditingBaseUrl(getBaseUrlForProvider(providerId));
       setDialogOpen(true);
     }
   };
@@ -220,13 +185,9 @@ export function SettingsTab() {
   const handleSave = () => {
     if (selectedProvider) {
       setToken(selectedProvider.id as keyof typeof tokens, editingValue);
-      if (selectedProvider.defaultBaseUrl) {
-        setBaseUrlForProvider(selectedProvider.id, editingBaseUrl);
-      }
       setDialogOpen(false);
       setSelectedProvider(null);
       setEditingValue("");
-      setEditingBaseUrl("");
     }
   };
 
@@ -234,7 +195,6 @@ export function SettingsTab() {
     setDialogOpen(false);
     setSelectedProvider(null);
     setEditingValue("");
-    setEditingBaseUrl("");
   };
 
   const handleOllamaSave = () => {
@@ -246,23 +206,6 @@ export function SettingsTab() {
   const handleOllamaCancel = () => {
     setOllamaDialogOpen(false);
     setOllamaUrl("");
-  };
-
-  const handleLiteLLMSave = () => {
-    setLiteLLMBaseUrl(litellmUrl);
-    setToken("litellm", litellmApiKey);
-    setLiteLLMModelAlias(litellmModelAlias);
-    setLitellmDialogOpen(false);
-    setLitellmUrl("");
-    setLitellmApiKey("");
-    setLitellmModelAlias("");
-  };
-
-  const handleLiteLLMCancel = () => {
-    setLitellmDialogOpen(false);
-    setLitellmUrl("");
-    setLitellmApiKey("");
-    setLitellmModelAlias("");
   };
 
   const handleOpenRouterSave = (apiKey: string, selectedModels: string[]) => {
@@ -295,6 +238,21 @@ export function SettingsTab() {
     const newTheme = checked ? "dark" : "light";
     updateThemeMode(newTheme);
     setThemeMode(newTheme);
+  };
+
+  const handleCustomProviderSave = (provider: CustomProvider) => {
+    if (editingCustomProviderIndex !== null) {
+      updateCustomProvider(editingCustomProviderIndex, provider);
+    } else {
+      addCustomProvider(provider);
+    }
+    setCustomProviderDialogOpen(false);
+    setEditingCustomProviderIndex(null);
+  };
+
+  const handleCustomProviderCancel = () => {
+    setCustomProviderDialogOpen(false);
+    setEditingCustomProviderIndex(null);
   };
 
   return (
@@ -351,6 +309,63 @@ export function SettingsTab() {
           ))}
         </SettingsSection>
 
+        {/* Custom Providers */}
+        <SettingsSection title="Custom Providers">
+          {customProviders.map((cp, index) => (
+            <div
+              key={`${cp.name}-${index}`}
+              className="flex items-center justify-between px-4 py-3 rounded-md border border-success/30 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="size-5 rounded-sm bg-primary/10 flex items-center justify-center">
+                  <span className="text-xs font-bold text-primary">
+                    {cp.name[0]?.toUpperCase()}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-sm font-medium">{cp.name}</span>
+                  <span className="text-xs text-muted-foreground ml-2">
+                    {cp.modelIds.length} model
+                    {cp.modelIds.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => {
+                    setEditingCustomProviderIndex(index);
+                    setCustomProviderDialogOpen(true);
+                  }}
+                >
+                  <Pencil className="size-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => removeCustomProvider(index)}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => {
+              setEditingCustomProviderIndex(null);
+              setCustomProviderDialogOpen(true);
+            }}
+          >
+            <Plus className="size-4 mr-2" />
+            Add Custom Provider
+          </Button>
+        </SettingsSection>
+
         {/* Dialogs */}
         <ProviderConfigDialog
           open={dialogOpen}
@@ -358,8 +373,6 @@ export function SettingsTab() {
           provider={selectedProvider}
           value={editingValue}
           onValueChange={setEditingValue}
-          baseUrlValue={editingBaseUrl}
-          onBaseUrlChange={setEditingBaseUrl}
           onSave={handleSave}
           onCancel={handleCancel}
           onRemove={() => {
@@ -368,7 +381,6 @@ export function SettingsTab() {
               setDialogOpen(false);
               setSelectedProvider(null);
               setEditingValue("");
-              setEditingBaseUrl("");
             }
           }}
           isConfigured={
@@ -385,19 +397,6 @@ export function SettingsTab() {
           onValueChange={setOllamaUrl}
           onSave={handleOllamaSave}
           onCancel={handleOllamaCancel}
-        />
-
-        <LiteLLMConfigDialog
-          open={litellmDialogOpen}
-          onOpenChange={setLitellmDialogOpen}
-          baseUrl={litellmUrl}
-          apiKey={litellmApiKey}
-          modelAlias={litellmModelAlias}
-          onBaseUrlChange={setLitellmUrl}
-          onApiKeyChange={setLitellmApiKey}
-          onModelAliasChange={setLitellmModelAlias}
-          onSave={handleLiteLLMSave}
-          onCancel={handleLiteLLMCancel}
         />
 
         <AzureOpenAIConfigDialog
@@ -426,6 +425,18 @@ export function SettingsTab() {
             setOpenRouterDialogOpen(false);
           }}
           isConfigured={Boolean(tokens.openrouter)}
+        />
+
+        <CustomProviderConfigDialog
+          open={customProviderDialogOpen}
+          onOpenChange={setCustomProviderDialogOpen}
+          editProvider={
+            editingCustomProviderIndex !== null
+              ? customProviders[editingCustomProviderIndex]
+              : undefined
+          }
+          onSave={handleCustomProviderSave}
+          onCancel={handleCustomProviderCancel}
         />
       </div>
     </div>
