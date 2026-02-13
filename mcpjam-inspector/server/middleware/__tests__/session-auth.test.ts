@@ -37,9 +37,13 @@ function createTestApp(): Hono {
   // Unprotected prefixes
   app.get("/assets/main.js", (c) => c.text("console.log('hello')"));
   app.get("/api/mcp/oauth/callback", (c) => c.json({ oauth: "callback" }));
-  app.get("/api/mcp/apps/widget", (c) => c.json({ widget: "data" }));
-  app.get("/api/apps/chatgpt/widget", (c) => c.json({ chatgpt: "widget" }));
-  app.get("/api/mcp/sandbox-proxy/content", (c) => c.text("sandbox content"));
+  app.get("/api/apps/mcp-apps/widget", (c) => c.json({ widget: "data" }));
+  app.get("/api/apps/chatgpt-apps/widget", (c) =>
+    c.json({ chatgpt: "widget" }),
+  );
+  app.get("/api/apps/mcp-apps/sandbox-proxy/content", (c) =>
+    c.text("sandbox content"),
+  );
 
   // Non-API routes (HTML pages, etc.)
   app.get("/", (c) => c.html("<html>Home</html>"));
@@ -208,20 +212,20 @@ describe("sessionAuthMiddleware", () => {
       expect(res.status).toBe(200);
     });
 
-    it("allows /api/mcp/apps/ without token", async () => {
-      const res = await app.request("/api/mcp/apps/widget");
+    it("allows /api/apps/mcp-apps/ without token", async () => {
+      const res = await app.request("/api/apps/mcp-apps/widget");
 
       expect(res.status).toBe(200);
     });
 
-    it("allows /api/apps/chatgpt/ without token", async () => {
-      const res = await app.request("/api/apps/chatgpt/widget");
+    it("allows /api/apps/chatgpt-apps/ without token", async () => {
+      const res = await app.request("/api/apps/chatgpt-apps/widget");
 
       expect(res.status).toBe(200);
     });
 
-    it("allows /api/mcp/sandbox-proxy without token", async () => {
-      const res = await app.request("/api/mcp/sandbox-proxy/content");
+    it("allows /api/apps/mcp-apps/sandbox-proxy without token", async () => {
+      const res = await app.request("/api/apps/mcp-apps/sandbox-proxy/content");
 
       expect(res.status).toBe(200);
     });

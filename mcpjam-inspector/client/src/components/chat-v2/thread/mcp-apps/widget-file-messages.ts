@@ -40,7 +40,7 @@ export type SendWidgetFileResponse = (
 function buildWidgetDownloadUrl(fileId: string): string {
   const loc = window.location;
   const widgetHost = loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
-  return `${loc.protocol}//${widgetHost}:${loc.port}/api/apps/chatgpt/file/${fileId}`;
+  return `${loc.protocol}//${widgetHost}:${loc.port}/api/apps/chatgpt-apps/file/${fileId}`;
 }
 
 export async function handleUploadFileMessage(
@@ -49,7 +49,7 @@ export async function handleUploadFileMessage(
 ): Promise<void> {
   const uploadCallId = data.callId;
   try {
-    const resp = await authFetch("/api/apps/chatgpt/upload-file", {
+    const resp = await authFetch("/api/apps/chatgpt-apps/upload-file", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
