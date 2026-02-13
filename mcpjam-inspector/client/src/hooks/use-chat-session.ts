@@ -227,7 +227,10 @@ export function useChatSession({
   // Create transport
   const transport = useMemo(() => {
     let apiKey: string;
-    if (selectedModel.provider === "custom" && selectedModel.customProviderName) {
+    if (
+      selectedModel.provider === "custom" &&
+      selectedModel.customProviderName
+    ) {
       // For custom providers, the API key is embedded in the provider config
       const cp = getCustomProviderByName(selectedModel.customProviderName);
       apiKey = cp?.apiKey || "";

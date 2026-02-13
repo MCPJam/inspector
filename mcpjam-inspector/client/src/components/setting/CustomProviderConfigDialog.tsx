@@ -105,9 +105,7 @@ export function CustomProviderConfigDialog({
     name.trim() &&
     !name.includes("/") &&
     baseUrl.trim() &&
-    modelIds
-      .split(",")
-      .some((id) => id.trim());
+    modelIds.split(",").some((id) => id.trim());
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -143,7 +141,10 @@ export function CustomProviderConfigDialog({
             <label htmlFor="cp-protocol" className="text-sm font-medium">
               Protocol
             </label>
-            <Select value={protocol} onValueChange={(v) => setProtocol(v as CompatibleProtocol)}>
+            <Select
+              value={protocol}
+              onValueChange={(v) => setProtocol(v as CompatibleProtocol)}
+            >
               <SelectTrigger className="mt-1">
                 <SelectValue />
               </SelectTrigger>
@@ -206,9 +207,7 @@ export function CustomProviderConfigDialog({
             />
           </div>
 
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
-          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
         <DialogFooter>

@@ -40,10 +40,7 @@ export function useCustomProviders(): UseCustomProvidersReturn {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(customProviders));
       } catch (error) {
-        console.warn(
-          "Failed to save custom providers to localStorage:",
-          error,
-        );
+        console.warn("Failed to save custom providers to localStorage:", error);
       }
     }
   }, [customProviders, isInitialized]);
