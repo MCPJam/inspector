@@ -7,8 +7,11 @@
  */
 
 import { Hono } from "hono";
-import "../../types/hono";
-import { logger } from "../../utils/logger";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import "../../../types/hono";
+import { logger } from "../../../utils/logger";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   McpUiResourceCsp,
@@ -17,6 +20,8 @@ import type {
 import { MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT } from "./McpAppsOpenAICompatibleRuntime.bundled";
 
 const apps = new Hono();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // ── OpenAI compat injection helpers ─────────────────────────────────
 
@@ -240,6 +245,18 @@ apps.post("/widget-content", async (c) => {
       500,
     );
   }
+});
+
+apps.get("/sandbox-proxy", (c) => {
+  const html = readFileSync(join(__dirname, "sandbox-proxy.html"), "utf-8");
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+  c.header(
+    "Content-Security-Policy",
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
+  );
+  c.res.headers.delete("X-Frame-Options");
+  return c.body(html);
 });
 
 export default apps;
