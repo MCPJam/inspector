@@ -10,11 +10,11 @@ import { Hono } from "hono";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type {
-  McpUiResourceCsp,
-  McpUiResourcePermissions,
-} from "@modelcontextprotocol/ext-apps";
 import { OPENAI_COMPAT_RUNTIME_SCRIPT } from "./openai-compat-runtime.bundled";
+import type {
+  UIResourceMeta,
+  WidgetContentRequest,
+} from "./mcp-apps-types";
 
 const apps = new Hono();
 
@@ -78,33 +78,6 @@ function injectOpenAICompat(
  * @see https://github.com/anthropics/anthropic-cookbook/blob/main/misc/sep-1865-mcp-apps.md
  */
 const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
-
-/**
- * CSP mode types - matches client-side CspMode type
- */
-type CspMode = "permissive" | "widget-declared";
-
-interface WidgetContentRequest {
-  serverId: string;
-  resourceUri: string;
-  toolInput: Record<string, unknown>;
-  toolOutput: unknown;
-  toolId: string;
-  toolName: string;
-  theme?: "light" | "dark";
-  cspMode?: CspMode;
-  template?: string;
-  viewMode?: string;
-  viewParams?: Record<string, unknown>;
-}
-
-// UI Resource metadata per SEP-1865 (using SDK types)
-interface UIResourceMeta {
-  csp?: McpUiResourceCsp;
-  permissions?: McpUiResourcePermissions;
-  domain?: string;
-  prefersBorder?: boolean;
-}
 
 // Serve widget content with CSP metadata (SEP-1865)
 apps.post("/widget-content", async (c) => {

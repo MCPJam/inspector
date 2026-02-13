@@ -36,7 +36,6 @@ import {
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import {
   AppBridge,
-  PostMessageTransport,
   type McpUiHostContext,
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
@@ -51,14 +50,12 @@ import {
   CLAUDE_DESKTOP_PLATFORM,
 } from "@/config/claude-desktop-host-context";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
-import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
-import {
-  handleGetFileDownloadUrlMessage,
-  handleUploadFileMessage,
-} from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
 import type { CheckoutSession } from "@/shared/acp-types";
+import { fetchMcpAppsWidgetContent } from "./mcp-apps-widget-request";
+import { createMcpAppsBridge } from "./mcp-apps-bridge-factory";
+import { createMcpAppsCompatRouter } from "./mcp-apps-compat-router";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -265,7 +262,6 @@ export function MCPAppsRenderer({
   const timeZone = isPlaygroundActive
     ? playgroundTimeZone
     : Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-
   // Get displayMode from playground store when active (SEP-1865)
   const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
 
@@ -479,30 +475,6 @@ export function MCPAppsRenderer({
           return;
         }
 
-        const contentResponse = await authFetch(
-          "/api/mcp/apps/widget-content",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serverId,
-              resourceUri,
-              toolInput: toolInputRef.current,
-              toolOutput: toolOutputRef.current,
-              toolId: toolCallId,
-              toolName,
-              theme: themeModeRef.current,
-              cspMode, // Pass CSP mode preference
-            }),
-          },
-        );
-        if (!contentResponse.ok) {
-          const errorData = await contentResponse.json().catch(() => ({}));
-          throw new Error(
-            errorData.error ||
-              `Failed to fetch widget: ${contentResponse.statusText}`,
-          );
-        }
         const {
           html,
           csp,
@@ -511,7 +483,19 @@ export function MCPAppsRenderer({
           mimeTypeWarning: warning,
           mimeTypeValid: valid,
           prefersBorder,
-        } = await contentResponse.json();
+        } = await fetchMcpAppsWidgetContent(
+          {
+            serverId,
+            resourceUri,
+            toolInput: toolInputRef.current,
+            toolOutput: toolOutputRef.current,
+            toolId: toolCallId,
+            toolName,
+            theme: themeModeRef.current,
+            cspMode,
+          },
+          "Failed to fetch widget",
+        );
 
         if (!valid) {
           setLoadError(
@@ -964,31 +948,15 @@ export function MCPAppsRenderer({
     setIsReady(false);
     isReadyRef.current = false;
 
-    const bridge = new AppBridge(
-      null,
-      { name: "mcpjam-inspector", version: __APP_VERSION__ },
-      {
-        openLinks: {},
-        serverTools: {},
-        serverResources: {},
-        logging: {},
-        sandbox: {
-          // In permissive mode: omit CSP (undefined) to indicate no restrictions
-          // In widget-declared mode: pass the widget's declared CSP
-          csp: widgetPermissive ? undefined : widgetCsp,
-          // Always pass permissions (if widget declared them)
-          permissions: widgetPermissions,
-        },
-      },
-      { hostContext: hostContextRef.current ?? {} },
-    );
-
-    registerBridgeHandlers(bridge);
-    bridgeRef.current = bridge;
-
-    const transport = new LoggingTransport(
-      new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
-      {
+    const { bridge, transport } = createMcpAppsBridge({
+      appVersion: __APP_VERSION__,
+      iframeWindow: iframe.contentWindow,
+      hostContext: hostContextRef.current ?? {},
+      csp: widgetCsp,
+      permissions: widgetPermissions,
+      permissive: widgetPermissive,
+      registerBridgeHandlers,
+      logs: {
         onSend: (message) => {
           const method = extractMethod(message, "mcp-apps");
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
@@ -1017,7 +985,8 @@ export function MCPAppsRenderer({
           });
         },
       },
-    );
+    });
+    bridgeRef.current = bridge;
 
     let isActive = true;
     bridge.connect(transport).catch((error) => {
@@ -1251,6 +1220,33 @@ export function MCPAppsRenderer({
     [addUiLog, toolCallId, serverId, addCspViolation],
   );
 
+  const routeCompatMessage = useMemo(
+    () =>
+      createMcpAppsCompatRouter({
+        widgetId: toolCallId,
+        serverId,
+        addUiLog: (log) => addUiLog(log),
+        postMessageToSandbox: (message) => {
+          sandboxRef.current?.postMessage(message);
+        },
+        onOpenModal: ({ title, params, template }) => {
+          setModalTitle(title);
+          setModalParams(params);
+          setModalTemplate(template);
+          setModalOpen(true);
+        },
+        onCloseModal: () => {
+          setModalOpen(false);
+        },
+        onRequestCheckout: ({ callId, session }) => {
+          setCheckoutCallId(callId);
+          setCheckoutSession(session);
+          setCheckoutOpen(true);
+        },
+      }),
+    [toolCallId, serverId, addUiLog],
+  );
+
   const handleSandboxMessage = (event: MessageEvent) => {
     const data = event.data;
     if (!data) return;
@@ -1261,52 +1257,7 @@ export function MCPAppsRenderer({
       return;
     }
 
-    // Handle file upload messages (non-JSON-RPC, same protocol as ChatGPT widget)
-    if (data.type === "openai:uploadFile") {
-      void handleUploadFileMessage(data, (message) => {
-        sandboxRef.current?.postMessage(message);
-      });
-      return;
-    }
-
-    if (data.type === "openai:getFileDownloadUrl") {
-      handleGetFileDownloadUrlMessage(data, (message) => {
-        sandboxRef.current?.postMessage(message);
-      });
-      return;
-    }
-
-    // Handle openai/* JSON-RPC notifications from the compat layer
-    if (
-      data.jsonrpc === "2.0" &&
-      typeof data.method === "string" &&
-      data.method.startsWith("openai/")
-    ) {
-      addUiLog({
-        widgetId: toolCallId,
-        serverId,
-        direction: "ui-to-host",
-        protocol: "mcp-apps",
-        method: data.method,
-        message: data,
-      });
-
-      if (data.method === "openai/requestModal") {
-        const params = data.params ?? {};
-        setModalTitle(params.title || "Modal");
-        setModalParams(params.params || {});
-        setModalTemplate(params.template || null);
-        setModalOpen(true);
-      } else if (data.method === "openai/requestClose") {
-        setModalOpen(false);
-      } else if (data.method === "openai/requestCheckout") {
-        const params = data.params ?? {};
-        const { callId: cId, ...sessionData } = params;
-        setCheckoutCallId(cId as number);
-        setCheckoutSession(sessionData as unknown as CheckoutSession);
-        setCheckoutOpen(true);
-      }
-    }
+    routeCompatMessage(data);
   };
 
   const respondToCheckout = useCallback(

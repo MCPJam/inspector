@@ -6,6 +6,12 @@ This document explains how MCPJam implements SEP-1865 (MCP Apps) to render inter
 
 MCPJam implements SEP-1865 (MCP Apps) to render interactive user interfaces from MCP servers. The implementation uses a **double-iframe sandbox architecture** with JSON-RPC 2.0 over `postMessage` for secure, bidirectional communication.
 
+Recent internal simplifications centralize repeated logic into:
+- `mcp-apps-widget-request.ts` (shared `/api/mcp/apps/widget-content` request builder/fetcher)
+- `mcp-apps-bridge-factory.ts` (shared AppBridge + transport wiring)
+- `mcp-apps-compat-router.ts` (isolated OpenAI compat message routing)
+- `server/routes/mcp/mcp-apps-types.ts` (shared server route types)
+
 ---
 
 ## Architecture Diagram
@@ -123,29 +129,27 @@ When `uiType === UIType.MCP_APPS`, the `MCPAppsRenderer` component is rendered:
 
 ---
 
-### Step 3: Fetch Widget HTML from Server (`mcp-apps-renderer.tsx:342-447`)
+### Step 3: Fetch Widget HTML from Server (`mcp-apps-renderer.tsx` + `mcp-apps-widget-request.ts`)
 
 Once `toolState === "output-available"`, the renderer fetches the widget HTML:
 
 ```typescript
 // mcp-apps-renderer.tsx
 // Single request for widget content + runtime config context
-const contentResponse = await authFetch("/api/mcp/apps/widget-content", {
-  method: "POST",
-  body: JSON.stringify({
-    serverId,
-    resourceUri,
-    toolInput,
-    toolOutput,
-    toolId: toolCallId,
-    toolName,
-    theme: themeMode,
-    cspMode,
-  }),
-});
-
 const { html, csp, permissions, permissive, prefersBorder } =
-  await contentResponse.json();
+  await fetchMcpAppsWidgetContent(
+    {
+      serverId,
+      resourceUri,
+      toolInput,
+      toolOutput,
+      toolId: toolCallId,
+      toolName,
+      theme: themeMode,
+      cspMode,
+    },
+    "Failed to fetch widget",
+  );
 ```
 
 ---

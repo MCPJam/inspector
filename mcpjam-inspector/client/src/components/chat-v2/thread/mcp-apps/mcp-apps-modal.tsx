@@ -9,18 +9,17 @@ import {
   SandboxedIframe,
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
-import { authFetch } from "@/lib/session-token";
 import { extractMethod } from "@/stores/traffic-log-store";
 import {
   AppBridge,
-  PostMessageTransport,
   type McpUiHostContext,
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { CspMode } from "@/stores/ui-playground-store";
-import { LoggingTransport } from "./mcp-apps-logging-transport";
+import { createMcpAppsBridge } from "./mcp-apps-bridge-factory";
+import { fetchMcpAppsWidgetContent } from "./mcp-apps-widget-request";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -93,34 +92,22 @@ export function McpAppsModal({
 
     const fetchModalHtml = async () => {
       try {
-        const contentResponse = await authFetch(
-          "/api/mcp/apps/widget-content",
+        const { html } = await fetchMcpAppsWidgetContent(
           {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serverId,
-              resourceUri,
-              toolInput: toolInputRef.current,
-              toolOutput: toolOutputRef.current,
-              toolId: toolCallId,
-              toolName,
-              theme: themeModeRef.current,
-              cspMode,
-              template: template ?? undefined,
-              viewMode: "modal",
-              viewParams: params,
-            }),
+            serverId,
+            resourceUri,
+            toolInput: toolInputRef.current,
+            toolOutput: toolOutputRef.current,
+            toolId: toolCallId,
+            toolName,
+            theme: themeModeRef.current,
+            cspMode,
+            template: template ?? undefined,
+            viewMode: "modal",
+            viewParams: params,
           },
+          "Failed to fetch modal widget",
         );
-        if (!contentResponse.ok) {
-          const errorData = await contentResponse.json().catch(() => ({}));
-          throw new Error(
-            errorData.error ||
-              `Failed to fetch modal widget: ${contentResponse.statusText}`,
-          );
-        }
-        const { html } = await contentResponse.json();
         setModalHtml(html);
       } catch (err) {
         console.error("[MCP Apps] Failed to fetch modal HTML", err);
@@ -148,24 +135,37 @@ export function McpAppsModal({
     const iframe = modalSandboxRef.current?.getIframeElement();
     if (!iframe?.contentWindow) return;
 
-    const bridge = new AppBridge(
-      null,
-      { name: "mcpjam-inspector", version: __APP_VERSION__ },
-      {
-        openLinks: {},
-        serverTools: {},
-        serverResources: {},
-        logging: {},
-        sandbox: {
-          csp: widgetPermissive ? undefined : widgetCsp,
-          permissions: widgetPermissions,
+    const { bridge, transport } = createMcpAppsBridge({
+      appVersion: __APP_VERSION__,
+      iframeWindow: iframe.contentWindow,
+      hostContext: hostContextRef.current ?? {},
+      csp: widgetCsp,
+      permissions: widgetPermissions,
+      permissive: widgetPermissive,
+      registerBridgeHandlers,
+      logs: {
+        onSend: (message) => {
+          addUiLog({
+            widgetId: `${toolCallId}-modal`,
+            serverId,
+            direction: "host-to-ui",
+            protocol: "mcp-apps",
+            method: extractMethod(message, "mcp-apps"),
+            message,
+          });
+        },
+        onReceive: (message) => {
+          addUiLog({
+            widgetId: `${toolCallId}-modal`,
+            serverId,
+            direction: "ui-to-host",
+            protocol: "mcp-apps",
+            method: extractMethod(message, "mcp-apps"),
+            message,
+          });
         },
       },
-      { hostContext: hostContextRef.current ?? {} },
-    );
-
-    // Reuse the same handlers as the inline bridge
-    registerBridgeHandlers(bridge);
+    });
 
     // Override onsizechange to target modal iframe instead of main widget
     bridge.onsizechange = ({ width, height }) => {
@@ -202,32 +202,6 @@ export function McpAppsModal({
     };
 
     modalBridgeRef.current = bridge;
-
-    const transport = new LoggingTransport(
-      new PostMessageTransport(iframe.contentWindow, iframe.contentWindow),
-      {
-        onSend: (message) => {
-          addUiLog({
-            widgetId: `${toolCallId}-modal`,
-            serverId,
-            direction: "host-to-ui",
-            protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
-            message,
-          });
-        },
-        onReceive: (message) => {
-          addUiLog({
-            widgetId: `${toolCallId}-modal`,
-            serverId,
-            direction: "ui-to-host",
-            protocol: "mcp-apps",
-            method: extractMethod(message, "mcp-apps"),
-            message,
-          });
-        },
-      },
-    );
 
     let isActive = true;
     bridge.connect(transport).catch((error) => {

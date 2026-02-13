@@ -33,15 +33,10 @@ type PendingCall = {
   reject: (reason?: unknown) => void;
 };
 
-declare global {
-  interface Window {
-    openai: any;
-  }
-}
-
 (function bootstrap() {
+  const openaiWindow = window as Window & { openai?: unknown };
   // Defensive: skip if already defined (e.g., ChatGPT widget-runtime ran first)
-  if (window.openai) return;
+  if (openaiWindow.openai) return;
 
   const CONFIG_ID = "openai-compat-config";
 
@@ -86,6 +81,51 @@ declare global {
 
   // Timeout for checkout calls (60 seconds — checkout flows take longer)
   const CHECKOUT_TIMEOUT_MS = 60_000;
+  const FILE_UPLOAD_TIMEOUT_MS = 60_000;
+  const FILE_DOWNLOAD_TIMEOUT_MS = 30_000;
+
+  const nextCallId = (): number => {
+    callId += 1;
+    return callId;
+  };
+
+  const createTimedPendingCall = (
+    store: Map<number, PendingCall>,
+    id: number,
+    timeoutMs: number,
+    timeoutMessage: string,
+  ): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      store.set(id, { resolve, reject });
+      setTimeout(() => {
+        if (store.has(id)) {
+          store.delete(id);
+          reject(new Error(timeoutMessage));
+        }
+      }, timeoutMs);
+    });
+
+  const resolvePendingCall = (
+    store: Map<number, PendingCall>,
+    id: number,
+    value: unknown,
+  ) => {
+    const pending = store.get(id);
+    if (!pending) return;
+    store.delete(id);
+    pending.resolve(value);
+  };
+
+  const rejectPendingCall = (
+    store: Map<number, PendingCall>,
+    id: number,
+    reason: unknown,
+  ) => {
+    const pending = store.get(id);
+    if (!pending) return;
+    store.delete(id);
+    pending.reject(reason);
+  };
 
   /**
    * Send a JSON-RPC 2.0 request (expects a response matched by id)
@@ -94,7 +134,7 @@ declare global {
     method: string,
     params: Record<string, unknown>,
   ): { id: number } => {
-    const id = ++callId;
+    const id = nextCallId();
     window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
     return { id };
   };
@@ -202,16 +242,12 @@ declare global {
         arguments: args,
         _meta: {},
       });
-
-      return new Promise((resolve, reject) => {
-        pendingCalls.set(id, { resolve, reject });
-        setTimeout(() => {
-          if (pendingCalls.has(id)) {
-            pendingCalls.delete(id);
-            reject(new Error("Tool call timeout"));
-          }
-        }, CALL_TIMEOUT_MS);
-      });
+      return createTimedPendingCall(
+        pendingCalls,
+        id,
+        CALL_TIMEOUT_MS,
+        "Tool call timeout",
+      );
     },
 
     /**
@@ -344,7 +380,10 @@ declare global {
       const id = ++this._fileCallId;
 
       return new Promise((resolve, reject) => {
-        this._pendingFileCalls.set(id, { resolve, reject });
+        this._pendingFileCalls.set(id, {
+          resolve: (value) => resolve(value as { fileId: string }),
+          reject,
+        });
 
         const reader = new FileReader();
         reader.onload = () => {
@@ -373,7 +412,7 @@ declare global {
             this._pendingFileCalls.delete(id);
             reject(new Error("Upload timeout"));
           }
-        }, 60_000);
+        }, FILE_UPLOAD_TIMEOUT_MS);
       });
     },
 
@@ -388,27 +427,21 @@ declare global {
       }
 
       const id = ++this._fileCallId;
-
-      return new Promise((resolve, reject) => {
-        this._pendingFileCalls.set(id, { resolve, reject });
-
-        window.parent.postMessage(
-          {
-            type: "openai:getFileDownloadUrl",
-            callId: id,
-            toolId,
-            fileId: options.fileId,
-          },
-          "*",
-        );
-
-        setTimeout(() => {
-          if (this._pendingFileCalls.has(id)) {
-            this._pendingFileCalls.delete(id);
-            reject(new Error("getFileDownloadUrl timeout"));
-          }
-        }, 30_000);
-      });
+      window.parent.postMessage(
+        {
+          type: "openai:getFileDownloadUrl",
+          callId: id,
+          toolId,
+          fileId: options.fileId,
+        },
+        "*",
+      );
+      return createTimedPendingCall(
+        this._pendingFileCalls,
+        id,
+        FILE_DOWNLOAD_TIMEOUT_MS,
+        "getFileDownloadUrl timeout",
+      ) as Promise<{ downloadUrl: string }>;
     },
 
     /**
@@ -417,18 +450,14 @@ declare global {
      * conflicts with AppBridge's JSON-RPC request handling.
      */
     requestCheckout(session: Record<string, unknown>): Promise<unknown> {
-      const id = ++callId;
+      const id = nextCallId();
       sendNotification("openai/requestCheckout", { ...session, callId: id });
-
-      return new Promise((resolve, reject) => {
-        pendingCheckoutCalls.set(id, { resolve, reject });
-        setTimeout(() => {
-          if (pendingCheckoutCalls.has(id)) {
-            pendingCheckoutCalls.delete(id);
-            reject(new Error("Checkout request timeout"));
-          }
-        }, CHECKOUT_TIMEOUT_MS);
-      });
+      return createTimedPendingCall(
+        pendingCheckoutCalls,
+        id,
+        CHECKOUT_TIMEOUT_MS,
+        "Checkout request timeout",
+      );
     },
   };
 
@@ -448,9 +477,10 @@ declare global {
     ) {
       const pending = pendingCalls.get(data.id);
       if (pending) {
-        pendingCalls.delete(data.id);
         if (data.error) {
-          pending.reject(
+          rejectPendingCall(
+            pendingCalls,
+            data.id,
             new Error(
               typeof data.error === "string"
                 ? data.error
@@ -458,7 +488,7 @@ declare global {
             ),
           );
         } else {
-          pending.resolve(data.result);
+          resolvePendingCall(pendingCalls, data.id, data.result);
         }
       }
       return;
@@ -486,20 +516,23 @@ declare global {
           if (params.displayMode) openaiAPI.displayMode = params.displayMode;
           break;
         case "openai/requestCheckout:response": {
-          const pending = pendingCheckoutCalls.get(params.callId as number);
-          if (pending) {
-            pendingCheckoutCalls.delete(params.callId as number);
-            if (params.error) {
-              pending.reject(
-                new Error(
-                  typeof params.error === "string"
-                    ? params.error
-                    : "Checkout failed",
-                ),
-              );
-            } else {
-              pending.resolve(params.result);
-            }
+          const checkoutCallId = params.callId as number;
+          if (params.error) {
+            rejectPendingCall(
+              pendingCheckoutCalls,
+              checkoutCallId,
+              new Error(
+                typeof params.error === "string"
+                  ? params.error
+                  : "Checkout failed",
+              ),
+            );
+          } else {
+            resolvePendingCall(
+              pendingCheckoutCalls,
+              checkoutCallId,
+              params.result,
+            );
           }
           break;
         }
@@ -520,14 +553,14 @@ declare global {
       data.type === "openai:uploadFile:response" ||
       data.type === "openai:getFileDownloadUrl:response"
     ) {
-      const pending = openaiAPI._pendingFileCalls.get(data.callId);
-      if (pending) {
-        openaiAPI._pendingFileCalls.delete(data.callId);
-        if (data.error) {
-          pending.reject(new Error(data.error));
-        } else {
-          pending.resolve(data.result);
-        }
+      if (data.error) {
+        rejectPendingCall(
+          openaiAPI._pendingFileCalls,
+          data.callId,
+          new Error(data.error),
+        );
+      } else {
+        resolvePendingCall(openaiAPI._pendingFileCalls, data.callId, data.result);
       }
     }
   });
@@ -538,7 +571,7 @@ declare global {
 
   const PROTOCOL_VERSION = "2026-01-26";
 
-  const initId = ++callId;
+  const initId = nextCallId();
   window.parent.postMessage(
     {
       jsonrpc: "2.0",
@@ -576,7 +609,7 @@ declare global {
 
   // ── Mount on window ────────────────────────────────────────────────
 
-  Object.defineProperty(window, "openai", {
+  Object.defineProperty(openaiWindow, "openai", {
     value: openaiAPI,
     writable: false,
     configurable: false,
