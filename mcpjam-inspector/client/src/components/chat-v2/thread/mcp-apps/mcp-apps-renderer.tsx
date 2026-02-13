@@ -453,6 +453,7 @@ export function MCPAppsRenderer({
     const fetchWidgetHtml = async () => {
       try {
         // Use cached widget HTML whenever available (faster and works offline)
+        // This is for the Views tab offline rendering
         if (cachedWidgetHtmlUrl) {
           const cachedResponse = await fetch(cachedWidgetHtmlUrl);
           if (!cachedResponse.ok) {
@@ -478,32 +479,22 @@ export function MCPAppsRenderer({
           return;
         }
 
-        // Store widget data first (same pattern as openai.ts)
-        const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverId,
-            resourceUri,
-            toolInput: toolInputRef.current,
-            toolOutput: toolOutputRef.current,
-            toolId: toolCallId,
-            toolName,
-            theme: themeModeRef.current,
-            protocol: "mcp-apps",
-            cspMode, // Pass CSP mode preference
-          }),
-        });
-
-        if (!storeResponse.ok) {
-          throw new Error(
-            `Failed to store widget: ${storeResponse.statusText}`,
-          );
-        }
-
-        // Fetch widget content with CSP metadata (SEP-1865)
-        const contentResponse = await fetch(
-          `/api/mcp/apps/widget-content/${toolCallId}?csp_mode=${cspMode}`,
+        const contentResponse = await authFetch(
+          "/api/mcp/apps/widget-content",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serverId,
+              resourceUri,
+              toolInput: toolInputRef.current,
+              toolOutput: toolOutputRef.current,
+              toolId: toolCallId,
+              toolName,
+              theme: themeModeRef.current,
+              cspMode, // Pass CSP mode preference
+            }),
+          },
         );
         if (!contentResponse.ok) {
           const errorData = await contentResponse.json().catch(() => ({}));
