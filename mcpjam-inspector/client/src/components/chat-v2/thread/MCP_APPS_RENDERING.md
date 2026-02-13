@@ -128,9 +128,9 @@ When `uiType === UIType.MCP_APPS`, the `MCPAppsRenderer` component is rendered:
 Once `toolState === "output-available"`, the renderer fetches the widget HTML:
 
 ```typescript
-// mcp-apps-renderer.tsx:348-374
-// 1. Store widget data
-const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
+// mcp-apps-renderer.tsx
+// Single request for widget content + runtime config context
+const contentResponse = await authFetch("/api/mcp/apps/widget-content", {
   method: "POST",
   body: JSON.stringify({
     serverId,
@@ -140,15 +140,10 @@ const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
     toolId: toolCallId,
     toolName,
     theme: themeMode,
-    protocol: "mcp-apps",
     cspMode,
   }),
 });
 
-// 2. Fetch widget content with CSP metadata
-const contentResponse = await fetch(
-  `/api/mcp/apps/widget-content/${toolCallId}?csp_mode=${cspMode}`,
-);
 const { html, csp, permissions, permissive, prefersBorder } =
   await contentResponse.json();
 ```

@@ -1,23 +1,7 @@
 import Ajv from "ajv";
 import type { ErrorObject } from "ajv";
 
-const ajv = new Ajv();
-
-/**
- * Recursively strips vendor extension keys (prefixed with "x-") from a JSON Schema.
- * These are custom annotations (e.g. "x-fastmcp-wrap-result") that are valid in JSON Schema
- * but cause AJV strict mode to reject the schema as unrecognized keywords.
- */
-function stripExtensionKeys(schema: any): any {
-  if (typeof schema !== "object" || schema === null) return schema;
-  if (Array.isArray(schema)) return schema.map(stripExtensionKeys);
-  const cleaned: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(schema)) {
-    if (key.startsWith("x-")) continue;
-    cleaned[key] = stripExtensionKeys(value);
-  }
-  return cleaned;
-}
+const ajv = new Ajv({ strict: false });
 
 export type UnstructuredValidationStatus =
   | "not_applicable"
@@ -45,7 +29,7 @@ export function validateToolOutput(
 
   if (result.structuredContent) {
     try {
-      const validate = ajv.compile(stripExtensionKeys(outputSchema));
+      const validate = ajv.compile(outputSchema);
       const isValid = validate(result.structuredContent);
       report.structuredErrors = isValid ? null : validate.errors || []; // null means valid
     } catch (e) {
@@ -67,7 +51,7 @@ export function validateToolOutput(
   if (typeof result.content[0].text === "string") {
     try {
       const parsedContent = JSON.parse(result.content[0].text);
-      const validate = ajv.compile(stripExtensionKeys(outputSchema));
+      const validate = ajv.compile(outputSchema);
       const isValid = validate(parsedContent);
       report.unstructuredStatus = isValid ? "valid" : "schema_mismatch";
     } catch (e) {
