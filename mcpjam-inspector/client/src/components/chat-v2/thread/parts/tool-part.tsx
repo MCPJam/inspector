@@ -412,7 +412,15 @@ export function ToolPart({
       <button
         type="button"
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer overflow-hidden"
-        onClick={() => setUserExpanded((prev) => !prev)}
+        onClick={() => {
+          setUserExpanded((prev) => {
+            const willExpand = !prev;
+            if (willExpand && activeDebugTab === null) {
+              setActiveDebugTab("data");
+            }
+            return willExpand;
+          });
+        }}
         aria-expanded={isExpanded}
       >
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
