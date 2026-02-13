@@ -161,7 +161,7 @@ export function CustomProviderConfigDialog({
 
           <div>
             <label htmlFor="cp-url" className="text-sm font-medium">
-              API URL
+              Base URL
             </label>
             <Input
               id="cp-url"

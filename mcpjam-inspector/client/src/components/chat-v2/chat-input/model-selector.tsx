@@ -119,7 +119,9 @@ export function ModelSelector({
 
   // Extract the custom provider name from a group key (e.g. "custom:Groq" → "Groq")
   const getCustomName = (groupKey: GroupKey): string | undefined =>
-    groupKey.startsWith("custom:") ? groupKey.slice("custom:".length) : undefined;
+    groupKey.startsWith("custom:")
+      ? groupKey.slice("custom:".length)
+      : undefined;
 
   const mcpjamProviders = hideProvidedModels
     ? []
@@ -179,7 +181,10 @@ export function ModelSelector({
                     : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[160px]"
                 }
               >
-                <ProviderLogo provider={currentModelData.provider} customProviderName={currentModelData.customProviderName} />
+                <ProviderLogo
+                  provider={currentModelData.provider}
+                  customProviderName={currentModelData.customProviderName}
+                />
                 {!compact && (
                   <span className="text-[10px] font-medium truncate">
                     {currentModelData.name}
@@ -208,7 +213,10 @@ export function ModelSelector({
             return (
               <DropdownMenuSub key={provider}>
                 <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                  <ProviderLogo provider={getLogoProvider(provider)} customProviderName={getCustomName(provider)} />
+                  <ProviderLogo
+                    provider={getLogoProvider(provider)}
+                    customProviderName={getCustomName(provider)}
+                  />
                   <div className="flex flex-col flex-1">
                     <span className="font-medium">
                       {getProviderDisplayName(provider)}
@@ -285,7 +293,10 @@ export function ModelSelector({
             return (
               <DropdownMenuSub key={provider}>
                 <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                  <ProviderLogo provider={getLogoProvider(provider)} customProviderName={getCustomName(provider)} />
+                  <ProviderLogo
+                    provider={getLogoProvider(provider)}
+                    customProviderName={getCustomName(provider)}
+                  />
                   <div className="flex flex-col flex-1">
                     <span className="font-medium">
                       {getProviderDisplayName(provider)}
