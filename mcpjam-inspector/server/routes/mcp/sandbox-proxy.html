@@ -313,7 +313,9 @@ document.addEventListener('securitypolicyviolation', function(e) {
           if (data && typeof data === "object") {
             if (
               data.jsonrpc === "2.0" ||
-              data.type === "mcp-apps:csp-violation"
+              data.type === "mcp-apps:csp-violation" ||
+              data.type === "openai:uploadFile" ||
+              data.type === "openai:getFileDownloadUrl"
             ) {
               window.parent.postMessage(data, "*");
             }

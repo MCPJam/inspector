@@ -144,6 +144,15 @@ export const SandboxedIframe = forwardRef<
         return;
       }
 
+      // File upload/download messages (not JSON-RPC) - forward directly
+      if (
+        event.data?.type === "openai:uploadFile" ||
+        event.data?.type === "openai:getFileDownloadUrl"
+      ) {
+        onMessage(event);
+        return;
+      }
+
       const { jsonrpc, method } =
         (event.data as { jsonrpc?: string; method?: string }) || {};
       if (jsonrpc !== "2.0") return;

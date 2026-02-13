@@ -307,6 +307,110 @@ declare global {
       sendNotification("openai/requestClose", { toolId });
     },
 
+    // ── File Upload / Download ────────────────────────────────────────
+    // These use custom (non-JSON-RPC) postMessage types, matching the
+    // ChatGPT widget-runtime.ts protocol. The sandbox proxy and
+    // SandboxedIframe whitelist these message types alongside CSP
+    // violation messages.
+
+    _fileCallId: 0,
+    _pendingFileCalls: new Map<number, PendingCall>(),
+
+    /**
+     * Upload a file (image) to the host. Returns a fileId for later retrieval.
+     */
+    uploadFile(file: File): Promise<{ fileId: string }> {
+      const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+      const MAX_SIZE = 20 * 1024 * 1024; // 20 MB
+
+      if (!(file instanceof File)) {
+        return Promise.reject(new Error("uploadFile requires a File object"));
+      }
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        return Promise.reject(
+          new Error(
+            `Unsupported file type: ${file.type}. Allowed: ${ALLOWED_TYPES.join(", ")}`,
+          ),
+        );
+      }
+      if (file.size > MAX_SIZE) {
+        return Promise.reject(
+          new Error(
+            `File too large. Maximum size: ${MAX_SIZE / 1024 / 1024}MB`,
+          ),
+        );
+      }
+
+      const id = ++this._fileCallId;
+
+      return new Promise((resolve, reject) => {
+        this._pendingFileCalls.set(id, { resolve, reject });
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          const base64 = dataUrl.split(",")[1];
+          window.parent.postMessage(
+            {
+              type: "openai:uploadFile",
+              callId: id,
+              toolId,
+              data: base64,
+              mimeType: file.type,
+              fileName: file.name,
+            },
+            "*",
+          );
+        };
+        reader.onerror = () => {
+          this._pendingFileCalls.delete(id);
+          reject(new Error("Failed to read file"));
+        };
+        reader.readAsDataURL(file);
+
+        setTimeout(() => {
+          if (this._pendingFileCalls.has(id)) {
+            this._pendingFileCalls.delete(id);
+            reject(new Error("Upload timeout"));
+          }
+        }, 60_000);
+      });
+    },
+
+    /**
+     * Get a download URL for a previously uploaded file.
+     */
+    getFileDownloadUrl(options: {
+      fileId: string;
+    }): Promise<{ downloadUrl: string }> {
+      if (!options || !options.fileId) {
+        return Promise.reject(new Error("fileId is required"));
+      }
+
+      const id = ++this._fileCallId;
+
+      return new Promise((resolve, reject) => {
+        this._pendingFileCalls.set(id, { resolve, reject });
+
+        window.parent.postMessage(
+          {
+            type: "openai:getFileDownloadUrl",
+            callId: id,
+            toolId,
+            fileId: options.fileId,
+          },
+          "*",
+        );
+
+        setTimeout(() => {
+          if (this._pendingFileCalls.has(id)) {
+            this._pendingFileCalls.delete(id);
+            reject(new Error("getFileDownloadUrl timeout"));
+          }
+        }, 30_000);
+      });
+    },
+
     /**
      * Request a checkout flow (ACP — Agentic Checkout Protocol).
      * Uses notification + callId pattern (same as requestModal) to avoid
@@ -331,6 +435,9 @@ declare global {
   // ── Listen for incoming JSON-RPC responses & notifications ─────────
 
   window.addEventListener("message", (event: MessageEvent) => {
+    // Only accept messages from our parent (sandbox proxy)
+    if (event.source !== window.parent) return;
+
     const data = event.data;
     if (!data || data.jsonrpc !== "2.0") return;
 
@@ -395,6 +502,31 @@ declare global {
             }
           }
           break;
+        }
+      }
+    }
+  });
+
+  // ── Listen for file operation responses (non-JSON-RPC) ─────────────
+
+  window.addEventListener("message", (event: MessageEvent) => {
+    // Only accept messages from our parent (sandbox proxy)
+    if (event.source !== window.parent) return;
+
+    const data = event.data;
+    if (!data) return;
+
+    if (
+      data.type === "openai:uploadFile:response" ||
+      data.type === "openai:getFileDownloadUrl:response"
+    ) {
+      const pending = openaiAPI._pendingFileCalls.get(data.callId);
+      if (pending) {
+        openaiAPI._pendingFileCalls.delete(data.callId);
+        if (data.error) {
+          pending.reject(new Error(data.error));
+        } else {
+          pending.resolve(data.result);
         }
       }
     }

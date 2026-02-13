@@ -53,6 +53,10 @@ import {
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
+import {
+  handleGetFileDownloadUrlMessage,
+  handleUploadFileMessage,
+} from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
 import type { CheckoutSession } from "@/shared/acp-types";
 
@@ -1263,6 +1267,21 @@ export function MCPAppsRenderer({
     // Handle CSP violation messages (custom type)
     if (data.type === "mcp-apps:csp-violation") {
       handleCspViolation(event);
+      return;
+    }
+
+    // Handle file upload messages (non-JSON-RPC, same protocol as ChatGPT widget)
+    if (data.type === "openai:uploadFile") {
+      void handleUploadFileMessage(data, (message) => {
+        sandboxRef.current?.postMessage(message);
+      });
+      return;
+    }
+
+    if (data.type === "openai:getFileDownloadUrl") {
+      handleGetFileDownloadUrlMessage(data, (message) => {
+        sandboxRef.current?.postMessage(message);
+      });
       return;
     }
 

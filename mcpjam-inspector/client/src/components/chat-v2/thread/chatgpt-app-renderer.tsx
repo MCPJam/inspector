@@ -30,6 +30,10 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
 import { authFetch } from "@/lib/session-token";
+import {
+  handleGetFileDownloadUrlMessage,
+  handleUploadFileMessage,
+} from "./mcp-apps/widget-file-messages";
 
 type ToolState =
   | "input-streaming"
@@ -1198,6 +1202,18 @@ export function ChatGPTAppRenderer({
           setCheckoutOpen(true);
           break;
         }
+        case "openai:uploadFile": {
+          void handleUploadFileMessage(event.data, (message) => {
+            postToWidget(message);
+          });
+          break;
+        }
+        case "openai:getFileDownloadUrl": {
+          handleGetFileDownloadUrlMessage(event.data, (message) => {
+            postToWidget(message);
+          });
+          break;
+        }
         case "openai:requestModal": {
           setModalTitle(event.data.title || "Modal");
           setModalParams(event.data.params || {});
@@ -1343,6 +1359,19 @@ export function ChatGPTAppRenderer({
             );
           }
         })();
+      }
+
+      if (event.data?.type === "openai:uploadFile") {
+        void handleUploadFileMessage(event.data, (message) => {
+          postToWidget(message, true);
+        });
+      }
+
+      if (event.data?.type === "openai:getFileDownloadUrl") {
+        handleGetFileDownloadUrlMessage(event.data, (message) => {
+          postToWidget(message, true);
+        });
+        return;
       }
     },
     [
