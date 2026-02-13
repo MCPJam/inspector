@@ -101,12 +101,12 @@ export type ModelProvider =
   | "google"
   | "meta"
   | "xai"
-  | "litellm"
   | "mistral"
   | "moonshotai"
   | "openrouter"
   | "z-ai"
-  | "minimax";
+  | "minimax"
+  | "custom";
 
 // Premium models (e.g. claude-sonnet-4.5, gpt-5, gpt-5.1) were removed to reduce free tier costs.
 // See: https://github.com/MCPJam/inspector/pull/1391
@@ -149,6 +149,8 @@ export interface ModelDefinition {
   id: Model | string;
   name: string;
   provider: ModelProvider;
+  /** Set when provider === "custom" to identify which custom provider to use */
+  customProviderName?: string;
   contextLength?: number;
   disabled?: boolean;
   disabledReason?: string;

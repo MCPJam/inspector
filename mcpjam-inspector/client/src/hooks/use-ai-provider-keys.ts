@@ -2,20 +2,15 @@ import { useState, useEffect, useCallback } from "react";
 
 export interface ProviderTokens {
   anthropic: string;
-  anthropicBaseUrl: string;
   azure: string;
   azureBaseUrl: string;
   openai: string;
-  openaiBaseUrl: string;
   deepseek: string;
   google: string;
   mistral: string;
   xai: string;
   ollama: string;
   ollamaBaseUrl: string;
-  litellm: string;
-  litellmBaseUrl: string;
-  litellmModelAlias: string;
   openrouter: string;
   openRouterSelectedModels: string[];
 }
@@ -29,38 +24,25 @@ export interface useAiProviderKeysReturn {
   getToken: (provider: keyof ProviderTokens) => string;
   getOllamaBaseUrl: () => string;
   setOllamaBaseUrl: (url: string) => void;
-  getLiteLLMBaseUrl: () => string;
-  setLiteLLMBaseUrl: (url: string) => void;
-  getLiteLLMModelAlias: () => string;
-  setLiteLLMModelAlias: (alias: string) => void;
   getOpenRouterSelectedModels: () => string[];
   setOpenRouterSelectedModels: (models: string[]) => void;
   getAzureBaseUrl: () => string;
   setAzureBaseUrl: (url: string) => void;
-  getAnthropicBaseUrl: () => string;
-  setAnthropicBaseUrl: (url: string) => void;
-  getOpenAIBaseUrl: () => string;
-  setOpenAIBaseUrl: (url: string) => void;
 }
 
 const STORAGE_KEY = "mcp-inspector-provider-tokens";
 
 const defaultTokens: ProviderTokens = {
   anthropic: "",
-  anthropicBaseUrl: "",
   azure: "",
   azureBaseUrl: "",
   openai: "",
-  openaiBaseUrl: "",
   deepseek: "",
   google: "",
   mistral: "",
   xai: "",
   ollama: "local", // Ollama runs locally, no API key needed
   ollamaBaseUrl: "http://127.0.0.1:11434/api",
-  litellm: "", // LiteLLM API key (optional, depends on proxy setup)
-  litellmBaseUrl: "http://localhost:4000", // Default LiteLLM proxy URL
-  litellmModelAlias: "", // Model name/alias to use with LiteLLM
   openrouter: "",
   openRouterSelectedModels: [],
 };
@@ -160,28 +142,6 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
-  const getLiteLLMBaseUrl = useCallback(() => {
-    return tokens.litellmBaseUrl || defaultTokens.litellmBaseUrl;
-  }, [tokens.litellmBaseUrl]);
-
-  const setLiteLLMBaseUrl = useCallback((url: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      litellmBaseUrl: url,
-    }));
-  }, []);
-
-  const getLiteLLMModelAlias = useCallback(() => {
-    return tokens.litellmModelAlias || defaultTokens.litellmModelAlias;
-  }, [tokens.litellmModelAlias]);
-
-  const setLiteLLMModelAlias = useCallback((alias: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      litellmModelAlias: alias,
-    }));
-  }, []);
-
   const getAzureBaseUrl = useCallback(() => {
     return tokens.azureBaseUrl || defaultTokens.azureBaseUrl;
   }, [tokens.azureBaseUrl]);
@@ -206,28 +166,6 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     }));
   }, []);
 
-  const getAnthropicBaseUrl = useCallback(() => {
-    return tokens.anthropicBaseUrl || "";
-  }, [tokens.anthropicBaseUrl]);
-
-  const setAnthropicBaseUrl = useCallback((url: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      anthropicBaseUrl: url,
-    }));
-  }, []);
-
-  const getOpenAIBaseUrl = useCallback(() => {
-    return tokens.openaiBaseUrl || "";
-  }, [tokens.openaiBaseUrl]);
-
-  const setOpenAIBaseUrl = useCallback((url: string) => {
-    setTokens((prev) => ({
-      ...prev,
-      openaiBaseUrl: url,
-    }));
-  }, []);
-
   return {
     tokens,
     setToken,
@@ -237,17 +175,9 @@ export function useAiProviderKeys(): useAiProviderKeysReturn {
     getToken,
     getOllamaBaseUrl,
     setOllamaBaseUrl,
-    getLiteLLMBaseUrl,
-    setLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
-    setLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     setOpenRouterSelectedModels,
     getAzureBaseUrl,
     setAzureBaseUrl,
-    getAnthropicBaseUrl,
-    setAnthropicBaseUrl,
-    getOpenAIBaseUrl,
-    setOpenAIBaseUrl,
   };
 }
