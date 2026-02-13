@@ -276,7 +276,7 @@ export function ToolPart({
           }`}
         >
           <Icon className="h-3.5 w-3.5" />
-          <span className="text-[9px] leading-none">{buttonLabel}</span>
+          <span className="text-[9px] leading-none hidden @[24rem]:inline">{buttonLabel}</span>
         </button>
       );
     });
@@ -310,7 +310,7 @@ export function ToolPart({
           }`}
         >
           <Icon className="h-3.5 w-3.5" />
-          <span className="text-[9px] leading-none">{buttonLabel}</span>
+          <span className="text-[9px] leading-none hidden @[24rem]:inline">{buttonLabel}</span>
           {badge !== undefined && badge > 0 && (
             <Badge
               variant="destructive"
@@ -353,7 +353,7 @@ export function ToolPart({
         ) : (
           <Layers className="h-3.5 w-3.5" />
         )}
-        <span className="text-[9px] leading-none">Save View</span>
+        <span className="text-[9px] leading-none hidden @[24rem]:inline">Save View</span>
       </button>
     </span>
   );
@@ -361,7 +361,7 @@ export function ToolPart({
   return (
     <div
       className={cn(
-        "rounded-lg border text-xs",
+        "@container rounded-lg border text-xs",
         needsApproval && approvalVisualState === "pending"
           ? "border-pending/40 bg-pending/5"
           : needsApproval && approvalVisualState === "approved"
@@ -373,8 +373,14 @@ export function ToolPart({
     >
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
-        onClick={() => setUserExpanded((prev) => !prev)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer overflow-hidden"
+        onClick={() => {
+          const nextExpanded = !userExpanded;
+          if (nextExpanded && activeDebugTab === null) {
+            setActiveDebugTab("data");
+          }
+          setUserExpanded(nextExpanded);
+        }}
         aria-expanded={isExpanded}
       >
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
@@ -408,7 +414,7 @@ export function ToolPart({
             </span>
           )}
         </span>
-        <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
           {showDisplayModeControls && (
             <span
               className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
