@@ -4,34 +4,6 @@ import { logger } from "../../utils/logger";
 
 const resources = new Hono();
 
-// In-memory storage for widget data (TTL: 1 hour)
-interface WidgetData {
-  serverId: string;
-  uri: string;
-  toolInput: Record<string, any>;
-  toolOutput: any;
-  toolResponseMetadata?: Record<string, any> | null;
-  toolId: string;
-  theme?: "light" | "dark";
-  timestamp: number;
-}
-
-const widgetDataStore = new Map<string, WidgetData>();
-
-// Cleanup expired widget data every 5 minutes
-setInterval(
-  () => {
-    const now = Date.now();
-    const ONE_HOUR = 60 * 60 * 1000;
-    for (const [toolId, data] of widgetDataStore.entries()) {
-      if (now - data.timestamp > ONE_HOUR) {
-        widgetDataStore.delete(toolId);
-      }
-    }
-  },
-  5 * 60 * 1000,
-).unref();
-
 // List resources endpoint
 resources.post("/list", async (c) => {
   let serverId: string | undefined;

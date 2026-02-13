@@ -29,15 +29,9 @@ type OpenAICompatConfig = {
 };
 
 type PendingCall = {
-  resolve: (value: unknown) => void;
+  resolve: (value: any) => void;
   reject: (reason?: unknown) => void;
 };
-
-declare global {
-  interface Window {
-    openai: any;
-  }
-}
 
 (function bootstrap() {
   // Defensive: skip if already defined (e.g., ChatGPT widget-runtime ran first)
@@ -62,15 +56,7 @@ declare global {
   const config = readConfig();
   if (!config) return;
 
-  const {
-    toolId,
-    toolName,
-    toolInput,
-    toolOutput,
-    theme,
-    viewMode,
-    viewParams,
-  } = config;
+  const { toolId, toolInput, toolOutput, theme, viewMode, viewParams } = config;
 
   // JSON-RPC 2.0 call ID counter
   let callId = 0;
