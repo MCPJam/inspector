@@ -190,7 +190,7 @@ function Composer({
           minRows={1}
           maxRows={3}
           className={cn(
-            "w-full resize-none border-none bg-transparent px-0 py-0 min-h-0 text-sm leading-tight",
+            "w-full resize-none border-none bg-transparent dark:bg-transparent px-0 py-0 min-h-0 text-sm leading-tight",
             "placeholder:text-muted-foreground/60 shadow-none",
             "focus-visible:ring-0 focus-visible:outline-none focus-visible:border-none",
           )}

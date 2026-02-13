@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+// Update info type
+interface UpdateInfo {
+  version: string;
+  releaseNotes?: string;
+}
+
 // Define the API interface
 interface ElectronAPI {
   // App metadata
@@ -34,6 +40,14 @@ interface ElectronAPI {
   oauth: {
     onCallback: (callback: (url: string) => void) => void;
     removeCallback: () => void;
+  };
+
+  // Update operations
+  update: {
+    onUpdateReady: (callback: (info: UpdateInfo) => void) => void;
+    removeUpdateReadyListener: () => void;
+    restartAndInstall: () => void;
+    simulateUpdate?: () => void; // Dev only - for testing
   };
 }
 
@@ -70,6 +84,25 @@ const electronAPI: ElectronAPI = {
     removeCallback: () => {
       ipcRenderer.removeAllListeners("oauth-callback");
     },
+  },
+
+  update: {
+    onUpdateReady: (callback: (info: UpdateInfo) => void) => {
+      ipcRenderer.on("update-ready", (_, info: UpdateInfo) => callback(info));
+    },
+    removeUpdateReadyListener: () => {
+      ipcRenderer.removeAllListeners("update-ready");
+    },
+    restartAndInstall: () => {
+      ipcRenderer.send("app:restart-for-update");
+    },
+    ...(process.env.NODE_ENV === "development"
+      ? {
+          simulateUpdate: () => {
+            ipcRenderer.send("app:simulate-update");
+          },
+        }
+      : {}),
   },
 };
 
