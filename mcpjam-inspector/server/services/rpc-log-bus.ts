@@ -7,7 +7,7 @@ export type RpcLogEvent = {
   message: unknown;
 };
 
-class RpcLogBus {
+export class RpcLogBus {
   private readonly emitter = new EventEmitter();
   private readonly bufferByServer = new Map<string, RpcLogEvent[]>();
 

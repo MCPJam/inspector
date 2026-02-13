@@ -24,6 +24,9 @@ import {
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
+import { hostedMcpAuthMiddleware } from "./middleware/hosted-mcp-auth";
+import { hostedRateLimitMiddleware } from "./middleware/hosted-rate-limit";
+import { runtimeActorMiddleware } from "./middleware/runtime-actor";
 
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
@@ -83,6 +86,8 @@ function logBox(content: string, title?: string) {
 import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
+import { progressStore } from "./services/progress-store";
+import { ensureElicitationCallback } from "./services/elicitation-hub";
 import { tunnelManager } from "./services/tunnel-manager";
 import {
   SERVER_PORT,
@@ -230,8 +235,25 @@ const mcpClientManager = new MCPClientManager(
         message,
       });
     },
+    progressHandler: ({
+      serverId,
+      progressToken,
+      progress,
+      total,
+      message,
+    }) => {
+      progressStore.publish({
+        serverId,
+        progressToken,
+        progress,
+        total,
+        message,
+        timestamp: new Date().toISOString(),
+      });
+    },
   },
 );
+ensureElicitationCallback(mcpClientManager);
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
   c.mcpClientManager = mcpClientManager;
@@ -249,6 +271,15 @@ app.use("*", originValidationMiddleware);
 
 // 3. Session authentication (blocks unauthorized API requests)
 app.use("*", sessionAuthMiddleware);
+
+// 4. Hosted bearer auth for MCP routes
+app.use("/api/mcp/*", hostedMcpAuthMiddleware);
+
+// 5. Hosted per-tenant rate limiter
+app.use("/api/mcp/*", hostedRateLimitMiddleware);
+
+// 6. Runtime actor resolver for tenant-scoped MCP execution
+app.use("/api/mcp/*", runtimeActorMiddleware);
 
 // ===== END SECURITY MIDDLEWARE =====
 

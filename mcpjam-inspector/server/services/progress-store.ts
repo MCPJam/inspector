@@ -20,7 +20,7 @@ const CLEANUP_INTERVAL_MS = 60 * 1000;
  * Also emits events for real-time streaming to clients.
  * Automatically cleans up stale progress entries to prevent memory leaks.
  */
-class ProgressStore {
+export class ProgressStore {
   private readonly emitter = new EventEmitter();
   // Map: serverId -> Map<progressToken, ProgressEvent>
   private readonly store = new Map<

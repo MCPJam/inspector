@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import "../../types/hono";
 import { handleJsonRpc, BridgeMode } from "../../services/mcp-http-bridge";
 
@@ -7,8 +8,37 @@ type Session = {
   send: (event: string, data: string) => void;
   close: () => void;
 };
-const sessions: Map<string, Session> = new Map();
-const latestSessionByServer: Map<string, string> = new Map();
+type ManagerSessionStore = {
+  sessions: Map<string, Session>;
+  latestSessionByServer: Map<string, string>;
+};
+
+const sessionStoreByManager = new WeakMap<
+  MCPClientManager,
+  Record<BridgeMode, ManagerSessionStore>
+>();
+
+function getManagerSessionStore(
+  manager: MCPClientManager,
+  mode: BridgeMode,
+): ManagerSessionStore {
+  const existing = sessionStoreByManager.get(manager);
+  if (existing) return existing[mode];
+
+  const created: Record<BridgeMode, ManagerSessionStore> = {
+    adapter: {
+      sessions: new Map(),
+      latestSessionByServer: new Map(),
+    },
+    manager: {
+      sessions: new Map(),
+      latestSessionByServer: new Map(),
+    },
+  };
+
+  sessionStoreByManager.set(manager, created);
+  return created[mode];
+}
 
 // Unified HTTP adapter that handles both adapter-http and manager-http routes
 // with the same robust implementation but different JSON-RPC response modes
@@ -26,6 +56,8 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
   async function handleHttp(c: any) {
     const serverId = c.req.param("serverId");
     const method = c.req.method;
+    const clientManager = c.mcpClientManager as MCPClientManager;
+    const sessionStore = getManagerSessionStore(clientManager, mode);
 
     // SSE endpoint for clients that probe/subscribe via GET; HEAD advertises event-stream
     if (method === "HEAD") {
@@ -75,8 +107,11 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           };
 
           // Register session
-          sessions.set(`${serverId}:${sessionId}`, { send, close });
-          latestSessionByServer.set(serverId, sessionId);
+          sessionStore.sessions.set(`${serverId}:${sessionId}`, {
+            send,
+            close,
+          });
+          sessionStore.latestSessionByServer.set(serverId, sessionId);
 
           // Ping and endpoint per SSE transport handshake
           send("ping", "");
@@ -103,10 +138,10 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           try {
             clearInterval(timer);
           } catch {}
-          sessions.delete(`${serverId}:${sessionId}`);
+          sessionStore.sessions.delete(`${serverId}:${sessionId}`);
           // If this session was the latest for this server, clear pointer
-          if (latestSessionByServer.get(serverId) === sessionId) {
-            latestSessionByServer.delete(serverId);
+          if (sessionStore.latestSessionByServer.get(serverId) === sessionId) {
+            sessionStore.latestSessionByServer.delete(serverId);
           }
         },
       });
@@ -128,8 +163,6 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
     try {
       body = await c.req.json();
     } catch {}
-
-    const clientManager = c.mcpClientManager;
 
     // Normalize serverId - try to find a case-insensitive match if exact match fails
     let normalizedServerId = serverId;
@@ -161,15 +194,17 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
 
   // Endpoint to receive client messages for SSE transport: /:serverId/messages?sessionId=...
   router.post("/:serverId/messages", async (c) => {
+    const clientManager = c.mcpClientManager as MCPClientManager;
+    const sessionStore = getManagerSessionStore(clientManager, mode);
     const serverId = c.req.param("serverId");
     const url = new URL(c.req.url);
     const sessionId = url.searchParams.get("sessionId") || "";
     const key = `${serverId}:${sessionId}`;
-    let sess = sessions.get(key);
+    let sess = sessionStore.sessions.get(key);
     if (!sess) {
-      const fallbackId = latestSessionByServer.get(serverId);
+      const fallbackId = sessionStore.latestSessionByServer.get(serverId);
       if (fallbackId) {
-        sess = sessions.get(`${serverId}:${fallbackId}`);
+        sess = sessionStore.sessions.get(`${serverId}:${fallbackId}`);
       }
     }
     if (!sess) {
@@ -192,9 +227,9 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
 
     // Normalize serverId - try to find a case-insensitive match if exact match fails
     let normalizedServerId = serverId;
-    const availableServers = c.mcpClientManager
+    const availableServers = clientManager
       .listServers()
-      .filter((id: string) => Boolean(c.mcpClientManager.getClient(id)));
+      .filter((id: string) => Boolean(clientManager.getClient(id)));
 
     if (!availableServers.includes(serverId)) {
       const match = availableServers.find(
@@ -210,7 +245,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       const responseMessage = await handleJsonRpc(
         normalizedServerId,
         { id, method, params },
-        c.mcpClientManager,
+        clientManager,
         mode,
       );
       // If there is a JSON-RPC response, emit it over SSE to the client

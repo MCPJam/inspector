@@ -2,10 +2,10 @@
  * Server configuration constants
  */
 
-// Server port - can be overridden via environment variable
-export const SERVER_PORT = process.env.SERVER_PORT
-  ? parseInt(process.env.SERVER_PORT, 10)
-  : 6274;
+// Server port - prefer explicit SERVER_PORT, then platform PORT (Railway, etc.)
+const configuredPort = process.env.SERVER_PORT ?? process.env.PORT;
+const parsedPort = configuredPort ? parseInt(configuredPort, 10) : NaN;
+export const SERVER_PORT = Number.isFinite(parsedPort) ? parsedPort : 6274;
 
 // Server hostname
 export const SERVER_HOSTNAME =

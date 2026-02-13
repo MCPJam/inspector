@@ -7,6 +7,10 @@ import { HOSTED_MODE } from "../../config";
 
 const servers = new Hono();
 
+function getScopedRpcLogBus(c: any) {
+  return c.runtimeActor?.rpcLogBus ?? rpcLogBus;
+}
+
 // List all connected servers with their status
 servers.get("/", async (c) => {
   try {
@@ -109,9 +113,12 @@ servers.delete("/:serverId", async (c) => {
       }
     } catch (error) {
       // Ignore disconnect errors for already disconnected servers
-      console.debug(
+      logger.debug(
         `Failed to disconnect MCP server ${serverId} during removal`,
-        error,
+        {
+          serverId,
+          error: error instanceof Error ? error.message : String(error),
+        },
       );
     }
 
@@ -237,6 +244,7 @@ servers.post("/reconnect", async (c) => {
 // Stream JSON-RPC messages over SSE for all servers.
 servers.get("/rpc/stream", async (c) => {
   const serverIds = c.mcpClientManager.listServers();
+  const scopedRpcLogBus = getScopedRpcLogBus(c);
   const url = new URL(c.req.url);
   const replay = parseInt(url.searchParams.get("replay") || "0", 10);
 
@@ -253,7 +261,7 @@ servers.get("/rpc/stream", async (c) => {
 
       // Replay recent messages for all known servers
       try {
-        const recent = rpcLogBus.getBuffer(
+        const recent = scopedRpcLogBus.getBuffer(
           serverIds,
           isNaN(replay) ? 0 : replay,
         );
@@ -263,9 +271,12 @@ servers.get("/rpc/stream", async (c) => {
       } catch {}
 
       // Subscribe to live events for all known servers
-      const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
-        send({ type: "rpc", ...evt });
-      });
+      const unsubscribe = scopedRpcLogBus.subscribe(
+        serverIds,
+        (evt: RpcLogEvent) => {
+          send({ type: "rpc", ...evt });
+        },
+      );
 
       // Keepalive comments
       const keepalive = setInterval(() => {

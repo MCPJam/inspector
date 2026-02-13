@@ -1,5 +1,6 @@
 import { useConvexAuth } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -44,6 +45,7 @@ import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
+import { setHostedAuthToken, setHostedWorkspaceId } from "./lib/session-token";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -53,6 +55,7 @@ export default function App() {
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const posthog = usePostHog();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const { getAccessToken } = useAuth();
 
   usePostHogIdentify();
 
@@ -130,6 +133,42 @@ export default function App() {
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+
+  useEffect(() => {
+    if (import.meta.env.VITE_MCPJAM_HOSTED_MODE !== "true") return;
+    setHostedWorkspaceId(convexWorkspaceId);
+  }, [convexWorkspaceId]);
+
+  useEffect(() => {
+    if (import.meta.env.VITE_MCPJAM_HOSTED_MODE !== "true") return;
+
+    let active = true;
+
+    const refreshAccessToken = async () => {
+      try {
+        const token = await getAccessToken();
+        if (!active) return;
+        setHostedAuthToken(token ?? null);
+      } catch {
+        if (!active) return;
+        setHostedAuthToken(null);
+      }
+    };
+
+    void refreshAccessToken();
+    const interval = setInterval(
+      () => {
+        void refreshAccessToken();
+      },
+      4 * 60 * 1000,
+    );
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      setHostedAuthToken(null);
+    };
+  }, [getAccessToken, isAuthenticated]);
 
   // Fetch views for the workspace to determine which servers have saved views
   const { viewsByServer } = useViewQueries({

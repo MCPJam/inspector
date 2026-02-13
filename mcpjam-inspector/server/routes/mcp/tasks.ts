@@ -1,8 +1,13 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { progressStore } from "../../services/progress-store";
+import { logger } from "../../utils/logger";
 
 const tasks = new Hono();
+
+function getScopedProgressStore(c: any) {
+  return c.runtimeActor?.progressStore ?? progressStore;
+}
 
 // List all tasks for a server
 tasks.post("/list", async (c) => {
@@ -19,7 +24,7 @@ tasks.post("/list", async (c) => {
     const result = await c.mcpClientManager.listTasks(serverId, cursor);
     return c.json(result);
   } catch (error) {
-    console.error("Error listing tasks:", error);
+    logger.error("Error listing tasks", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,
@@ -41,7 +46,7 @@ tasks.post("/get", async (c) => {
     const result = await c.mcpClientManager.getTask(serverId, taskId);
     return c.json(result);
   } catch (error) {
-    console.error("Error getting task:", error);
+    logger.error("Error getting task", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,
@@ -79,7 +84,7 @@ tasks.post("/result", async (c) => {
 
     return c.json(result);
   } catch (error) {
-    console.error("Error getting task result:", error);
+    logger.error("Error getting task result", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,
@@ -113,7 +118,7 @@ tasks.post("/cancel", async (c) => {
     const result = await c.mcpClientManager.cancelTask(serverId, taskId);
     return c.json(result);
   } catch (error) {
-    console.error("Error cancelling task:", error);
+    logger.error("Error cancelling task", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,
@@ -142,7 +147,7 @@ tasks.post("/capabilities", async (c) => {
 
     return c.json(capabilities);
   } catch (error) {
-    console.error("Error getting task capabilities:", error);
+    logger.error("Error getting task capabilities", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,
@@ -160,10 +165,10 @@ tasks.post("/progress", async (c) => {
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const progress = progressStore.getLatestProgress(serverId);
+    const progress = getScopedProgressStore(c).getLatestProgress(serverId);
     return c.json({ progress: progress ?? null });
   } catch (error) {
-    console.error("Error getting progress:", error);
+    logger.error("Error getting progress", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,
@@ -180,10 +185,10 @@ tasks.post("/progress/all", async (c) => {
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const allProgress = progressStore.getAllProgress(serverId);
+    const allProgress = getScopedProgressStore(c).getAllProgress(serverId);
     return c.json({ progress: allProgress });
   } catch (error) {
-    console.error("Error getting all progress:", error);
+    logger.error("Error getting all progress", error);
     return c.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       500,

@@ -13,7 +13,7 @@ import { fileURLToPath } from "url";
 import mcpRoutes from "./routes/mcp/index.js";
 import appsRoutes from "./routes/apps/index.js";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { initElicitationCallback } from "./routes/mcp/elicitation.js";
+import { ensureElicitationCallback } from "./services/elicitation-hub.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
@@ -31,6 +31,9 @@ import {
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
+import { hostedMcpAuthMiddleware } from "./middleware/hosted-mcp-auth.js";
+import { hostedRateLimitMiddleware } from "./middleware/hosted-rate-limit.js";
+import { runtimeActorMiddleware } from "./middleware/runtime-actor.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -116,7 +119,7 @@ export function createHonoApp() {
 
   // Initialize elicitation callback immediately so tasks/result calls work
   // without needing to hit the elicitation endpoints first
-  initElicitationCallback(mcpClientManager);
+  ensureElicitationCallback(mcpClientManager);
 
   if (process.env.DEBUG_MCP_SELECTION === "1") {
     appLogger.debug("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
@@ -139,6 +142,15 @@ export function createHonoApp() {
 
   // 3. Session authentication (blocks unauthorized API requests)
   app.use("*", sessionAuthMiddleware);
+
+  // 4. Hosted bearer auth for MCP routes
+  app.use("/api/mcp/*", hostedMcpAuthMiddleware);
+
+  // 5. Hosted per-tenant rate limiter
+  app.use("/api/mcp/*", hostedRateLimitMiddleware);
+
+  // 6. Runtime actor resolver for tenant-scoped MCP execution
+  app.use("/api/mcp/*", runtimeActorMiddleware);
 
   // ===== END SECURITY MIDDLEWARE =====
 

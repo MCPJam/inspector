@@ -19,6 +19,7 @@
 
 import type { Context, Next } from "hono";
 import { validateToken } from "../services/session-token.js";
+import { HOSTED_MODE } from "../config.js";
 
 /**
  * Routes that don't require authentication.
@@ -87,6 +88,12 @@ export async function sessionAuthMiddleware(
   // Only protect API routes - static files and HTML pages don't need auth
   // The HTML page is where the token gets injected, so it must be accessible
   if (!path.startsWith("/api/")) {
+    return next();
+  }
+
+  // Hosted mode uses bearer token auth for /api/mcp/* requests.
+  // Local session token auth remains for local/desktop workflows.
+  if (HOSTED_MODE && path.startsWith("/api/mcp/")) {
     return next();
   }
 

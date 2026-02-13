@@ -21,6 +21,8 @@ declare global {
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
+let hostedBearerToken: string | null = null;
+let hostedWorkspaceId: string | null = null;
 
 /**
  * Initialize the session token.
@@ -104,6 +106,14 @@ export function getAuthHeaders(): HeadersInit {
   return { "X-MCP-Session-Auth": `Bearer ${token}` };
 }
 
+export function setHostedAuthToken(token: string | null): void {
+  hostedBearerToken = token;
+}
+
+export function setHostedWorkspaceId(workspaceId: string | null): void {
+  hostedWorkspaceId = workspaceId;
+}
+
 /**
  * Add token to URL as query parameter.
  * Required for SSE/EventSource which doesn't support custom headers.
@@ -152,11 +162,22 @@ export function authFetch(
   init?: RequestInit,
 ): Promise<Response> {
   const authHeaders = getAuthHeaders();
+  const hostedHeaders: Record<string, string> = {};
+
+  if (import.meta.env.VITE_MCPJAM_HOSTED_MODE === "true") {
+    if (hostedBearerToken) {
+      hostedHeaders.Authorization = `Bearer ${hostedBearerToken}`;
+    }
+    if (hostedWorkspaceId) {
+      hostedHeaders["X-MCPJam-Workspace-Id"] = hostedWorkspaceId;
+    }
+  }
 
   const mergedInit: RequestInit = {
     ...init,
     headers: {
       ...authHeaders,
+      ...hostedHeaders,
       ...init?.headers,
     },
   };
