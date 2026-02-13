@@ -18,8 +18,6 @@ export interface ActiveServerSelectorProps {
   onConnect: (formData: ServerFormData) => void;
   onReconnect?: (serverName: string) => void;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
-  showOnlyOpenAIAppsServers?: boolean; // Only show servers that have OpenAI apps tools
-  openAiAppOrMcpAppsServers?: Set<string>; // Set of server names that have OpenAI apps or MCP apps
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   serversWithViews?: Set<string>; // Set of server names that have saved views
   hasMessages?: boolean;
@@ -66,8 +64,6 @@ export function ActiveServerSelector({
   onConnect,
   onReconnect,
   showOnlyOAuthServers = false,
-  showOnlyOpenAIAppsServers = false,
-  openAiAppOrMcpAppsServers,
   showOnlyServersWithViews = false,
   serversWithViews,
   hasMessages = false,
@@ -96,12 +92,6 @@ export function ActiveServerSelector({
 
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
     if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
-    if (
-      showOnlyOpenAIAppsServers &&
-      openAiAppOrMcpAppsServers &&
-      !openAiAppOrMcpAppsServers.has(name)
-    )
-      return false;
     if (
       showOnlyServersWithViews &&
       serversWithViews &&

@@ -216,7 +216,7 @@ export function AppBuilderTab({
       <EmptyState
         icon={Wrench}
         title="No Server Selected"
-        description="Connect to an MCP server to test ChatGPT Apps in the UI Playground."
+        description="Connect to an MCP server to use the App Builder."
       />
     );
   }
