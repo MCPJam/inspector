@@ -112,7 +112,7 @@ export type MessageErrorCode =
 
 export type Message = {
   type: MessageType;
-  text: string;
+  content: string;
   /** JSONPath reference for field-specific messages (e.g., $.line_items[1]) */
   param?: string;
   /** Error code for error messages */

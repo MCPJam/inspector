@@ -1,7 +1,6 @@
 import { ProviderTableRow } from "./ProviderTableRow";
 import { OpenRouterTableRow } from "./OpenRouterTableRow";
 import { OllamaTableRow } from "./OllamaTableRow";
-import { LiteLLMTableRow } from "./LiteLLMTableRow";
 import { AzureOpenAITableRow } from "./AzureOpenAITableRow";
 
 interface ProviderConfig {
@@ -21,9 +20,6 @@ interface ProvidersTableProps {
   onDeleteProvider: (providerId: string) => void;
   ollamaBaseUrl: string;
   onEditOllama: () => void;
-  litellmBaseUrl: string;
-  litellmModelAlias: string;
-  onEditLiteLLM: () => void;
   openRouterSelectedModels: string[];
   onEditOpenRouter: () => void;
   azureBaseUrl: string;
@@ -37,9 +33,6 @@ export function ProvidersTable({
   onDeleteProvider,
   ollamaBaseUrl,
   onEditOllama,
-  litellmBaseUrl,
-  litellmModelAlias,
-  onEditLiteLLM,
   openRouterSelectedModels,
   onEditOpenRouter,
   azureBaseUrl,
@@ -60,11 +53,6 @@ export function ProvidersTable({
         );
       })}
       <OllamaTableRow baseUrl={ollamaBaseUrl} onEdit={onEditOllama} />
-      <LiteLLMTableRow
-        baseUrl={litellmBaseUrl}
-        modelAlias={litellmModelAlias}
-        onEdit={onEditLiteLLM}
-      />
       <OpenRouterTableRow
         modelAlias={openRouterSelectedModels}
         onEdit={onEditOpenRouter}

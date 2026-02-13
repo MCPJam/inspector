@@ -30,6 +30,10 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
 import { authFetch } from "@/lib/session-token";
+import {
+  handleGetFileDownloadUrlMessage,
+  handleUploadFileMessage,
+} from "./mcp-apps/widget-file-messages";
 
 type ToolState =
   | "input-streaming"
@@ -432,7 +436,7 @@ function useWidgetFetch(
       widgetUrl &&
       ((canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
         (!canUseCachedHtml &&
-          widgetUrl.includes("/api/apps/chatgpt/widget-content/")));
+          widgetUrl.includes("/api/apps/chatgpt-apps/widget-content/")));
 
     if (
       toolState !== "output-available" ||
@@ -485,7 +489,7 @@ function useWidgetFetch(
         const userLocation = await getUserLocation(); // Coarse IP-based location
 
         const storeResponse = await authFetch(
-          "/api/apps/chatgpt/widget/store",
+          "/api/apps/chatgpt-apps/widget/store",
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -515,7 +519,7 @@ function useWidgetFetch(
 
         // Check if widget should close and get CSP config
         const htmlResponse = await fetch(
-          `/api/apps/chatgpt/widget-html/${resolvedToolCallId}`,
+          `/api/apps/chatgpt-apps/widget-html/${resolvedToolCallId}`,
         );
         if (htmlResponse.ok) {
           const data = await htmlResponse.json();
@@ -543,7 +547,7 @@ function useWidgetFetch(
         }
 
         // Fetch and cache the widget HTML for later saving
-        const widgetContentUrl = `/api/apps/chatgpt/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
+        const widgetContentUrl = `/api/apps/chatgpt-apps/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
         if (onWidgetHtmlCaptured) {
           try {
             const contentResponse = await fetch(widgetContentUrl);
@@ -1198,6 +1202,18 @@ export function ChatGPTAppRenderer({
           setCheckoutOpen(true);
           break;
         }
+        case "openai:uploadFile": {
+          void handleUploadFileMessage(event.data, (message) => {
+            postToWidget(message);
+          });
+          break;
+        }
+        case "openai:getFileDownloadUrl": {
+          handleGetFileDownloadUrlMessage(event.data, (message) => {
+            postToWidget(message);
+          });
+          break;
+        }
         case "openai:requestModal": {
           setModalTitle(event.data.title || "Modal");
           setModalParams(event.data.params || {});
@@ -1343,6 +1359,19 @@ export function ChatGPTAppRenderer({
             );
           }
         })();
+      }
+
+      if (event.data?.type === "openai:uploadFile") {
+        void handleUploadFileMessage(event.data, (message) => {
+          postToWidget(message, true);
+        });
+      }
+
+      if (event.data?.type === "openai:getFileDownloadUrl") {
+        handleGetFileDownloadUrlMessage(event.data, (message) => {
+          postToWidget(message, true);
+        });
+        return;
       }
     },
     [

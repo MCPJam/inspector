@@ -93,39 +93,25 @@ export function McpAppsModal({
 
     const fetchModalHtml = async () => {
       try {
-        // Store widget data (server already has it, but refresh timestamp)
-        const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverId,
-            resourceUri,
-            toolInput: toolInputRef.current,
-            toolOutput: toolOutputRef.current,
-            toolId: toolCallId,
-            toolName,
-            theme: themeModeRef.current,
-            protocol: "mcp-apps",
-            cspMode,
-          }),
-        });
-
-        if (!storeResponse.ok) {
-          throw new Error(
-            `Failed to store widget: ${storeResponse.statusText}`,
-          );
-        }
-
-        // Build URL with optional template override and modal view params
-        const urlParams = new URLSearchParams({ csp_mode: cspMode });
-        if (template) {
-          urlParams.set("template", template);
-        }
-        urlParams.set("view_mode", "modal");
-        urlParams.set("view_params", JSON.stringify(params));
-
         const contentResponse = await authFetch(
-          `/api/mcp/apps/widget-content/${toolCallId}?${urlParams.toString()}`,
+          "/api/apps/mcp-apps/widget-content",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serverId,
+              resourceUri,
+              toolInput: toolInputRef.current,
+              toolOutput: toolOutputRef.current,
+              toolId: toolCallId,
+              toolName,
+              theme: themeModeRef.current,
+              cspMode,
+              template: template ?? undefined,
+              viewMode: "modal",
+              viewParams: params,
+            }),
+          },
         );
         if (!contentResponse.ok) {
           const errorData = await contentResponse.json().catch(() => ({}));
