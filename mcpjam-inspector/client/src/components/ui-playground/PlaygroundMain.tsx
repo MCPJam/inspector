@@ -478,7 +478,7 @@ export function PlaygroundMain({
   const isCompact = useMemo(() => {
     if (storeDeviceType === "mobile" || storeDeviceType === "tablet")
       return true;
-    if (storeDeviceType === "custom" && customViewport.width < 500) return true;
+    if (storeDeviceType === "custom" && customViewport.width < 650) return true;
     return false;
   }, [storeDeviceType, customViewport.width]);
 
