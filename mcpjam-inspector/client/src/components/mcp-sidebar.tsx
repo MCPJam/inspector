@@ -260,7 +260,7 @@ export function MCPSidebar({
               onClick={restartAndInstall}
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
             >
-              Update
+              Update & Restart
             </Button>
           </div>
         )}
