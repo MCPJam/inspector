@@ -62,10 +62,13 @@ export default defineConfig({
     mkdirSync(distDir, { recursive: true });
 
     const assets = [
-      { src: "routes/mcp/sandbox-proxy.html", dest: "sandbox-proxy.html" },
       {
-        src: "routes/apps/chatgpt-sandbox-proxy.html",
-        dest: "chatgpt-sandbox-proxy.html",
+        src: "routes/apps/mcp-apps/sandbox-proxy.html",
+        dest: "mcp-apps-sandbox-proxy.html",
+      },
+      {
+        src: "routes/apps/chatgpt-apps/sandbox-proxy.html",
+        dest: "chatgpt-apps-sandbox-proxy.html",
       },
     ];
 
