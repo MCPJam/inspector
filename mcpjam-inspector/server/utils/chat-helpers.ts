@@ -19,16 +19,22 @@ import {
 
 export interface BaseUrls {
   ollama?: string;
-  litellm?: string;
   azure?: string;
-  anthropic?: string;
-  openai?: string;
+}
+
+export interface CustomProviderConfig {
+  name: string;
+  protocol: string;
+  baseUrl: string;
+  modelIds: string[];
+  apiKey?: string;
 }
 
 export const createLlmModel = (
   modelDefinition: ModelDefinition,
   apiKey: string,
   baseUrls?: BaseUrls,
+  customProviders?: CustomProviderConfig[],
 ) => {
   if (!modelDefinition?.id || !modelDefinition?.provider) {
     throw new Error(
@@ -37,15 +43,9 @@ export const createLlmModel = (
   }
   switch (modelDefinition.provider) {
     case "anthropic":
-      return createAnthropic({
-        apiKey,
-        ...(baseUrls?.anthropic && { baseURL: baseUrls.anthropic }),
-      })(modelDefinition.id);
+      return createAnthropic({ apiKey })(modelDefinition.id);
     case "openai":
-      return createOpenAI({
-        apiKey,
-        ...(baseUrls?.openai && { baseURL: baseUrls.openai }),
-      })(modelDefinition.id);
+      return createOpenAI({ apiKey })(modelDefinition.id);
     case "deepseek":
       return createDeepSeek({ apiKey })(modelDefinition.id);
     case "google":
@@ -59,18 +59,6 @@ export const createLlmModel = (
     }
     case "mistral":
       return createMistral({ apiKey })(modelDefinition.id);
-    case "litellm": {
-      // LiteLLM uses OpenAI-compatible endpoints (standard chat completions API)
-      const baseURL = baseUrls?.litellm || "http://localhost:4000";
-      // LiteLLM may not require API key depending on setup - use env var or empty string
-      const litellmApiKey = apiKey || process.env.LITELLM_API_KEY || "";
-      const openai = createOpenAI({
-        apiKey: litellmApiKey,
-        baseURL,
-      });
-      // IMPORTANT: Use .chat() to use Chat Completions API instead of Responses API
-      return openai.chat(modelDefinition.id);
-    }
     case "openrouter":
       return createOpenRouter({
         apiKey,
@@ -85,6 +73,38 @@ export const createLlmModel = (
       return createAzure({ apiKey, baseURL: baseUrls?.azure })(
         modelDefinition.id,
       );
+    case "custom": {
+      const providerName = modelDefinition.customProviderName;
+      if (!providerName) {
+        throw new Error(
+          `Custom provider model missing customProviderName: ${modelDefinition.id}`,
+        );
+      }
+      const cp = customProviders?.find((p) => p.name === providerName);
+      if (!cp) {
+        throw new Error(`Custom provider not found: ${providerName}`);
+      }
+      // Strip the "custom:<providerName>:" namespace prefix to get the raw model ID
+      // Client sends id as "custom:<providerName>:<modelId>" to avoid clashes with built-in models
+      const rawModelId = String(modelDefinition.id).startsWith("custom:")
+        ? String(modelDefinition.id).split(":").slice(2).join(":")
+        : String(modelDefinition.id);
+      // Use the custom provider's apiKey, falling back to the runtime apiKey
+      const resolvedApiKey = cp.apiKey || apiKey || "";
+      if (cp.protocol === "anthropic-compatible") {
+        return createAnthropic({
+          apiKey: resolvedApiKey,
+          baseURL: cp.baseUrl,
+        })(rawModelId);
+      }
+      // Default: openai-compatible
+      // Always use .chat() (Chat Completions API) since virtually all
+      // OpenAI-compatible providers implement /chat/completions
+      return createOpenAI({
+        apiKey: resolvedApiKey,
+        baseURL: cp.baseUrl,
+      }).chat(rawModelId);
+    }
     default:
       throw new Error(
         `Unsupported provider: ${modelDefinition.provider} for model: ${modelDefinition.id}`,

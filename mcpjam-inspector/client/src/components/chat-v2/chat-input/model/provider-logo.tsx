@@ -13,8 +13,8 @@ export function ProviderLogo({ provider }: ProviderLogoProps) {
   const logoSrc = getProviderLogoFromProvider(provider, themeMode);
 
   if (!logoSrc) {
-    // Special rendering for LiteLLM with gradient badge
-    if (provider === "litellm") {
+    // Special rendering for custom providers with colored badge and first letter
+    if (provider === "custom") {
       return (
         <div
           className={cn(
@@ -22,7 +22,7 @@ export function ProviderLogo({ provider }: ProviderLogoProps) {
             getProviderColor(provider),
           )}
         >
-          <span className="text-white font-bold text-[6px]">L</span>
+          <span className="text-white font-bold text-[6px]">C</span>
         </div>
       );
     }

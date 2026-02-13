@@ -35,23 +35,35 @@ interface ModelSelectorProps {
   compact?: boolean;
 }
 
-// Helper function to group models by provider
+// Group key: for custom providers, use the customProviderName to group separately
+type GroupKey = string;
+
+// Helper function to group models by provider (custom providers grouped by customProviderName)
 const groupModelsByProvider = (
   models: ModelDefinition[],
-): Map<ModelProvider, ModelDefinition[]> => {
-  const groupedModels = new Map<ModelProvider, ModelDefinition[]>();
+): Map<GroupKey, ModelDefinition[]> => {
+  const groupedModels = new Map<GroupKey, ModelDefinition[]>();
 
   models.forEach((model) => {
-    const existing = groupedModels.get(model.provider) || [];
-    groupedModels.set(model.provider, [...existing, model]);
+    // Custom providers are grouped by customProviderName
+    const key =
+      model.provider === "custom" && model.customProviderName
+        ? `custom:${model.customProviderName}`
+        : model.provider;
+    const existing = groupedModels.get(key) || [];
+    groupedModels.set(key, [...existing, model]);
   });
 
   return groupedModels;
 };
 
 // Provider display names
-const getProviderDisplayName = (provider: ModelProvider): string => {
-  switch (provider) {
+const getProviderDisplayName = (groupKey: GroupKey): string => {
+  // Custom provider groups use "custom:<name>" format
+  if (groupKey.startsWith("custom:")) {
+    return groupKey.slice("custom:".length);
+  }
+  switch (groupKey) {
     case "azure":
       return "Azure OpenAI";
     case "anthropic":
@@ -70,8 +82,6 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "Meta";
     case "xai":
       return "xAI";
-    case "litellm":
-      return "LiteLLM";
     case "moonshotai":
       return "Moonshot AI";
     case "z-ai":
@@ -79,7 +89,7 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
     case "minimax":
       return "MiniMax";
     default:
-      return provider;
+      return groupKey;
   }
 };
 
@@ -102,6 +112,10 @@ export function ModelSelector({
   const { isAuthenticated } = useConvexAuth();
   const groupedModels = groupModelsByProvider(availableModels);
   const sortedProviders = Array.from(groupedModels.keys()).sort();
+
+  // Extract the raw provider string for ProviderLogo (strips "custom:" prefix)
+  const getLogoProvider = (groupKey: GroupKey): string =>
+    groupKey.startsWith("custom:") ? "custom" : groupKey;
 
   const mcpjamProviders = hideProvidedModels
     ? []
@@ -190,7 +204,7 @@ export function ModelSelector({
             return (
               <DropdownMenuSub key={provider}>
                 <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                  <ProviderLogo provider={provider} />
+                  <ProviderLogo provider={getLogoProvider(provider)} />
                   <div className="flex flex-col flex-1">
                     <span className="font-medium">
                       {getProviderDisplayName(provider)}
@@ -267,7 +281,7 @@ export function ModelSelector({
             return (
               <DropdownMenuSub key={provider}>
                 <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                  <ProviderLogo provider={provider} />
+                  <ProviderLogo provider={getLogoProvider(provider)} />
                   <div className="flex flex-col flex-1">
                     <span className="font-medium">
                       {getProviderDisplayName(provider)}
