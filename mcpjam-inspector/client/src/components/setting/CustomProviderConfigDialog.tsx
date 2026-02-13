@@ -70,8 +70,8 @@ export function CustomProviderConfigDialog({
       setError("Provider name is required");
       return;
     }
-    if (trimmedName.includes("/")) {
-      setError("Provider name cannot contain '/'");
+    if (trimmedName.includes("/") || trimmedName.includes(":")) {
+      setError("Provider name cannot contain '/' or ':'");
       return;
     }
 
@@ -104,6 +104,7 @@ export function CustomProviderConfigDialog({
   const isValid =
     name.trim() &&
     !name.includes("/") &&
+    !name.includes(":") &&
     baseUrl.trim() &&
     modelIds.split(",").some((id) => id.trim());
 
