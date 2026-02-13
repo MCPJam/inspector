@@ -102,9 +102,7 @@ function DirectionLabel({
   if (source === "mcp-apps") {
     const isHostToUi = direction === "HOST→UI";
     return (
-      <span
-        className="font-mono text-[10px] leading-none flex-shrink-0 text-purple-500"
-      >
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-purple-500">
         {isHostToUi ? "host → view" : "view → host"}
       </span>
     );
