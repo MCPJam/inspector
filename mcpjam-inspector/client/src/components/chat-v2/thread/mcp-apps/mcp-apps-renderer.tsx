@@ -53,6 +53,12 @@ import {
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
+import {
+  handleGetFileDownloadUrlMessage,
+  handleUploadFileMessage,
+} from "./widget-file-messages";
+import { CheckoutDialogV2 } from "./checkout-dialog-v2";
+import type { CheckoutSession } from "@/shared/acp-types";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -347,6 +353,12 @@ export function MCPAppsRenderer({
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
   const [modalTitle, setModalTitle] = useState("");
   const [modalTemplate, setModalTemplate] = useState<string | null>(null);
+
+  // Checkout state
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutSession, setCheckoutSession] =
+    useState<CheckoutSession | null>(null);
+  const [checkoutCallId, setCheckoutCallId] = useState<number | null>(null);
 
   // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
   useEffect(() => {
@@ -1258,6 +1270,21 @@ export function MCPAppsRenderer({
       return;
     }
 
+    // Handle file upload messages (non-JSON-RPC, same protocol as ChatGPT widget)
+    if (data.type === "openai:uploadFile") {
+      void handleUploadFileMessage(data, (message) => {
+        sandboxRef.current?.postMessage(message);
+      });
+      return;
+    }
+
+    if (data.type === "openai:getFileDownloadUrl") {
+      handleGetFileDownloadUrlMessage(data, (message) => {
+        sandboxRef.current?.postMessage(message);
+      });
+      return;
+    }
+
     // Handle openai/* JSON-RPC notifications from the compat layer
     if (
       data.jsonrpc === "2.0" &&
@@ -1281,9 +1308,36 @@ export function MCPAppsRenderer({
         setModalOpen(true);
       } else if (data.method === "openai/requestClose") {
         setModalOpen(false);
+      } else if (data.method === "openai/requestCheckout") {
+        const params = data.params ?? {};
+        const { callId: cId, ...sessionData } = params;
+        setCheckoutCallId(cId as number);
+        setCheckoutSession(sessionData as unknown as CheckoutSession);
+        setCheckoutOpen(true);
       }
     }
   };
+
+  const respondToCheckout = useCallback(
+    (result: unknown, error?: string) => {
+      if (checkoutCallId == null) return;
+      const params: Record<string, unknown> = { callId: checkoutCallId };
+      if (error) {
+        params.error = error;
+      } else {
+        params.result = result;
+      }
+      sandboxRef.current?.postMessage({
+        jsonrpc: "2.0",
+        method: "openai/requestCheckout:response",
+        params,
+      });
+      setCheckoutOpen(false);
+      setCheckoutSession(null);
+      setCheckoutCallId(null);
+    },
+    [checkoutCallId],
+  );
 
   // Denied state
   if (toolState === "output-denied") {
@@ -1466,6 +1520,23 @@ export function MCPAppsRenderer({
         }
         onCspViolation={handleCspViolation}
       />
+
+      {checkoutSession && (
+        <CheckoutDialogV2
+          session={checkoutSession}
+          open={checkoutOpen}
+          onOpenChange={setCheckoutOpen}
+          onComplete={(result) => respondToCheckout(result)}
+          onError={(error) => respondToCheckout(null, error)}
+          onCancel={() => respondToCheckout(null, "User cancelled checkout")}
+          onCallTool={async (toolName, params) => {
+            if (!onCallTool) {
+              throw new Error("Tool calls not supported");
+            }
+            return onCallTool(toolName, params);
+          }}
+        />
+      )}
     </div>
   );
 }
