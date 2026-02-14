@@ -54,6 +54,23 @@ Browser `console.*` is acceptable for client-side debugging.
 
 **All changes should include tests.** Uses Vitest. Run with `npm run test` (or `test:watch`, `test:coverage`).
 
+### Testing a fork or branch
+
+When testing changes from a fork/feature branch, prefer one of these flows:
+
+- Local checkout:
+  - `git clone https://github.com/ramarivera/inspector.git`
+  - `cd inspector`
+  - `git checkout <branch-name>`
+  - `npm install`
+  - `npm run build`
+  - `npm run start -- --help`
+
+- Directly from fork with `npx`:
+  - `npx github:ramarivera/inspector#<branch-name> -- --help`
+
+- If `npx` branch fetch fails, use `npm link` from a local checkout.
+
 ### Structure
 
 Tests live in `__tests__/` directories next to source files. Use existing tests as examples:

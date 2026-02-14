@@ -58,6 +58,31 @@ We recommend starting MCPJam inspector via `npx`:
 npx @mcpjam/inspector@latest
 ```
 
+### Using your fork for testing
+
+To test changes on your own fork/branch:
+
+```bash
+git clone https://github.com/ramarivera/inspector.git
+cd inspector
+git checkout codex/fix-dynamic-port-detection
+npm install
+npm run build
+npm run start -- --help
+```
+
+To run directly from your fork with `npx` (no local install needed):
+
+```bash
+npx github:ramarivera/inspector#codex/fix-dynamic-port-detection -- --help
+```
+
+> Notes:
+>
+> - Use `--help` to see all available CLI flags for your local branch version.
+> - Use `npm run start -- --port 6274 --verbose` for a quick local smoke run.
+> - If `npm pack`/`npx` cannot fetch the branch, use `npm link` from the cloned checkout instead.
+
 We have a Mac and Windows desktop app:
 
 - [Install Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg)
