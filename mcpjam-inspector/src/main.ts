@@ -56,7 +56,7 @@ function parsePort(value: string | undefined, fallback: number): PortParseResult
   }
 
   const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_PORT_NUMBER) {
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_PORT_NUMBER) {
     log.warn(`Ignoring invalid port value "${value}", using fallback ${fallback}`);
     return { value: fallback, isExplicit: false };
   }
@@ -84,14 +84,23 @@ function isPortAvailable(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createServer();
     let settled = false;
+    const onCloseError = () => {};
     const timeout = setTimeout(() => {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
-      server.close();
-      resolve(false);
+      server.once("error", onCloseError);
+      try {
+        server.close(() => {
+          server.removeListener("error", onCloseError);
+          resolve(false);
+        });
+      } catch {
+        server.removeListener("error", onCloseError);
+        resolve(false);
+      }
     }, 1000);
 
     const cleanup = () => {

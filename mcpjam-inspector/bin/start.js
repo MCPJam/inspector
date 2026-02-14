@@ -124,14 +124,23 @@ function isPortAvailable(port, host = "127.0.0.1") {
   return new Promise((resolve) => {
     const server = createServer();
     let settled = false;
+    const onCloseError = () => {};
     const timeout = setTimeout(() => {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
-      server.close();
-      resolve(false);
+      server.once("error", onCloseError);
+      try {
+        server.close(() => {
+          server.removeListener("error", onCloseError);
+          resolve(false);
+        });
+      } catch {
+        server.removeListener("error", onCloseError);
+        resolve(false);
+      }
     }, 1000);
 
     const cleanup = () => {
@@ -168,7 +177,7 @@ function isPortAvailable(port, host = "127.0.0.1") {
 
 function parsePort(value) {
   const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) {
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) {
     throw new Error(`Invalid port value: ${value}`);
   }
   return parsed;
@@ -711,7 +720,7 @@ async function main() {
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     } else {
-      const resolvedPort = await findAvailablePort(requestedPort, host, 100, true);
+      const resolvedPort = await findAvailablePort(requestedPort, host, 100, verboseLogs);
       if (resolvedPort !== requestedPort) {
         logInfo(
           `Default port ${requestedPort} is busy. Using next available port ${resolvedPort}.`,
