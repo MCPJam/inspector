@@ -1,0 +1,143 @@
+import { isUIResource } from "@mcp-ui/client";
+import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
+import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+
+export const UIType = {
+  MCP_APPS: "mcp-apps",
+  OPENAI_SDK: "openai-sdk",
+  OPENAI_SDK_AND_MCP_APPS: "openai-sdk-and-mcp-apps",
+  MCP_UI: "mcp-ui",
+} as const;
+
+export type UIType = (typeof UIType)[keyof typeof UIType];
+
+export function detectUiTypeFromTool(tool: Tool): UIType | null {
+  const toolMeta = tool._meta;
+  if (!toolMeta) return null;
+  return detectUIType(toolMeta, undefined);
+}
+
+export function detectUIType(
+  toolMeta: Record<string, unknown> | undefined,
+  toolResult: unknown,
+): UIType | null {
+  // 1. OpenAI SDK and MCP Apps: Check for openai/outputTemplate and ui.resourceUri metadata
+  if (
+    toolMeta?.["openai/outputTemplate"] &&
+    getToolUiResourceUri({ _meta: toolMeta })
+  ) {
+    return UIType.OPENAI_SDK_AND_MCP_APPS;
+  }
+
+  // 2. OpenAI SDK: Check for openai/outputTemplate metadata
+  if (toolMeta?.["openai/outputTemplate"]) {
+    return UIType.OPENAI_SDK;
+  }
+
+  // 3. MCP Apps (SEP-1865): Check for ui.resourceUri metadata
+  if (getToolUiResourceUri({ _meta: toolMeta })) {
+    return UIType.MCP_APPS;
+  }
+
+  // 4. MCP-UI: Check for inline ui:// resource in result
+  const directResource = (toolResult as { resource?: { uri?: string } })
+    ?.resource;
+  if (directResource?.uri?.startsWith("ui://")) {
+    return UIType.MCP_UI;
+  }
+
+  const content = (toolResult as { content?: unknown[] })?.content;
+  if (Array.isArray(content)) {
+    for (const item of content) {
+      // isUIResource is a type guard, cast to any for runtime type check
+      if (isUIResource(item as any)) {
+        return UIType.MCP_UI;
+      }
+    }
+  }
+  return null;
+}
+
+export function getUIResourceUri(
+  uiType: UIType | null,
+  toolMeta: Record<string, unknown> | undefined,
+): string | null {
+  switch (uiType) {
+    case UIType.MCP_APPS:
+    case UIType.OPENAI_SDK_AND_MCP_APPS:
+      return getToolUiResourceUri({ _meta: toolMeta }) ?? null;
+    case UIType.OPENAI_SDK:
+      return (toolMeta?.["openai/outputTemplate"] as string) ?? null;
+    default:
+      return null;
+  }
+}
+
+export function isMCPApp(
+  toolsData?: ListToolsResultWithMetadata | null,
+): boolean {
+  const metadata = toolsData?.toolsMetadata;
+  if (!metadata) return false;
+
+  return Object.values(metadata).some(
+    (meta) => detectUIType(meta, undefined) === UIType.MCP_APPS,
+  );
+}
+
+export function isOpenAIApp(
+  toolsData?: ListToolsResultWithMetadata | null,
+): boolean {
+  const metadata = toolsData?.toolsMetadata;
+  if (!metadata) return false;
+
+  return Object.values(metadata).some(
+    (meta) => detectUIType(meta, undefined) === UIType.OPENAI_SDK,
+  );
+}
+
+export function isOpenAIAppAndMCPApp(
+  toolsData?: ListToolsResultWithMetadata | null,
+): boolean {
+  const metadata = toolsData?.toolsMetadata;
+  if (!metadata) return false;
+
+  return Object.values(metadata).some(
+    (meta) => detectUIType(meta, undefined) === UIType.OPENAI_SDK_AND_MCP_APPS,
+  );
+}
+
+/**
+ * Get the visibility array from tool metadata.
+ * Default: ["model", "app"] if not specified (per SEP-1865)
+ */
+export function getToolVisibility(
+  toolMeta: Record<string, unknown> | undefined,
+): Array<"model" | "app"> {
+  const ui = toolMeta?.ui as
+    | { visibility?: Array<"model" | "app"> }
+    | undefined;
+  return ui?.visibility ?? ["model", "app"];
+}
+
+/**
+ * Check if tool is visible to model only (not callable by apps).
+ * True when visibility is exactly ["model"]
+ */
+export function isVisibleToModelOnly(
+  toolMeta: Record<string, unknown> | undefined,
+): boolean {
+  const visibility = getToolVisibility(toolMeta);
+  return visibility.length === 1 && visibility[0] === "model";
+}
+
+/**
+ * Check if tool is visible to app only (hidden from model).
+ * True when visibility is exactly ["app"]
+ */
+export function isVisibleToAppOnly(
+  toolMeta: Record<string, unknown> | undefined,
+): boolean {
+  const visibility = getToolVisibility(toolMeta);
+  return visibility.length === 1 && visibility[0] === "app";
+}
