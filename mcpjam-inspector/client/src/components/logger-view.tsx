@@ -344,6 +344,7 @@ export function LoggerView({
             )}
           </div>
         </div>
+      </div>
 
       <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border flex-shrink-0">
         {isSearchVisible && (
