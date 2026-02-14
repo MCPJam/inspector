@@ -106,7 +106,7 @@ describe("widget-file-messages", () => {
     const sendResponse = vi.fn();
     const loc = window.location;
     const widgetHost = loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
-    const expectedDownloadUrl = `${loc.protocol}//${widgetHost}:${loc.port}/api/apps/chatgpt/file/file_550e8400-e29b-41d4-a716-446655440000`;
+    const expectedDownloadUrl = `${loc.protocol}//${widgetHost}:${loc.port}/api/apps/chatgpt-apps/file/file_550e8400-e29b-41d4-a716-446655440000`;
 
     handleGetFileDownloadUrlMessage(
       {

@@ -33,6 +33,7 @@ import {
   ProviderTokens,
   useAiProviderKeys,
 } from "@/hooks/use-ai-provider-keys";
+import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
   buildAvailableModels,
@@ -148,12 +149,11 @@ export function useChatSession({
   const {
     hasToken,
     getToken,
-    getLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getOllamaBaseUrl,
     getAzureBaseUrl,
   } = useAiProviderKeys();
+  const { customProviders, getCustomProviderByName } = useCustomProviders();
 
   // Local state
   const [ollamaModels, setOllamaModels] = useState<ModelDefinition[]>([]);
@@ -187,21 +187,19 @@ export function useChatSession({
   const availableModels = useMemo(() => {
     return buildAvailableModels({
       hasToken,
-      getLiteLLMBaseUrl,
-      getLiteLLMModelAlias,
       getOpenRouterSelectedModels,
       isOllamaRunning,
       ollamaModels,
       getAzureBaseUrl,
+      customProviders,
     });
   }, [
     hasToken,
-    getLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
+    customProviders,
   ]);
 
   // Model selection with persistence
@@ -228,7 +226,17 @@ export function useChatSession({
 
   // Create transport
   const transport = useMemo(() => {
-    const apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    let apiKey: string;
+    if (
+      selectedModel.provider === "custom" &&
+      selectedModel.customProviderName
+    ) {
+      // For custom providers, the API key is embedded in the provider config
+      const cp = getCustomProviderByName(selectedModel.customProviderName);
+      apiKey = cp?.apiKey || "";
+    } else {
+      apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    }
     const isGpt5 = isGPT5Model(selectedModel.id);
 
     // Merge session auth headers with workos auth headers
@@ -247,6 +255,7 @@ export function useChatSession({
         systemPrompt,
         selectedServers,
         requireToolApproval: requireToolApprovalRef.current,
+        ...(customProviders.length > 0 ? { customProviders } : {}),
       }),
       headers:
         Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
@@ -254,6 +263,8 @@ export function useChatSession({
   }, [
     selectedModel,
     getToken,
+    getCustomProviderByName,
+    customProviders,
     authHeaders,
     temperature,
     systemPrompt,

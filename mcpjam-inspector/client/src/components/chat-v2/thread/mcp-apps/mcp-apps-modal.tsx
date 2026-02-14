@@ -94,7 +94,7 @@ export function McpAppsModal({
     const fetchModalHtml = async () => {
       try {
         const contentResponse = await authFetch(
-          "/api/mcp/apps/widget-content",
+          "/api/apps/mcp-apps/widget-content",
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },

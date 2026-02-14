@@ -1,17 +1,5 @@
 import { useEffect } from "react";
 
-declare global {
-  interface Window {
-    electronAPI?: {
-      oauth: {
-        onCallback: (callback: (url: string) => void) => void;
-        removeCallback: () => void;
-      };
-    };
-    isElectron?: boolean;
-  }
-}
-
 export function useElectronOAuth() {
   useEffect(() => {
     // Only set up the callback if we're running in Electron
