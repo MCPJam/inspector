@@ -4,5 +4,6 @@ import type { MCPClientManager } from "@mcpjam/sdk";
 declare module "hono" {
   interface Context {
     mcpClientManager: MCPClientManager;
+    mcpSessionId?: string;
   }
 }

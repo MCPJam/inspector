@@ -1,12 +1,18 @@
 import { EventEmitter } from "events";
 
 export type ProgressEvent = {
+  sessionId?: string;
   serverId: string;
   progressToken: string | number;
   progress: number;
   total?: number;
   message?: string;
   timestamp: string;
+};
+
+export type ProgressFilter = {
+  serverIds: string[];
+  sessionId?: string;
 };
 
 // Stale progress entries are cleaned up after this duration (5 minutes)
@@ -20,9 +26,9 @@ const CLEANUP_INTERVAL_MS = 60 * 1000;
  * Also emits events for real-time streaming to clients.
  * Automatically cleans up stale progress entries to prevent memory leaks.
  */
-class ProgressStore {
+export class ProgressStore {
   private readonly emitter = new EventEmitter();
-  // Map: serverId -> Map<progressToken, ProgressEvent>
+  // Map: sessionKey+serverId -> Map<progressToken, ProgressEvent>
   private readonly store = new Map<
     string,
     Map<string | number, ProgressEvent>
@@ -38,10 +44,11 @@ class ProgressStore {
    * Store a progress update
    */
   publish(event: ProgressEvent): void {
-    let serverProgress = this.store.get(event.serverId);
+    const scopedServerKey = getScopedServerKey(event.serverId, event.sessionId);
+    let serverProgress = this.store.get(scopedServerKey);
     if (!serverProgress) {
       serverProgress = new Map();
-      this.store.set(event.serverId, serverProgress);
+      this.store.set(scopedServerKey, serverProgress);
     }
     serverProgress.set(event.progressToken, event);
     this.emitter.emit("progress", event);
@@ -94,15 +101,20 @@ class ProgressStore {
   getProgress(
     serverId: string,
     progressToken: string | number,
+    sessionId?: string,
   ): ProgressEvent | undefined {
-    return this.store.get(serverId)?.get(progressToken);
+    return this.store
+      .get(getScopedServerKey(serverId, sessionId))
+      ?.get(progressToken);
   }
 
   /**
    * Get all active progress for a server
    */
-  getAllProgress(serverId: string): ProgressEvent[] {
-    const serverProgress = this.store.get(serverId);
+  getAllProgress(serverId: string, sessionId?: string): ProgressEvent[] {
+    const serverProgress = this.store.get(
+      getScopedServerKey(serverId, sessionId),
+    );
     if (!serverProgress) return [];
     return Array.from(serverProgress.values());
   }
@@ -110,8 +122,11 @@ class ProgressStore {
   /**
    * Get the most recent progress event for a server (useful when we don't know the token)
    */
-  getLatestProgress(serverId: string): ProgressEvent | undefined {
-    const all = this.getAllProgress(serverId);
+  getLatestProgress(
+    serverId: string,
+    sessionId?: string,
+  ): ProgressEvent | undefined {
+    const all = this.getAllProgress(serverId, sessionId);
     if (all.length === 0) return undefined;
     // Return the most recent by timestamp
     return all.sort(
@@ -123,33 +138,48 @@ class ProgressStore {
   /**
    * Clear progress for a specific token (e.g., when task completes)
    */
-  clearProgress(serverId: string, progressToken: string | number): void {
-    this.store.get(serverId)?.delete(progressToken);
+  clearProgress(
+    serverId: string,
+    progressToken: string | number,
+    sessionId?: string,
+  ): void {
+    this.store
+      .get(getScopedServerKey(serverId, sessionId))
+      ?.delete(progressToken);
   }
 
   /**
    * Clear all progress for a server
    */
-  clearAllProgress(serverId: string): void {
-    this.store.delete(serverId);
+  clearAllProgress(serverId: string, sessionId?: string): void {
+    this.store.delete(getScopedServerKey(serverId, sessionId));
   }
 
   /**
    * Subscribe to progress events
    */
   subscribe(
-    serverIds: string[],
+    filter: ProgressFilter,
     listener: (event: ProgressEvent) => void,
   ): () => void {
-    const filter = new Set(serverIds);
+    const serverFilter = new Set(filter.serverIds);
+    const hasServerFilter = serverFilter.size > 0;
+    const sessionFilter = filter.sessionId;
     const handler = (event: ProgressEvent) => {
-      if (filter.size === 0 || filter.has(event.serverId)) {
-        listener(event);
-      }
+      if (!hasServerFilter) return;
+      if (!serverFilter.has(event.serverId)) return;
+      if (sessionFilter !== undefined && event.sessionId !== sessionFilter)
+        return;
+      listener(event);
     };
     this.emitter.on("progress", handler);
     return () => this.emitter.off("progress", handler);
   }
+}
+
+function getScopedServerKey(serverId: string, sessionId?: string): string {
+  const sessionKey = sessionId ?? "";
+  return `${sessionKey}::${serverId}`;
 }
 
 export const progressStore = new ProgressStore();

@@ -160,7 +160,7 @@ tasks.post("/progress", async (c) => {
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const progress = progressStore.getLatestProgress(serverId);
+    const progress = progressStore.getLatestProgress(serverId, c.mcpSessionId);
     return c.json({ progress: progress ?? null });
   } catch (error) {
     console.error("Error getting progress:", error);
@@ -180,7 +180,7 @@ tasks.post("/progress/all", async (c) => {
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const allProgress = progressStore.getAllProgress(serverId);
+    const allProgress = progressStore.getAllProgress(serverId, c.mcpSessionId);
     return c.json({ progress: allProgress });
   } catch (error) {
     console.error("Error getting all progress:", error);
