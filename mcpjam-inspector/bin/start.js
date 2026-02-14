@@ -191,7 +191,7 @@ async function findAvailablePort(
 ) {
   const maxPort = Math.min(startPort + maxPortOffset, 65535);
 
-  if (maxPort <= startPort) {
+  if (maxPort < startPort) {
     throw new Error(
       `No available port found in range ${startPort}-${maxPort}`,
     );
