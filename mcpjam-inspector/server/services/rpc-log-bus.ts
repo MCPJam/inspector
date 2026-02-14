@@ -1,13 +1,19 @@
 import { EventEmitter } from "events";
 
 export type RpcLogEvent = {
+  sessionId?: string;
   serverId: string;
   direction: "send" | "receive";
   timestamp: string; // ISO
   message: unknown;
 };
 
-class RpcLogBus {
+export type RpcLogFilter = {
+  serverIds: string[];
+  sessionId?: string;
+};
+
+export class RpcLogBus {
   private readonly emitter = new EventEmitter();
   private readonly bufferByServer = new Map<string, RpcLogEvent[]>();
 
@@ -19,23 +25,42 @@ class RpcLogBus {
   }
 
   subscribe(
-    serverIds: string[],
+    filter: RpcLogFilter,
     listener: (event: RpcLogEvent) => void,
   ): () => void {
-    const filter = new Set(serverIds);
+    const serverFilter = new Set(filter.serverIds);
+    const hasServerFilter = serverFilter.size > 0;
+    const sessionFilter = filter.sessionId;
     const handler = (event: RpcLogEvent) => {
-      if (filter.size === 0 || filter.has(event.serverId)) listener(event);
+      if (!hasServerFilter) return;
+      if (!serverFilter.has(event.serverId)) return;
+      if (sessionFilter !== undefined && event.sessionId !== sessionFilter)
+        return;
+      listener(event);
     };
     this.emitter.on("event", handler);
     return () => this.emitter.off("event", handler);
   }
 
-  getBuffer(serverIds: string[], limit: number): RpcLogEvent[] {
-    const filter = new Set(serverIds);
+  getBuffer(filter: RpcLogFilter, limit: number): RpcLogEvent[] {
+    const serverFilter = new Set(filter.serverIds);
+    const hasServerFilter = serverFilter.size > 0;
+    if (!hasServerFilter) return [];
+
     const all: RpcLogEvent[] = [];
+    const sessionFilter = filter.sessionId;
     for (const [serverId, buf] of this.bufferByServer.entries()) {
-      if (filter.size > 0 && !filter.has(serverId)) continue;
-      all.push(...buf);
+      if (!serverFilter.has(serverId)) continue;
+      if (sessionFilter === undefined) {
+        all.push(...buf);
+        continue;
+      }
+
+      for (const event of buf) {
+        if (event.sessionId === sessionFilter) {
+          all.push(event);
+        }
+      }
     }
     // If limit is 0, return empty array (no replay)
     if (limit === 0) return [];

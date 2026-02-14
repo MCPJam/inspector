@@ -16,7 +16,12 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
+import {
+  createClientManagerStore,
+  readSessionStoreOptionsFromEnv,
+} from "./services/client-manager-store.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
+import { resolveRequestSessionId } from "./middleware/client-manager-session.js";
 import path from "path";
 
 // Security imports
@@ -82,51 +87,53 @@ export function createHonoApp() {
   generateSessionToken();
   const app = new Hono();
 
-  // Create the MCPJam client manager instance and wire RPC logging to SSE bus
-  const mcpClientManager = new MCPClientManager(
-    {},
-    {
-      rpcLogger: ({ direction, message, serverId }) => {
-        rpcLogBus.publish({
-          serverId,
-          direction,
-          timestamp: new Date().toISOString(),
-          message,
-        });
-      },
-      progressHandler: ({
-        serverId,
-        progressToken,
-        progress,
-        total,
-        message,
-      }) => {
-        // Store progress for UI access using the real progressToken from the notification
-        progressStore.publish({
-          serverId,
-          progressToken,
-          progress,
-          total,
-          message,
-          timestamp: new Date().toISOString(),
-        });
-      },
-    },
-  );
+  const mcpClientManagerStore = createClientManagerStore({
+    hostedMode: HOSTED_MODE,
+    managerFactory: (sessionId) => {
+      // Create a manager and wire RPC/progress logging for each isolated session.
+      const manager = new MCPClientManager(
+        {},
+        {
+          rpcLogger: ({ direction, message, serverId }) => {
+            rpcLogBus.publish({
+              sessionId,
+              serverId,
+              direction,
+              timestamp: new Date().toISOString(),
+              message,
+            });
+          },
+          progressHandler: ({
+            serverId,
+            progressToken,
+            progress,
+            total,
+            message,
+          }) => {
+            // Store progress for UI access using the real progressToken from the notification
+            progressStore.publish({
+              sessionId,
+              serverId,
+              progressToken,
+              progress,
+              total,
+              message,
+              timestamp: new Date().toISOString(),
+            });
+          },
+        },
+      );
 
-  // Initialize elicitation callback immediately so tasks/result calls work
-  // without needing to hit the elicitation endpoints first
-  initElicitationCallback(mcpClientManager);
+      // Register callback per manager instance so task-related elicitation works.
+      initElicitationCallback(manager);
+      return manager;
+    },
+    sessionStoreOptions: readSessionStoreOptionsFromEnv(),
+  });
 
   if (process.env.DEBUG_MCP_SELECTION === "1") {
     appLogger.debug("[mcpjam][boot] DEBUG_MCP_SELECTION enabled");
   }
-
-  // Middleware to inject the client manager into context
-  app.use("*", async (c, next) => {
-    c.mcpClientManager = mcpClientManager;
-    await next();
-  });
 
   // ===== SECURITY MIDDLEWARE STACK =====
   // Order matters: headers -> origin validation -> session auth
@@ -141,6 +148,14 @@ export function createHonoApp() {
   app.use("*", sessionAuthMiddleware);
 
   // ===== END SECURITY MIDDLEWARE =====
+
+  // Resolve the manager only after security middleware has run.
+  app.use("*", async (c, next) => {
+    const sessionId = resolveRequestSessionId(c, HOSTED_MODE);
+    c.mcpSessionId = sessionId;
+    c.mcpClientManager = mcpClientManagerStore.getManager(sessionId);
+    await next();
+  });
 
   // Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
   const enableHttpLogs =
