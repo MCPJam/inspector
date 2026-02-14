@@ -43,6 +43,7 @@ let serverPort: number = 0;
 const isDev = process.env.NODE_ENV === "development";
 const DEFAULT_ELECTRON_PORT = 6274;
 const PORT_SCAN_LIMIT = 100;
+const MAX_PORT_NUMBER = 65535;
 
 type PortParseResult = {
   value: number;
@@ -55,12 +56,7 @@ function parsePort(value: string | undefined, fallback: number): PortParseResult
   }
 
   const parsed = Number.parseInt(value, 10);
-  if (
-    !Number.isFinite(parsed) ||
-    !Number.isInteger(parsed) ||
-    parsed <= 0 ||
-    parsed > 65535
-  ) {
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_PORT_NUMBER) {
     log.warn(`Ignoring invalid port value "${value}", using fallback ${fallback}`);
     return { value: fallback, isExplicit: false };
   }
@@ -87,15 +83,46 @@ function getRequestedPort(): {
 function isPortAvailable(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createServer();
-    server.listen(port, host, () => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      server.close();
+      resolve(false);
+    }, 1000);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      server.removeListener("error", onError);
+      server.removeListener("listening", onListening);
+    };
+
+    const onListening = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       server.close(() => {
         resolve(true);
       });
-    });
+    };
 
-    server.on("error", () => {
+    const onError = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       resolve(false);
-    });
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
   });
 }
 
@@ -104,6 +131,10 @@ async function findAvailablePort(
   host: string,
   hasExplicitPort = false,
 ): Promise<number> {
+  if (requestedPort < 1 || requestedPort > MAX_PORT_NUMBER) {
+    throw new Error(`Requested port ${requestedPort} is outside valid range 1-${MAX_PORT_NUMBER}`);
+  }
+
   if (await isPortAvailable(requestedPort, host)) {
     return requestedPort;
   }
@@ -112,7 +143,12 @@ async function findAvailablePort(
     throw new Error(`Requested port ${requestedPort} is already in use`);
   }
 
-  for (let port = requestedPort + 1; port <= requestedPort + PORT_SCAN_LIMIT; port++) {
+  const maxPort = Math.min(requestedPort + PORT_SCAN_LIMIT, MAX_PORT_NUMBER);
+  if (maxPort <= requestedPort) {
+    throw new Error(`No available port found in range ${requestedPort}-${maxPort}`);
+  }
+
+  for (let port = requestedPort + 1; port <= maxPort; port++) {
     if (await isPortAvailable(port, host)) {
       log.warn(
         `Port ${requestedPort} was unavailable. Using fallback free port ${port}`,
@@ -122,10 +158,12 @@ async function findAvailablePort(
   }
 
   throw new Error(
-    `No available port found in range ${requestedPort}-${
-      requestedPort + PORT_SCAN_LIMIT
-    }`,
+    `No available port found in range ${requestedPort}-${maxPort}`,
   );
+}
+
+function getServerUrl(port: number, host: string): string {
+  return `http://${host}:${port}`;
 }
 
 async function startHonoServer(): Promise<number> {
@@ -153,7 +191,7 @@ async function startHonoServer(): Promise<number> {
       hostname,
     });
 
-    log.info(`🚀 MCPJam Server started on port ${port}`);
+    log.info(`🚀 MCPJam Server started on port ${port} (${hostname})`);
     return port;
   } catch (error) {
     log.error("Failed to start Hono server:", error);
@@ -289,8 +327,9 @@ function createAppMenu(): void {
 app.whenReady().then(async () => {
   try {
     // Start the embedded Hono server
+    const serverHost = app.isPackaged ? "127.0.0.1" : "localhost";
     serverPort = await startHonoServer();
-    const serverUrl = `http://127.0.0.1:${serverPort}`;
+    const serverUrl = getServerUrl(serverPort, serverHost);
 
     // Create the main window
     createAppMenu();
@@ -325,14 +364,15 @@ app.on("window-all-closed", () => {
 app.on("activate", async () => {
   // On macOS, re-create window when the dock icon is clicked
   if (BrowserWindow.getAllWindows().length === 0) {
+    const serverHost = app.isPackaged ? "127.0.0.1" : "localhost";
     if (serverPort > 0) {
-      const serverUrl = `http://127.0.0.1:${serverPort}`;
+      const serverUrl = getServerUrl(serverPort, serverHost);
       mainWindow = createMainWindow(serverUrl);
     } else {
       // Restart server if needed
       try {
         serverPort = await startHonoServer();
-        const serverUrl = `http://127.0.0.1:${serverPort}`;
+        const serverUrl = getServerUrl(serverPort, serverHost);
         mainWindow = createMainWindow(serverUrl);
       } catch (error) {
         log.error("Failed to restart server:", error);
@@ -358,7 +398,7 @@ app.on("open-url", (event, url) => {
     // Compute the base URL the renderer should load
     const baseUrl = isDev
       ? MAIN_WINDOW_VITE_DEV_SERVER_URL
-      : `http://127.0.0.1:${serverPort}`;
+      : getServerUrl(serverPort, app.isPackaged ? "127.0.0.1" : "localhost");
 
     const callbackUrl = new URL("/callback", baseUrl);
     if (code) callbackUrl.searchParams.set("code", code);
