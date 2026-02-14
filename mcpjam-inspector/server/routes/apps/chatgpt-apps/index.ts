@@ -1,15 +1,10 @@
 import { Hono } from "hono";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { API_RUNTIME_SCRIPT } from "./OpenAIRuntime.bundled";
+import { CHATGPT_APPS_RUNTIME_SCRIPT } from "./OpenAIRuntime.bundled";
 import "../../../types/hono";
 import { logger } from "../../../utils/logger";
+import { CHATGPT_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 
 const chatgpt = new Hono();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // ============================================================================
 // Shared Types & Storage
@@ -198,7 +193,7 @@ function buildRuntimeHeadContent(options: {
   baseTag?: string;
 }): string {
   const configScript = buildConfigScript(options.runtimeConfig);
-  const runtimeScript = `<script>${API_RUNTIME_SCRIPT}</script>`;
+  const runtimeScript = `<script>${CHATGPT_APPS_RUNTIME_SCRIPT}</script>`;
   return `${WIDGET_BASE_CSS}${options.urlPolyfill ?? ""}${options.baseTag ?? ""}${configScript}${runtimeScript}`;
 }
 
@@ -437,7 +432,6 @@ chatgpt.post("/widget/store", async (c) => {
 });
 
 chatgpt.get("/sandbox-proxy", (c) => {
-  const html = readFileSync(join(__dirname, "sandbox-proxy.html"), "utf-8");
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "public, max-age=3600");
   // Allow cross-origin framing between localhost and 127.0.0.1 for triple-iframe architecture
@@ -446,7 +440,8 @@ chatgpt.get("/sandbox-proxy", (c) => {
     "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
   );
   // Remove X-Frame-Options as it doesn't support multiple origins (CSP takes precedence)
-  return c.body(html);
+  c.res.headers.delete("X-Frame-Options");
+  return c.body(CHATGPT_APPS_SANDBOX_PROXY_HTML);
 });
 
 chatgpt.get("/widget-html/:toolId", async (c) => {
