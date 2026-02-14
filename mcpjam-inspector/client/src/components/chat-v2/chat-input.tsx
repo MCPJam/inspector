@@ -464,13 +464,11 @@ export function ChatInput({
                     )}
                   </Button>
                 </TooltipTrigger>
-                {compact && (
-                  <TooltipContent>
-                    {requireToolApproval
-                      ? "Turn off tool approval"
-                      : "Require approval before tools run"}
-                  </TooltipContent>
-                )}
+                <TooltipContent>
+                  {requireToolApproval
+                    ? "Turn off tool approval"
+                    : "Require approval before tools run"}
+                </TooltipContent>
               </Tooltip>
             )}
             {onXrayModeChange && (
@@ -502,13 +500,11 @@ export function ChatInput({
                     )}
                   </Button>
                 </TooltipTrigger>
-                {compact && (
-                  <TooltipContent>
-                    {xrayMode
-                      ? "Hide X-Ray view"
-                      : "See what is sent to the model"}
-                  </TooltipContent>
-                )}
+                <TooltipContent>
+                  {xrayMode
+                    ? "Hide X-Ray view"
+                    : "See what is sent to the model"}
+                </TooltipContent>
               </Tooltip>
             )}
           </div>
