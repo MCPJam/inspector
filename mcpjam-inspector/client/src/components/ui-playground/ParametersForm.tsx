@@ -188,7 +188,7 @@ function FieldInput({
       onKeyDown={handleKeyDown}
       placeholder={`Enter ${field.name}`}
       disabled={disabled}
-      className="bg-background border-border text-xs h-8 disabled:cursor-not-allowed disabled:opacity-50"
+      className="bg-background border-border text-xs h-8 disabled:cursor-not-allowed disabled:opacity-50 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
     />
   );
 }

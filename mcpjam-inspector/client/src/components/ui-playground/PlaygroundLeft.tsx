@@ -8,6 +8,12 @@
  */
 
 import { useState, useEffect, useMemo } from "react";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "../ui/accordion";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
@@ -15,6 +21,7 @@ import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
 import { LoggerView } from "../logger-view";
+import { JsonEditor } from "@/components/ui/json-editor";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -166,6 +173,7 @@ export function PlaygroundLeft({
       ) : (
         <ToolParametersView
           selectedToolName={selectedToolName!}
+          selectedTool={tools[selectedToolName!]}
           formFields={formFields}
           onExpand={() => setIsListExpanded(true)}
           onClear={() => onSelectTool(null)}
@@ -286,6 +294,7 @@ function SavedRequestsTab({
 
 interface ToolParametersViewProps {
   selectedToolName: string;
+  selectedTool?: Tool;
   formFields: FormField[];
   onExpand: () => void;
   onClear: () => void;
@@ -296,6 +305,7 @@ interface ToolParametersViewProps {
 
 function ToolParametersView({
   selectedToolName,
+  selectedTool,
   formFields,
   onExpand,
   onClear,
@@ -303,6 +313,13 @@ function ToolParametersView({
   onToggleField,
   shouldRenderUiTypeOverrideSelector,
 }: ToolParametersViewProps) {
+  const hasParameters = formFields && formFields.length > 0;
+  const [openSections, setOpenSections] = useState<string[]>(["description"]);
+
+  useEffect(() => {
+    setOpenSections(hasParameters ? ["parameters"] : ["description"]);
+  }, [selectedToolName, hasParameters]);
+
   return (
     <div className="h-full flex flex-col">
       <SelectedToolHeader
@@ -312,11 +329,56 @@ function ToolParametersView({
         showProtocolSelector={shouldRenderUiTypeOverrideSelector}
       />
       <ScrollArea className="flex-1 min-h-0">
-        <ParametersForm
-          fields={formFields}
-          onFieldChange={onFieldChange}
-          onToggleField={onToggleField}
-        />
+        <Accordion
+          type="multiple"
+          value={openSections}
+          onValueChange={setOpenSections}
+          className="px-3"
+        >
+          {selectedTool?.description && (
+            <AccordionItem value="description">
+              <AccordionTrigger className="text-xs">
+                Description
+              </AccordionTrigger>
+              <AccordionContent>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {selectedTool.description}
+                </p>
+              </AccordionContent>
+            </AccordionItem>
+          )}
+          {selectedTool?.outputSchema && (
+            <AccordionItem value="output-schema">
+              <AccordionTrigger className="text-xs">
+                Output Schema
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="overflow-hidden rounded-md [&_.h-full]:h-auto">
+                  <JsonEditor
+                    value={selectedTool.outputSchema}
+                    readOnly
+                    showToolbar={false}
+                    height="auto"
+                  />
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          )}
+          {hasParameters && (
+            <AccordionItem value="parameters">
+              <AccordionTrigger className="text-xs">
+                Parameters
+              </AccordionTrigger>
+              <AccordionContent>
+                <ParametersForm
+                  fields={formFields}
+                  onFieldChange={onFieldChange}
+                  onToggleField={onToggleField}
+                />
+              </AccordionContent>
+            </AccordionItem>
+          )}
+        </Accordion>
       </ScrollArea>
     </div>
   );
