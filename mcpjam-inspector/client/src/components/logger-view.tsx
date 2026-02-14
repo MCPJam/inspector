@@ -6,6 +6,7 @@ import {
   Trash2,
   PanelRightClose,
   Copy,
+  Download,
 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Input } from "@/components/ui/input";
@@ -64,6 +65,8 @@ interface RenderableRpcItem {
   protocol?: UiProtocol;
   widgetId?: string;
 }
+
+type LogEntrySnapshot = Omit<RenderableRpcItem, 'id'>;
 
 interface LoggerViewProps {
   serverIds?: string[]; // Optional filter for specific server IDs
@@ -206,16 +209,43 @@ export function LoggerView({
     setExpanded(new Set());
   };
 
-  const copyLogs = async () => {
-    const logs = filteredItems.map((item) => ({
+  const extractLogs = (): Array<LogEntrySnapshot> => {
+    return filteredItems.map((item) => ({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
       direction: item.direction,
       method: item.method,
       payload: item.payload,
+      ...(item.protocol && { protocol: item.protocol }),
+      ...(item.widgetId && { widgetId: item.widgetId }),
     }));
+  };
+
+  const exportLogs = () => {
     try {
+      const logs = extractLogs();
+
+      const blob = new Blob([JSON.stringify(logs, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `mcp-logs-${new Date().toISOString()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Logs exported");
+    } catch {
+      toast.error("Failed to export logs");
+    }
+  };
+
+  const copyLogs = async () => {
+    try {
+      const logs = extractLogs();
       await navigator.clipboard.writeText(JSON.stringify(logs, null, 2));
       toast.success("Logs copied to clipboard");
     } catch {
@@ -273,6 +303,55 @@ export function LoggerView({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex flex-col gap-2 p-3 border-b border-border flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-semibold text-foreground">Logs</h2>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={exportLogs}
+              disabled={filteredItemCount === 0}
+              className="h-7 w-7"
+              title="Export logs"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={copyLogs}
+              disabled={filteredItemCount === 0}
+              className="h-7 w-7"
+              title="Copy logs to clipboard"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={clearMessages}
+              disabled={totalItemCount === 0}
+              className="h-7 w-7"
+              title="Clear all messages"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+            {onClose && isCollapsable && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                className="h-7 w-7"
+                title="Hide JSON-RPC panel"
+              >
+                <PanelRightClose className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border flex-shrink-0">
         {isSearchVisible && (
           <>
@@ -414,38 +493,6 @@ export function LoggerView({
 
         {/* Push action buttons to the right when search is hidden */}
         {!isSearchVisible && <div className="flex-1" />}
-
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={copyLogs}
-          disabled={filteredItemCount === 0}
-          className="h-7 w-7 flex-shrink-0"
-          title="Copy logs to clipboard"
-        >
-          <Copy className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={clearMessages}
-          disabled={totalItemCount === 0}
-          className="h-7 w-7 flex-shrink-0"
-          title="Clear all messages"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-        {onClose && isCollapsable && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="h-7 w-7 flex-shrink-0"
-            title="Hide JSON-RPC panel"
-          >
-            <PanelRightClose className="h-3.5 w-3.5" />
-          </Button>
-        )}
       </div>
 
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
