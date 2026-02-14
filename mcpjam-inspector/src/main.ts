@@ -9,8 +9,8 @@ Sentry.init({
 
 import { app, BrowserWindow, shell, Menu } from "electron";
 import { serve } from "@hono/node-server";
+import { createServer } from "node:net";
 import path from "path";
-import { createHonoApp } from "../server/app.js";
 import log from "electron-log";
 import { updateElectronApp } from "update-electron-app";
 import { registerListeners } from "./ipc/listeners-register.js";
@@ -41,10 +41,99 @@ let server: any = null;
 let serverPort: number = 0;
 
 const isDev = process.env.NODE_ENV === "development";
+const DEFAULT_ELECTRON_PORT = 6274;
+const PORT_SCAN_LIMIT = 100;
+
+type PortParseResult = {
+  value: number;
+  isExplicit: boolean;
+};
+
+function parsePort(value: string | undefined, fallback: number): PortParseResult {
+  if (value === undefined || value.trim() === "") {
+    return { value: fallback, isExplicit: false };
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (
+    !Number.isFinite(parsed) ||
+    !Number.isInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > 65535
+  ) {
+    log.warn(`Ignoring invalid port value "${value}", using fallback ${fallback}`);
+    return { value: fallback, isExplicit: false };
+  }
+
+  return { value: parsed, isExplicit: true };
+}
+
+function getRequestedPort(): {
+  port: number;
+  hasExplicitPort: boolean;
+} {
+  const explicitPort =
+    process.env.ELECTRON_PORT ??
+    process.env.SERVER_PORT ??
+    process.env.PORT;
+  const parsedPort = parsePort(explicitPort, DEFAULT_ELECTRON_PORT);
+
+  return {
+    port: parsedPort.value,
+    hasExplicitPort: parsedPort.isExplicit,
+  };
+}
+
+function isPortAvailable(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.listen(port, host, () => {
+      server.close(() => {
+        resolve(true);
+      });
+    });
+
+    server.on("error", () => {
+      resolve(false);
+    });
+  });
+}
+
+async function findAvailablePort(
+  requestedPort: number,
+  host: string,
+  hasExplicitPort = false,
+): Promise<number> {
+  if (await isPortAvailable(requestedPort, host)) {
+    return requestedPort;
+  }
+
+  if (hasExplicitPort) {
+    throw new Error(`Requested port ${requestedPort} is already in use`);
+  }
+
+  for (let port = requestedPort + 1; port <= requestedPort + PORT_SCAN_LIMIT; port++) {
+    if (await isPortAvailable(port, host)) {
+      log.warn(
+        `Port ${requestedPort} was unavailable. Using fallback free port ${port}`,
+      );
+      return port;
+    }
+  }
+
+  throw new Error(
+    `No available port found in range ${requestedPort}-${
+      requestedPort + PORT_SCAN_LIMIT
+    }`,
+  );
+}
 
 async function startHonoServer(): Promise<number> {
   try {
-    const port = 6274;
+    const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
+    const { port: requestedPort, hasExplicitPort } = getRequestedPort();
+    const port = await findAvailablePort(requestedPort, hostname, hasExplicitPort);
+
     // Set environment variables to tell the server it's running in Electron
     process.env.ELECTRON_APP = "true";
     process.env.IS_PACKAGED = app.isPackaged ? "true" : "false";
@@ -53,11 +142,10 @@ async function startHonoServer(): Promise<number> {
       ? process.resourcesPath
       : app.getAppPath();
     process.env.NODE_ENV = app.isPackaged ? "production" : "development";
+    process.env.SERVER_PORT = String(port);
 
+    const { createHonoApp } = await import("../server/app.js");
     const honoApp = createHonoApp();
-
-    // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
-    const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
 
     server = serve({
       fetch: honoApp.fetch,
