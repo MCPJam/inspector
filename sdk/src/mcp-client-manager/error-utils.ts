@@ -36,6 +36,8 @@ export function isMethodUnavailableError(
     "unsupported",
     "does not support",
     "unimplemented",
+    "unknown method",
+    "unknown mcp method",
   ];
 
   const indicatorMatch = indicators.some((indicator) =>
