@@ -94,18 +94,14 @@ export function SystemPromptSelector({
               disabled={disabled || isLoading}
               className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[180px] @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0 @max-2xl/toolbar:max-w-none"
             >
-              <Settings2
-                className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0"
-              />
+              <Settings2 className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0" />
               <span className="text-[10px] font-medium truncate @max-2xl/toolbar:hidden">
                 System Prompt & Temperature
               </span>
             </Button>
           </DialogTrigger>
         </TooltipTrigger>
-        <TooltipContent side="top">
-          System Prompt & Temperature
-        </TooltipContent>
+        <TooltipContent side="top">System Prompt & Temperature</TooltipContent>
       </Tooltip>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>

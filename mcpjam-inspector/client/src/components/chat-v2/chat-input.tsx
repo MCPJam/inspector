@@ -481,10 +481,10 @@ export function ChatInput({
                       "@max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
                     )}
                   >
-                    <Glasses
-                      className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0"
-                    />
-                    <span className="text-[10px] font-medium @max-2xl/toolbar:hidden">X-Ray</span>
+                    <Glasses className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0" />
+                    <span className="text-[10px] font-medium @max-2xl/toolbar:hidden">
+                      X-Ray
+                    </span>
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
