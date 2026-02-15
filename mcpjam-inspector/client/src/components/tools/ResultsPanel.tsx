@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Info,
   ExternalLink,
+  Clock3,
 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -19,6 +20,7 @@ interface ResultsPanelProps {
   validationErrors: any[] | null | undefined;
   unstructuredValidationResult: UnstructuredStatus;
   toolMeta?: Record<string, any>;
+  responseDurationMs?: number | null;
 }
 
 export function ResultsPanel({
@@ -27,12 +29,19 @@ export function ResultsPanel({
   validationErrors,
   unstructuredValidationResult,
   toolMeta,
+  responseDurationMs,
 }: ResultsPanelProps) {
   const rawResult = result as unknown as Record<string, unknown> | null;
   const uiType = detectUIType(toolMeta, rawResult);
   const hasOpenAIComponent = uiType === UIType.OPENAI_SDK;
   const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
   const hasUIComponent = hasOpenAIComponent || hasMCPAppsComponent;
+  const formattedResponseTime =
+    responseDurationMs == null
+      ? null
+      : responseDurationMs < 1000
+        ? `${Math.round(responseDurationMs)} ms`
+        : `${(responseDurationMs / 1000).toFixed(2)} s`;
 
   return (
     <div className="h-full flex flex-col bg-background break-all">
@@ -55,6 +64,18 @@ export function ResultsPanel({
                 Invalid
               </Badge>
             ))}
+          {formattedResponseTime && (
+            <>
+              <h2 className="text-xs font-semibold text-foreground">Time</h2>
+              <Badge
+                variant="default"
+                className="bg-green-600 hover:bg-green-700"
+              >
+                <Clock3 className="h-3 w-3 mr-1" />
+                {formattedResponseTime}
+              </Badge>
+            </>
+          )}
         </div>
       </div>
 

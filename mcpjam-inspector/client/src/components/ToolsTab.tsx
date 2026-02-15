@@ -105,6 +105,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
+  const [responseDurationMs, setResponseDurationMs] = useState<number | null>(
+    null,
+  );
   const [activeElicitation, setActiveElicitation] =
     useState<ActiveElicitation | null>(null);
   const [elicitationLoading, setElicitationLoading] = useState(false);
@@ -190,6 +193,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setValidationErrors(undefined);
       setUnstructuredValidationResult("not_applicable");
       setError("");
+      setResponseDurationMs(null);
       setActiveElicitation(null);
       setTaskCapabilities(null);
       return;
@@ -285,6 +289,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setResult(null);
       setValidationErrors(undefined);
       setUnstructuredValidationResult("not_applicable");
+      setResponseDurationMs(null);
       setTools({});
       setCursor(undefined);
     } else {
@@ -350,8 +355,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     toolName: string,
     startedAt: number,
   ) => {
+    const durationMs = Date.now() - startedAt;
+
     if ("result" in response && response.status === "completed") {
       setActiveElicitation(null);
+      setResponseDurationMs(durationMs);
       const callResult = response.result;
       setResult(callResult);
 
@@ -376,12 +384,13 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
       logger.info("Tool execution completed", {
         toolName,
-        duration: Date.now() - startedAt,
+        duration: durationMs,
       });
       return;
     }
 
     if ("status" in response && response.status === "elicitation_required") {
+      setResponseDurationMs(durationMs);
       setActiveElicitation({
         executionId: response.executionId,
         requestId: response.requestId,
@@ -413,7 +422,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         status: task.status,
         ttl: task.ttl,
         pollInterval: task.pollInterval,
-        duration: Date.now() - startedAt,
+        duration: durationMs,
         // Per MCP Tasks spec: optional string for LLM hosts to return to model immediately
         modelImmediateResponse: modelImmediateResponse || undefined,
       });
@@ -424,6 +433,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     }
 
     if ("error" in response && response.error) {
+      setResponseDurationMs(durationMs);
       setError(response.error as string);
     }
   };
@@ -443,6 +453,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setResult(null);
     setValidationErrors(undefined);
     setUnstructuredValidationResult("not_applicable");
+    setResponseDurationMs(null);
 
     const executionStartTime = Date.now();
 
@@ -470,7 +481,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       );
       handleExecutionResponse(response, selectedTool, executionStartTime);
     } catch (err) {
-      console.error("executeTool", err);
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Tool execution network error", {
         toolName: selectedTool,
@@ -667,6 +677,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       validationErrors={validationErrors}
       unstructuredValidationResult={unstructuredValidationResult}
       toolMeta={getToolMeta(lastToolName)}
+      responseDurationMs={responseDurationMs}
     />
   ) : (
     <div className="h-full flex items-center justify-center">
