@@ -69,11 +69,18 @@ vi.mock("ai", async () => {
 });
 
 // Mock chat helpers
-vi.mock("../../../utils/chat-helpers", () => ({
-  createLlmModel: vi.fn().mockReturnValue({}),
-  scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
-  scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
-}));
+vi.mock("../../../utils/chat-helpers", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chat-helpers")
+  >("../../../utils/chat-helpers");
+  return {
+    createLlmModel: vi.fn().mockReturnValue({}),
+    scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
+    scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
+    isAnthropicCompatibleModel: actual.isAnthropicCompatibleModel,
+    getInvalidAnthropicToolNames: actual.getInvalidAnthropicToolNames,
+  };
+});
 
 // Mock shared types
 vi.mock("@/shared/types", () => ({
@@ -150,6 +157,96 @@ describe("POST /api/mcp/chat-v2", () => {
 
       expect(status).toBe(400);
       expect(data.error).toBe("model is not supported");
+    });
+
+    it("returns 400 when Anthropic model has tools with invalid names", async () => {
+      manager.getToolsForAiSdk.mockResolvedValue({
+        "server.read_file": { execute: vi.fn() },
+        valid_tool: { execute: vi.fn() },
+        "namespace/list": { execute: vi.fn() },
+      });
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: {
+          id: "claude-sonnet-4-0",
+          name: "Claude Sonnet 4",
+          provider: "anthropic",
+        },
+        apiKey: "test-key",
+      });
+      const { status, data } = await expectJson(res);
+
+      expect(status).toBe(400);
+      expect(data.error).toContain("Invalid tool name(s) for Anthropic");
+      expect(data.error).toContain("'server.read_file'");
+      expect(data.error).toContain("'namespace/list'");
+      expect(data.error).toContain(
+        "Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
+      );
+    });
+
+    it("returns 400 when custom anthropic-compatible provider has tools with invalid names", async () => {
+      manager.getToolsForAiSdk.mockResolvedValue({
+        "bad.tool.name": { execute: vi.fn() },
+      });
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: {
+          id: "custom:my-anthropic:my-model",
+          name: "My Model",
+          provider: "custom",
+          customProviderName: "my-anthropic",
+        },
+        apiKey: "test-key",
+        customProviders: [
+          {
+            name: "my-anthropic",
+            protocol: "anthropic-compatible",
+            baseUrl: "https://example.com",
+            modelIds: ["my-model"],
+          },
+        ],
+      });
+      const { status, data } = await expectJson(res);
+
+      expect(status).toBe(400);
+      expect(data.error).toContain("Invalid tool name(s) for Anthropic");
+      expect(data.error).toContain("'bad.tool.name'");
+    });
+
+    it("does not return 400 for non-Anthropic model with invalid tool names", async () => {
+      manager.getToolsForAiSdk.mockResolvedValue({
+        "server.read_file": { execute: vi.fn() },
+      });
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it("passes through when Anthropic model has only valid tool names", async () => {
+      manager.getToolsForAiSdk.mockResolvedValue({
+        read_file: { execute: vi.fn() },
+        "list-items": { execute: vi.fn() },
+      });
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: {
+          id: "claude-sonnet-4-0",
+          name: "Claude Sonnet 4",
+          provider: "anthropic",
+        },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
     });
   });
 
