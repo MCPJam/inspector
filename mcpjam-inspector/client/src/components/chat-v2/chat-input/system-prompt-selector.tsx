@@ -29,8 +29,6 @@ interface SystemPromptSelectorProps {
   hasMessages?: boolean;
   onResetChat: () => void;
   currentModel: ModelDefinition;
-  /** When true, shows icon only for compact layout */
-  compact?: boolean;
 }
 
 export function SystemPromptSelector({
@@ -43,7 +41,6 @@ export function SystemPromptSelector({
   hasMessages,
   onResetChat,
   currentModel,
-  compact = false,
 }: SystemPromptSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
@@ -93,30 +90,22 @@ export function SystemPromptSelector({
           <DialogTrigger asChild>
             <Button
               variant="ghost"
-              size={compact ? "icon" : "sm"}
+              size="sm"
               disabled={disabled || isLoading}
-              className={
-                compact
-                  ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
-                  : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[180px]"
-              }
+              className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[180px] @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0 @max-2xl/toolbar:max-w-none"
             >
               <Settings2
-                className={compact ? "h-4 w-4" : "h-2 w-2 mr-1 flex-shrink-0"}
+                className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0"
               />
-              {!compact && (
-                <span className="text-[10px] font-medium truncate">
-                  System Prompt & Temperature
-                </span>
-              )}
+              <span className="text-[10px] font-medium truncate @max-2xl/toolbar:hidden">
+                System Prompt & Temperature
+              </span>
             </Button>
           </DialogTrigger>
         </TooltipTrigger>
-        {compact && (
-          <TooltipContent side="top">
-            System Prompt & Temperature
-          </TooltipContent>
-        )}
+        <TooltipContent side="top">
+          System Prompt & Temperature
+        </TooltipContent>
       </Tooltip>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
