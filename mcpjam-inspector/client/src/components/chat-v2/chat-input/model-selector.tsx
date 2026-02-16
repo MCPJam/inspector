@@ -31,8 +31,6 @@ interface ModelSelectorProps {
   isLoading?: boolean;
   hideProvidedModels?: boolean;
   hasMessages?: boolean;
-  /** When true, shows icon only for compact layout */
-  compact?: boolean;
 }
 
 // Group key: for custom providers, use the customProviderName to group separately
@@ -101,7 +99,6 @@ export function ModelSelector({
   isLoading,
   hideProvidedModels = false,
   hasMessages = false,
-  compact = false,
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const [pendingModel, setPendingModel] = useState<ModelDefinition | null>(
@@ -173,29 +170,21 @@ export function ModelSelector({
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
-                size={compact ? "icon" : "sm"}
+                size="sm"
                 disabled={disabled || isLoading}
-                className={
-                  compact
-                    ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
-                    : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[160px]"
-                }
+                className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[160px] @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0 @max-2xl/toolbar:max-w-none"
               >
                 <ProviderLogo
                   provider={currentModelData.provider}
                   customProviderName={currentModelData.customProviderName}
                 />
-                {!compact && (
-                  <span className="text-[10px] font-medium truncate">
-                    {currentModelData.name}
-                  </span>
-                )}
+                <span className="text-[10px] font-medium truncate @max-2xl/toolbar:hidden">
+                  {currentModelData.name}
+                </span>
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          {compact && (
-            <TooltipContent side="top">{currentModelData.name}</TooltipContent>
-          )}
+          <TooltipContent side="top">{currentModelData.name}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start" className="min-w-[200px]">
           {mcpjamProviders.length > 0 && (
