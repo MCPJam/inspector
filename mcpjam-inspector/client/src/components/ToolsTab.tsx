@@ -353,9 +353,11 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
     toolName: string,
-    startedAt: number,
   ) => {
-    const durationMs = Date.now() - startedAt;
+    const durationMs =
+      "durationMs" in response && typeof response.durationMs === "number"
+        ? response.durationMs
+        : null;
 
     if ("result" in response && response.status === "completed") {
       setActiveElicitation(null);
@@ -384,7 +386,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
       logger.info("Tool execution completed", {
         toolName,
-        duration: durationMs,
+        duration: durationMs ?? undefined,
       });
       return;
     }
@@ -422,7 +424,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         status: task.status,
         ttl: task.ttl,
         pollInterval: task.pollInterval,
-        duration: durationMs,
+        duration: durationMs ?? undefined,
         // Per MCP Tasks spec: optional string for LLM hosts to return to model immediately
         modelImmediateResponse: modelImmediateResponse || undefined,
       });
@@ -455,8 +457,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setUnstructuredValidationResult("not_applicable");
     setResponseDurationMs(null);
 
-    const executionStartTime = Date.now();
-
     try {
       const params = buildParameters();
       setLastToolName(selectedTool);
@@ -479,7 +479,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         params,
         taskOptions,
       );
-      handleExecutionResponse(response, selectedTool, executionStartTime);
+      handleExecutionResponse(response, selectedTool);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Tool execution network error", {
@@ -541,7 +541,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         activeElicitation.requestId,
         payload,
       );
-      handleExecutionResponse(response, selectedTool, Date.now());
+      handleExecutionResponse(response, selectedTool);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Error responding to elicitation", {

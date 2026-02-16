@@ -23,6 +23,7 @@ export type ToolExecutionResponse =
   | {
       status: "completed";
       result: CallToolResult;
+      durationMs?: number;
     }
   | {
       status: "elicitation_required";
@@ -30,10 +31,12 @@ export type ToolExecutionResponse =
       requestId: string;
       request: ElicitRequest["params"];
       timestamp: string;
+      durationMs?: number;
     }
   | {
       status: "task_created";
       task: TaskData;
+      durationMs?: number;
       // Optional string for LLM hosts to return as immediate tool result while task executes
       // Per MCP Tasks spec (2025-11-25): io.modelcontextprotocol/model-immediate-response in _meta
       modelImmediateResponse?: string;
