@@ -341,14 +341,6 @@ describe("ChatInput", () => {
     });
   });
 
-  describe("compact mode", () => {
-    it("passes compact prop to ModelSelector", () => {
-      render(<ChatInput {...defaultProps} compact={true} />);
-
-      expect(screen.getByTestId("model-selector")).toBeInTheDocument();
-    });
-  });
-
   describe("token usage", () => {
     it("renders context component with token usage", () => {
       render(

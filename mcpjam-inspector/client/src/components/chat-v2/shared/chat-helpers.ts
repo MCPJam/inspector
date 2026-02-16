@@ -13,7 +13,6 @@ import ollamaLogo from "/ollama_logo.svg";
 import ollamaDarkLogo from "/ollama_dark.png";
 import grokLightLogo from "/grok_light.svg";
 import grokDarkLogo from "/grok_dark.png";
-import litellmLogo from "/litellm_logo.png";
 import openrouterLogo from "/openrouter_logo.png";
 import moonshotLightLogo from "/moonshot_light.png";
 import moonshotDarkLogo from "/moonshot_dark.png";
@@ -60,8 +59,8 @@ export const getProviderLogoFromProvider = (
         return isDark ? grokDarkLogo : grokLightLogo;
       }
       return grokLightLogo;
-    case "litellm":
-      return litellmLogo;
+    case "custom":
+      return null;
     case "openrouter":
       return openrouterLogo;
     case "moonshotai":
@@ -107,8 +106,8 @@ export const getProviderColor = (provider: string) => {
       return "text-purple-600 dark:text-purple-400";
     case "azure":
       return "text-purple-600 dark:text-purple-400";
-    case "litellm":
-      return "bg-gradient-to-br from-blue-500 to-purple-600";
+    case "custom":
+      return "bg-gradient-to-br from-teal-500 to-cyan-600";
     case "moonshotai":
       return "text-cyan-600 dark:text-cyan-400";
     case "z-ai":

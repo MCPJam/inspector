@@ -8,6 +8,8 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import {
   createLlmModel,
+  getInvalidAnthropicToolNames,
+  isAnthropicCompatibleModel,
   scrubChatGPTAppsToolResultsForBackend,
   scrubMcpAppsToolResultsForBackend,
 } from "../../utils/chat-helpers";
@@ -65,6 +67,22 @@ chatV2.post("/", async (c) => {
 
     const allTools = { ...mcpTools, ...finalSkillTools };
 
+    // Validate tool names for Anthropic-compatible models
+    if (isAnthropicCompatibleModel(modelDefinition, body.customProviders)) {
+      const invalidNames = getInvalidAnthropicToolNames(Object.keys(allTools));
+      if (invalidNames.length > 0) {
+        const nameList = invalidNames.map((n) => `'${n}'`).join(", ");
+        return c.json(
+          {
+            error:
+              `Invalid tool name(s) for Anthropic: ${nameList}. ` +
+              `Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`,
+          },
+          400,
+        );
+      }
+    }
+
     // Build enhanced system prompt
     const enhancedSystemPrompt = systemPrompt
       ? systemPrompt + skillsPromptSection
@@ -112,13 +130,15 @@ chatV2.post("/", async (c) => {
     }
 
     // User-provided models: direct streamText
-    const llmModel = createLlmModel(modelDefinition, apiKey ?? "", {
-      ollama: body.ollamaBaseUrl,
-      litellm: body.litellmBaseUrl,
-      azure: body.azureBaseUrl,
-      anthropic: body.anthropicBaseUrl,
-      openai: body.openaiBaseUrl,
-    });
+    const llmModel = createLlmModel(
+      modelDefinition,
+      apiKey ?? "",
+      {
+        ollama: body.ollamaBaseUrl,
+        azure: body.azureBaseUrl,
+      },
+      body.customProviders,
+    );
 
     const modelMessages = await convertToModelMessages(messages);
 

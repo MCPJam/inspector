@@ -7,10 +7,10 @@ import {
   Model,
   ModelDefinition,
   SUPPORTED_MODELS,
-  ModelProvider,
   isMCPJamProvidedModel,
 } from "@/shared/types.js";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
+import { useCustomProviders } from "@/hooks/use-custom-providers";
 import {
   detectOllamaModels,
   detectOllamaToolCapableModels,
@@ -44,13 +44,10 @@ export function useChat(options: UseChatOptions = {}) {
     hasToken,
     tokens,
     getOllamaBaseUrl,
-    getLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getAzureBaseUrl,
-    getAnthropicBaseUrl,
-    getOpenAIBaseUrl,
   } = useAiProviderKeys();
+  const { customProviders, getCustomProviderByName } = useCustomProviders();
   const posthog = usePostHog();
 
   const {
@@ -149,9 +146,13 @@ export function useChat(options: UseChatOptions = {}) {
           );
         return available ? "local" : "";
       }
+      if (m.provider === "custom" && m.customProviderName) {
+        const cp = getCustomProviderByName(m.customProviderName);
+        return cp?.apiKey || "custom";
+      }
       return getToken(m.provider as keyof typeof tokens);
     },
-    [getToken, isOllamaRunning, ollamaModels],
+    [getToken, isOllamaRunning, ollamaModels, getCustomProviderByName],
   );
 
   const currentApiKey = useMemo(
@@ -178,7 +179,6 @@ export function useChat(options: UseChatOptions = {}) {
       mistral: hasToken("mistral"),
       xai: hasToken("xai"),
       ollama: isOllamaRunning,
-      litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
       openrouter: Boolean(
         hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
       ),
@@ -193,28 +193,6 @@ export function useChat(options: UseChatOptions = {}) {
       return providerHasKey[m.provider];
     });
 
-    const parseModelAliases = (
-      aliasString: string,
-      provider: ModelProvider,
-    ): ModelDefinition[] => {
-      return aliasString
-        .split(",")
-        .map((alias) => alias.trim())
-        .filter((alias) => alias.length > 0)
-        .map((alias) => ({
-          id: alias,
-          name: alias,
-          provider,
-        }));
-    };
-
-    // Add user's configured LiteLLM models if configured
-    const litellmModels: ModelDefinition[] = [];
-    if (providerHasKey.litellm) {
-      const modelAliasString = getLiteLLMModelAlias();
-      litellmModels.push(...parseModelAliases(modelAliasString, "litellm"));
-    }
-
     const openRouterModels: ModelDefinition[] = [];
     if (providerHasKey.openrouter) {
       const selectedModels = getOpenRouterSelectedModels();
@@ -227,26 +205,35 @@ export function useChat(options: UseChatOptions = {}) {
       });
     }
 
-    // Combine all models: cloud + ollama + litellm
+    // Add custom provider models
+    const customModels: ModelDefinition[] = customProviders.flatMap((cp) =>
+      cp.modelIds.map((modelId) => ({
+        id: `custom:${cp.name}:${modelId}`,
+        name: modelId,
+        provider: "custom" as const,
+        customProviderName: cp.name,
+      })),
+    );
+
+    // Combine all models: cloud + ollama + openrouter + custom
     let allModels = cloud;
     if (isOllamaRunning && ollamaModels.length > 0) {
       allModels = allModels.concat(ollamaModels);
     }
-    if (litellmModels.length > 0) {
-      allModels = allModels.concat(litellmModels);
-    }
     if (openRouterModels.length > 0) {
       allModels = allModels.concat(openRouterModels);
+    }
+    if (customModels.length > 0) {
+      allModels = allModels.concat(customModels);
     }
     return allModels;
   }, [
     isOllamaRunning,
     ollamaModels,
     hasToken,
-    getLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     getAzureBaseUrl,
+    customProviders,
   ]);
 
   const applySseEvent = useCallback(
@@ -468,10 +455,14 @@ export function useChat(options: UseChatOptions = {}) {
             temperature,
             messages: messagesRef.current.concat(userMessage),
             ollamaBaseUrl: getOllamaBaseUrl(),
-            litellmBaseUrl: getLiteLLMBaseUrl(),
             azureBaseUrl: getAzureBaseUrl(),
-            anthropicBaseUrl: getAnthropicBaseUrl(),
-            openaiBaseUrl: getOpenAIBaseUrl(),
+            customProviders: customProviders.map((cp) => ({
+              name: cp.name,
+              protocol: cp.protocol,
+              baseUrl: cp.baseUrl,
+              modelIds: cp.modelIds,
+              ...(cp.apiKey ? { apiKey: cp.apiKey } : {}),
+            })),
             sendMessagesToBackend: routeThroughBackend,
             selectedServers,
           }),
@@ -548,10 +539,8 @@ export function useChat(options: UseChatOptions = {}) {
       onMessageReceived,
       applySseEvent,
       getOllamaBaseUrl,
-      getLiteLLMBaseUrl,
       getAzureBaseUrl,
-      getAnthropicBaseUrl,
-      getOpenAIBaseUrl,
+      customProviders,
       sendMessagesToBackend,
       getAccessToken,
       selectedServers,

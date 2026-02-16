@@ -28,7 +28,7 @@ MCPJam implements SEP-1865 (MCP Apps) to render interactive user interfaces from
                                                      ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │              Sandbox Proxy (Different Origin)                   │
-│              /api/mcp/sandbox-proxy (sandbox-proxy.html)        │
+│              /api/apps/mcp-apps/sandbox-proxy (sandbox-proxy.html)        │
 │                                                                 │
 │  1. Creates inner iframe                                        │
 │  2. Receives HTML via ui/notifications/sandbox-resource-ready   │
@@ -130,7 +130,7 @@ Once `toolState === "output-available"`, the renderer fetches the widget HTML:
 ```typescript
 // mcp-apps-renderer.tsx
 // Single request for widget content + runtime config context
-const contentResponse = await authFetch("/api/mcp/apps/widget-content", {
+const contentResponse = await authFetch("/api/apps/mcp-apps/widget-content", {
   method: "POST",
   body: JSON.stringify({
     serverId,
@@ -195,7 +195,7 @@ const [sandboxProxyUrl] = useState(() => {
   } else if (currentHost === "127.0.0.1") {
     sandboxHost = "localhost";
   }
-  return `${protocol}//${sandboxHost}${portSuffix}/api/mcp/sandbox-proxy`;
+  return `${protocol}//${sandboxHost}${portSuffix}/api/apps/mcp-apps/sandbox-proxy`;
 });
 ```
 

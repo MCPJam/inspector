@@ -7,14 +7,15 @@
  */
 
 import { Hono } from "hono";
-import "../../types/hono";
-import { logger } from "../../utils/logger";
+import "../../../types/hono";
+import { logger } from "../../../utils/logger";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
-import { OPENAI_COMPAT_RUNTIME_SCRIPT } from "./openai-compat-runtime.bundled";
+import { MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT } from "./McpAppsOpenAICompatibleRuntime.bundled";
+import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 
 const apps = new Hono();
 
@@ -62,7 +63,10 @@ function injectOpenAICompat(
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
   // Escape </ sequences to prevent a literal "</script>" in the bundled code
   // from prematurely closing the tag (XSS vector). In JS, \/ is just /.
-  const escapedRuntime = OPENAI_COMPAT_RUNTIME_SCRIPT.replace(/<\//g, "<\\/");
+  const escapedRuntime = MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT.replace(
+    /<\//g,
+    "<\\/",
+  );
   const runtimeScript = `<script>${escapedRuntime}</script>`;
   const headContent = `${configScript}${runtimeScript}`;
 
@@ -237,6 +241,17 @@ apps.post("/widget-content", async (c) => {
       500,
     );
   }
+});
+
+apps.get("/sandbox-proxy", (c) => {
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+  c.header(
+    "Content-Security-Policy",
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
+  );
+  c.res.headers.delete("X-Frame-Options");
+  return c.body(MCP_APPS_SANDBOX_PROXY_HTML);
 });
 
 export default apps;
