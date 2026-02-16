@@ -381,6 +381,7 @@ export function MCPAppsRenderer({
   const toolInputSentRef = useRef(false);
   const isReadyRef = useRef(false);
   const previousToolStateRef = useRef<ToolState | undefined>(toolState);
+  const lastInlineHeightRef = useRef<string>("400px");
 
   /** Clear all streaming-related timers and refs. Shared across reset paths. */
   const resetStreamingState = useCallback(() => {
@@ -908,6 +909,7 @@ export function MCPAppsRenderer({
           }
           from.height = `${iframe.offsetHeight}px`;
           iframe.style.height = to.height = `${adjustedHeight}px`;
+          lastInlineHeightRef.current = `${adjustedHeight}px`;
         }
 
         iframe.animate([from, to], { duration: 300, easing: "ease-out" });
@@ -1390,11 +1392,15 @@ export function MCPAppsRenderer({
   const showWidget = isReady && canRenderStreamingInput;
 
   const iframeStyle: CSSProperties = {
-    height: isFullscreen ? "100%" : "400px",
+    height: isFullscreen ? "100%" : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
     // Width transition was previously included here ("width 300ms ease-out").
-    transition: isFullscreen ? undefined : "height 300ms ease-out",
+    transition:
+      isFullscreen ||
+      effectiveDisplayModeRef.current !== effectiveDisplayMode
+        ? undefined
+        : "height 300ms ease-out",
     // Hide iframe visually while not ready to display
     ...(!showWidget
       ? { visibility: "hidden" as const, position: "absolute" as const }
