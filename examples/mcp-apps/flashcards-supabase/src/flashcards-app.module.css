@@ -1,0 +1,135 @@
+.main {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+}
+
+.study {
+  width: min(920px, 100%);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.navButton {
+  width: 52px;
+  height: 52px;
+  border: 1px solid #000;
+  border-radius: 999px;
+  background: #fff;
+  color: #000;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.navButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.navButton:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 10%);
+}
+
+.cardRail {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+.card {
+  position: relative;
+  width: min(680px, 100%);
+  min-height: 360px;
+  border: 1px solid #000;
+  border-radius: 18px;
+  background: #fff;
+  padding: 0;
+  text-align: left;
+  color: #000;
+  cursor: pointer;
+  transform-style: preserve-3d;
+  transition:
+    transform 260ms ease,
+    box-shadow 160ms ease;
+  box-shadow: 0 20px 45px rgb(0 0 0 / 8%);
+}
+
+.card:hover {
+  box-shadow: 0 24px 55px rgb(0 0 0 / 11%);
+}
+
+.cardFlipped {
+  transform: rotateY(180deg);
+}
+
+.face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  padding: 28px;
+  backface-visibility: hidden;
+}
+
+.back {
+  transform: rotateY(180deg);
+}
+
+.sideLabel {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #000;
+  opacity: 0.55;
+}
+
+.sideText {
+  margin: 0;
+  font-size: clamp(1.1rem, 2.5vw, 1.45rem);
+  line-height: 1.45;
+  color: #000;
+  white-space: pre-wrap;
+}
+
+.counter {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: #000;
+  opacity: 0.6;
+}
+
+.empty {
+  margin: 0;
+  padding: 18px 20px;
+  border: 1px solid #000;
+  border-radius: 12px;
+  background: #fff;
+  color: #000;
+  font-size: 14px;
+}
+
+@media (max-width: 760px) {
+  .study {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .card {
+    min-height: 300px;
+  }
+
+  .navButton {
+    width: 48px;
+    height: 48px;
+  }
+}
