@@ -215,9 +215,7 @@ describe("AppBuilderTab", () => {
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
       expect(
-        screen.getByText(
-          "Connect to an MCP server to test ChatGPT Apps in the UI Playground.",
-        ),
+        screen.getByText("Connect to an MCP server to use the App Builder."),
       ).toBeInTheDocument();
     });
 

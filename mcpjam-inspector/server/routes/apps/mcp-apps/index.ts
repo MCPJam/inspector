@@ -1,20 +1,21 @@
 /**
  * MCP Apps (SEP-1865) Server Routes
  *
- * Provides endpoints for storing widget data and serving widget HTML.
+ * Provides an endpoint for serving widget HTML.
  * Widgets are expected to use the official SDK (@modelcontextprotocol/ext-apps)
  * which handles JSON-RPC communication with the host.
  */
 
 import { Hono } from "hono";
-import "../../types/hono";
-import { logger } from "../../utils/logger";
+import "../../../types/hono";
+import { logger } from "../../../utils/logger";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
-import { OPENAI_COMPAT_RUNTIME_SCRIPT } from "./openai-compat-runtime.bundled";
+import { MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT } from "./McpAppsOpenAICompatibleRuntime.bundled";
+import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 
 const apps = new Hono();
 
@@ -62,7 +63,10 @@ function injectOpenAICompat(
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
   // Escape </ sequences to prevent a literal "</script>" in the bundled code
   // from prematurely closing the tag (XSS vector). In JS, \/ is just /.
-  const escapedRuntime = OPENAI_COMPAT_RUNTIME_SCRIPT.replace(/<\//g, "<\\/");
+  const escapedRuntime = MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT.replace(
+    /<\//g,
+    "<\\/",
+  );
   const runtimeScript = `<script>${escapedRuntime}</script>`;
   const headContent = `${configScript}${runtimeScript}`;
 
@@ -84,8 +88,7 @@ const MCP_APPS_MIMETYPE = RESOURCE_MIME_TYPE;
  */
 type CspMode = "permissive" | "widget-declared";
 
-// Widget data store - SAME PATTERN as openai.ts
-interface WidgetData {
+interface WidgetContentRequest {
   serverId: string;
   resourceUri: string;
   toolInput: Record<string, unknown>;
@@ -93,72 +96,11 @@ interface WidgetData {
   toolId: string;
   toolName: string;
   theme?: "light" | "dark";
-  protocol: "mcp-apps";
-  cspMode: CspMode; // CSP enforcement mode
-  timestamp: number;
+  cspMode?: CspMode;
+  template?: string;
+  viewMode?: string;
+  viewParams?: Record<string, unknown>;
 }
-
-const widgetDataStore = new Map<string, WidgetData>();
-
-// Cleanup expired data every 5 minutes - SAME as openai.ts
-setInterval(
-  () => {
-    const now = Date.now();
-    const ONE_HOUR = 60 * 60 * 1000;
-    for (const [toolId, data] of widgetDataStore.entries()) {
-      if (now - data.timestamp > ONE_HOUR) {
-        widgetDataStore.delete(toolId);
-      }
-    }
-  },
-  5 * 60 * 1000,
-).unref();
-
-// Store widget data - SAME pattern as openai.ts
-apps.post("/widget/store", async (c) => {
-  try {
-    const body = await c.req.json();
-    const {
-      serverId,
-      resourceUri,
-      toolInput,
-      toolOutput,
-      toolId,
-      toolName,
-      theme,
-      protocol,
-      cspMode,
-    } = body;
-
-    if (!serverId || !resourceUri || !toolId || !toolName) {
-      return c.json({ success: false, error: "Missing required fields" }, 400);
-    }
-
-    widgetDataStore.set(toolId, {
-      serverId,
-      resourceUri,
-      toolInput,
-      toolOutput,
-      toolId,
-      toolName,
-      theme: theme ?? "dark",
-      protocol: protocol ?? "mcp-apps",
-      cspMode: cspMode ?? "widget-declared", // Default to strict (widget-declared) mode
-      timestamp: Date.now(),
-    });
-
-    return c.json({ success: true });
-  } catch (error) {
-    logger.error("[MCP Apps] Error storing widget data", error);
-    return c.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      500,
-    );
-  }
-});
 
 // UI Resource metadata per SEP-1865 (using SDK types)
 interface UIResourceMeta {
@@ -169,34 +111,38 @@ interface UIResourceMeta {
 }
 
 // Serve widget content with CSP metadata (SEP-1865)
-apps.get("/widget-content/:toolId", async (c) => {
+apps.post("/widget-content", async (c) => {
   try {
-    const toolId = c.req.param("toolId");
-    const widgetData = widgetDataStore.get(toolId);
+    const body = (await c.req.json()) as Partial<WidgetContentRequest>;
+    const {
+      serverId,
+      resourceUri,
+      toolInput,
+      toolOutput,
+      toolId,
+      toolName,
+      theme,
+      cspMode,
+      template: templateUri,
+      viewMode,
+      viewParams,
+    } = body;
 
-    if (!widgetData) {
-      return c.json({ error: "Widget data not found or expired" }, 404);
+    if (!serverId || !resourceUri || !toolId || !toolName) {
+      return c.json({ error: "Missing required fields" }, 400);
     }
-
-    // Read CSP mode from query param (allows override for testing)
-    const cspModeParam = c.req.query("csp_mode") as CspMode | undefined;
-
-    // Support template query param for modal views (overrides resource URI)
-    const templateUri = c.req.query("template");
     if (templateUri && !templateUri.startsWith("ui://")) {
       return c.json({ error: "Template must use ui:// protocol" }, 400);
     }
 
-    const { serverId, cspMode: storedCspMode } = widgetData;
-    const resourceUri = templateUri || widgetData.resourceUri;
+    const resolvedResourceUri = templateUri || resourceUri;
 
-    // Use query param override if provided, otherwise use stored mode
-    const effectiveCspMode = cspModeParam ?? storedCspMode ?? "widget-declared";
+    const effectiveCspMode = cspMode ?? "widget-declared";
     const mcpClientManager = c.mcpClientManager;
 
     // REUSE existing mcpClientManager.readResource (same as resources.ts)
     const resourceResult = await mcpClientManager.readResource(serverId, {
-      uri: resourceUri,
+      uri: resolvedResourceUri,
     });
 
     // Extract HTML from resource contents
@@ -218,7 +164,7 @@ apps.get("/widget-content/:toolId", async (c) => {
 
     if (mimeTypeWarning) {
       logger.warn("[MCP Apps] Mimetype validation: " + mimeTypeWarning, {
-        resourceUri,
+        resourceUri: resolvedResourceUri,
       });
     }
 
@@ -239,7 +185,7 @@ apps.get("/widget-content/:toolId", async (c) => {
 
     // Log CSP and permissions configuration for security review (SEP-1865)
     logger.debug("[MCP Apps] Security configuration", {
-      resourceUri,
+      resourceUri: resolvedResourceUri,
       effectiveCspMode,
       widgetDeclaredCsp: csp
         ? {
@@ -264,18 +210,15 @@ apps.get("/widget-content/:toolId", async (c) => {
     const isPermissive = effectiveCspMode === "permissive";
 
     // Inject window.openai compat layer into every MCP App iframe
-    // Pass through view_mode/view_params query params for modal support
-    const viewMode = c.req.query("view_mode");
-    const viewParamsRaw = c.req.query("view_params");
-    let viewParams: Record<string, unknown> | undefined;
-    if (viewParamsRaw) {
-      try {
-        viewParams = JSON.parse(viewParamsRaw);
-      } catch {
-        // Ignore invalid JSON
-      }
-    }
-    html = injectOpenAICompat(html, { ...widgetData, viewMode, viewParams });
+    html = injectOpenAICompat(html, {
+      toolId,
+      toolName,
+      toolInput: toolInput ?? {},
+      toolOutput,
+      theme,
+      viewMode,
+      viewParams,
+    });
 
     // Return JSON with HTML and metadata for CSP enforcement
     c.header("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -298,6 +241,17 @@ apps.get("/widget-content/:toolId", async (c) => {
       500,
     );
   }
+});
+
+apps.get("/sandbox-proxy", (c) => {
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+  c.header(
+    "Content-Security-Policy",
+    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
+  );
+  c.res.headers.delete("X-Frame-Options");
+  return c.body(MCP_APPS_SANDBOX_PROXY_HTML);
 });
 
 export default apps;

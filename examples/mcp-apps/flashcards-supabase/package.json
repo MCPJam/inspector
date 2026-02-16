@@ -1,0 +1,42 @@
+{
+  "name": "flashcards-supabase",
+  "version": "1.0.0",
+  "description": "MCP flashcards app with Supabase backend",
+  "type": "module",
+  "main": "server.ts",
+  "scripts": {
+    "build": "tsc --noEmit && cross-env INPUT=flashcards-app.html vite build",
+    "watch": "cross-env INPUT=flashcards-app.html vite build --watch",
+    "serve": "tsx server.ts",
+    "serve:stdio": "tsx server.ts --stdio",
+    "dev": "cross-env NODE_ENV=development concurrently 'npm run watch' 'npm run serve'",
+    "start": "npm run build && npm run serve",
+    "prettier": "prettier --check \"**/*.{ts,tsx,js,jsx,mjs,json,md,css,html,yml,yaml}\"",
+    "prettier:fix": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,json,md,css,html,yml,yaml}\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.0.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@supabase/supabase-js": "^2.95.3",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.4",
+    "@types/node": "^25.2.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-singlefile": "^2.3.0"
+  }
+}

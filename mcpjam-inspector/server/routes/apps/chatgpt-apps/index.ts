@@ -1,15 +1,10 @@
 import { Hono } from "hono";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
-import { API_RUNTIME_SCRIPT } from "./chatgpt.bundled";
-import "../../types/hono";
-import { logger } from "../../utils/logger";
+import { CHATGPT_APPS_RUNTIME_SCRIPT } from "./OpenAIRuntime.bundled";
+import "../../../types/hono";
+import { logger } from "../../../utils/logger";
+import { CHATGPT_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 
 const chatgpt = new Hono();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // ============================================================================
 // Shared Types & Storage
@@ -54,7 +49,18 @@ interface WidgetData {
 
 const widgetDataStore = new Map<string, WidgetData>();
 
-// Cleanup expired widget data every 5 minutes
+interface StoredFile {
+  buffer: Buffer;
+  mimeType: string;
+  fileName: string;
+  timestamp: number;
+}
+
+const fileStore = new Map<string, StoredFile>();
+const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+
+// Cleanup expired widget data and uploaded files every 5 minutes
 setInterval(
   () => {
     const now = Date.now();
@@ -62,6 +68,11 @@ setInterval(
     for (const [toolId, data] of widgetDataStore.entries()) {
       if (now - data.timestamp > ONE_HOUR) {
         widgetDataStore.delete(toolId);
+      }
+    }
+    for (const [fileId, file] of fileStore.entries()) {
+      if (now - file.timestamp > ONE_HOUR) {
+        fileStore.delete(fileId);
       }
     }
   },
@@ -182,7 +193,7 @@ function buildRuntimeHeadContent(options: {
   baseTag?: string;
 }): string {
   const configScript = buildConfigScript(options.runtimeConfig);
-  const runtimeScript = `<script>${API_RUNTIME_SCRIPT}</script>`;
+  const runtimeScript = `<script>${CHATGPT_APPS_RUNTIME_SCRIPT}</script>`;
   return `${WIDGET_BASE_CSS}${options.urlPolyfill ?? ""}${options.baseTag ?? ""}${configScript}${runtimeScript}`;
 }
 
@@ -421,10 +432,6 @@ chatgpt.post("/widget/store", async (c) => {
 });
 
 chatgpt.get("/sandbox-proxy", (c) => {
-  const html = readFileSync(
-    join(__dirname, "chatgpt-sandbox-proxy.html"),
-    "utf-8",
-  );
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "public, max-age=3600");
   // Allow cross-origin framing between localhost and 127.0.0.1 for triple-iframe architecture
@@ -433,7 +440,8 @@ chatgpt.get("/sandbox-proxy", (c) => {
     "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*",
   );
   // Remove X-Frame-Options as it doesn't support multiple origins (CSP takes precedence)
-  return c.body(html);
+  c.res.headers.delete("X-Frame-Options");
+  return c.body(CHATGPT_APPS_SANDBOX_PROXY_HTML);
 });
 
 chatgpt.get("/widget-html/:toolId", async (c) => {
@@ -555,7 +563,7 @@ chatgpt.get("/widget/:toolId", async (c) => {
 (async function() {
   const searchParams = window.location.search;
   history.replaceState(null, '', '/');
-  const response = await fetch('/api/apps/chatgpt/widget-content/${toolId}' + searchParams);
+  const response = await fetch('/api/apps/chatgpt-apps/widget-content/${toolId}' + searchParams);
   const html = await response.text();
   document.open(); document.write(html); document.close();
 })();
@@ -691,6 +699,113 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
       500,
     );
   }
+});
+
+// ============================================================================
+// File Upload / Download (ChatGPT Apps SDK: uploadFile, getFileDownloadUrl)
+// ============================================================================
+
+/**
+ * Validate that the leading bytes of a buffer match the expected image type.
+ * This prevents uploading a .exe renamed to .png.
+ */
+function validateMagicBytes(buffer: Buffer, mimeType: string): boolean {
+  if (buffer.length < 12) return false;
+  switch (mimeType) {
+    case "image/png":
+      // PNG: 89 50 4E 47 (\x89PNG)
+      return (
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4e &&
+        buffer[3] === 0x47
+      );
+    case "image/jpeg":
+      // JPEG: FF D8
+      return buffer[0] === 0xff && buffer[1] === 0xd8;
+    case "image/webp":
+      // WebP: RIFF....WEBP
+      return (
+        buffer[0] === 0x52 && // R
+        buffer[1] === 0x49 && // I
+        buffer[2] === 0x46 && // F
+        buffer[3] === 0x46 && // F
+        buffer[8] === 0x57 && // W
+        buffer[9] === 0x45 && // E
+        buffer[10] === 0x42 && // B
+        buffer[11] === 0x50 // P
+      );
+    default:
+      return false;
+  }
+}
+
+chatgpt.post("/upload-file", async (c) => {
+  try {
+    const { data, mimeType, fileName } = await c.req.json();
+
+    if (!data || typeof data !== "string") {
+      return c.json({ error: "Missing or invalid base64 data" }, 400);
+    }
+    if (!mimeType || !ALLOWED_IMAGE_TYPES.has(mimeType)) {
+      return c.json(
+        {
+          error: `Unsupported file type: ${mimeType}. Allowed: ${[...ALLOWED_IMAGE_TYPES].join(", ")}`,
+        },
+        400,
+      );
+    }
+
+    const buffer = Buffer.from(data, "base64");
+    if (buffer.length === 0) {
+      return c.json({ error: "Empty file" }, 400);
+    }
+    if (buffer.length > MAX_FILE_SIZE) {
+      return c.json(
+        {
+          error: `File too large. Maximum size: ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+        },
+        400,
+      );
+    }
+    if (!validateMagicBytes(buffer, mimeType)) {
+      return c.json(
+        { error: "File content does not match declared MIME type" },
+        400,
+      );
+    }
+
+    const fileId = `file_${crypto.randomUUID()}`;
+    fileStore.set(fileId, {
+      buffer,
+      mimeType,
+      fileName: fileName || "upload",
+      timestamp: Date.now(),
+    });
+
+    return c.json({ fileId });
+  } catch (error) {
+    logger.error("Error uploading file:", error);
+    return c.json(
+      { error: error instanceof Error ? error.message : "Upload failed" },
+      500,
+    );
+  }
+});
+
+chatgpt.get("/file/:fileId", (c) => {
+  const fileId = c.req.param("fileId");
+  const stored = fileStore.get(fileId);
+  if (!stored) {
+    return c.json({ error: "File not found or expired" }, 404);
+  }
+
+  c.header("Content-Type", stored.mimeType);
+  c.header("Content-Disposition", "inline");
+  c.header("Cache-Control", "private, max-age=3600");
+  // Allow cross-origin access so the widget iframe (127.0.0.1) can fetch
+  c.header("Access-Control-Allow-Origin", "*");
+  return c.body(new Uint8Array(stored.buffer));
 });
 
 export default chatgpt;

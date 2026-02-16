@@ -474,14 +474,6 @@ export function PlaygroundMain({
   const errorMessage = formatErrorMessage(error);
   const inputDisabled = disableChatInput || status !== "ready" || submitBlocked;
 
-  // Compact mode for smaller devices or narrow custom viewports
-  const isCompact = useMemo(() => {
-    if (storeDeviceType === "mobile" || storeDeviceType === "tablet")
-      return true;
-    if (storeDeviceType === "custom" && customViewport.width < 500) return true;
-    return false;
-  }, [storeDeviceType, customViewport.width]);
-
   // Shared chat input props
   const sharedChatInputProps = {
     value: input,
@@ -514,7 +506,6 @@ export function PlaygroundMain({
     onChangeMcpPromptResults: setMcpPromptResults,
     skillResults,
     onChangeSkillResults: setSkillResults,
-    compact: isCompact,
     fileAttachments,
     onChangeFileAttachments: setFileAttachments,
     xrayMode,

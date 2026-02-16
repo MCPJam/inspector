@@ -145,7 +145,7 @@ export function ToolsSidebar({
     <div className="h-full flex flex-col border-r border-border bg-background">
       {/* Header with tabs and actions - App Builder style */}
       <div className="border-b border-border flex-shrink-0">
-        <div className="px-2 py-1.5 flex items-center gap-2">
+        <div className="px-2 py-2 flex items-center gap-2">
           {/* Tabs */}
           <div className="flex items-center gap-1.5">
             <button

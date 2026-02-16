@@ -30,6 +30,10 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
 import { authFetch } from "@/lib/session-token";
+import {
+  handleGetFileDownloadUrlMessage,
+  handleUploadFileMessage,
+} from "./mcp-apps/widget-file-messages";
 
 type ToolState =
   | "input-streaming"
@@ -214,69 +218,9 @@ function getDeviceType(): "mobile" | "tablet" | "desktop" {
   return "desktop";
 }
 
-/**
- * Coarse user location per SDK spec: { country, region, city }
- * Uses IP-based geolocation (no permission required).
- */
-interface UserLocation {
-  country: string;
-  region: string;
-  city: string;
-}
-
-// Cache location to avoid repeated API calls
-let cachedLocation: UserLocation | null = null;
-let locationFetchPromise: Promise<UserLocation | null> | null = null;
-
 // Default values for non-playground contexts (defined outside component to avoid infinite loops)
 const DEFAULT_CAPABILITIES = { hover: true, touch: false };
 const DEFAULT_SAFE_AREA_INSETS = { top: 0, bottom: 0, left: 0, right: 0 };
-
-/**
- * Fetch coarse location from IP-based geolocation service.
- * Uses ip-api.com (free, no API key required, 45 req/min limit).
- * Results are cached for the session.
- */
-async function getUserLocation(): Promise<UserLocation | null> {
-  // Return cached result if available
-  if (cachedLocation) return cachedLocation;
-
-  // Return existing promise if fetch is in progress
-  if (locationFetchPromise) return locationFetchPromise;
-
-  locationFetchPromise = (async () => {
-    try {
-      // ip-api.com provides free IP geolocation (no API key needed)
-      // Fields: country, regionName, city
-      const response = await fetch(
-        "http://ip-api.com/json/?fields=status,country,regionName,city",
-        {
-          signal: AbortSignal.timeout(3000), // 3s timeout
-        },
-      );
-
-      if (!response.ok) return null;
-
-      const data = await response.json();
-      if (data.status !== "success") return null;
-
-      cachedLocation = {
-        country: data.country || "",
-        region: data.regionName || "",
-        city: data.city || "",
-      };
-
-      return cachedLocation;
-    } catch (err) {
-      // Silently fail - location is optional per SDK spec
-      console.debug("[OpenAI SDK] IP geolocation unavailable:", err);
-      return null;
-    }
-  })();
-
-  return locationFetchPromise;
-}
-
 interface WidgetCspData {
   mode: CspMode;
   connectDomains: string[];
@@ -432,7 +376,7 @@ function useWidgetFetch(
       widgetUrl &&
       ((canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
         (!canUseCachedHtml &&
-          widgetUrl.includes("/api/apps/chatgpt/widget-content/")));
+          widgetUrl.includes("/api/apps/chatgpt-apps/widget-content/")));
 
     if (
       toolState !== "output-available" ||
@@ -482,10 +426,10 @@ function useWidgetFetch(
         }
 
         // Host-controlled values per SDK spec
-        const userLocation = await getUserLocation(); // Coarse IP-based location
+        const userLocation = null; // Coarse IP-based location
 
         const storeResponse = await authFetch(
-          "/api/apps/chatgpt/widget/store",
+          "/api/apps/chatgpt-apps/widget/store",
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -515,7 +459,7 @@ function useWidgetFetch(
 
         // Check if widget should close and get CSP config
         const htmlResponse = await fetch(
-          `/api/apps/chatgpt/widget-html/${resolvedToolCallId}`,
+          `/api/apps/chatgpt-apps/widget-html/${resolvedToolCallId}`,
         );
         if (htmlResponse.ok) {
           const data = await htmlResponse.json();
@@ -543,7 +487,7 @@ function useWidgetFetch(
         }
 
         // Fetch and cache the widget HTML for later saving
-        const widgetContentUrl = `/api/apps/chatgpt/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
+        const widgetContentUrl = `/api/apps/chatgpt-apps/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
         if (onWidgetHtmlCaptured) {
           try {
             const contentResponse = await fetch(widgetContentUrl);
@@ -1198,6 +1142,18 @@ export function ChatGPTAppRenderer({
           setCheckoutOpen(true);
           break;
         }
+        case "openai:uploadFile": {
+          void handleUploadFileMessage(event.data, (message) => {
+            postToWidget(message);
+          });
+          break;
+        }
+        case "openai:getFileDownloadUrl": {
+          handleGetFileDownloadUrlMessage(event.data, (message) => {
+            postToWidget(message);
+          });
+          break;
+        }
         case "openai:requestModal": {
           setModalTitle(event.data.title || "Modal");
           setModalParams(event.data.params || {});
@@ -1343,6 +1299,19 @@ export function ChatGPTAppRenderer({
             );
           }
         })();
+      }
+
+      if (event.data?.type === "openai:uploadFile") {
+        void handleUploadFileMessage(event.data, (message) => {
+          postToWidget(message, true);
+        });
+      }
+
+      if (event.data?.type === "openai:getFileDownloadUrl") {
+        handleGetFileDownloadUrlMessage(event.data, (message) => {
+          postToWidget(message, true);
+        });
+        return;
       }
     },
     [

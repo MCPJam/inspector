@@ -53,6 +53,12 @@ import {
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
+import {
+  handleGetFileDownloadUrlMessage,
+  handleUploadFileMessage,
+} from "./widget-file-messages";
+import { CheckoutDialogV2 } from "./checkout-dialog-v2";
+import type { CheckoutSession } from "@/shared/acp-types";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -66,10 +72,7 @@ const SIGNATURE_MAX_DEPTH = 4;
 const SIGNATURE_MAX_ARRAY_ITEMS = 24;
 const SIGNATURE_MAX_OBJECT_KEYS = 32;
 const SIGNATURE_STRING_EDGE_LENGTH = 24;
-const SUPPRESSED_UI_LOG_METHODS = new Set([
-  "ui/notifications/tool-input-partial",
-  "ui/notifications/size-changed",
-]);
+const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
@@ -351,6 +354,12 @@ export function MCPAppsRenderer({
   const [modalTitle, setModalTitle] = useState("");
   const [modalTemplate, setModalTemplate] = useState<string | null>(null);
 
+  // Checkout state
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutSession, setCheckoutSession] =
+    useState<CheckoutSession | null>(null);
+  const [checkoutCallId, setCheckoutCallId] = useState<number | null>(null);
+
   // Reset widget HTML when cachedWidgetHtmlUrl changes (e.g., different view selected)
   useEffect(() => {
     setWidgetHtml(null);
@@ -444,6 +453,7 @@ export function MCPAppsRenderer({
     const fetchWidgetHtml = async () => {
       try {
         // Use cached widget HTML whenever available (faster and works offline)
+        // This is for the Views tab offline rendering
         if (cachedWidgetHtmlUrl) {
           const cachedResponse = await fetch(cachedWidgetHtmlUrl);
           if (!cachedResponse.ok) {
@@ -469,32 +479,22 @@ export function MCPAppsRenderer({
           return;
         }
 
-        // Store widget data first (same pattern as openai.ts)
-        const storeResponse = await authFetch("/api/mcp/apps/widget/store", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverId,
-            resourceUri,
-            toolInput: toolInputRef.current,
-            toolOutput: toolOutputRef.current,
-            toolId: toolCallId,
-            toolName,
-            theme: themeModeRef.current,
-            protocol: "mcp-apps",
-            cspMode, // Pass CSP mode preference
-          }),
-        });
-
-        if (!storeResponse.ok) {
-          throw new Error(
-            `Failed to store widget: ${storeResponse.statusText}`,
-          );
-        }
-
-        // Fetch widget content with CSP metadata (SEP-1865)
-        const contentResponse = await fetch(
-          `/api/mcp/apps/widget-content/${toolCallId}?csp_mode=${cspMode}`,
+        const contentResponse = await authFetch(
+          "/api/apps/mcp-apps/widget-content",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serverId,
+              resourceUri,
+              toolInput: toolInputRef.current,
+              toolOutput: toolOutputRef.current,
+              toolId: toolCallId,
+              toolName,
+              theme: themeModeRef.current,
+              cspMode, // Pass CSP mode preference
+            }),
+          },
         );
         if (!contentResponse.ok) {
           const errorData = await contentResponse.json().catch(() => ({}));
@@ -1261,6 +1261,21 @@ export function MCPAppsRenderer({
       return;
     }
 
+    // Handle file upload messages (non-JSON-RPC, same protocol as ChatGPT widget)
+    if (data.type === "openai:uploadFile") {
+      void handleUploadFileMessage(data, (message) => {
+        sandboxRef.current?.postMessage(message);
+      });
+      return;
+    }
+
+    if (data.type === "openai:getFileDownloadUrl") {
+      handleGetFileDownloadUrlMessage(data, (message) => {
+        sandboxRef.current?.postMessage(message);
+      });
+      return;
+    }
+
     // Handle openai/* JSON-RPC notifications from the compat layer
     if (
       data.jsonrpc === "2.0" &&
@@ -1284,9 +1299,36 @@ export function MCPAppsRenderer({
         setModalOpen(true);
       } else if (data.method === "openai/requestClose") {
         setModalOpen(false);
+      } else if (data.method === "openai/requestCheckout") {
+        const params = data.params ?? {};
+        const { callId: cId, ...sessionData } = params;
+        setCheckoutCallId(cId as number);
+        setCheckoutSession(sessionData as unknown as CheckoutSession);
+        setCheckoutOpen(true);
       }
     }
   };
+
+  const respondToCheckout = useCallback(
+    (result: unknown, error?: string) => {
+      if (checkoutCallId == null) return;
+      const params: Record<string, unknown> = { callId: checkoutCallId };
+      if (error) {
+        params.error = error;
+      } else {
+        params.result = result;
+      }
+      sandboxRef.current?.postMessage({
+        jsonrpc: "2.0",
+        method: "openai/requestCheckout:response",
+        params,
+      });
+      setCheckoutOpen(false);
+      setCheckoutSession(null);
+      setCheckoutCallId(null);
+    },
+    [checkoutCallId],
+  );
 
   // Denied state
   if (toolState === "output-denied") {
@@ -1469,6 +1511,23 @@ export function MCPAppsRenderer({
         }
         onCspViolation={handleCspViolation}
       />
+
+      {checkoutSession && (
+        <CheckoutDialogV2
+          session={checkoutSession}
+          open={checkoutOpen}
+          onOpenChange={setCheckoutOpen}
+          onComplete={(result) => respondToCheckout(result)}
+          onError={(error) => respondToCheckout(null, error)}
+          onCancel={() => respondToCheckout(null, "User cancelled checkout")}
+          onCallTool={async (toolName, params) => {
+            if (!onCallTool) {
+              throw new Error("Tool calls not supported");
+            }
+            return onCallTool(toolName, params);
+          }}
+        />
+      )}
     </div>
   );
 }

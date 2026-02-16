@@ -29,6 +29,11 @@ import {
 } from "../thread-helpers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
@@ -257,27 +262,35 @@ export function ToolPart({
       const buttonLabel =
         mode === "inline" ? "Inline" : mode === "pip" ? "PiP" : "Fullscreen";
       return (
-        <button
-          key={mode}
-          type="button"
-          aria-label={buttonLabel}
-          disabled={isDisabled}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (isDisabled) return;
-            handleDisplayModeChange(mode);
-          }}
-          className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors ${
-            isDisabled
-              ? "text-muted-foreground/30 cursor-not-allowed"
-              : isActive
-                ? "bg-background text-foreground shadow-sm cursor-pointer"
-                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
-          }`}
-        >
-          <Icon className="h-3.5 w-3.5" />
-          <span className="text-[9px] leading-none">{buttonLabel}</span>
-        </button>
+        <Tooltip key={mode}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={buttonLabel}
+              disabled={isDisabled}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isDisabled) return;
+                handleDisplayModeChange(mode);
+              }}
+              className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors ${
+                isDisabled
+                  ? "text-muted-foreground/30 cursor-not-allowed"
+                  : isActive
+                    ? "bg-background text-foreground shadow-sm cursor-pointer"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              <span className="text-[9px] leading-none hidden @[33rem]:inline">
+                {buttonLabel}
+              </span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="font-medium">{buttonLabel}</p>
+          </TooltipContent>
+        </Tooltip>
       );
     });
 
@@ -291,35 +304,51 @@ export function ToolPart({
             : tab === "csp"
               ? "CSP"
               : "Context";
+      const tooltipLabel =
+        tab === "data"
+          ? "Data"
+          : tab === "state"
+            ? "Widget State"
+            : tab === "csp"
+              ? "CSP"
+              : "Model Context";
 
       return (
-        <button
-          key={tab}
-          type="button"
-          aria-label={buttonLabel}
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDebugClick(tab);
-          }}
-          className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors cursor-pointer relative ${
-            activeDebugTab === tab
-              ? "bg-background text-foreground shadow-sm"
-              : badge && badge > 0
-                ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
-          }`}
-        >
-          <Icon className="h-3.5 w-3.5" />
-          <span className="text-[9px] leading-none">{buttonLabel}</span>
-          {badge !== undefined && badge > 0 && (
-            <Badge
-              variant="destructive"
-              className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none text-white"
+        <Tooltip key={tab}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={tooltipLabel}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDebugClick(tab);
+              }}
+              className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors cursor-pointer relative ${
+                activeDebugTab === tab
+                  ? "bg-background text-foreground shadow-sm"
+                  : badge && badge > 0
+                    ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+              }`}
             >
-              {badge}
-            </Badge>
-          )}
-        </button>
+              <Icon className="h-3.5 w-3.5" />
+              <span className="text-[9px] leading-none hidden @[33rem]:inline">
+                {buttonLabel}
+              </span>
+              {badge !== undefined && badge > 0 && (
+                <Badge
+                  variant="destructive"
+                  className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none text-white"
+                >
+                  {badge}
+                </Badge>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="font-medium">{tooltipLabel}</p>
+          </TooltipContent>
+        </Tooltip>
       );
     });
 
@@ -331,37 +360,49 @@ export function ToolPart({
 
   const renderSaveViewButton = () => (
     <span className="relative inline-flex items-center">
-      {canSaveView && !isSaving && !hasUsedSaveViewButton && (
-        <span className="absolute right-0 top-full z-50 mt-2 whitespace-nowrap rounded-xl border border-primary/70 bg-primary px-2.5 py-1 text-[10px] font-semibold normal-case text-primary-foreground shadow-md shadow-primary/30 ring-1 ring-primary/40">
-          <span className="absolute -top-1 right-2 z-50 h-2.5 w-2.5 rotate-45 border-l border-t border-primary/70 bg-primary" />
-          <span className="relative z-10">Like how it looks? Save it.</span>
-        </span>
-      )}
-      <button
-        type="button"
-        aria-label={saveViewAriaLabel}
-        disabled={!canSaveView || isSaving}
-        onClick={handleSaveViewClick}
-        className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors ${
-          canSaveView && !isSaving
-            ? "border border-border/50 bg-background text-foreground shadow-sm hover:bg-background/80 cursor-pointer"
-            : "border border-border/30 text-muted-foreground/30 cursor-not-allowed"
-        }`}
-      >
-        {isSaving ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Layers className="h-3.5 w-3.5" />
+      {canSaveView &&
+        !isSaving &&
+        !hasUsedSaveViewButton &&
+        displayMode !== "fullscreen" && (
+          <span className="absolute right-0 top-full z-50 mt-2 whitespace-nowrap rounded-xl border border-primary/70 bg-primary px-2.5 py-1 text-[10px] font-semibold normal-case text-primary-foreground shadow-md shadow-primary/30 ring-1 ring-primary/40">
+            <span className="absolute -top-1 right-2 z-50 h-2.5 w-2.5 rotate-45 border-l border-t border-primary/70 bg-primary" />
+            <span className="relative z-10">Like how it looks? Save it.</span>
+          </span>
         )}
-        <span className="text-[9px] leading-none">Save View</span>
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={saveViewAriaLabel}
+            disabled={!canSaveView || isSaving}
+            onClick={handleSaveViewClick}
+            className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors ${
+              canSaveView && !isSaving
+                ? "border border-border/50 bg-background text-foreground shadow-sm hover:bg-background/80 cursor-pointer"
+                : "border border-border/30 text-muted-foreground/30 cursor-not-allowed"
+            }`}
+          >
+            {isSaving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Layers className="h-3.5 w-3.5" />
+            )}
+            <span className="text-[9px] leading-none hidden @[33rem]:inline">
+              Save View
+            </span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="font-medium">Save View</p>
+        </TooltipContent>
+      </Tooltip>
     </span>
   );
 
   return (
     <div
       className={cn(
-        "rounded-lg border text-xs",
+        "@container rounded-lg border text-xs",
         needsApproval && approvalVisualState === "pending"
           ? "border-pending/40 bg-pending/5"
           : needsApproval && approvalVisualState === "approved"
@@ -373,8 +414,16 @@ export function ToolPart({
     >
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
-        onClick={() => setUserExpanded((prev) => !prev)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer overflow-hidden"
+        onClick={() => {
+          setUserExpanded((prev) => {
+            const willExpand = !prev;
+            if (willExpand && activeDebugTab === null) {
+              setActiveDebugTab("data");
+            }
+            return willExpand;
+          });
+        }}
         aria-expanded={isExpanded}
       >
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
@@ -408,7 +457,7 @@ export function ToolPart({
             </span>
           )}
         </span>
-        <span className="inline-flex items-center gap-1.5 text-muted-foreground shrink-0">
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
           {showDisplayModeControls && (
             <span
               className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"

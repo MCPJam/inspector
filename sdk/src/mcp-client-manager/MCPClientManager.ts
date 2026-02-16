@@ -634,6 +634,12 @@ export class MCPClientManager {
     await this.ensureConnected(serverId);
     const client = this.getClientOrThrow(serverId);
 
+    // Skip if server doesn't advertise prompts capability
+    const capabilities = client.getServerCapabilities();
+    if (capabilities && !capabilities.prompts) {
+      return { prompts: [] } as Awaited<ReturnType<Client["listPrompts"]>>;
+    }
+
     try {
       return await client.listPrompts(
         params,

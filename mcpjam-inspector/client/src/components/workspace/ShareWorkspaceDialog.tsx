@@ -60,7 +60,7 @@ export function ShareWorkspaceDialog({
   const { profilePictureUrl } = useProfilePicture();
   const { createWorkspace, addMember, removeMember } = useWorkspaceMutations();
 
-  const { activeMembers, pendingMembers, isLoading } = useWorkspaceMembers({
+  const { activeMembers, pendingMembers } = useWorkspaceMembers({
     isAuthenticated,
     workspaceId: sharedWorkspaceId || null,
   });
@@ -73,9 +73,7 @@ export function ShareWorkspaceDialog({
     : currentMember
       ? resolveWorkspaceRole(currentMember)
       : null;
-  const canInviteMembers = !sharedWorkspaceId
-    ? true
-    : currentRole === "owner" || currentRole === "admin";
+  const canInviteMembers = !sharedWorkspaceId ? true : !!currentRole;
 
   const canRemoveActiveMember = (member: WorkspaceMember): boolean => {
     if (!currentRole) return false;
@@ -230,11 +228,6 @@ export function ShareWorkspaceDialog({
                 </Button>
               </div>
             </div>
-          )}
-          {!canInviteMembers && sharedWorkspaceId && !isLoading && (
-            <p className="text-xs text-muted-foreground">
-              Only workspace owners and admins can invite members.
-            </p>
           )}
 
           <div className="space-y-2">
