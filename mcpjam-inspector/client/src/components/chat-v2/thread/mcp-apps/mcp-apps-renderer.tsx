@@ -1376,7 +1376,7 @@ export function MCPAppsRenderer({
         return "absolute inset-0 z-10 w-full h-full bg-background flex flex-col";
       }
       return [
-        "fixed top-4 left-1/2 -translate-x-1/2 z-40 w-full min-w-[300px] max-w-[min(90vw,1200px)] space-y-2",
+        "fixed top-4 left-1/2 -translate-x-1/2 z-40 w-full min-w-[300px] max-w-[min(90vw,1200px)] max-h-[50vh] flex flex-col space-y-2",
         "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
         "shadow-xl border border-border/60 rounded-xl p-3",
       ].join(" ");
@@ -1390,11 +1390,12 @@ export function MCPAppsRenderer({
   const showWidget = isReady && canRenderStreamingInput;
 
   const iframeStyle: CSSProperties = {
-    height: isFullscreen ? "100%" : "400px",
+    height: isFullscreen || isPip ? "100%" : "400px",
     width: "100%",
     maxWidth: "100%",
     // Width transition was previously included here ("width 300ms ease-out").
     transition: isFullscreen ? undefined : "height 300ms ease-out",
+    ...(isPip ? { flex: 1, minHeight: 0 } : {}),
     // Hide iframe visually while not ready to display
     ...(!showWidget
       ? { visibility: "hidden" as const, position: "absolute" as const }
