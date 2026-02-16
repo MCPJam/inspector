@@ -79,8 +79,6 @@ interface ChatInputProps {
   onChangeMcpPromptResults: (mcpPromptResults: MCPPromptResult[]) => void;
   skillResults: SkillResult[];
   onChangeSkillResults: (skillResults: SkillResult[]) => void;
-  /** When true, shows icons only for a more compact layout */
-  compact?: boolean;
   /** File attachments for the message */
   fileAttachments?: FileAttachment[];
   /** Callback when file attachments change */
@@ -123,7 +121,6 @@ export function ChatInput({
   onChangeMcpPromptResults,
   skillResults,
   onChangeSkillResults,
-  compact = false,
   fileAttachments = [],
   onChangeFileAttachments,
   xrayMode = false,
@@ -392,7 +389,7 @@ export function ChatInput({
           autoFocus={!disabled}
         />
 
-        <div className="flex items-center justify-between gap-2 px-2 flex-wrap min-w-0">
+        <div className="@container/toolbar flex items-center justify-between gap-2 px-2 min-w-0">
           <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
             {onChangeFileAttachments && (
               <Tooltip>
@@ -417,7 +414,6 @@ export function ChatInput({
               onModelChange={onModelChange}
               isLoading={isLoading}
               hasMessages={hasMessages}
-              compact={compact}
             />
             <SystemPromptSelector
               systemPrompt={
@@ -431,7 +427,6 @@ export function ChatInput({
               hasMessages={hasMessages}
               onResetChat={onResetChat}
               currentModel={currentModel}
-              compact={compact}
             />
             {onRequireToolApprovalChange && (
               <Tooltip>
@@ -439,38 +434,33 @@ export function ChatInput({
                   <Button
                     type="button"
                     variant={requireToolApproval ? "secondary" : "ghost"}
-                    size={compact ? "icon" : "sm"}
+                    size="sm"
                     onClick={() =>
                       onRequireToolApprovalChange(!requireToolApproval)
                     }
                     className={cn(
-                      compact
-                        ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
-                        : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer",
+                      "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer",
+                      "@max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
                       requireToolApproval &&
                         "bg-success/10 hover:bg-success/15",
                     )}
                   >
                     <ShieldCheck
                       className={cn(
-                        compact ? "h-4 w-4" : "h-2 w-2 mr-1 flex-shrink-0",
+                        "h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0",
                         requireToolApproval && "text-success",
                       )}
                     />
-                    {!compact && (
-                      <span className="text-[10px] font-medium">
-                        Tool Approval
-                      </span>
-                    )}
+                    <span className="text-[10px] font-medium @max-2xl/toolbar:hidden">
+                      Tool Approval
+                    </span>
                   </Button>
                 </TooltipTrigger>
-                {compact && (
-                  <TooltipContent>
-                    {requireToolApproval
-                      ? "Turn off tool approval"
-                      : "Require approval before tools run"}
-                  </TooltipContent>
-                )}
+                <TooltipContent>
+                  {requireToolApproval
+                    ? "Turn off tool approval"
+                    : "Require approval before tools run"}
+                </TooltipContent>
               </Tooltip>
             )}
             {onXrayModeChange && (
@@ -479,36 +469,29 @@ export function ChatInput({
                   <Button
                     type="button"
                     variant={xrayMode ? "secondary" : "ghost"}
-                    size={compact ? "icon" : "sm"}
+                    size="sm"
                     onClick={() => {
                       if (!xrayMode) {
                         posthog.capture("xray_opened");
                       }
                       onXrayModeChange(!xrayMode);
                     }}
-                    className={
-                      compact
-                        ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
-                        : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer"
-                    }
-                  >
-                    <Glasses
-                      className={
-                        compact ? "h-4 w-4" : "h-2 w-2 mr-1 flex-shrink-0"
-                      }
-                    />
-                    {!compact && (
-                      <span className="text-[10px] font-medium">X-Ray</span>
+                    className={cn(
+                      "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer",
+                      "@max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
                     )}
+                  >
+                    <Glasses className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0" />
+                    <span className="text-[10px] font-medium @max-2xl/toolbar:hidden">
+                      X-Ray
+                    </span>
                   </Button>
                 </TooltipTrigger>
-                {compact && (
-                  <TooltipContent>
-                    {xrayMode
-                      ? "Hide X-Ray view"
-                      : "See what is sent to the model"}
-                  </TooltipContent>
-                )}
+                <TooltipContent>
+                  {xrayMode
+                    ? "Hide X-Ray view"
+                    : "See what is sent to the model"}
+                </TooltipContent>
               </Tooltip>
             )}
           </div>

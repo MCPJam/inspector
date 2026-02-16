@@ -1,7 +1,6 @@
 import { defineConfig } from "tsup";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { copyFileSync, mkdirSync } from "node:fs";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(serverDir, "..");
@@ -53,24 +52,5 @@ export default defineConfig({
     options.alias = {
       "@mcpjam/sdk": join(rootDir, "../sdk/dist/index.mjs"),
     };
-  },
-  async onSuccess() {
-    // Copy static assets to dist folder
-    // Since the bundle is at dist/server/index.js, __dirname resolves to dist/server/
-    // so the HTML files need to live alongside it
-    const distDir = join(rootDir, "dist/server");
-    mkdirSync(distDir, { recursive: true });
-
-    const assets = [
-      { src: "routes/mcp/sandbox-proxy.html", dest: "sandbox-proxy.html" },
-      {
-        src: "routes/apps/chatgpt-sandbox-proxy.html",
-        dest: "chatgpt-sandbox-proxy.html",
-      },
-    ];
-
-    for (const asset of assets) {
-      copyFileSync(join(serverDir, asset.src), join(distDir, asset.dest));
-    }
   },
 });

@@ -6,6 +6,7 @@ import {
   isMCPJamProvidedModel,
   Model,
 } from "@/shared/types";
+import type { CustomProvider } from "@mcpjam/sdk";
 
 export function parseModelAliases(
   aliasString: string,
@@ -20,21 +21,19 @@ export function parseModelAliases(
 
 export function buildAvailableModels(params: {
   hasToken: (provider: keyof ProviderTokens) => boolean;
-  getLiteLLMBaseUrl: () => string;
-  getLiteLLMModelAlias: () => string;
   getOpenRouterSelectedModels: () => string[];
   isOllamaRunning: boolean;
   ollamaModels: ModelDefinition[];
   getAzureBaseUrl: () => string;
+  customProviders: CustomProvider[];
 }): ModelDefinition[] {
   const {
     hasToken,
     getAzureBaseUrl,
-    getLiteLLMBaseUrl,
-    getLiteLLMModelAlias,
     getOpenRouterSelectedModels,
     isOllamaRunning,
     ollamaModels,
+    customProviders,
   } = params;
 
   const providerHasKey: Record<string, boolean> = {
@@ -46,7 +45,6 @@ export function buildAvailableModels(params: {
     xai: hasToken("xai"),
     azure: Boolean(getAzureBaseUrl()),
     ollama: isOllamaRunning,
-    litellm: Boolean(getLiteLLMBaseUrl() && getLiteLLMModelAlias()),
     openrouter: Boolean(
       hasToken("openrouter") && getOpenRouterSelectedModels().length > 0,
     ),
@@ -58,10 +56,6 @@ export function buildAvailableModels(params: {
     return providerHasKey[m.provider];
   });
 
-  const litellmModels: ModelDefinition[] = providerHasKey.litellm
-    ? parseModelAliases(getLiteLLMModelAlias(), "litellm")
-    : [];
-
   const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
     ? getOpenRouterSelectedModels().map((id) => ({
         id,
@@ -70,11 +64,20 @@ export function buildAvailableModels(params: {
       }))
     : [];
 
+  const customModels: ModelDefinition[] = customProviders.flatMap((cp) =>
+    cp.modelIds.map((modelId) => ({
+      id: `custom:${cp.name}:${modelId}`,
+      name: modelId,
+      provider: "custom" as const,
+      customProviderName: cp.name,
+    })),
+  );
+
   let models: ModelDefinition[] = cloud;
   if (isOllamaRunning && ollamaModels.length > 0)
     models = models.concat(ollamaModels);
-  if (litellmModels.length > 0) models = models.concat(litellmModels);
   if (openRouterModels.length > 0) models = models.concat(openRouterModels);
+  if (customModels.length > 0) models = models.concat(customModels);
   return models;
 }
 

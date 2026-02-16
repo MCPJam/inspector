@@ -41,7 +41,7 @@ The solution: **two nested iframes with different origins**.
 │  │  │                                                             │  │  │
 │  └──│─────────────────────────────────────────────────────────────│──┘  │
 │     │                                                             │     │
-│     │  <iframe src="http://127.0.0.1:5173/api/mcp/sandbox-proxy"> │     │
+│     │  <iframe src="http://127.0.0.1:5173/api/apps/mcp-apps/sandbox-proxy"> │     │
 │     │  sandbox="allow-scripts allow-same-origin allow-forms..."   │     │
 │     │  allow="camera *; microphone *; ..."                        │     │
 │     │                                                             │     │
@@ -106,7 +106,7 @@ const [sandboxProxyUrl] = useState(() => {
   }
 
   const portSuffix = currentPort ? `:${currentPort}` : "";
-  return `${protocol}//${sandboxHost}${portSuffix}/api/mcp/sandbox-proxy?v=${Date.now()}`;
+  return `${protocol}//${sandboxHost}${portSuffix}/api/apps/mcp-apps/sandbox-proxy?v=${Date.now()}`;
 });
 ```
 
@@ -646,9 +646,9 @@ server.registerResource({
 | File                    | Location                                                     | Purpose                                    |
 | ----------------------- | ------------------------------------------------------------ | ------------------------------------------ |
 | `SandboxedIframe`       | `client/src/components/ui/sandboxed-iframe.tsx`              | React component, outer iframe management   |
-| `sandbox-proxy.html`    | `server/routes/mcp/sandbox-proxy.html`                       | Proxy page, CSP injection, message relay   |
+| `sandbox-proxy.html`    | `server/routes/apps/mcp-apps/sandbox-proxy.html`             | Proxy page, CSP injection, message relay   |
 | `MCPAppsRenderer`       | `client/src/components/chat-v2/thread/mcp-apps-renderer.tsx` | Orchestrates rendering, AppBridge setup    |
-| `apps.ts`               | `server/routes/mcp/apps.ts`                                  | Server routes for widget storage/retrieval |
+| `apps.ts`               | `server/routes/apps/mcp-apps.ts`                             | Server routes for widget storage/retrieval |
 | `CSPDebugPanel`         | `client/src/components/chat-v2/thread/csp-debug-panel.tsx`   | CSP violation debugging UI                 |
 | `widget-debug-store.ts` | `client/src/stores/widget-debug-store.ts`                    | Stores CSP violations and debug info       |
 
@@ -676,7 +676,7 @@ server {
 server {
     server_name sandbox.example.com;
 
-    location /api/mcp/sandbox-proxy {
+    location /api/apps/mcp-apps/sandbox-proxy {
         # Serve sandbox-proxy.html
         add_header Content-Security-Policy "...permissive for outer frame...";
     }
