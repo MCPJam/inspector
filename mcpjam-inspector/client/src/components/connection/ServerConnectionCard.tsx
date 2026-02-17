@@ -51,6 +51,22 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
+
+const HOSTED_HTTPS_REQUIRED_HINT =
+  "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
+
+function isHostedInsecureHttpServer(server: ServerWithName): boolean {
+  if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
+    return false;
+  }
+
+  try {
+    return new URL(server.config.url.toString()).protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
@@ -125,6 +141,14 @@ export function ServerConnectionCard({
   const hasTunnel = Boolean(tunnelUrl);
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
+  const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
+  const isReconnectMenuDisabled =
+    isHostedHttpReconnectBlocked ||
+    isReconnecting ||
+    server.connectionStatus === "connecting" ||
+    server.connectionStatus === "oauth-flow";
+  const isSwitchReconnectDisabled =
+    isHostedHttpReconnectBlocked && server.connectionStatus !== "connected";
 
   // Load tools when server is connected
   useEffect(() => {
@@ -315,6 +339,14 @@ export function ServerConnectionCard({
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {isHostedHttpReconnectBlocked && (
+                  <span
+                    className="inline-flex items-center rounded-full border border-amber-300/60 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-800 dark:text-amber-300"
+                    title={HOSTED_HTTPS_REQUIRED_HINT}
+                  >
+                    HTTP blocked in hosted mode
+                  </span>
+                )}
                 {hasError && (
                   <button
                     onClick={() => setIsErrorExpanded(true)}
@@ -346,12 +378,21 @@ export function ServerConnectionCard({
 
                 <Switch
                   checked={server.connectionStatus === "connected"}
+                  disabled={isSwitchReconnectDisabled}
+                  title={
+                    isHostedHttpReconnectBlocked
+                      ? HOSTED_HTTPS_REQUIRED_HINT
+                      : undefined
+                  }
                   onCheckedChange={(checked) => {
                     posthog.capture("connection_switch_toggled", {
                       location: "server_connection_card",
                       platform: detectPlatform(),
                       environment: detectEnvironment(),
                     });
+                    if (checked && isHostedHttpReconnectBlocked) {
+                      return;
+                    }
                     if (!checked) {
                       onDisconnect(server.name);
                     } else {
@@ -374,6 +415,9 @@ export function ServerConnectionCard({
                   <DropdownMenuContent align="end" className="w-44">
                     <DropdownMenuItem
                       onClick={() => {
+                        if (isHostedHttpReconnectBlocked) {
+                          return;
+                        }
                         posthog.capture("reconnect_server_clicked", {
                           location: "server_connection_card",
                           platform: detectPlatform(),
@@ -388,10 +432,11 @@ export function ServerConnectionCard({
                             : undefined,
                         );
                       }}
-                      disabled={
-                        isReconnecting ||
-                        server.connectionStatus === "connecting" ||
-                        server.connectionStatus === "oauth-flow"
+                      disabled={isReconnectMenuDisabled}
+                      title={
+                        isHostedHttpReconnectBlocked
+                          ? HOSTED_HTTPS_REQUIRED_HINT
+                          : undefined
                       }
                       className="text-xs cursor-pointer"
                     >

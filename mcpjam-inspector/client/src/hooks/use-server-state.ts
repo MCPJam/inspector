@@ -26,6 +26,7 @@ import {
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
+import { HOSTED_MODE } from "@/lib/config";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
@@ -177,10 +178,14 @@ export function useServerState({
     if (!formData.url || formData.url.trim() === "") {
       return "URL is required for HTTP connections";
     }
+    let parsedUrl: URL;
     try {
-      new URL(formData.url);
+      parsedUrl = new URL(formData.url);
     } catch (err) {
       return `Invalid URL format: ${formData.url} ${err}`;
+    }
+    if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
+      return "Hosted mode requires HTTPS server URLs";
     }
     return null;
   };

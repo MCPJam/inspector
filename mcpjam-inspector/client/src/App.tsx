@@ -1,6 +1,7 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -48,6 +49,19 @@ import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { HOSTED_MODE } from "./lib/config";
+import {
+  isHostedHashTabAllowed,
+  normalizeHostedHashTab,
+} from "./lib/hosted-tab-policy";
+
+const getNormalizedHashParts = (hashValue: string): string[] => {
+  const rawHash = hashValue.replace(/^#/, "");
+  const trimmedHash = rawHash.startsWith("/") ? rawHash.slice(1) : rawHash;
+  const hashParts = (trimmedHash || "servers").split("/");
+  hashParts[0] = normalizeHostedHashTab(hashParts[0] || "servers");
+  return hashParts;
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -189,27 +203,40 @@ export default function App() {
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
     const applyHash = () => {
-      const hash = (window.location.hash || "#servers").replace("#", "");
+      const currentHash = window.location.hash || "#servers";
+      const normalizedParts = getNormalizedHashParts(currentHash);
+      const normalizedHash = normalizedParts.join("/");
+      const currentHashWithoutPrefix = currentHash
+        .replace(/^#/, "")
+        .replace(/^\/+/, "");
 
-      // Remove leading slash before splitting to avoid empty first element
-      const trimmedHash = hash.startsWith("/") ? hash.slice(1) : hash;
-      const hashParts = trimmedHash.split("/");
+      if ((currentHashWithoutPrefix || "servers") !== normalizedHash) {
+        window.location.hash = normalizedHash;
+        return;
+      }
 
-      // Extract the top-level tab (e.g., "evals/suite/123" -> "evals")
-      const topLevelTab = hashParts[0];
+      const normalizedTab = normalizedParts[0] || "servers";
+
+      if (HOSTED_MODE && !isHostedHashTabAllowed(normalizedTab)) {
+        toast.error(`${normalizedTab} is not available in hosted mode.`);
+        setActiveOrganizationId(undefined);
+        setActiveTab("servers");
+        setChatHasMessages(false);
+        if (window.location.hash !== "#servers") {
+          window.location.hash = "servers";
+        }
+        return;
+      }
 
       // Handle organizations/:orgId route
-      if (hashParts[0] === "organizations" && hashParts[1]) {
-        setActiveOrganizationId(hashParts[1]);
+      if (normalizedTab === "organizations" && normalizedParts[1]) {
+        setActiveOrganizationId(normalizedParts[1]);
       } else {
         setActiveOrganizationId(undefined);
       }
 
-      const normalizedTab =
-        topLevelTab === "registry" ? "servers" : topLevelTab;
-
       setActiveTab(normalizedTab);
-      if (normalizedTab === "chat" || normalizedTab === "chat-v2") {
+      if (normalizedTab === "chat-v2") {
         setSelectedMultipleServersToAllServers();
       }
       if (normalizedTab !== "chat-v2") {
@@ -222,14 +249,33 @@ export default function App() {
   }, [setSelectedMultipleServersToAllServers]);
 
   const handleNavigate = (section: string) => {
-    if (section === "chat" || section === "chat-v2") {
+    const normalizedParts = getNormalizedHashParts(section);
+    const normalizedSection = normalizedParts.join("/");
+    const normalizedTab = normalizedParts[0] || "servers";
+
+    if (HOSTED_MODE && !isHostedHashTabAllowed(normalizedTab)) {
+      toast.error(`${normalizedTab} is not available in hosted mode.`);
+      setActiveTab("servers");
+      setActiveOrganizationId(undefined);
+      setChatHasMessages(false);
+      window.location.hash = "servers";
+      return;
+    }
+
+    if (normalizedTab === "organizations" && normalizedParts[1]) {
+      setActiveOrganizationId(normalizedParts[1]);
+    } else {
+      setActiveOrganizationId(undefined);
+    }
+
+    if (normalizedTab === "chat-v2") {
       setSelectedMultipleServersToAllServers();
     }
-    if (section !== "chat-v2") {
+    if (normalizedTab !== "chat-v2") {
       setChatHasMessages(false);
     }
-    window.location.hash = section;
-    setActiveTab(section);
+    window.location.hash = normalizedSection;
+    setActiveTab(normalizedTab);
   };
 
   if (isDebugCallback) {
