@@ -1,5 +1,12 @@
 import type { MCPPrompt } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+import {
+  getHostedPrompt,
+  listHostedPrompts,
+  listHostedPromptsMulti,
+} from "@/lib/apis/web/prompts-api";
+import { resolveHostedServerId } from "@/lib/apis/web/context";
 
 export interface PromptContentResponse {
   content: any;
@@ -11,6 +18,11 @@ export interface BatchPromptsResponse {
 }
 
 export async function listPrompts(serverId: string): Promise<MCPPrompt[]> {
+  if (HOSTED_MODE) {
+    const body = await listHostedPrompts({ serverNameOrId: serverId });
+    return Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : [];
+  }
+
   const res = await authFetch("/api/mcp/prompts/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -35,6 +47,14 @@ export async function getPrompt(
   name: string,
   args?: Record<string, string>,
 ): Promise<PromptContentResponse> {
+  if (HOSTED_MODE) {
+    return (await getHostedPrompt({
+      serverNameOrId: serverId,
+      promptName: name,
+      arguments: args,
+    })) as PromptContentResponse;
+  }
+
   const res = await authFetch("/api/mcp/prompts/get", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -57,6 +77,32 @@ export async function getPrompt(
 export async function listPromptsForServers(
   serverIds: string[],
 ): Promise<BatchPromptsResponse> {
+  if (HOSTED_MODE) {
+    const body = await listHostedPromptsMulti({ serverNamesOrIds: serverIds });
+    const remappedPrompts: Record<string, MCPPrompt[]> = {};
+    const remappedErrors: Record<string, string> = {};
+    const reverseMap = Object.fromEntries(
+      serverIds.map((serverName) => [resolveHostedServerId(serverName), serverName]),
+    );
+
+    for (const [serverId, prompts] of Object.entries(
+      (body?.prompts ?? {}) as Record<string, MCPPrompt[]>,
+    )) {
+      remappedPrompts[reverseMap[serverId] ?? serverId] = prompts;
+    }
+
+    for (const [serverId, message] of Object.entries(
+      (body?.errors ?? {}) as Record<string, string>,
+    )) {
+      remappedErrors[reverseMap[serverId] ?? serverId] = message;
+    }
+
+    return {
+      prompts: remappedPrompts,
+      errors: Object.keys(remappedErrors).length > 0 ? remappedErrors : undefined,
+    };
+  }
+
   const res = await authFetch("/api/mcp/prompts/list-multi", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

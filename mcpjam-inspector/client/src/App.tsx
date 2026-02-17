@@ -1,5 +1,6 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -46,6 +47,7 @@ import type { ActiveServerSelectorProps } from "./components/ActiveServerSelecto
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
+import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -54,6 +56,7 @@ export default function App() {
   >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const posthog = usePostHog();
+  const { getAccessToken } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const convexUser = useQuery(
     "users:getCurrentUser" as any,
@@ -157,6 +160,18 @@ export default function App() {
   const { serversById } = useWorkspaceServers({
     isAuthenticated,
     workspaceId: convexWorkspaceId,
+  });
+  const hostedServerIdsByName = useMemo(
+    () =>
+      Object.fromEntries(
+        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
+      ),
+    [serversById],
+  );
+  useHostedApiContext({
+    workspaceId: convexWorkspaceId,
+    serverIdsByName: hostedServerIdsByName,
+    getAccessToken,
   });
 
   // Compute the set of server names that have saved views

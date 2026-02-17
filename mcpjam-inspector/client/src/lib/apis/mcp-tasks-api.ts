@@ -1,5 +1,6 @@
 import type { MCPTask, MCPListTasksResult } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 
 // Re-export SDK types for convenience
 export type Task = MCPTask;
@@ -9,6 +10,10 @@ export async function listTasks(
   serverId: string,
   cursor?: string,
 ): Promise<ListTasksResult> {
+  if (HOSTED_MODE) {
+    throw new Error("Tasks are not supported in hosted mode");
+  }
+
   const res = await authFetch("/api/mcp/tasks/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -27,6 +32,10 @@ export async function listTasks(
 }
 
 export async function getTask(serverId: string, taskId: string): Promise<Task> {
+  if (HOSTED_MODE) {
+    throw new Error("Tasks are not supported in hosted mode");
+  }
+
   const res = await authFetch("/api/mcp/tasks/get", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,6 +57,10 @@ export async function getTaskResult(
   serverId: string,
   taskId: string,
 ): Promise<unknown> {
+  if (HOSTED_MODE) {
+    throw new Error("Tasks are not supported in hosted mode");
+  }
+
   const res = await authFetch("/api/mcp/tasks/result", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -72,6 +85,10 @@ export async function cancelTask(
   serverId: string,
   taskId: string,
 ): Promise<Task> {
+  if (HOSTED_MODE) {
+    throw new Error("Tasks are not supported in hosted mode");
+  }
+
   const res = await authFetch("/api/mcp/tasks/cancel", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -105,6 +122,15 @@ export interface TaskCapabilities {
 export async function getTaskCapabilities(
   serverId: string,
 ): Promise<TaskCapabilities> {
+  if (HOSTED_MODE) {
+    void serverId;
+    return {
+      supportsToolCalls: false,
+      supportsList: false,
+      supportsCancel: false,
+    };
+  }
+
   const res = await authFetch("/api/mcp/tasks/capabilities", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -138,6 +164,10 @@ export interface ProgressEvent {
 export async function getLatestProgress(
   serverId: string,
 ): Promise<ProgressEvent | null> {
+  if (HOSTED_MODE) {
+    throw new Error("Tasks are not supported in hosted mode");
+  }
+
   const res = await authFetch("/api/mcp/tasks/progress", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -159,6 +189,10 @@ export async function getLatestProgress(
 export async function getAllProgress(
   serverId: string,
 ): Promise<ProgressEvent[]> {
+  if (HOSTED_MODE) {
+    throw new Error("Tasks are not supported in hosted mode");
+  }
+
   const res = await authFetch("/api/mcp/tasks/progress/all", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -192,6 +226,13 @@ export async function respondToTaskElicitation(
   action: "accept" | "decline" | "cancel",
   content?: Record<string, unknown>,
 ): Promise<{ ok: boolean }> {
+  if (HOSTED_MODE) {
+    void requestId;
+    void action;
+    void content;
+    throw new Error("Elicitation is not supported in hosted mode");
+  }
+
   const res = await authFetch("/api/mcp/elicitation/respond", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -1,6 +1,8 @@
 import { MCPServerConfig } from "@mcpjam/sdk";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+import { validateHostedServer } from "@/lib/apis/web/servers-api";
 
 // Helper to add timeout to authFetch requests
 async function authFetchWithTimeout(
@@ -33,6 +35,11 @@ export async function testConnection(
   serverConfig: MCPServerConfig,
   serverId: string,
 ) {
+  if (HOSTED_MODE) {
+    void serverConfig;
+    return validateHostedServer(serverId);
+  }
+
   const res = await authFetchWithTimeout(
     "/api/mcp/connect",
     {
@@ -46,6 +53,11 @@ export async function testConnection(
 }
 
 export async function deleteServer(serverId: string) {
+  if (HOSTED_MODE) {
+    void serverId;
+    return { success: true };
+  }
+
   const res = await authFetch(
     `/api/mcp/servers/${encodeURIComponent(serverId)}`,
     {
@@ -56,6 +68,10 @@ export async function deleteServer(serverId: string) {
 }
 
 export async function listServers() {
+  if (HOSTED_MODE) {
+    return { success: true, servers: [] };
+  }
+
   const res = await authFetch("/api/mcp/servers");
   return res.json();
 }
@@ -64,6 +80,11 @@ export async function reconnectServer(
   serverId: string,
   serverConfig: MCPServerConfig,
 ) {
+  if (HOSTED_MODE) {
+    void serverConfig;
+    return validateHostedServer(serverId);
+  }
+
   const res = await authFetchWithTimeout(
     "/api/mcp/servers/reconnect",
     {
@@ -77,6 +98,11 @@ export async function reconnectServer(
 }
 
 export async function getInitializationInfo(serverId: string) {
+  if (HOSTED_MODE) {
+    void serverId;
+    return { success: true, initInfo: null };
+  }
+
   const res = await authFetch(
     `/api/mcp/servers/init-info/${encodeURIComponent(serverId)}`,
   );
@@ -87,6 +113,15 @@ export async function setServerLoggingLevel(
   serverId: string,
   level: LoggingLevel,
 ) {
+  if (HOSTED_MODE) {
+    void serverId;
+    void level;
+    return {
+      success: false,
+      error: "Server logging level is not supported in hosted mode",
+    };
+  }
+
   const res = await authFetch("/api/mcp/log-level", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

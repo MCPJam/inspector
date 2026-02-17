@@ -1,4 +1,9 @@
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+import {
+  listHostedResources,
+  readHostedResource,
+} from "@/lib/apis/web/resources-api";
 
 export type ListResourcesResult = {
   resources: Array<{
@@ -14,6 +19,17 @@ export async function listResources(
   serverId: string,
   cursor?: string,
 ): Promise<ListResourcesResult> {
+  if (HOSTED_MODE) {
+    const body = await listHostedResources({
+      serverNameOrId: serverId,
+      cursor,
+    });
+    return {
+      resources: body.resources || [],
+      nextCursor: body.nextCursor,
+    };
+  }
+
   const res = await authFetch("/api/mcp/resources/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -36,6 +52,10 @@ export async function listResources(
 }
 
 export async function readResource(serverId: string, uri: string) {
+  if (HOSTED_MODE) {
+    return readHostedResource({ serverNameOrId: serverId, uri });
+  }
+
   const response = await authFetch(`/api/mcp/resources/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

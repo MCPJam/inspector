@@ -3,11 +3,18 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 
 export async function countMCPToolsTokens(
   selectedServers: string[],
   modelId: string,
 ): Promise<Record<string, number>> {
+  if (HOSTED_MODE) {
+    void selectedServers;
+    void modelId;
+    return {};
+  }
+
   const res = await authFetch("/api/mcp/tokenizer/count-tools", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -38,6 +45,12 @@ export async function countTextTokens(
   text: string,
   modelId: string,
 ): Promise<number> {
+  if (HOSTED_MODE) {
+    void text;
+    void modelId;
+    return 0;
+  }
+
   const res = await authFetch("/api/mcp/tokenizer/count-text", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

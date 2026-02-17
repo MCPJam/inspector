@@ -12,6 +12,9 @@
  * - Add token to URLs for SSE/EventSource (which can't use headers)
  */
 
+import { HOSTED_MODE } from "@/lib/config";
+import { getHostedAuthorizationHeader } from "@/lib/apis/web/context";
+
 // Extend window type for the injected token
 declare global {
   interface Window {
@@ -96,6 +99,10 @@ export function hasSessionToken(): boolean {
  * @returns Headers object with X-MCP-Session-Auth header
  */
 export function getAuthHeaders(): HeadersInit {
+  if (HOSTED_MODE) {
+    return {};
+  }
+
   const token = getSessionToken();
   if (!token) {
     console.warn("[Auth] Session token not available");
@@ -112,6 +119,10 @@ export function getAuthHeaders(): HeadersInit {
  * @returns URL with token as query parameter
  */
 export function addTokenToUrl(url: string): string {
+  if (HOSTED_MODE) {
+    return url;
+  }
+
   const token = getSessionToken();
   if (!token) {
     console.warn("[Auth] Session token not available for URL");
@@ -147,16 +158,21 @@ export function addTokenToUrl(url: string): string {
  * @param init - Optional RequestInit configuration
  * @returns Promise<Response>
  */
-export function authFetch(
+export async function authFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const authHeaders = getAuthHeaders();
+  const sessionHeaders = getAuthHeaders();
+  const hostedAuthHeader = await getHostedAuthorizationHeader();
+  const hostedHeaders = hostedAuthHeader
+    ? ({ Authorization: hostedAuthHeader } as HeadersInit)
+    : {};
 
   const mergedInit: RequestInit = {
     ...init,
     headers: {
-      ...authHeaders,
+      ...sessionHeaders,
+      ...hostedHeaders,
       ...init?.headers,
     },
   };

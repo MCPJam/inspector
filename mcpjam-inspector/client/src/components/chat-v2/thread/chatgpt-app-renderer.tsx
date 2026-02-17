@@ -30,6 +30,8 @@ import { type DisplayMode } from "@/stores/ui-playground-store";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+import { buildHostedServerRequest } from "@/lib/apis/web/context";
 import {
   handleGetFileDownloadUrlMessage,
   handleUploadFileMessage,
@@ -266,6 +268,7 @@ function useWidgetFetch(
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   // Track if we should skip cached HTML (for live editing after initial load)
   const [skipCachedHtml, setSkipCachedHtml] = useState(false);
+  const hostedBlobUrlRef = useRef<string | null>(null);
   // Track serialized data to detect changes
   const prevDataRef = useRef<string | null>(null);
   // Track the tool call ID to detect view switches (more stable than URL)
@@ -308,6 +311,25 @@ function useWidgetFetch(
   toolResponseMetadataRef.current = toolResponseMetadata;
   const onCspConfigReceivedRef = useRef(onCspConfigReceived);
   onCspConfigReceivedRef.current = onCspConfigReceived;
+
+  useEffect(() => {
+    if (!HOSTED_MODE) return;
+    if (!hostedBlobUrlRef.current) return;
+    if (widgetUrl === hostedBlobUrlRef.current) return;
+
+    URL.revokeObjectURL(hostedBlobUrlRef.current);
+    hostedBlobUrlRef.current = null;
+  }, [widgetUrl]);
+
+  useEffect(
+    () => () => {
+      if (hostedBlobUrlRef.current) {
+        URL.revokeObjectURL(hostedBlobUrlRef.current);
+        hostedBlobUrlRef.current = null;
+      }
+    },
+    [],
+  );
 
   // Reset widget URL when CSP mode changes to trigger reload
   useEffect(() => {
@@ -376,7 +398,9 @@ function useWidgetFetch(
       widgetUrl &&
       ((canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
         (!canUseCachedHtml &&
-          widgetUrl.includes("/api/apps/chatgpt-apps/widget-content/")));
+          (HOSTED_MODE
+            ? widgetUrl.startsWith("blob:")
+            : widgetUrl.includes("/api/apps/chatgpt-apps/widget-content/"))));
 
     if (
       toolState !== "output-available" ||
@@ -427,6 +451,78 @@ function useWidgetFetch(
 
         // Host-controlled values per SDK spec
         const userLocation = null; // Coarse IP-based location
+
+        if (HOSTED_MODE) {
+          const hostedServerRequest = buildHostedServerRequest(serverId);
+          const hostedResponse = await authFetch(
+            "/api/web/apps/chatgpt-apps/widget-content",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                ...hostedServerRequest,
+                uri: outputTemplate,
+                toolInput: resolvedToolInputRef.current,
+                toolOutput: resolvedToolOutputRef.current,
+                toolResponseMetadata: toolResponseMetadataRef.current,
+                toolId: resolvedToolCallId,
+                toolName,
+                theme: themeMode,
+                locale,
+                deviceType,
+                userLocation,
+                cspMode,
+              }),
+            },
+          );
+          if (!hostedResponse.ok) {
+            const hostedError = (await hostedResponse
+              .json()
+              .catch(() => ({}))) as {
+              message?: string;
+              error?: string;
+            };
+            throw new Error(
+              hostedError.message ||
+                hostedError.error ||
+                `Failed to fetch hosted widget: ${hostedResponse.statusText}`,
+            );
+          }
+
+          const hostedData = (await hostedResponse.json()) as {
+            html: string;
+            csp?: WidgetCspData;
+            prefersBorder?: boolean;
+            closeWidget?: boolean;
+          };
+
+          if (hostedData.csp && onCspConfigReceivedRef.current) {
+            onCspConfigReceivedRef.current(hostedData.csp);
+          }
+          if (hostedData.closeWidget) {
+            setWidgetClosed(true);
+            setWidgetClosedReason("completed");
+            setIsStoringWidget(false);
+            return;
+          }
+          setPrefersBorder(hostedData.prefersBorder ?? true);
+
+          if (onWidgetHtmlCaptured) {
+            onWidgetHtmlCaptured(resolvedToolCallId, hostedData.html);
+          }
+
+          if (hostedBlobUrlRef.current) {
+            URL.revokeObjectURL(hostedBlobUrlRef.current);
+            hostedBlobUrlRef.current = null;
+          }
+
+          const blobUrl = URL.createObjectURL(
+            new Blob([hostedData.html], { type: "text/html" }),
+          );
+          hostedBlobUrlRef.current = blobUrl;
+          setWidgetUrl(blobUrl);
+          return;
+        }
 
         const storeResponse = await authFetch(
           "/api/apps/chatgpt-apps/widget/store",

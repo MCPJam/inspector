@@ -6,6 +6,8 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPTask, TaskOptions } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
@@ -51,6 +53,17 @@ export async function listTools({
   modelId?: string | undefined;
   cursor?: string | undefined;
 }): Promise<ListToolsResultWithMetadata> {
+  if (HOSTED_MODE) {
+    if (!serverId) {
+      throw new Error("serverId is required in hosted mode");
+    }
+    return (await listHostedTools({
+      serverNameOrId: serverId,
+      modelId,
+      cursor,
+    })) as ListToolsResultWithMetadata;
+  }
+
   const res = await authFetch("/api/mcp/tools/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -73,6 +86,20 @@ export async function executeToolApi(
   parameters: Record<string, unknown>,
   taskOptions?: TaskOptions,
 ): Promise<ToolExecutionResponse> {
+  if (HOSTED_MODE) {
+    try {
+      return (await executeHostedTool({
+        serverNameOrId: serverId,
+        toolName,
+        parameters,
+        taskOptions: taskOptions as Record<string, unknown> | undefined,
+      })) as ToolExecutionResponse;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { error: message };
+    }
+  }
+
   const res = await authFetch("/api/mcp/tools/execute", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -118,6 +145,12 @@ export async function respondToElicitationApi(
   requestId: string,
   response: ElicitResult,
 ): Promise<ToolExecutionResponse> {
+  if (HOSTED_MODE) {
+    return {
+      error: "Elicitation responses are not supported in hosted mode",
+    };
+  }
+
   const res = await authFetch("/api/mcp/tools/respond", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -14,6 +14,7 @@ import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
+import { HOSTED_MODE } from "./lib/config";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -111,10 +112,13 @@ if (isInIframe) {
     const root = createRoot(document.getElementById("root")!);
 
     try {
-      // Initialize session token BEFORE rendering
-      // This ensures all API calls have authentication
-      await initializeSessionToken();
-      console.log("[Auth] Session token initialized");
+      if (!HOSTED_MODE) {
+        // Initialize session token BEFORE rendering in local mode.
+        await initializeSessionToken();
+        console.log("[Auth] Session token initialized");
+      } else {
+        console.log("[Auth] Hosted mode active, skipping session token bootstrap");
+      }
     } catch (error) {
       console.error("[Auth] Failed to initialize session token:", error);
       // Show error UI instead of crashing

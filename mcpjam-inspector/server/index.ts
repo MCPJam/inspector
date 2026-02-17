@@ -4,6 +4,7 @@ import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -82,6 +83,7 @@ function logBox(content: string, title?: string) {
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
+import webRoutes from "./routes/web/index";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import {
@@ -89,7 +91,10 @@ import {
   SERVER_HOSTNAME,
   CORS_ORIGINS,
   HOSTED_MODE,
+  HOSTED_STRICT_SECURITY,
   ALLOWED_HOSTS,
+  WEB_RATE_LIMIT_ENABLED,
+  WEB_RATE_LIMIT_REQUESTS_PER_MINUTE,
 } from "./config";
 import "./types/hono"; // Type extensions
 
@@ -184,6 +189,22 @@ const app = new Hono().onError((err, c) => {
 
   return c.json({ error: "Internal server error" }, 500);
 });
+const webRateLimitBuckets = new Map<
+  string,
+  {
+    count: number;
+    resetAt: number;
+  }
+>();
+
+const strictModeResponse = (c: any, path: string) =>
+  c.json(
+    {
+      code: "FEATURE_NOT_SUPPORTED",
+      message: `${path} is disabled in hosted strict mode`,
+    },
+    410,
+  );
 
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const envFile =
@@ -239,7 +260,7 @@ app.use("*", async (c, next) => {
 });
 
 // ===== SECURITY MIDDLEWARE STACK =====
-// Order matters: headers -> origin validation -> session auth
+// Order matters: headers -> origin validation -> strict partition -> session auth
 
 // 1. Security headers (always applied)
 app.use("*", securityHeadersMiddleware);
@@ -247,7 +268,18 @@ app.use("*", securityHeadersMiddleware);
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
 
-// 3. Session authentication (blocks unauthorized API requests)
+// 3. Hosted strict mode partition blocks legacy API families.
+if (HOSTED_STRICT_SECURITY) {
+  app.use("/api/session-token", (c) =>
+    strictModeResponse(c, "/api/session-token"),
+  );
+  app.use("/api/mcp", (c) => strictModeResponse(c, "/api/mcp/*"));
+  app.use("/api/mcp/*", (c) => strictModeResponse(c, "/api/mcp/*"));
+  app.use("/api/apps", (c) => strictModeResponse(c, "/api/apps/*"));
+  app.use("/api/apps/*", (c) => strictModeResponse(c, "/api/apps/*"));
+}
+
+// 4. Session authentication (blocks unauthorized API requests)
 app.use("*", sessionAuthMiddleware);
 
 // ===== END SECURITY MIDDLEWARE =====
@@ -272,9 +304,62 @@ app.use(
   }),
 );
 
+app.use(
+  "/api/web/*",
+  bodyLimit({
+    maxSize: 1024 * 1024,
+    onError: (c) =>
+      c.json(
+        {
+          code: "VALIDATION_ERROR",
+          message: "Request body exceeds 1MB limit",
+        },
+        400,
+      ),
+  }),
+);
+
+if (WEB_RATE_LIMIT_ENABLED) {
+  app.use("/api/web/*", async (c, next) => {
+    const forwardedFor = c.req.header("x-forwarded-for");
+    const clientIp = forwardedFor?.split(",")[0]?.trim() || "unknown";
+    const bucketKey = `${clientIp}:${c.req.path}`;
+    const now = Date.now();
+    const windowMs = 60_000;
+    const existing = webRateLimitBuckets.get(bucketKey);
+
+    if (!existing || existing.resetAt <= now) {
+      webRateLimitBuckets.set(bucketKey, {
+        count: 1,
+        resetAt: now + windowMs,
+      });
+      await next();
+      return;
+    }
+
+    if (existing.count >= WEB_RATE_LIMIT_REQUESTS_PER_MINUTE) {
+      c.header("Retry-After", Math.ceil((existing.resetAt - now) / 1000).toString());
+      return c.json(
+        {
+          code: "RATE_LIMITED",
+          message: "Request rate limit exceeded",
+        },
+        429,
+      );
+    }
+
+    existing.count += 1;
+    webRateLimitBuckets.set(bucketKey, existing);
+    await next();
+  });
+}
+
 // API Routes
-app.route("/api/apps", appsRoutes);
-app.route("/api/mcp", mcpRoutes);
+if (!HOSTED_STRICT_SECURITY) {
+  app.route("/api/apps", appsRoutes);
+  app.route("/api/mcp", mcpRoutes);
+}
+app.route("/api/web", webRoutes);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
@@ -298,6 +383,10 @@ app.get("/health", (c) => {
 // Session token endpoint (for dev mode where HTML isn't served by this server)
 // Token is only served to localhost or allowed hosts (in hosted mode) to prevent leakage
 app.get("/api/session-token", (c) => {
+  if (HOSTED_STRICT_SECURITY) {
+    return strictModeResponse(c, "/api/session-token");
+  }
+
   const host = c.req.header("Host");
 
   if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {

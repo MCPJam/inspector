@@ -13,8 +13,7 @@
  * and potentially future OpenAI SDK consolidation.
  */
 
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import posthog from "posthog-js";
+import { HOSTED_MODE } from "@/lib/config";
 import {
   useRef,
   useState,
@@ -109,7 +108,10 @@ export const SandboxedIframe = forwardRef<
     }
 
     const portSuffix = currentPort ? `:${currentPort}` : "";
-    return `${protocol}//${sandboxHost}${portSuffix}/api/apps/mcp-apps/sandbox-proxy?v=${Date.now()}`;
+    const proxyPath = HOSTED_MODE
+      ? "/api/web/apps/mcp-apps/sandbox-proxy"
+      : "/api/apps/mcp-apps/sandbox-proxy";
+    return `${protocol}//${sandboxHost}${portSuffix}${proxyPath}?v=${Date.now()}`;
   });
 
   const sandboxProxyOrigin = useMemo(() => {

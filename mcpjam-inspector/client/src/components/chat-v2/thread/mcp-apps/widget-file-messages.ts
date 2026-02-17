@@ -1,5 +1,6 @@
 import { authFetch } from "@/lib/session-token";
 import { isValidUploadedFileId } from "../uploaded-file-id";
+import { HOSTED_MODE } from "@/lib/config";
 
 type UploadFileMessage = {
   type: "openai:uploadFile";
@@ -40,7 +41,10 @@ export type SendWidgetFileResponse = (
 function buildWidgetDownloadUrl(fileId: string): string {
   const loc = window.location;
   const widgetHost = loc.hostname === "localhost" ? "127.0.0.1" : "localhost";
-  return `${loc.protocol}//${widgetHost}:${loc.port}/api/apps/chatgpt-apps/file/${fileId}`;
+  const basePath = HOSTED_MODE
+    ? "/api/web/apps/chatgpt-apps/file"
+    : "/api/apps/chatgpt-apps/file";
+  return `${loc.protocol}//${widgetHost}:${loc.port}${basePath}/${fileId}`;
 }
 
 export async function handleUploadFileMessage(
@@ -48,6 +52,15 @@ export async function handleUploadFileMessage(
   sendResponse: SendWidgetFileResponse,
 ): Promise<void> {
   const uploadCallId = data.callId;
+  if (HOSTED_MODE) {
+    sendResponse({
+      type: "openai:uploadFile:response",
+      callId: uploadCallId,
+      error: "File upload is not supported in hosted mode",
+    });
+    return;
+  }
+
   try {
     const resp = await authFetch("/api/apps/chatgpt-apps/upload-file", {
       method: "POST",
@@ -92,6 +105,15 @@ export function handleGetFileDownloadUrlMessage(
   sendResponse: SendWidgetFileResponse,
 ): void {
   const dlCallId = data.callId;
+  if (HOSTED_MODE) {
+    sendResponse({
+      type: "openai:getFileDownloadUrl:response",
+      callId: dlCallId,
+      error: "File download is not supported in hosted mode",
+    });
+    return;
+  }
+
   const fileId = data.fileId;
   if (!isValidUploadedFileId(fileId)) {
     sendResponse({

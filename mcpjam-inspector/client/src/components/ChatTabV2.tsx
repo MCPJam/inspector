@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState, useEffect, useCallback } from "react";
 import { ArrowDown } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { useConvexAuth } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
@@ -23,7 +24,6 @@ import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mc
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import {
   type FileAttachment,
-  type FileUIPart,
   attachmentsToFileUIParts,
   revokeFileAttachmentUrls,
 } from "@/components/chat-v2/chat-input/attachments/file-utils";
@@ -38,6 +38,9 @@ import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
+import { useSharedAppState } from "@/state/app-state-context";
+import { useWorkspaceServers } from "@/hooks/useViews";
+import { HOSTED_MODE } from "@/lib/config";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -69,6 +72,8 @@ export function ChatTabV2({
   onHasMessagesChange,
 }: ChatTabProps) {
   const { signUp } = useAuth();
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const posthog = usePostHog();
@@ -112,6 +117,20 @@ export function ChatTabV2({
     [selectedServerNames, connectedOrConnectingServerConfigs],
   );
 
+  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
+  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const { serversByName } = useWorkspaceServers({
+    isAuthenticated: isConvexAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+  const hostedSelectedServerIds = useMemo(
+    () =>
+      selectedConnectedServerNames
+        .map((serverName) => serversByName.get(serverName))
+        .filter((serverId): serverId is string => !!serverId),
+    [selectedConnectedServerNames, serversByName],
+  );
+
   // Use shared chat session hook
   const {
     messages,
@@ -123,8 +142,6 @@ export function ChatTabV2({
     selectedModel,
     setSelectedModel,
     availableModels,
-    isMcpJamModel,
-    isAuthenticated,
     isAuthLoading,
     systemPrompt,
     setSystemPrompt,
@@ -146,6 +163,8 @@ export function ChatTabV2({
     addToolApprovalResponse,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
+    hostedWorkspaceId: convexWorkspaceId,
+    hostedSelectedServerIds,
     onReset: () => {
       setInput("");
       setWidgetStateQueue([]);
@@ -314,6 +333,10 @@ export function ChatTabV2({
 
   // Elicitation SSE listener
   useEffect(() => {
+    if (HOSTED_MODE) {
+      return;
+    }
+
     const es = new EventSource(addTokenToUrl("/api/mcp/elicitation/stream"));
     es.onmessage = (ev) => {
       try {
@@ -410,13 +433,13 @@ export function ChatTabV2({
       // Build messages from MCP prompts
       const promptMessages = buildMcpPromptMessages(mcpPromptResults);
       if (promptMessages.length > 0) {
-        setMessages((prev) => [...prev, ...promptMessages]);
+        setMessages((prev) => [...prev, ...(promptMessages as any[])]);
       }
 
       // Build messages from skills
       const skillMessages = buildSkillToolMessages(skillResults);
       if (skillMessages.length > 0) {
-        setMessages((prev) => [...prev, ...skillMessages]);
+        setMessages((prev) => [...prev, ...(skillMessages as any[])]);
       }
 
       // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
@@ -439,7 +462,7 @@ export function ChatTabV2({
       );
 
       if (contextMessages.length > 0) {
-        setMessages((prev) => [...prev, ...contextMessages]);
+        setMessages((prev) => [...prev, ...(contextMessages as any[])]);
       }
 
       // Convert file attachments to FileUIPart[] format for the AI SDK
