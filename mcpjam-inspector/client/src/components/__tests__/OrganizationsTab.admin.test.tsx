@@ -6,6 +6,7 @@ const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
 const mockUseOrganizationQueries = vi.fn();
 const mockUseOrganizationMembers = vi.fn();
+const mockUseOrganizationBilling = vi.fn();
 
 const mockUpdateOrganization = vi.fn();
 const mockDeleteOrganization = vi.fn();
@@ -98,6 +99,11 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("@/hooks/useOrganizationBilling", () => ({
+  useOrganizationBilling: (...args: unknown[]) =>
+    mockUseOrganizationBilling(...args),
+}));
+
 const organization = {
   _id: "org-1",
   name: "Acme Org",
@@ -169,6 +175,25 @@ describe("OrganizationsTab admin console", () => {
       pendingMembers: [],
       isLoading: false,
     }));
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        organizationId: "org-1",
+        organizationName: "Acme Org",
+        plan: "oss",
+        subscriptionStatus: null,
+        canManageBilling: true,
+        isOwner: true,
+        hasCustomer: false,
+        stripeCurrentPeriodEnd: null,
+        stripePriceId: null,
+      },
+      isLoadingBilling: false,
+      isStartingCheckout: false,
+      isOpeningPortal: false,
+      error: null,
+      startCheckout: vi.fn(),
+      openPortal: vi.fn(),
+    });
 
     mockUpdateOrganization.mockResolvedValue(undefined);
     mockDeleteOrganization.mockResolvedValue(undefined);
