@@ -65,16 +65,10 @@ export function ResultsPanel({
               </Badge>
             ))}
           {formattedResponseTime && (
-            <>
-              <h2 className="text-xs font-semibold text-foreground">Time</h2>
-              <Badge
-                variant="default"
-                className="bg-green-600 hover:bg-green-700"
-              >
-                <Clock3 className="h-3 w-3 mr-1" />
-                {formattedResponseTime}
-              </Badge>
-            </>
+            <span className="inline-flex items-center text-xs font-medium text-muted-foreground">
+              <Clock3 className="h-3 w-3 mr-1" />
+              {formattedResponseTime}
+            </span>
           )}
         </div>
       </div>
