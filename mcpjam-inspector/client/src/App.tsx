@@ -1,4 +1,4 @@
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -42,14 +42,10 @@ import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
-import { listTools } from "./lib/apis/mcp-tools-api";
-import {
-  isMCPApp,
-  isOpenAIApp,
-  isOpenAIAppAndMCPApp,
-} from "./lib/mcp-ui/mcp-apps-utils";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
+import { useOrganizationQueries } from "./hooks/useOrganizations";
+import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -57,11 +53,22 @@ export default function App() {
     string | undefined
   >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
-  const [openAiAppOrMcpAppsServers, setOpenAiAppOrMcpAppsServers] = useState<
-    Set<string>
-  >(new Set());
   const posthog = usePostHog();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const convexUser = useQuery(
+    "users:getCurrentUser" as any,
+    isAuthenticated ? ({} as any) : "skip",
+  );
+  const { sortedOrganizations, isLoading: isOrganizationsLoading } =
+    useOrganizationQueries({ isAuthenticated });
+
+  const shouldRequireOrganization =
+    isAuthenticated &&
+    !isAuthLoading &&
+    convexUser !== undefined &&
+    convexUser !== null &&
+    !isOrganizationsLoading &&
+    sortedOrganizations.length === 0;
 
   usePostHogIdentify();
 
@@ -164,54 +171,6 @@ export default function App() {
     return serverNames;
   }, [viewsByServer, serversById]);
 
-  // Create a stable key that only tracks fully "connected" servers (not "connecting")
-  // so the effect re-fires when servers finish connecting (e.g., after reconnect)
-  const connectedServerNamesKey = useMemo(
-    () =>
-      Object.entries(connectedOrConnectingServerConfigs)
-        .filter(([, server]) => server.connectionStatus === "connected")
-        .map(([name]) => name)
-        .sort()
-        .join(","),
-    [connectedOrConnectingServerConfigs],
-  );
-
-  // Check which connected servers have OpenAI apps tools
-  useEffect(() => {
-    const checkOpenAiAppOrMcpAppsServers = async () => {
-      const connectedServerNames = Object.entries(
-        connectedOrConnectingServerConfigs,
-      )
-        .filter(([, server]) => server.connectionStatus === "connected")
-        .map(([name]) => name);
-      const serversWithOpenAiAppOrMcpApps = new Set<string>();
-
-      await Promise.all(
-        connectedServerNames.map(async (serverName) => {
-          try {
-            const toolsData = await listTools({ serverId: serverName });
-            if (
-              isOpenAIApp(toolsData) ||
-              isMCPApp(toolsData) ||
-              isOpenAIAppAndMCPApp(toolsData)
-            ) {
-              serversWithOpenAiAppOrMcpApps.add(serverName);
-            }
-          } catch (error) {
-            console.debug(
-              `Failed to check OpenAI apps for server ${serverName}:`,
-              error,
-            );
-          }
-        }),
-      );
-
-      setOpenAiAppOrMcpAppsServers(serversWithOpenAiAppOrMcpApps);
-    };
-
-    checkOpenAiAppOrMcpAppsServers(); // eslint-disable-line react-hooks/exhaustive-deps
-  }, [connectedServerNamesKey]);
-
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
     const applyHash = () => {
@@ -310,8 +269,6 @@ export default function App() {
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers: activeTab === "oauth-flow",
-          showOnlyOpenAIAppsServers: activeTab === "app-builder",
-          openAiAppOrMcpAppsServers: openAiAppOrMcpAppsServers,
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
@@ -450,6 +407,13 @@ export default function App() {
     >
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
+        <CreateOrganizationDialog
+          open={shouldRequireOrganization}
+          onOpenChange={(open) => {
+            void open;
+          }}
+          required
+        />
         {appContent}
       </AppStateProvider>
     </PreferencesStoreProvider>

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import chatgpt from "./chatgpt";
+import chatgptApps from "./chatgpt-apps";
+import mcpApps from "./mcp-apps";
 
 const apps = new Hono();
 
@@ -11,6 +12,7 @@ apps.get("/health", (c) =>
   }),
 );
 
-apps.route("/chatgpt", chatgpt);
+apps.route("/chatgpt-apps", chatgptApps);
+apps.route("/mcp-apps", mcpApps);
 
 export default apps;

@@ -7,58 +7,66 @@ import React from "react";
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────
 // vi.hoisted runs before imports, letting us capture bridge instances.
-const { mockBridge, mockPostMessageTransport, triggerReady, stableStoreFns } =
-  vi.hoisted(() => {
-    const bridge = {
-      sendToolInput: vi.fn(),
-      sendToolInputPartial: vi.fn(),
-      sendToolResult: vi.fn(),
-      sendToolCancelled: vi.fn(),
-      setHostContext: vi.fn(),
-      teardownResource: vi.fn().mockResolvedValue({}),
-      close: vi.fn().mockResolvedValue(undefined),
-      connect: vi.fn().mockResolvedValue(undefined),
-      getAppCapabilities: vi.fn().mockReturnValue(undefined),
-      // These callbacks get set by registerBridgeHandlers
-      oninitialized: null as (() => void) | null,
-      onmessage: null as any,
-      onopenlink: null as any,
-      oncalltool: null as any,
-      onreadresource: null as any,
-      onlistresources: null as any,
-      onlistresourcetemplates: null as any,
-      onlistprompts: null as any,
-      onloggingmessage: null as any,
-      onsizechange: null as any,
-      onrequestdisplaymode: null as any,
-      onupdatemodelcontext: null as any,
-    };
+const {
+  mockBridge,
+  mockPostMessageTransport,
+  triggerReady,
+  stableStoreFns,
+  mockSandboxPostMessage,
+  sandboxedIframePropsRef,
+} = vi.hoisted(() => {
+  const bridge = {
+    sendToolInput: vi.fn(),
+    sendToolInputPartial: vi.fn(),
+    sendToolResult: vi.fn(),
+    sendToolCancelled: vi.fn(),
+    setHostContext: vi.fn(),
+    teardownResource: vi.fn().mockResolvedValue({}),
+    close: vi.fn().mockResolvedValue(undefined),
+    connect: vi.fn().mockResolvedValue(undefined),
+    getAppCapabilities: vi.fn().mockReturnValue(undefined),
+    // These callbacks get set by registerBridgeHandlers
+    oninitialized: null as (() => void) | null,
+    onmessage: null as any,
+    onopenlink: null as any,
+    oncalltool: null as any,
+    onreadresource: null as any,
+    onlistresources: null as any,
+    onlistresourcetemplates: null as any,
+    onlistprompts: null as any,
+    onloggingmessage: null as any,
+    onsizechange: null as any,
+    onrequestdisplaymode: null as any,
+    onupdatemodelcontext: null as any,
+  };
 
-    // Stable function references for store selectors — prevents useEffect deps
-    // from changing on every render, which would teardown/reinitialize the bridge.
-    const stableFns = {
-      addLog: vi.fn(),
-      setWidgetDebugInfo: vi.fn(),
-      setWidgetGlobals: vi.fn(),
-      setWidgetCsp: vi.fn(),
-      addCspViolation: vi.fn(),
-      clearCspViolations: vi.fn(),
-      setWidgetModelContext: vi.fn(),
-      setWidgetHtml: vi.fn(),
-    };
+  // Stable function references for store selectors — prevents useEffect deps
+  // from changing on every render, which would teardown/reinitialize the bridge.
+  const stableFns = {
+    addLog: vi.fn(),
+    setWidgetDebugInfo: vi.fn(),
+    setWidgetGlobals: vi.fn(),
+    setWidgetCsp: vi.fn(),
+    addCspViolation: vi.fn(),
+    clearCspViolations: vi.fn(),
+    setWidgetModelContext: vi.fn(),
+    setWidgetHtml: vi.fn(),
+  };
 
-    return {
-      mockBridge: bridge,
-      mockPostMessageTransport: vi.fn(),
-      stableStoreFns: stableFns,
-      /** Simulate the widget completing initialization. */
-      triggerReady: () => {
-        if (!bridge.oninitialized)
-          throw new Error("oninitialized was never set on the bridge");
-        bridge.oninitialized();
-      },
-    };
-  });
+  return {
+    mockBridge: bridge,
+    mockPostMessageTransport: vi.fn(),
+    mockSandboxPostMessage: vi.fn(),
+    sandboxedIframePropsRef: { current: null as any },
+    stableStoreFns: stableFns,
+    /** Simulate the widget completing initialization. */
+    triggerReady: () => {
+      if (!bridge.oninitialized)
+        throw new Error("oninitialized was never set on the bridge");
+      bridge.oninitialized();
+    },
+  };
+});
 
 // ── Module mocks ───────────────────────────────────────────────────────────
 vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
@@ -69,11 +77,12 @@ vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
 // Mock SandboxedIframe using forwardRef so the parent's useRef gets populated
 vi.mock("@/components/ui/sandboxed-iframe", () => ({
   SandboxedIframe: React.forwardRef((props: any, ref: any) => {
+    sandboxedIframePropsRef.current = props;
     const iframeElementRef = React.useRef<HTMLElement | null>(null);
     if (!iframeElementRef.current) {
       const el = document.createElement("div");
       Object.defineProperty(el, "contentWindow", {
-        value: { postMessage: vi.fn() },
+        value: { postMessage: mockSandboxPostMessage },
       });
       Object.defineProperty(el, "offsetHeight", { value: 400 });
       (el as HTMLElement & { animate: ReturnType<typeof vi.fn> }).animate =
@@ -83,6 +92,9 @@ vi.mock("@/components/ui/sandboxed-iframe", () => ({
 
     React.useImperativeHandle(ref, () => ({
       getIframeElement: () => iframeElementRef.current,
+      postMessage: (message: unknown) => {
+        mockSandboxPostMessage(message);
+      },
     }));
     return (
       <div
@@ -179,6 +191,8 @@ describe("MCPAppsRenderer tool input streaming", () => {
     mockBridge.close.mockClear().mockResolvedValue(undefined);
     mockBridge.teardownResource.mockClear().mockResolvedValue({});
     mockBridge.oninitialized = null;
+    mockSandboxPostMessage.mockClear();
+    sandboxedIframePropsRef.current = null;
 
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
@@ -531,6 +545,33 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(mockBridge.sendToolInput).toHaveBeenLastCalledWith({
         arguments: { elements: '[{"type":"ellipse"}]' },
       });
+    });
+  });
+
+  it("rejects invalid fileId in getFileDownloadUrl widget messages", async () => {
+    render(
+      <MCPAppsRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "openai:getFileDownloadUrl",
+          callId: 42,
+          fileId: "../../other-endpoint",
+        },
+      } as MessageEvent);
+    });
+
+    expect(mockSandboxPostMessage).toHaveBeenCalledWith({
+      type: "openai:getFileDownloadUrl:response",
+      callId: 42,
+      error: "Invalid fileId",
     });
   });
 });

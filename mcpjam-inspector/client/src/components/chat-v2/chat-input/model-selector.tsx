@@ -31,27 +31,37 @@ interface ModelSelectorProps {
   isLoading?: boolean;
   hideProvidedModels?: boolean;
   hasMessages?: boolean;
-  /** When true, shows icon only for compact layout */
-  compact?: boolean;
 }
 
-// Helper function to group models by provider
+// Group key: for custom providers, use the customProviderName to group separately
+type GroupKey = string;
+
+// Helper function to group models by provider (custom providers grouped by customProviderName)
 const groupModelsByProvider = (
   models: ModelDefinition[],
-): Map<ModelProvider, ModelDefinition[]> => {
-  const groupedModels = new Map<ModelProvider, ModelDefinition[]>();
+): Map<GroupKey, ModelDefinition[]> => {
+  const groupedModels = new Map<GroupKey, ModelDefinition[]>();
 
   models.forEach((model) => {
-    const existing = groupedModels.get(model.provider) || [];
-    groupedModels.set(model.provider, [...existing, model]);
+    // Custom providers are grouped by customProviderName
+    const key =
+      model.provider === "custom" && model.customProviderName
+        ? `custom:${model.customProviderName}`
+        : model.provider;
+    const existing = groupedModels.get(key) || [];
+    groupedModels.set(key, [...existing, model]);
   });
 
   return groupedModels;
 };
 
 // Provider display names
-const getProviderDisplayName = (provider: ModelProvider): string => {
-  switch (provider) {
+const getProviderDisplayName = (groupKey: GroupKey): string => {
+  // Custom provider groups use "custom:<name>" format
+  if (groupKey.startsWith("custom:")) {
+    return groupKey.slice("custom:".length);
+  }
+  switch (groupKey) {
     case "azure":
       return "Azure OpenAI";
     case "anthropic":
@@ -70,8 +80,6 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
       return "Meta";
     case "xai":
       return "xAI";
-    case "litellm":
-      return "LiteLLM";
     case "moonshotai":
       return "Moonshot AI";
     case "z-ai":
@@ -79,7 +87,7 @@ const getProviderDisplayName = (provider: ModelProvider): string => {
     case "minimax":
       return "MiniMax";
     default:
-      return provider;
+      return groupKey;
   }
 };
 
@@ -91,7 +99,6 @@ export function ModelSelector({
   isLoading,
   hideProvidedModels = false,
   hasMessages = false,
-  compact = false,
 }: ModelSelectorProps) {
   const [isModelSelectorOpen, setIsModelSelectorOpen] = useState(false);
   const [pendingModel, setPendingModel] = useState<ModelDefinition | null>(
@@ -102,6 +109,16 @@ export function ModelSelector({
   const { isAuthenticated } = useConvexAuth();
   const groupedModels = groupModelsByProvider(availableModels);
   const sortedProviders = Array.from(groupedModels.keys()).sort();
+
+  // Extract the raw provider string for ProviderLogo (strips "custom:" prefix)
+  const getLogoProvider = (groupKey: GroupKey): string =>
+    groupKey.startsWith("custom:") ? "custom" : groupKey;
+
+  // Extract the custom provider name from a group key (e.g. "custom:Groq" → "Groq")
+  const getCustomName = (groupKey: GroupKey): string | undefined =>
+    groupKey.startsWith("custom:")
+      ? groupKey.slice("custom:".length)
+      : undefined;
 
   const mcpjamProviders = hideProvidedModels
     ? []
@@ -153,26 +170,21 @@ export function ModelSelector({
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
-                size={compact ? "icon" : "sm"}
+                size="sm"
                 disabled={disabled || isLoading}
-                className={
-                  compact
-                    ? "h-8 w-8 rounded-full hover:bg-muted/80 transition-colors cursor-pointer"
-                    : "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[160px]"
-                }
+                className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[160px] @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0 @max-2xl/toolbar:max-w-none"
               >
-                <ProviderLogo provider={currentModelData.provider} />
-                {!compact && (
-                  <span className="text-[10px] font-medium truncate">
-                    {currentModelData.name}
-                  </span>
-                )}
+                <ProviderLogo
+                  provider={currentModelData.provider}
+                  customProviderName={currentModelData.customProviderName}
+                />
+                <span className="text-[10px] font-medium truncate @max-2xl/toolbar:hidden">
+                  {currentModelData.name}
+                </span>
               </Button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          {compact && (
-            <TooltipContent side="top">{currentModelData.name}</TooltipContent>
-          )}
+          <TooltipContent side="top">{currentModelData.name}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start" className="min-w-[200px]">
           {mcpjamProviders.length > 0 && (
@@ -190,7 +202,10 @@ export function ModelSelector({
             return (
               <DropdownMenuSub key={provider}>
                 <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                  <ProviderLogo provider={provider} />
+                  <ProviderLogo
+                    provider={getLogoProvider(provider)}
+                    customProviderName={getCustomName(provider)}
+                  />
                   <div className="flex flex-col flex-1">
                     <span className="font-medium">
                       {getProviderDisplayName(provider)}
@@ -267,7 +282,10 @@ export function ModelSelector({
             return (
               <DropdownMenuSub key={provider}>
                 <DropdownMenuSubTrigger className="flex items-center gap-3 text-sm cursor-pointer">
-                  <ProviderLogo provider={provider} />
+                  <ProviderLogo
+                    provider={getLogoProvider(provider)}
+                    customProviderName={getCustomName(provider)}
+                  />
                   <div className="flex flex-col flex-1">
                     <span className="font-medium">
                       {getProviderDisplayName(provider)}

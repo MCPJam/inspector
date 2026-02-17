@@ -109,7 +109,7 @@ export const SandboxedIframe = forwardRef<
     }
 
     const portSuffix = currentPort ? `:${currentPort}` : "";
-    return `${protocol}//${sandboxHost}${portSuffix}/api/mcp/sandbox-proxy?v=${Date.now()}`;
+    return `${protocol}//${sandboxHost}${portSuffix}/api/apps/mcp-apps/sandbox-proxy?v=${Date.now()}`;
   });
 
   const sandboxProxyOrigin = useMemo(() => {
@@ -140,6 +140,15 @@ export const SandboxedIframe = forwardRef<
 
       // CSP violation messages (not JSON-RPC) - forward directly
       if (event.data?.type === "mcp-apps:csp-violation") {
+        onMessage(event);
+        return;
+      }
+
+      // File upload/download messages (not JSON-RPC) - forward directly
+      if (
+        event.data?.type === "openai:uploadFile" ||
+        event.data?.type === "openai:getFileDownloadUrl"
+      ) {
         onMessage(event);
         return;
       }

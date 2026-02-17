@@ -1,6 +1,12 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { RefreshCw, Play, Clock, PanelLeftClose, Save } from "lucide-react";
-import type { RefObject } from "react";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "../ui/accordion";
+import { type RefObject, useMemo, useState, useEffect } from "react";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SearchInput } from "../ui/search-input";
@@ -12,6 +18,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
 import { ParametersForm } from "../ui-playground/ParametersForm";
+import { JsonEditor } from "@/components/ui/json-editor";
 import type { FormField } from "@/lib/tool-form";
 
 interface ToolsSidebarProps {
@@ -95,6 +102,12 @@ export function ToolsSidebar({
   const posthog = usePostHog();
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
 
+  const hasParameters = formFields && formFields.length > 0;
+  const [openSections, setOpenSections] = useState<string[]>(["description"]);
+
+  useEffect(() => {
+    setOpenSections(hasParameters ? ["parameters"] : ["description"]);
+  }, [selectedToolName, hasParameters]);
   const canExecute = !!selectedToolName && !!onExecute;
   const canSave = !!selectedToolName && !!onSave;
 
@@ -132,7 +145,7 @@ export function ToolsSidebar({
     <div className="h-full flex flex-col border-r border-border bg-background">
       {/* Header with tabs and actions - App Builder style */}
       <div className="border-b border-border flex-shrink-0">
-        <div className="px-2 py-1.5 flex items-center gap-2">
+        <div className="px-2 py-2 flex items-center gap-2">
           {/* Tabs */}
           <div className="flex items-center gap-1.5">
             <button
@@ -233,19 +246,57 @@ export function ToolsSidebar({
 
           <div className="flex-1 overflow-hidden">
             <ScrollArea className="h-full">
-              {selectedTool?.description && (
-                <div className="px-3 py-2 border-b border-border">
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    {selectedTool.description}
-                  </p>
-                </div>
-              )}
-              <ParametersForm
-                fields={formFields}
-                onFieldChange={onFieldChange}
-                onToggleField={onToggleField ?? (() => {})}
-                onExecute={onExecute}
-              />
+              <Accordion
+                type="multiple"
+                value={openSections}
+                onValueChange={setOpenSections}
+                className="px-3"
+              >
+                {selectedTool?.description && (
+                  <AccordionItem value="description">
+                    <AccordionTrigger className="text-xs">
+                      Description
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {selectedTool.description}
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+                {selectedTool?.outputSchema && (
+                  <AccordionItem value="output-schema">
+                    <AccordionTrigger className="text-xs">
+                      Output Schema
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <div className="overflow-hidden rounded-md [&_.h-full]:h-auto">
+                        <JsonEditor
+                          value={selectedTool.outputSchema}
+                          readOnly
+                          showToolbar={false}
+                          height="auto"
+                        />
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+                {formFields && formFields.length > 0 && (
+                  <AccordionItem value="parameters">
+                    <AccordionTrigger className="text-xs">
+                      Parameters
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      <ParametersForm
+                        fields={formFields}
+                        onFieldChange={onFieldChange}
+                        onToggleField={onToggleField ?? (() => {})}
+                        onExecute={onExecute}
+                      />
+                    </AccordionContent>
+                  </AccordionItem>
+                )}
+              </Accordion>
 
               {/* Task execution options */}
               {serverSupportsTaskToolCalls && (
