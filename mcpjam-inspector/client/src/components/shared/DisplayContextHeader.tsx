@@ -460,7 +460,7 @@ export function DisplayContextHeader({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Hover</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs font-light text-primary-foreground/90">
                     {capabilities.hover ? "Enabled" : "Disabled"}
                   </p>
                 </TooltipContent>
@@ -480,7 +480,7 @@ export function DisplayContextHeader({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Touch</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs font-light text-primary-foreground/90">
                     {capabilities.touch ? "Enabled" : "Disabled"}
                   </p>
                 </TooltipContent>
@@ -798,7 +798,7 @@ export function DisplayContextHeader({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Hover</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs font-light text-primary-foreground/90">
                     {capabilities.hover ? "Enabled" : "Disabled"}
                   </p>
                 </TooltipContent>
@@ -818,7 +818,7 @@ export function DisplayContextHeader({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Touch</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs font-light text-primary-foreground/90">
                     {capabilities.touch ? "Enabled" : "Disabled"}
                   </p>
                 </TooltipContent>
