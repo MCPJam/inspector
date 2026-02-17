@@ -228,7 +228,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <DeviceIcon className="h-3.5 w-3.5" />
                       <span>{deviceConfig.label}</span>
@@ -358,7 +358,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <Globe className="h-3.5 w-3.5" />
                       <span>{locale}</span>
@@ -402,7 +402,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <Shield className="h-3.5 w-3.5" />
                       <span>
@@ -444,7 +444,7 @@ export function DisplayContextHeader({
             </Popover>
 
             {/* Capabilities toggles */}
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-0.5 rounded-md border p-0.5 bg-background shadow-xs">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -490,7 +490,7 @@ export function DisplayContextHeader({
             {/* Safe area editor */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <div>
+                <div className="rounded-md border p-0.5 bg-background shadow-xs">
                   <SafeAreaEditor />
                 </div>
               </TooltipTrigger>
@@ -515,7 +515,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <DeviceIcon className="h-3.5 w-3.5" />
                       <span>{deviceConfig.label}</span>
@@ -645,7 +645,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <Globe className="h-3.5 w-3.5" />
                       <span>{locale}</span>
@@ -692,7 +692,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <Clock className="h-3.5 w-3.5" />
                       <span>
@@ -739,7 +739,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <Shield className="h-3.5 w-3.5" />
                       <span>
@@ -782,7 +782,7 @@ export function DisplayContextHeader({
             </Popover>
 
             {/* Capabilities toggles */}
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-0.5 rounded-md border p-0.5 bg-background shadow-xs">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -828,7 +828,7 @@ export function DisplayContextHeader({
             {/* Safe area editor */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <div>
+                <div className="rounded-md border p-0.5 bg-background shadow-xs">
                   <SafeAreaEditor />
                 </div>
               </TooltipTrigger>
@@ -843,7 +843,7 @@ export function DisplayContextHeader({
         {(showChatGPTControls || showMCPAppsControls) && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="flex items-center gap-0.5 rounded-md border-2 border-border/50 p-0.5">
+              <div className="flex items-center gap-0.5 rounded-md border p-0.5 bg-background shadow-xs">
                 <div className="flex items-center justify-center h-6 w-6">
                   <Palette className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
@@ -885,7 +885,7 @@ export function DisplayContextHeader({
                 variant="ghost"
                 size="icon"
                 onClick={handleThemeChange}
-                className="h-7 w-7"
+                className="h-7 w-7 border bg-background shadow-xs"
               >
                 {themeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
