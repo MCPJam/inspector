@@ -414,7 +414,7 @@ export function ToolPart({
     >
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer overflow-hidden"
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
         onClick={() => {
           setUserExpanded((prev) => {
             const willExpand = !prev;
