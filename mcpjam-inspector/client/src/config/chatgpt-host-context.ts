@@ -190,7 +190,10 @@ export function getChatGPTStyleVariables(theme: "light" | "dark"): McpUiStyles {
 }
 
 /** Actual ChatGPT chat area background (not a widget design token) */
-export const CHATGPT_CHAT_BACKGROUND = { light: "#ffffff", dark: "#212121" };
+export const CHATGPT_CHAT_BACKGROUND = {
+  light: "rgba(255, 255, 255, 1)",
+  dark: "rgba(33, 33, 33, 1)",
+};
 
 // No custom fonts — ChatGPT uses system fonts only
 export const CHATGPT_FONT_CSS = ``;

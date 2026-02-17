@@ -127,6 +127,7 @@ export function ViewsTab({
   const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
   const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
   const setSafeAreaInsets = useUIPlaygroundStore((s) => s.setSafeAreaInsets);
+  const setHostStyle = useUIPlaygroundStore((s) => s.setHostStyle);
 
   const buildSignatures = useCallback(
     (
@@ -234,11 +235,9 @@ export function ViewsTab({
   // Keep playground protocol and display context aligned to selected view
   useEffect(() => {
     if (!selectedView) return;
-    setSelectedProtocol(
-      selectedView.protocol === "mcp-apps"
-        ? UIType.MCP_APPS
-        : UIType.OPENAI_SDK,
-    );
+    const isMcpApps = selectedView.protocol === "mcp-apps";
+    setSelectedProtocol(isMcpApps ? UIType.MCP_APPS : UIType.OPENAI_SDK);
+    setHostStyle(isMcpApps ? "claude" : "chatgpt");
     if (!selectedView.defaultContext) return;
     const ctx = selectedView.defaultContext;
     if (ctx.deviceType) setDeviceType(ctx.deviceType);
@@ -255,6 +254,7 @@ export function ViewsTab({
     updateGlobal,
     setCapabilities,
     setSafeAreaInsets,
+    setHostStyle,
   ]);
 
   // Load toolOutput from blob when view is selected

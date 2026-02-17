@@ -74,6 +74,7 @@ export function AppBuilderTab({
     updateGlobal,
     toggleSidebar,
     setSelectedProtocol,
+    setHostStyle,
     reset,
   } = useUIPlaygroundStore();
 
@@ -190,6 +191,12 @@ export function AppBuilderTab({
         }
       } else {
         setSelectedProtocol(uiType);
+        // Auto-switch host style for pure protocol tools
+        if (uiType === UIType.OPENAI_SDK) {
+          setHostStyle("chatgpt");
+        } else if (uiType === UIType.MCP_APPS) {
+          setHostStyle("claude");
+        }
       }
       return;
     }
