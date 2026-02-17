@@ -44,6 +44,8 @@ import {
   type DisplayMode,
 } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
+import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import {
   DisplayContextHeader,
   PRESET_DEVICE_CONFIGS,
@@ -268,14 +270,11 @@ export function PlaygroundMain({
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const hostBackgroundColor =
+  const chatBg =
     hostStyle === "chatgpt"
-      ? themeMode === "light"
-        ? "#ffffff"
-        : "#212121"
-      : themeMode === "light"
-        ? "#F4F3EE"
-        : "#30302E";
+      ? CHATGPT_CHAT_BACKGROUND
+      : CLAUDE_DESKTOP_CHAT_BACKGROUND;
+  const hostBackgroundColor = chatBg[themeMode];
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
