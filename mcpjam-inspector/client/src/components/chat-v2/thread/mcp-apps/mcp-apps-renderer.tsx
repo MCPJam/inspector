@@ -73,6 +73,7 @@ const SIGNATURE_MAX_ARRAY_ITEMS = 24;
 const SIGNATURE_MAX_OBJECT_KEYS = 32;
 const SIGNATURE_STRING_EDGE_LENGTH = 24;
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
+const PIP_MAX_HEIGHT = "min(40vh, 600px)";
 
 type DisplayMode = "inline" | "pip" | "fullscreen";
 type ToolState =
@@ -1392,13 +1393,16 @@ export function MCPAppsRenderer({
   const showWidget = isReady && canRenderStreamingInput;
 
   const iframeStyle: CSSProperties = {
-    height: isFullscreen ? "100%" : lastInlineHeightRef.current,
+    height: isFullscreen
+      ? "100%"
+      : isPip
+        ? PIP_MAX_HEIGHT
+        : lastInlineHeightRef.current,
     width: "100%",
     maxWidth: "100%",
     // Width transition was previously included here ("width 300ms ease-out").
     transition:
-      isFullscreen ||
-      effectiveDisplayModeRef.current !== effectiveDisplayMode
+      isFullscreen || effectiveDisplayModeRef.current !== effectiveDisplayMode
         ? undefined
         : "height 300ms ease-out",
     // Hide iframe visually while not ready to display
