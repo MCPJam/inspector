@@ -162,6 +162,12 @@ export function getClaudeDesktopStyleVariables(
   return { ...resolved, ...CLAUDE_DESKTOP_STATIC_VARS } as McpUiStyles;
 }
 
+/** Actual Claude Desktop chat area background (not a widget design token) */
+export const CLAUDE_DESKTOP_CHAT_BACKGROUND = {
+  light: "#F4F3EE",
+  dark: "#30302E",
+};
+
 // Empty: Anthropic Sans requires external URLs (assets.claude.ai) blocked by the
 // sandbox CSP (font-src data:). All font sizes, weights (400–700), and styles
 // (normal/italic) still work — --font-sans falls back to the system sans-serif font.
