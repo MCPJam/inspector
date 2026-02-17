@@ -1,4 +1,4 @@
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -44,6 +44,8 @@ import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
+import { useOrganizationQueries } from "./hooks/useOrganizations";
+import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -53,6 +55,20 @@ export default function App() {
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const posthog = usePostHog();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const convexUser = useQuery(
+    "users:getCurrentUser" as any,
+    isAuthenticated ? ({} as any) : "skip",
+  );
+  const { sortedOrganizations, isLoading: isOrganizationsLoading } =
+    useOrganizationQueries({ isAuthenticated });
+
+  const shouldRequireOrganization =
+    isAuthenticated &&
+    !isAuthLoading &&
+    convexUser !== undefined &&
+    convexUser !== null &&
+    !isOrganizationsLoading &&
+    sortedOrganizations.length === 0;
 
   usePostHogIdentify();
 
@@ -391,6 +407,13 @@ export default function App() {
     >
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
+        <CreateOrganizationDialog
+          open={shouldRequireOrganization}
+          onOpenChange={(open) => {
+            void open;
+          }}
+          required
+        />
         {appContent}
       </AppStateProvider>
     </PreferencesStoreProvider>
