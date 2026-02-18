@@ -707,6 +707,16 @@ export function ChatGPTAppRenderer({
     : DEFAULT_SAFE_AREA_INSETS;
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
   const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
+  const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
+
+  // Clear CSP violations when CSP mode changes (stale data from previous mode)
+  const prevCspModeRef = useRef(cspMode);
+  useEffect(() => {
+    if (prevCspModeRef.current !== cspMode) {
+      clearCspViolations(resolvedToolCallId);
+      prevCspModeRef.current = cspMode;
+    }
+  }, [cspMode, resolvedToolCallId, clearCspViolations]);
 
   // Mobile playground mode detection
   const isMobilePlaygroundMode = isPlaygroundActive && deviceType === "mobile";
