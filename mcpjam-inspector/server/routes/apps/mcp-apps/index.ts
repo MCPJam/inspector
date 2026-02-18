@@ -14,68 +14,10 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
-import { MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT } from "./McpAppsOpenAICompatibleRuntime.bundled";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
+import { injectOpenAICompat } from "../../../utils/widget-helpers";
 
 const apps = new Hono();
-
-// ── OpenAI compat injection helpers ─────────────────────────────────
-
-/**
- * Escape characters that could break inline <script> content.
- * Same approach as chatgpt.ts serializeForInlineScript.
- */
-const serializeForInlineScript = (value: unknown) =>
-  JSON.stringify(value ?? null)
-    .replace(/</g, "\\u003C")
-    .replace(/>/g, "\\u003E")
-    .replace(/&/g, "\\u0026")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
-
-/**
- * Inject the OpenAI compatibility runtime into MCP App HTML.
- * Adds a JSON config element + the bundled IIFE script into <head>.
- * If no <head> tag exists, wraps the content in a full HTML document.
- */
-function injectOpenAICompat(
-  html: string,
-  widgetData: {
-    toolId: string;
-    toolName: string;
-    toolInput: Record<string, unknown>;
-    toolOutput: unknown;
-    theme?: string;
-    viewMode?: string;
-    viewParams?: Record<string, unknown>;
-  },
-): string {
-  const configJson = serializeForInlineScript({
-    toolId: widgetData.toolId,
-    toolName: widgetData.toolName,
-    toolInput: widgetData.toolInput,
-    toolOutput: widgetData.toolOutput,
-    theme: widgetData.theme ?? "dark",
-    viewMode: widgetData.viewMode ?? "inline",
-    viewParams: widgetData.viewParams ?? {},
-  });
-
-  const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
-  // Escape </ sequences to prevent a literal "</script>" in the bundled code
-  // from prematurely closing the tag (XSS vector). In JS, \/ is just /.
-  const escapedRuntime = MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT.replace(
-    /<\//g,
-    "<\\/",
-  );
-  const runtimeScript = `<script>${escapedRuntime}</script>`;
-  const headContent = `${configScript}${runtimeScript}`;
-
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, `$&${headContent}`);
-  }
-  // No <head> tag — wrap in a full HTML document
-  return `<!DOCTYPE html><html><head>${headContent}<meta charset="UTF-8"></head><body>${html}</body></html>`;
-}
 
 /**
  * SEP-1865 mandated mimetype for MCP Apps

@@ -5,55 +5,9 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import "../../types/hono"; // Type extensions
-import {
-  mapModelIdToTokenizerBackend,
-  estimateTokensFromChars,
-} from "../../utils/tokenizer-helpers";
-import { logger } from "../../utils/logger";
+import { countToolsTokens } from "../../utils/tokenizer-helpers";
 
 const tools = new Hono();
-
-/**
- * Count tokens for tools, using backend tokenizer or char fallback.
- * Accepts already-fetched tools to avoid duplicate listTools calls.
- */
-async function countToolsTokens(
-  tools: ListToolsResult["tools"],
-  modelId: string,
-): Promise<number> {
-  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  const mappedModelId = mapModelIdToTokenizerBackend(modelId);
-  const useBackendTokenizer = mappedModelId !== null && !!convexHttpUrl;
-
-  try {
-    const toolsText = JSON.stringify(tools);
-
-    if (useBackendTokenizer && mappedModelId) {
-      const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: toolsText, model: mappedModelId }),
-      });
-
-      if (response.ok) {
-        const data = (await response.json()) as {
-          ok?: boolean;
-          tokenCount?: number;
-        };
-        if (data.ok) {
-          return data.tokenCount || 0;
-        }
-      }
-    }
-
-    return estimateTokensFromChars(toolsText);
-  } catch (error) {
-    logger.warn("[tools] Error counting tokens", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return 0;
-  }
-}
 
 type ElicitationPayload = {
   executionId: string;

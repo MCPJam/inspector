@@ -3,6 +3,18 @@ import { CHATGPT_APPS_RUNTIME_SCRIPT } from "./OpenAIRuntime.bundled";
 import "../../../types/hono";
 import { logger } from "../../../utils/logger";
 import { CHATGPT_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
+import {
+  serializeForInlineScript,
+  extractBaseUrl,
+  generateUrlPolyfillScript,
+  WIDGET_BASE_CSS,
+  buildRuntimeConfigScript,
+  injectScripts,
+  buildCspHeader,
+  type CspMode,
+  type WidgetCspMeta,
+  type CspConfig,
+} from "../../../utils/widget-helpers";
 
 const chatgpt = new Hono();
 
@@ -83,14 +95,6 @@ setInterval(
 // Shared Helpers (DRY)
 // ============================================================================
 
-const serializeForInlineScript = (value: unknown) =>
-  JSON.stringify(value ?? null)
-    .replace(/</g, "\\u003C")
-    .replace(/>/g, "\\u003E")
-    .replace(/&/g, "\\u0026")
-    .replace(/\u2028/g, "\\u2028")
-    .replace(/\u2029/g, "\\u2029");
-
 function extractHtmlContent(content: unknown): {
   html: string;
   firstContent: any;
@@ -128,14 +132,6 @@ function resolveServerId(
   };
 }
 
-function extractBaseUrl(html: string): string {
-  const baseMatch = html.match(/<base\s+href\s*=\s*["']([^"']+)["']\s*\/?>/i);
-  if (baseMatch) return baseMatch[1];
-  const innerMatch = html.match(/window\.innerBaseUrl\s*=\s*["']([^"']+)["']/);
-  if (innerMatch) return innerMatch[1];
-  return "";
-}
-
 interface RuntimeConfig {
   toolId: string;
   toolName: string;
@@ -154,219 +150,14 @@ interface RuntimeConfig {
   useMapPendingCalls?: boolean;
 }
 
-function generateUrlPolyfillScript(baseUrl: string): string {
-  if (!baseUrl) return "";
-  return `<script>(function(){
-var BASE="${baseUrl}";window.__widgetBaseUrl=BASE;var OrigURL=window.URL;
-function isRelative(u){return typeof u==="string"&&!u.match(/^[a-z][a-z0-9+.-]*:/i);}
-window.URL=function URL(u,b){
-var base=b;if(base===void 0||base===null||base==="null"||base==="about:srcdoc"){base=BASE;}
-else if(typeof base==="string"&&base.startsWith("null")){base=BASE;}
-try{return new OrigURL(u,base);}catch(e){if(isRelative(u)){try{return new OrigURL(u,BASE);}catch(e2){}}throw e;}
-};
-window.URL.prototype=OrigURL.prototype;window.URL.createObjectURL=OrigURL.createObjectURL;
-window.URL.revokeObjectURL=OrigURL.revokeObjectURL;window.URL.canParse=OrigURL.canParse;
-})();</script>`;
-}
-
-// Widget base styles: keep layout clean but allow vertical scrolling when the host
-// uses a fixed-height container (fullscreen/PiP). Inline mode still auto-resizes,
-// so scrollbars typically remain hidden while staying available when needed.
-const WIDGET_BASE_CSS = `<style>
-html, body {
-  margin: 0;
-  padding: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-</style>`;
-
-const CONFIG_SCRIPT_ID = "openai-runtime-config";
-
-function buildConfigScript(config: RuntimeConfig): string {
-  return `<script type="application/json" id="${CONFIG_SCRIPT_ID}">${serializeForInlineScript(config)}</script>`;
-}
-
 function buildRuntimeHeadContent(options: {
   runtimeConfig: RuntimeConfig;
   urlPolyfill?: string;
   baseTag?: string;
 }): string {
-  const configScript = buildConfigScript(options.runtimeConfig);
+  const configScript = buildRuntimeConfigScript(options.runtimeConfig as unknown as Record<string, unknown>);
   const runtimeScript = `<script>${CHATGPT_APPS_RUNTIME_SCRIPT}</script>`;
   return `${WIDGET_BASE_CSS}${options.urlPolyfill ?? ""}${options.baseTag ?? ""}${configScript}${runtimeScript}`;
-}
-
-function injectScripts(html: string, headContent: string): string {
-  if (/<html[^>]*>/i.test(html) && /<head[^>]*>/i.test(html)) {
-    return html.replace(/<head[^>]*>/i, `$&${headContent}`);
-  }
-  return `<!DOCTYPE html><html><head>${headContent}<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body>${html}</body></html>`;
-}
-
-// ============================================================================
-// CSP Configuration
-// ============================================================================
-
-/**
- * CSP mode types
- */
-type CspMode = "permissive" | "widget-declared";
-
-/**
- * Widget CSP metadata from openai/widgetCSP
- */
-interface WidgetCspMeta {
-  connect_domains?: string[];
-  resource_domains?: string[];
-  frame_domains?: string[];
-}
-
-/**
- * Parsed CSP configuration for client display
- */
-interface CspConfig {
-  mode: CspMode;
-  connectDomains: string[];
-  resourceDomains: string[];
-  frameDomains: string[];
-  headerString: string;
-}
-
-/**
- * Build CSP header string based on mode and widget metadata.
- *
- * @param mode - CSP enforcement mode
- * @param widgetCsp - Widget's declared CSP from openai/widgetCSP metadata
- * @returns CSP configuration including header string and parsed domains
- */
-function buildCspHeader(
-  mode: CspMode,
-  widgetCsp?: WidgetCspMeta | null,
-): CspConfig {
-  // Always allow localhost/127.* for widget development + sandbox proxy HMR
-  const localhostSources = [
-    "http://localhost:*",
-    "http://127.0.0.1:*",
-    "https://localhost:*",
-    "https://127.0.0.1:*",
-  ];
-
-  // WebSocket sources for HMR, etc.
-  const wsSources = [
-    "ws://localhost:*",
-    "ws://127.0.0.1:*",
-    "wss://localhost:*",
-  ];
-
-  let connectDomains: string[];
-  let resourceDomains: string[];
-  let frameDomains: string[];
-
-  switch (mode) {
-    case "permissive":
-      // Most lenient - allow https: wildcard
-      connectDomains = [
-        "'self'",
-        "https:",
-        "wss:",
-        "ws:",
-        ...localhostSources,
-        ...wsSources,
-      ];
-      resourceDomains = [
-        "'self'",
-        "data:",
-        "blob:",
-        "https:",
-        ...localhostSources,
-      ];
-      frameDomains = ["*", "data:", "blob:", "https:", "http:", "about:"];
-      break;
-
-    case "widget-declared":
-      // Honor widget's declared CSP, with sensible defaults
-      connectDomains = [
-        "'self'",
-        ...(widgetCsp?.connect_domains || []),
-        ...localhostSources,
-        ...wsSources,
-      ];
-      resourceDomains = [
-        "'self'",
-        "data:",
-        "blob:",
-        ...(widgetCsp?.resource_domains || []),
-        ...localhostSources,
-      ];
-      frameDomains =
-        widgetCsp?.frame_domains && widgetCsp.frame_domains.length > 0
-          ? widgetCsp.frame_domains
-          : [];
-      break;
-
-    default:
-      // Fallback to permissive
-      connectDomains = ["'self'", "https:", ...localhostSources];
-      resourceDomains = [
-        "'self'",
-        "data:",
-        "blob:",
-        "https:",
-        ...localhostSources,
-      ];
-      frameDomains = ["*", "data:", "blob:", "https:", "http:", "about:"];
-  }
-
-  const connectSrc = connectDomains.join(" ");
-  const resourceSrc = resourceDomains.join(" ");
-
-  // Image/media sources - respect mode for widget-declared CSP
-  // In permissive mode: allow all https: sources
-  // In widget-declared mode: only allow declared resource_domains
-  const imgSrc =
-    mode === "widget-declared"
-      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
-      : `'self' data: blob: https: ${localhostSources.join(" ")}`;
-
-  const mediaSrc =
-    mode === "widget-declared"
-      ? `'self' data: blob: ${(widgetCsp?.resource_domains || []).join(" ")} ${localhostSources.join(" ")}`
-      : "'self' data: blob: https:";
-
-  // Frame ancestors must always include localhost/127.0.0.1 for the cross-origin
-  // sandbox architecture to work (sandbox-proxy swaps localhost <-> 127.0.0.1)
-  // This is required regardless of NODE_ENV since the inspector is self-hosted
-  const frameAncestors =
-    "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*";
-
-  // frame-src directive: controls which origins can be loaded in iframes
-  const frameSrc =
-    frameDomains.length > 0
-      ? `frame-src ${frameDomains.join(" ")}`
-      : "frame-src 'none'";
-
-  const headerString = [
-    "default-src 'self'",
-    `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${resourceSrc}`,
-    "worker-src 'self' blob:",
-    "child-src 'self' blob:",
-    `style-src 'self' 'unsafe-inline' ${resourceSrc}`,
-    `img-src ${imgSrc}`,
-    `media-src ${mediaSrc}`,
-    `font-src 'self' data: ${resourceSrc}`,
-    `connect-src ${connectSrc}`,
-    frameSrc,
-    frameAncestors,
-  ].join("; ");
-
-  return {
-    mode,
-    connectDomains,
-    resourceDomains,
-    frameDomains,
-    headerString,
-  };
 }
 
 // ============================================================================

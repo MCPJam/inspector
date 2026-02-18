@@ -1,4 +1,5 @@
 import { getModelById } from "../../shared/types";
+import { logger } from "./logger";
 
 /**
  * Mapping from AI SDK model IDs to ai-tokenizer model IDs.
@@ -139,4 +140,47 @@ export function mapModelIdToTokenizerBackend(modelId: string): string | null {
  */
 export function estimateTokensFromChars(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+/**
+ * Count tokens for tools, using backend tokenizer or char fallback.
+ * Shared by mcp/tools and web routes.
+ */
+export async function countToolsTokens(
+  tools: unknown[],
+  modelId: string,
+  logPrefix = "[tools]",
+): Promise<number> {
+  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+  const mappedModelId = mapModelIdToTokenizerBackend(modelId);
+  const useBackendTokenizer = mappedModelId !== null && !!convexHttpUrl;
+
+  try {
+    const toolsText = JSON.stringify(tools);
+
+    if (useBackendTokenizer && mappedModelId) {
+      const response = await fetch(`${convexHttpUrl}/tokenizer/count`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: toolsText, model: mappedModelId }),
+      });
+
+      if (response.ok) {
+        const data = (await response.json()) as {
+          ok?: boolean;
+          tokenCount?: number;
+        };
+        if (data.ok) {
+          return data.tokenCount || 0;
+        }
+      }
+    }
+
+    return estimateTokensFromChars(toolsText);
+  } catch (error) {
+    logger.warn(`${logPrefix} Error counting tokens`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
+  }
 }

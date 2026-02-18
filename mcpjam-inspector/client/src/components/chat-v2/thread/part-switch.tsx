@@ -8,8 +8,6 @@ import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 
 import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
 import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
-import { HostedChatGptAppsRenderer } from "@/components/hosted/HostedChatGptAppsRenderer";
-import { HostedMcpAppsRenderer } from "@/components/hosted/HostedMcpAppsRenderer";
 import { ToolPart } from "./parts/tool-part";
 import { ReasoningPart } from "./parts/reasoning-part";
 import { FilePart } from "./parts/file-part";
@@ -43,7 +41,6 @@ import {
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
-import { HOSTED_MODE } from "@/lib/config";
 
 export function PartSwitch({
   part,
@@ -98,12 +95,6 @@ export function PartSwitch({
     DisplayMode[] | undefined
   >();
   void messageParts;
-  const ChatGptRenderer = HOSTED_MODE
-    ? HostedChatGptAppsRenderer
-    : ChatGPTAppRenderer;
-  const McpAppsRenderer = HOSTED_MODE
-    ? HostedMcpAppsRenderer
-    : MCPAppsRenderer;
 
   // Get auth and app state for saving views
   const { isAuthenticated } = useConvexAuth();
@@ -363,7 +354,7 @@ export function PartSwitch({
             isSaving={isSaving}
             {...approvalProps}
           />
-          <ChatGptRenderer
+          <ChatGPTAppRenderer
             serverId={serverId ?? "offline-view"}
             toolCallId={toolInfo.toolCallId}
             toolName={toolInfo.toolName}
@@ -444,7 +435,7 @@ export function PartSwitch({
             isSaving={isSaving}
             {...approvalProps}
           />
-          <McpAppsRenderer
+          <MCPAppsRenderer
             serverId={serverId ?? "offline-view"}
             toolCallId={toolInfo.toolCallId}
             toolName={toolInfo.toolName}
