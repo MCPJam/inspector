@@ -26,6 +26,8 @@ import {
   UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   Organization,
   OrganizationMember,
@@ -35,6 +37,7 @@ import {
   useOrganizationMembers,
   useOrganizationMutations,
 } from "@/hooks/useOrganizations";
+import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 
@@ -142,6 +145,15 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const canAccessAdminConsole = isOwner || currentRole === "admin";
   const canEdit = currentRole === "owner" || currentRole === "admin";
   const canInvite = canEdit;
+  const {
+    billingStatus,
+    isLoadingBilling,
+    isStartingCheckout,
+    isOpeningPortal,
+    error: billingError,
+    startCheckout,
+    openPortal,
+  } = useOrganizationBilling(organization._id);
 
   const canRemoveMember = (member: OrganizationMember): boolean => {
     if (!currentRole) return false;
@@ -376,7 +388,29 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     }
   };
 
+  const handleBillingAction = async () => {
+    if (!billingStatus) return;
+
+    try {
+      const returnUrl = `${window.location.origin}${window.location.pathname}#organizations/${organization._id}`;
+      const billingUrl =
+        billingStatus.plan === "pro"
+          ? await openPortal(returnUrl)
+          : await startCheckout(returnUrl);
+      window.open(billingUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to start billing flow",
+      );
+    }
+  };
+
   const initial = organization.name.charAt(0).toUpperCase();
+  const isBillingActionPending = isStartingCheckout || isOpeningPortal;
+  const billingActionLabel =
+    billingStatus?.plan === "pro"
+      ? "Manage subscription"
+      : "Upgrade to MCPJam Pro";
 
   return (
     <div className="p-8 max-w-4xl overflow-auto h-full">
@@ -430,6 +464,66 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
             <h1 className="text-3xl font-semibold">{organization.name}</h1>
           )}
         </div>
+      </div>
+
+      <div className="mb-12">
+        <Card className="max-w-2xl">
+          <CardHeader>
+            <CardTitle>MCPJam Pro</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isLoadingBilling ? (
+              <p className="text-sm text-muted-foreground">
+                Loading billing status...
+              </p>
+            ) : billingStatus ? (
+              <>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Plan</span>
+                  <Badge
+                    variant={
+                      billingStatus.plan === "pro" ? "default" : "secondary"
+                    }
+                  >
+                    {billingStatus.plan.toUpperCase()}
+                  </Badge>
+                </div>
+
+                <p className="text-sm text-muted-foreground">
+                  Subscription status:{" "}
+                  {billingStatus.subscriptionStatus ?? "not_started"}
+                </p>
+
+                <Button
+                  onClick={handleBillingAction}
+                  disabled={
+                    !billingStatus.canManageBilling || isBillingActionPending
+                  }
+                  className="cursor-pointer"
+                >
+                  {isBillingActionPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    billingActionLabel
+                  )}
+                </Button>
+
+                {!billingStatus.canManageBilling ? (
+                  <p className="text-xs text-muted-foreground">
+                    Only organization owners can manage billing.
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+
+            {billingError ? (
+              <p className="text-xs text-destructive">{billingError}</p>
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
 
       {canAccessAdminConsole ? (
