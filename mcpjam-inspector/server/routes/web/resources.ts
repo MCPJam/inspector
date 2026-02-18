@@ -4,29 +4,23 @@ import {
   resourcesReadSchema,
   withEphemeralConnection,
 } from "./auth.js";
+import {
+  listResources,
+  readResource,
+} from "../../utils/route-handlers.js";
 
 const resources = new Hono();
 
 resources.post("/list", async (c) =>
-  withEphemeralConnection(c, resourcesListSchema, async (manager, body) => {
-    const result = await manager.listResources(
-      body.serverId,
-      body.cursor ? { cursor: body.cursor } : undefined,
-    );
-    return {
-      resources: result.resources ?? [],
-      nextCursor: result.nextCursor,
-    };
-  }),
+  withEphemeralConnection(c, resourcesListSchema, (manager, body) =>
+    listResources(manager, body),
+  ),
 );
 
 resources.post("/read", async (c) =>
-  withEphemeralConnection(c, resourcesReadSchema, async (manager, body) => {
-    const content = await manager.readResource(body.serverId, {
-      uri: body.uri,
-    });
-    return { content };
-  }),
+  withEphemeralConnection(c, resourcesReadSchema, (manager, body) =>
+    readResource(manager, body),
+  ),
 );
 
 export default resources;

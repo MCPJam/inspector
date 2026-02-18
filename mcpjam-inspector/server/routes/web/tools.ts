@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { countToolsTokens } from "../../utils/tokenizer-helpers.js";
 import {
   toolsListSchema,
   toolsExecuteSchema,
@@ -7,27 +6,14 @@ import {
   ErrorCode,
   WebRouteError,
 } from "./auth.js";
+import { listTools } from "../../utils/route-handlers.js";
 
 const tools = new Hono();
 
 tools.post("/list", async (c) =>
-  withEphemeralConnection(c, toolsListSchema, async (manager, body) => {
-    const result = await manager.listTools(
-      body.serverId,
-      body.cursor ? { cursor: body.cursor } : undefined,
-    );
-    const toolsMetadata = manager.getAllToolsMetadata(body.serverId);
-    const tokenCount = body.modelId
-      ? await countToolsTokens(result.tools, body.modelId)
-      : undefined;
-
-    return {
-      ...result,
-      toolsMetadata,
-      tokenCount,
-      nextCursor: result.nextCursor,
-    };
-  }),
+  withEphemeralConnection(c, toolsListSchema, (manager, body) =>
+    listTools(manager, body),
+  ),
 );
 
 tools.post("/execute", async (c) =>

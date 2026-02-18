@@ -5,7 +5,7 @@ import type {
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import "../../types/hono"; // Type extensions
-import { countToolsTokens } from "../../utils/tokenizer-helpers";
+import { listTools as listToolsShared } from "../../utils/route-handlers.js";
 
 const tools = new Hono();
 
@@ -144,27 +144,13 @@ tools.post("/list", async (c) => {
       }
     }
 
-    const result = (await c.mcpClientManager.listTools(
-      normalizedServerId,
-      cursor ? { cursor } : undefined,
-    )) as ListToolsResult;
-
-    // Get cached metadata map for O(1) frontend lookups
-    const toolsMetadata =
-      c.mcpClientManager.getAllToolsMetadata(normalizedServerId);
-
-    // If modelId provided, also compute token count using already-fetched tools
-    let tokenCount: number | undefined;
-    if (modelId) {
-      tokenCount = await countToolsTokens(result.tools, modelId);
-    }
-
-    return c.json({
-      ...result,
-      toolsMetadata,
-      tokenCount,
-      nextCursor: result.nextCursor,
-    });
+    return c.json(
+      await listToolsShared(c.mcpClientManager, {
+        serverId: normalizedServerId,
+        modelId,
+        cursor,
+      }),
+    );
   } catch (error) {
     return jsonError(c, error, 500);
   }
