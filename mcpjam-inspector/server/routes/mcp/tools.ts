@@ -67,6 +67,7 @@ type ExecutionContext = {
   id: string;
   serverId: string;
   toolName: string;
+  startedAtMs: number;
   execPromise: Promise<ListToolsResult>;
   queue: ElicitationPayload[];
   waiter?: (payload: ElicitationPayload) => void;
@@ -127,6 +128,10 @@ function resetExecution(context: ExecutionContext, clear: () => void) {
     pendingResponses.delete(requestId);
     pending.reject(new Error("Execution finished"));
   }
+}
+
+function getExecutionDurationMs(context: ExecutionContext): number {
+  return Math.max(0, Date.now() - context.startedAtMs);
 }
 
 function serializeMcpError(error: unknown) {
@@ -239,11 +244,13 @@ tools.post("/execute", async (c) => {
   }
 
   const executionId = makeExecutionId();
+  const startedAtMs = Date.now();
 
   const context: ExecutionContext = {
     id: executionId,
     serverId,
     toolName,
+    startedAtMs,
     execPromise: manager.executeTool(
       serverId,
       toolName,
@@ -311,6 +318,7 @@ tools.post("/execute", async (c) => {
         return c.json({
           status: "task_created",
           task: result.task,
+          durationMs: getExecutionDurationMs(context),
           // Include model-immediate-response if provided by server
           modelImmediateResponse,
         });
@@ -332,12 +340,17 @@ tools.post("/execute", async (c) => {
             ttl: metaTask.ttl ?? null,
             pollInterval: metaTask.pollInterval,
           },
+          durationMs: getExecutionDurationMs(context),
           // Include model-immediate-response if provided by server
           modelImmediateResponse,
         });
       }
 
-      return c.json({ status: "completed", result: next.result });
+      return c.json({
+        status: "completed",
+        result: next.result,
+        durationMs: getExecutionDurationMs(context),
+      });
     }
 
     return c.json(
@@ -347,6 +360,7 @@ tools.post("/execute", async (c) => {
         requestId: next.payload.requestId,
         request: next.payload.request,
         timestamp: next.payload.issuedAt,
+        durationMs: getExecutionDurationMs(context),
       },
       202,
     );
@@ -399,7 +413,11 @@ tools.post("/respond", async (c) => {
       resetExecution(context, () =>
         c.mcpClientManager.clearElicitationHandler(context.serverId),
       );
-      return c.json({ status: "completed", result: next.result });
+      return c.json({
+        status: "completed",
+        result: next.result,
+        durationMs: getExecutionDurationMs(context),
+      });
     }
 
     return c.json(
@@ -409,6 +427,7 @@ tools.post("/respond", async (c) => {
         requestId: next.payload.requestId,
         request: next.payload.request,
         timestamp: next.payload.issuedAt,
+        durationMs: getExecutionDurationMs(context),
       },
       202,
     );

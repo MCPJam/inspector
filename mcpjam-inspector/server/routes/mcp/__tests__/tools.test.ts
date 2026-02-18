@@ -155,6 +155,8 @@ describe("POST /api/mcp/tools/execute", () => {
       expect(status).toBe(200);
       expect(data.status).toBe("completed");
       expect(data.result.content[0].text).toBe("Hello, World!");
+      expect(typeof data.durationMs).toBe("number");
+      expect(data.durationMs).toBeGreaterThanOrEqual(0);
 
       expect(manager.executeTool).toHaveBeenCalledWith(
         "test-server",
@@ -238,6 +240,8 @@ describe("POST /api/mcp/tools/execute", () => {
       expect(data.status).toBe("task_created");
       expect(data.task.taskId).toBe("task-123");
       expect(data.task.status).toBe("running");
+      expect(typeof data.durationMs).toBe("number");
+      expect(data.durationMs).toBeGreaterThanOrEqual(0);
     });
 
     it("returns task_created when task is in _meta", async () => {
@@ -261,6 +265,8 @@ describe("POST /api/mcp/tools/execute", () => {
       expect(status).toBe(200);
       expect(data.status).toBe("task_created");
       expect(data.task.taskId).toBe("meta-task-456");
+      expect(typeof data.durationMs).toBe("number");
+      expect(data.durationMs).toBeGreaterThanOrEqual(0);
     });
   });
 
