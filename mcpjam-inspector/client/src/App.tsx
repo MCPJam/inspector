@@ -63,6 +63,8 @@ export default function App() {
     string | undefined
   >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
+  const [callbackCompleted, setCallbackCompleted] = useState(false);
+  const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
   const { getAccessToken, signIn } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
@@ -107,14 +109,32 @@ export default function App() {
   // Ensure a `users` row exists after Convex auth
   useEnsureDbUser();
 
-  const isDebugCallback = useMemo(
-    () => window.location.pathname.startsWith("/oauth/callback/debug"),
-    [],
+  const isDebugCallback = window.location.pathname.startsWith(
+    "/oauth/callback/debug",
   );
-  const isOAuthCallback = useMemo(
-    () => window.location.pathname === "/callback",
-    [],
-  );
+  const isOAuthCallback = window.location.pathname === "/callback";
+
+  useEffect(() => {
+    if (!isOAuthCallback) {
+      setCallbackCompleted(false);
+      setCallbackRecoveryExpired(false);
+      return;
+    }
+
+    // Let AuthKit + Convex auth settle before leaving /callback.
+    if (!isAuthLoading && isAuthenticated) {
+      window.history.replaceState({}, "", "/");
+      setCallbackCompleted(true);
+      setCallbackRecoveryExpired(false);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setCallbackRecoveryExpired(true);
+    }, 15000);
+
+    return () => clearTimeout(timeout);
+  }, [isOAuthCallback, isAuthLoading, isAuthenticated]);
 
   const {
     appState,
@@ -222,7 +242,9 @@ export default function App() {
       }
 
       if (resolved.isBlocked) {
-        toast.error(`${resolved.normalizedTab} is not available in hosted mode.`);
+        toast.error(
+          `${resolved.normalizedTab} is not available in hosted mode.`,
+        );
         setActiveOrganizationId(undefined);
         setActiveTab("servers");
         setChatHasMessages(false);
@@ -266,17 +288,35 @@ export default function App() {
     return <OAuthDebugCallback />;
   }
 
-  if (isOAuthCallback) {
-    // Handle the actual OAuth callback - AuthKit will process this automatically
-    // Show a loading screen while the OAuth flow completes
-    useEffect(() => {
-      // Fallback: redirect to home after 5 seconds if still stuck
-      const timeout = setTimeout(() => {
-        window.location.href = "/";
-      }, 5000);
-
-      return () => clearTimeout(timeout);
-    }, []);
+  if (isOAuthCallback && !callbackCompleted) {
+    if (callbackRecoveryExpired) {
+      return (
+        <div
+          className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center"
+          data-testid="callback-auth-timeout"
+        >
+          <p className="text-sm text-muted-foreground">
+            Sign-in is taking longer than expected.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              onClick={() => signIn()}
+            >
+              Try sign in again
+            </button>
+            <button
+              type="button"
+              className="rounded border px-4 py-2 text-sm font-medium"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
 
     return <CompletingSignInLoading />;
   }

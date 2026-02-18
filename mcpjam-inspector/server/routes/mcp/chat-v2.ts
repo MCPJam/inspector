@@ -61,8 +61,12 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    const { allTools, enhancedSystemPrompt, resolvedTemperature, scrubMessages } =
-      prepared;
+    const {
+      allTools,
+      enhancedSystemPrompt,
+      resolvedTemperature,
+      scrubMessages,
+    } = prepared;
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {

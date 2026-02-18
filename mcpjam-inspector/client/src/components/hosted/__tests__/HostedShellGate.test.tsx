@@ -53,7 +53,9 @@ describe("HostedShellGate", () => {
       </HostedShellGate>,
     );
 
-    expect(screen.getByText("Sign in to MCPJam to continue")).toBeInTheDocument();
+    expect(
+      screen.getByText("Sign in to MCPJam to continue"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "MCPJam" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(onSignIn).toHaveBeenCalledTimes(1);

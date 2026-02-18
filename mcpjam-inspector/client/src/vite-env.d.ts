@@ -5,6 +5,7 @@ interface ImportMetaEnv {
   readonly VITE_DOCKER?: string;
   readonly VITE_RUNTIME?: string;
   readonly VITE_MCPJAM_HOSTED_MODE?: string;
+  readonly VITE_WORKOS_DEV_MODE?: string;
   // more env variables...
 }
 

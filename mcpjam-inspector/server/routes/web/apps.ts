@@ -78,10 +78,7 @@ const chatgptAppsWidgetContentSchema = workspaceServerSchema.extend({
   uri: z.string().min(1),
   toolInput: z.record(z.string(), z.unknown()).default({}),
   toolOutput: z.unknown().optional(),
-  toolResponseMetadata: z
-    .record(z.string(), z.unknown())
-    .nullable()
-    .optional(),
+  toolResponseMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
   toolId: z.string().min(1),
   toolName: z.string().min(1),
   theme: z.enum(["light", "dark"]).optional(),

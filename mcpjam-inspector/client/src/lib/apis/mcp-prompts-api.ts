@@ -84,7 +84,9 @@ export async function listPromptsForServers(
 ): Promise<BatchPromptsResponse> {
   return runByMode({
     hosted: async () => {
-      const body = await listHostedPromptsMulti({ serverNamesOrIds: serverIds });
+      const body = await listHostedPromptsMulti({
+        serverNamesOrIds: serverIds,
+      });
       const remappedPrompts: Record<string, MCPPrompt[]> = {};
       const remappedErrors: Record<string, string> = {};
       const reverseMap = Object.fromEntries(
@@ -125,7 +127,8 @@ export async function listPromptsForServers(
       } catch {}
 
       if (!res.ok) {
-        const message = body?.error || `Batch list prompts failed (${res.status})`;
+        const message =
+          body?.error || `Batch list prompts failed (${res.status})`;
         throw new Error(message);
       }
 

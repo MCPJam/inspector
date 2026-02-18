@@ -808,7 +808,9 @@ export function MCPAppsRenderer({
 
       bridge.onlistresourcetemplates = async (_params) => {
         if (HOSTED_MODE) {
-          throw new Error("Resource templates are not supported in hosted mode");
+          throw new Error(
+            "Resource templates are not supported in hosted mode",
+          );
         }
 
         const response = await authFetch(`/api/mcp/resource-templates/list`, {

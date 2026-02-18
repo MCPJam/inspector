@@ -17,7 +17,12 @@ resources.post("/list", async (c) => {
     if (!serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-    return c.json(await listResources(c.mcpClientManager, { serverId, cursor: body.cursor }));
+    return c.json(
+      await listResources(c.mcpClientManager, {
+        serverId,
+        cursor: body.cursor,
+      }),
+    );
   } catch (error) {
     logger.error("Error fetching resources", error, { serverId });
     return c.json(
@@ -45,10 +50,7 @@ resources.post("/read", async (c) => {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
     if (!uri) {
-      return c.json(
-        { success: false, error: "Resource URI is required" },
-        400,
-      );
+      return c.json({ success: false, error: "Resource URI is required" }, 400);
     }
     return c.json(await readResource(c.mcpClientManager, { serverId, uri }));
   } catch (error) {

@@ -14,8 +14,9 @@ import {
  */
 function extractOAuthToken(serverConfig: MCPServerConfig): string | undefined {
   const httpConfig = serverConfig as HttpServerConfig;
-  const authHeader = (httpConfig?.requestInit?.headers as Record<string, string>)
-    ?.["Authorization"];
+  const authHeader = (
+    httpConfig?.requestInit?.headers as Record<string, string>
+  )?.["Authorization"];
   if (authHeader && authHeader.startsWith("Bearer ")) {
     return authHeader.slice("Bearer ".length);
   }
@@ -49,7 +50,10 @@ async function safeValidateHostedServer(
   serverConfig: MCPServerConfig,
 ): Promise<HostedServerValidateResponse & { error?: string }> {
   try {
-    return await validateHostedServer(serverId, extractOAuthToken(serverConfig));
+    return await validateHostedServer(
+      serverId,
+      extractOAuthToken(serverConfig),
+    );
   } catch (error) {
     return {
       success: false,

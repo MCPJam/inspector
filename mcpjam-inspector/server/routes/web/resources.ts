@@ -4,10 +4,7 @@ import {
   resourcesReadSchema,
   withEphemeralConnection,
 } from "./auth.js";
-import {
-  listResources,
-  readResource,
-} from "../../utils/route-handlers.js";
+import { listResources, readResource } from "../../utils/route-handlers.js";
 
 const resources = new Hono();
 

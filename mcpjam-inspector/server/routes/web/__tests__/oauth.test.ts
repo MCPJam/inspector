@@ -95,7 +95,9 @@ describe("web routes — oauth error contract", () => {
   });
 
   it("returns compatibility payload for generic runtime errors", async () => {
-    executeOAuthProxyMock.mockRejectedValueOnce(new Error("connect ECONNREFUSED"));
+    executeOAuthProxyMock.mockRejectedValueOnce(
+      new Error("connect ECONNREFUSED"),
+    );
 
     const response = await postJson(
       app,

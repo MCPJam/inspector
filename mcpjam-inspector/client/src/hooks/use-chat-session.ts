@@ -204,9 +204,7 @@ export function useChatSession({
       customProviders,
     });
     if (HOSTED_MODE) {
-      return models.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      );
+      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
     }
     return models;
   }, [
@@ -529,7 +527,8 @@ export function useChatSession({
 
   // Computed state for UI
   const requiresAuthForChat = HOSTED_MODE || isMcpJamModel;
-  const isAuthReady = !requiresAuthForChat || (isAuthenticated && !!authHeaders);
+  const isAuthReady =
+    !requiresAuthForChat || (isAuthenticated && !!authHeaders);
   const disableForAuthentication = !isAuthenticated && requiresAuthForChat;
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;

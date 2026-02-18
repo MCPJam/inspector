@@ -52,7 +52,9 @@ export function resolveHostedServerId(serverNameOrId: string): string {
   if (mapped) return mapped;
 
   // Allow direct server IDs for callers that already resolved names.
-  if (Object.values(hostedApiContext.serverIdsByName).includes(serverNameOrId)) {
+  if (
+    Object.values(hostedApiContext.serverIdsByName).includes(serverNameOrId)
+  ) {
     return serverNameOrId;
   }
 

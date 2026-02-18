@@ -16,7 +16,9 @@ prompts.post("/list", async (c) => {
     if (!body.serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-    return c.json(await listPrompts(c.mcpClientManager, body as { serverId: string }));
+    return c.json(
+      await listPrompts(c.mcpClientManager, body as { serverId: string }),
+    );
   } catch (error) {
     logger.error("Error fetching prompts", error, { serverId: "unknown" });
     return c.json(
@@ -84,10 +86,7 @@ prompts.post("/get", async (c) => {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
     if (!body.name) {
-      return c.json(
-        { success: false, error: "Prompt name is required" },
-        400,
-      );
+      return c.json({ success: false, error: "Prompt name is required" }, 400);
     }
 
     return c.json(

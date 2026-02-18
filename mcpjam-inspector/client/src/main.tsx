@@ -42,6 +42,8 @@ if (isInIframe) {
 } else {
   const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
   const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
+  const workosDevMode =
+    (import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined) === "true";
 
   // Compute redirect URI safely across environments
   const workosRedirectUri = (() => {
@@ -99,6 +101,7 @@ if (isInIframe) {
     <AuthKitProvider
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
+      devMode={workosDevMode}
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
@@ -117,7 +120,9 @@ if (isInIframe) {
         await initializeSessionToken();
         console.log("[Auth] Session token initialized");
       } else {
-        console.log("[Auth] Hosted mode active, skipping session token bootstrap");
+        console.log(
+          "[Auth] Hosted mode active, skipping session token bootstrap",
+        );
       }
     } catch (error) {
       console.error("[Auth] Failed to initialize session token:", error);

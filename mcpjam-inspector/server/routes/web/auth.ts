@@ -124,16 +124,13 @@ export async function authorizeServer(
   }
 
   if (!response.ok) {
-    const code = typeof body?.code === "string" ? body.code : ErrorCode.INTERNAL_ERROR;
+    const code =
+      typeof body?.code === "string" ? body.code : ErrorCode.INTERNAL_ERROR;
     const message =
       typeof body?.message === "string"
         ? body.message
         : `Authorization failed (${response.status})`;
-    throw new WebRouteError(
-      response.status,
-      code as ErrorCode,
-      message,
-    );
+    throw new WebRouteError(response.status, code as ErrorCode, message);
   }
 
   if (!body?.authorized || !body?.serverConfig) {
@@ -292,7 +289,10 @@ function resolveConnectionParams(body: Record<string, unknown>): {
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   c: any,
   schema: S,
-  fn: (manager: InstanceType<typeof MCPClientManager>, body: z.infer<S>) => Promise<T>,
+  fn: (
+    manager: InstanceType<typeof MCPClientManager>,
+    body: z.infer<S>,
+  ) => Promise<T>,
   options?: { timeoutMs?: number },
 ) {
   return handleRoute(c, async () => {

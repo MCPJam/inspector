@@ -66,7 +66,13 @@ oauthWeb.post("/proxy", async (c) => {
     assertBearerToken(c);
 
     const { url, method, body, headers } = await c.req.json();
-    const result = await executeOAuthProxy({ url, method, body, headers, httpsOnly: true });
+    const result = await executeOAuthProxy({
+      url,
+      method,
+      body,
+      headers,
+      httpsOnly: true,
+    });
     return c.json(result);
   } catch (error) {
     return webErrorCompat(c, toRouteError(error));

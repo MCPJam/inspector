@@ -229,7 +229,10 @@ oauth.post("/proxy", async (c) => {
     return c.json(result);
   } catch (error) {
     if (error instanceof OAuthProxyError) {
-      return c.json({ error: error.message }, error.status as ContentfulStatusCode);
+      return c.json(
+        { error: error.message },
+        error.status as ContentfulStatusCode,
+      );
     }
     logger.error("OAuth proxy error", error);
     return c.json(
@@ -266,7 +269,10 @@ oauth.get("/metadata", async (c) => {
     return c.json(result.metadata);
   } catch (error) {
     if (error instanceof OAuthProxyError) {
-      return c.json({ error: error.message }, error.status as ContentfulStatusCode);
+      return c.json(
+        { error: error.message },
+        error.status as ContentfulStatusCode,
+      );
     }
     logger.error("OAuth metadata proxy error", error);
     return c.json(

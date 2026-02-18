@@ -155,7 +155,9 @@ function buildRuntimeHeadContent(options: {
   urlPolyfill?: string;
   baseTag?: string;
 }): string {
-  const configScript = buildRuntimeConfigScript(options.runtimeConfig as unknown as Record<string, unknown>);
+  const configScript = buildRuntimeConfigScript(
+    options.runtimeConfig as unknown as Record<string, unknown>,
+  );
   const runtimeScript = `<script>${CHATGPT_APPS_RUNTIME_SCRIPT}</script>`;
   return `${WIDGET_BASE_CSS}${options.urlPolyfill ?? ""}${options.baseTag ?? ""}${configScript}${runtimeScript}`;
 }

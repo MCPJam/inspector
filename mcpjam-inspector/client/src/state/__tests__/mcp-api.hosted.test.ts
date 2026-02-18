@@ -8,7 +8,8 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/lib/apis/web/servers-api", () => ({
-  validateHostedServer: (...args: unknown[]) => validateHostedServerMock(...args),
+  validateHostedServer: (...args: unknown[]) =>
+    validateHostedServerMock(...args),
 }));
 
 vi.mock("@/lib/session-token", () => ({
