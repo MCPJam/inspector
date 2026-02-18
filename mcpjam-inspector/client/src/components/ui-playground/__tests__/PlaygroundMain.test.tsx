@@ -114,6 +114,21 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
+// Mock convex/react
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => ({
+    isAuthenticated: false,
+    isLoading: false,
+  }),
+}));
+
+// Mock useViews (useWorkspaceServers)
+vi.mock("@/hooks/useViews", () => ({
+  useWorkspaceServers: () => ({
+    serversByName: new Map(),
+  }),
+}));
+
 // Mock useChatSession hook
 const mockUseChatSession = {
   messages: [],
@@ -346,6 +361,8 @@ vi.mock("@/state/app-state-context", () => ({
     servers: {
       "test-server": { connectionStatus: "connected" },
     },
+    workspaces: {},
+    activeWorkspaceId: "default",
   }),
 }));
 
