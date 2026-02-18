@@ -19,8 +19,16 @@ export const SIGNATURE_MAX_DEPTH = 4;
 export const SIGNATURE_MAX_ARRAY_ITEMS = 24;
 export const SIGNATURE_MAX_OBJECT_KEYS = 32;
 export const SIGNATURE_STRING_EDGE_LENGTH = 24;
+export const PARTIAL_HISTORY_MAX_ENTRIES = 200;
 
 // ── Types ────────────────────────────────────────────────────────────────────
+
+export interface PartialHistoryEntry {
+  timestamp: number;
+  elapsedFromStart: number;
+  input: Record<string, unknown>;
+  isFinal?: boolean;
+}
 
 export type ToolState =
   | "input-streaming"
@@ -147,6 +155,14 @@ export interface UseToolInputStreamingReturn {
   signalStreamingRender: () => void;
   /** Called on CSP mode change (or externally) to clear all streaming state. */
   resetStreamingState: () => void;
+  /** Recorded history of partial inputs (populated after streaming completes). */
+  partialHistory: PartialHistoryEntry[];
+  /** Replay the widget to a specific history position. */
+  replayToPosition: (position: number) => void;
+  /** Exit replay mode and restore widget to final state. */
+  exitReplay: () => void;
+  /** Whether the hook is currently in replay mode. */
+  isReplayActive: boolean;
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
@@ -176,11 +192,19 @@ export function useToolInputStreaming({
   const toolInputSentRef = useRef(false);
   const previousToolStateRef = useRef<ToolState | undefined>(toolState);
 
+  // ── History recording refs ──────────────────────────────────────────────
+  const partialHistoryRef = useRef<PartialHistoryEntry[]>([]);
+  const recordingStartTimeRef = useRef<number | null>(null);
+
   // ── Internal state ───────────────────────────────────────────────────────
 
   const [streamingRenderSignaled, setStreamingRenderSignaled] = useState(false);
   const [hasDeliveredStreamingInput, setHasDeliveredStreamingInput] =
     useState(false);
+  const [partialHistory, setPartialHistory] = useState<PartialHistoryEntry[]>(
+    [],
+  );
+  const [isReplayActive, setIsReplayActive] = useState(false);
 
   // ── Derived values ───────────────────────────────────────────────────────
 
@@ -214,11 +238,78 @@ export function useToolInputStreaming({
     toolInputSentRef.current = false;
     setStreamingRenderSignaled(false);
     setHasDeliveredStreamingInput(false);
+    partialHistoryRef.current = [];
+    recordingStartTimeRef.current = null;
+    setPartialHistory([]);
+    setIsReplayActive(false);
   }, []);
 
   const signalStreamingRender = useCallback(() => {
     setStreamingRenderSignaled(true);
   }, []);
+
+  const recordPartialEntry = useCallback(
+    (input: Record<string, unknown>, isFinal?: boolean) => {
+      if (partialHistoryRef.current.length >= PARTIAL_HISTORY_MAX_ENTRIES)
+        return;
+      const now = Date.now();
+      if (recordingStartTimeRef.current === null) {
+        recordingStartTimeRef.current = now;
+      }
+      partialHistoryRef.current.push({
+        timestamp: now,
+        elapsedFromStart: now - recordingStartTimeRef.current,
+        input: structuredClone(input),
+        isFinal,
+      });
+    },
+    [],
+  );
+
+  // ── Replay callbacks ──────────────────────────────────────────────────────
+
+  const replayToPosition = useCallback(
+    (position: number) => {
+      const bridge = bridgeRef.current;
+      if (!bridge || !isReadyRef.current) return;
+      const history = partialHistoryRef.current;
+      if (position < 0 || position >= history.length) return;
+
+      setIsReplayActive(true);
+
+      // Clear dedup guards so bridge accepts the replayed message
+      lastToolInputRef.current = null;
+      lastToolInputPartialRef.current = null;
+
+      const entry = history[position];
+      if (entry.isFinal) {
+        Promise.resolve(
+          bridge.sendToolInput({ arguments: entry.input }),
+        ).catch(() => {});
+      } else {
+        Promise.resolve(
+          bridge.sendToolInputPartial({ arguments: entry.input }),
+        ).catch(() => {});
+      }
+    },
+    [bridgeRef, isReadyRef],
+  );
+
+  const exitReplay = useCallback(() => {
+    setIsReplayActive(false);
+
+    // Restore widget to final state
+    const bridge = bridgeRef.current;
+    if (!bridge || !isReadyRef.current) return;
+    const history = partialHistoryRef.current;
+    if (history.length === 0) return;
+
+    const finalEntry = history[history.length - 1];
+    lastToolInputRef.current = null;
+    Promise.resolve(
+      bridge.sendToolInput({ arguments: finalEntry.input }),
+    ).catch(() => {});
+  }, [bridgeRef, isReadyRef]);
 
   // ── Effects ──────────────────────────────────────────────────────────────
 
@@ -280,6 +371,7 @@ export function useToolInputStreaming({
       lastToolInputPartialSentAtRef.current = Date.now();
       setHasDeliveredStreamingInput(true);
       setStreamingRenderSignaled(true);
+      recordPartialEntry(pending);
       Promise.resolve(
         bridge.sendToolInputPartial({ arguments: pending }),
       ).catch(() => {});
@@ -306,7 +398,7 @@ export function useToolInputStreaming({
       partialInputTimerRef.current = null;
       flushPartialInput();
     }, PARTIAL_INPUT_THROTTLE_MS - elapsed);
-  }, [hasToolInputData, isReady, toolInput, toolState, bridgeRef, isReadyRef]);
+  }, [hasToolInputData, isReady, toolInput, toolState, bridgeRef, isReadyRef, recordPartialEntry]);
 
   // 5. Complete input delivery
   useEffect(() => {
@@ -335,13 +427,15 @@ export function useToolInputStreaming({
     }
     lastToolInputRef.current = serialized;
     toolInputSentRef.current = true;
+    recordPartialEntry(resolvedToolInput, true);
+    setPartialHistory([...partialHistoryRef.current]);
     Promise.resolve(
       bridge.sendToolInput({ arguments: resolvedToolInput }),
     ).catch(() => {
       toolInputSentRef.current = false;
       lastToolInputRef.current = null;
     });
-  }, [isReady, toolInput, toolState, bridgeRef]);
+  }, [isReady, toolInput, toolState, bridgeRef, recordPartialEntry]);
 
   // 6. Tool result delivery
   useEffect(() => {
@@ -390,5 +484,9 @@ export function useToolInputStreaming({
     canRenderStreamingInput,
     signalStreamingRender,
     resetStreamingState,
+    partialHistory,
+    replayToPosition,
+    exitReplay,
+    isReplayActive,
   };
 }

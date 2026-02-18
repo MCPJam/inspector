@@ -65,6 +65,7 @@ import {
   handleUploadFileMessage,
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
+import { StreamingPlaybackBar } from "./streaming-playback-bar";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
@@ -306,6 +307,10 @@ export function MCPAppsRenderer({
     canRenderStreamingInput,
     signalStreamingRender,
     resetStreamingState,
+    partialHistory,
+    replayToPosition,
+    exitReplay,
+    isReplayActive,
   } = useToolInputStreaming({
     bridgeRef,
     isReady,
@@ -446,6 +451,12 @@ export function MCPAppsRenderer({
     (s) => s.setWidgetModelContext,
   );
   const setWidgetHtmlStore = useWidgetDebugStore((s) => s.setWidgetHtml);
+  const setStreamingHistoryCount = useWidgetDebugStore(
+    (s) => s.setStreamingHistoryCount,
+  );
+  const streamingPlaybackActive = useWidgetDebugStore(
+    (s) => s.widgets.get(toolCallId)?.streamingPlaybackActive ?? false,
+  );
 
   // Clear CSP violations when CSP mode changes (stale data from previous mode)
   useEffect(() => {
@@ -519,6 +530,13 @@ export function MCPAppsRenderer({
     safeAreaInsets,
     setWidgetGlobals,
   ]);
+
+  // Write streaming history count to debug store
+  useEffect(() => {
+    if (partialHistory.length > 0) {
+      setStreamingHistoryCount(toolCallId, partialHistory.length);
+    }
+  }, [partialHistory.length, toolCallId, setStreamingHistoryCount]);
 
   // CSS Variables for theming (SEP-1865 styles.variables)
   // These are sent via hostContext.styles.variables - the SDK should pass them through
@@ -1162,6 +1180,16 @@ export function MCPAppsRenderer({
           <X className="w-4 h-4" />
         </button>
       )}
+      {streamingPlaybackActive && partialHistory.length > 1 && (
+        <StreamingPlaybackBar
+          partialHistory={partialHistory}
+          replayToPosition={replayToPosition}
+          exitReplay={exitReplay}
+          isReplayActive={isReplayActive}
+          toolCallId={toolCallId}
+        />
+      )}
+
       {/* Uses SandboxedIframe for DRY double-iframe architecture */}
       <SandboxedIframe
         ref={sandboxRef}

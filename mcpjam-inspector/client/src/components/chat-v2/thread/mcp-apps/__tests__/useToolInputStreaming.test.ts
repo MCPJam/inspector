@@ -5,6 +5,7 @@ import {
   useToolInputStreaming,
   PARTIAL_INPUT_THROTTLE_MS,
   STREAMING_REVEAL_FALLBACK_MS,
+  PARTIAL_HISTORY_MAX_ENTRIES,
   type ToolState,
 } from "../useToolInputStreaming";
 
@@ -443,5 +444,222 @@ describe("useToolInputStreaming", () => {
     rerender();
 
     expect(bridge.sendToolCancelled).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Partial history tests ───────────────────────────────────────────────
+
+  describe("partialHistory", () => {
+    it("is empty during streaming, populated after transition to input-available", () => {
+      const props = createDefaultProps(bridge);
+      props.toolState = "input-streaming";
+      props.toolInput = { code: "he" };
+
+      const { result, rerender } = renderHook(() =>
+        useToolInputStreaming(props),
+      );
+
+      // During streaming, partialHistory state has not been snapshotted yet
+      expect(result.current.partialHistory).toEqual([]);
+
+      // Transition to input-available
+      props.toolState = "input-available";
+      props.toolInput = { code: "hello" };
+      rerender();
+
+      // Now partialHistory should be populated (includes the streaming partial + final)
+      expect(result.current.partialHistory.length).toBeGreaterThan(0);
+    });
+
+    it("final entry has isFinal: true", () => {
+      const props = createDefaultProps(bridge);
+      props.toolState = "input-streaming";
+      props.toolInput = { code: "he" };
+
+      const { result, rerender } = renderHook(() =>
+        useToolInputStreaming(props),
+      );
+
+      // Transition to input-available
+      props.toolState = "input-available";
+      props.toolInput = { code: "hello" };
+      rerender();
+
+      const history = result.current.partialHistory;
+      expect(history.length).toBeGreaterThan(0);
+      expect(history[history.length - 1].isFinal).toBe(true);
+    });
+
+    it("elapsedFromStart is relative to first entry", () => {
+      const props = createDefaultProps(bridge);
+      props.toolState = "input-streaming";
+      props.toolInput = { code: "h" };
+
+      const { result, rerender } = renderHook(() =>
+        useToolInputStreaming(props),
+      );
+
+      // Advance time, change input
+      act(() => {
+        vi.advanceTimersByTime(PARTIAL_INPUT_THROTTLE_MS + 10);
+      });
+      props.toolInput = { code: "he" };
+      rerender();
+
+      // Transition to complete
+      props.toolState = "input-available";
+      props.toolInput = { code: "hello" };
+      rerender();
+
+      const history = result.current.partialHistory;
+      expect(history.length).toBeGreaterThanOrEqual(2);
+      expect(history[0].elapsedFromStart).toBe(0);
+      // Later entries should have positive elapsed time
+      for (let i = 1; i < history.length; i++) {
+        expect(history[i].elapsedFromStart).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it("history resets on toolCallId change", () => {
+      const props = createDefaultProps(bridge);
+      props.toolState = "input-streaming";
+      props.toolInput = { code: "hello" };
+
+      const { result, rerender } = renderHook(() =>
+        useToolInputStreaming(props),
+      );
+
+      // Complete to populate history
+      props.toolState = "input-available";
+      rerender();
+
+      expect(result.current.partialHistory.length).toBeGreaterThan(0);
+
+      // Change toolCallId — history should reset
+      props.toolCallId = "call-2";
+      props.toolState = "input-streaming";
+      props.toolInput = { code: "new" };
+      rerender();
+
+      expect(result.current.partialHistory).toEqual([]);
+    });
+
+    it("history is capped at PARTIAL_HISTORY_MAX_ENTRIES", () => {
+      const props = createDefaultProps(bridge);
+      props.toolState = "input-streaming";
+
+      const { result, rerender } = renderHook(() =>
+        useToolInputStreaming(props),
+      );
+
+      // Send many distinct partials
+      for (let i = 0; i < PARTIAL_HISTORY_MAX_ENTRIES + 50; i++) {
+        act(() => {
+          vi.advanceTimersByTime(PARTIAL_INPUT_THROTTLE_MS + 10);
+        });
+        props.toolInput = { code: `input-${i}` };
+        rerender();
+      }
+
+      // Complete to snapshot history
+      props.toolState = "input-available";
+      props.toolInput = { code: "final" };
+      rerender();
+
+      // The final entry addition is also guarded, so total should be capped
+      expect(
+        result.current.partialHistory.length,
+      ).toBeLessThanOrEqual(PARTIAL_HISTORY_MAX_ENTRIES);
+    });
+  });
+
+  // ── Replay tests ────────────────────────────────────────────────────────
+
+  describe("replay", () => {
+    function setupWithHistory(b: ReturnType<typeof createMockBridge>) {
+      const props = createDefaultProps(b);
+      props.toolState = "input-streaming";
+      props.toolInput = { code: "h" };
+
+      const hookResult = renderHook(() => useToolInputStreaming(props));
+
+      // Advance and add another partial
+      act(() => {
+        vi.advanceTimersByTime(PARTIAL_INPUT_THROTTLE_MS + 10);
+      });
+      props.toolInput = { code: "he" };
+      hookResult.rerender();
+
+      // Complete
+      props.toolState = "input-available";
+      props.toolInput = { code: "hello" };
+      hookResult.rerender();
+
+      // Clear mock call history for cleaner assertions
+      b.sendToolInputPartial.mockClear();
+      b.sendToolInput.mockClear();
+
+      return { hookResult, props };
+    }
+
+    it("replayToPosition(0) calls bridge.sendToolInputPartial", () => {
+      const { hookResult } = setupWithHistory(bridge);
+      // The first entry in history is { code: "he" } — the mount-time entry
+      // { code: "h" } gets cleared by the reset effect that runs in the same cycle.
+      const firstEntry = hookResult.result.current.partialHistory[0];
+
+      act(() => {
+        hookResult.result.current.replayToPosition(0);
+      });
+
+      expect(bridge.sendToolInputPartial).toHaveBeenCalledWith({
+        arguments: firstEntry.input,
+      });
+    });
+
+    it("replayToPosition(lastIndex) calls bridge.sendToolInput for final entry", () => {
+      const { hookResult } = setupWithHistory(bridge);
+      const lastIndex =
+        hookResult.result.current.partialHistory.length - 1;
+
+      act(() => {
+        hookResult.result.current.replayToPosition(lastIndex);
+      });
+
+      expect(bridge.sendToolInput).toHaveBeenCalledWith({
+        arguments: { code: "hello" },
+      });
+    });
+
+    it("replayToPosition sets isReplayActive = true", () => {
+      const { hookResult } = setupWithHistory(bridge);
+
+      expect(hookResult.result.current.isReplayActive).toBe(false);
+
+      act(() => {
+        hookResult.result.current.replayToPosition(0);
+      });
+
+      expect(hookResult.result.current.isReplayActive).toBe(true);
+    });
+
+    it("exitReplay calls bridge.sendToolInput with final args and sets isReplayActive = false", () => {
+      const { hookResult } = setupWithHistory(bridge);
+
+      act(() => {
+        hookResult.result.current.replayToPosition(0);
+      });
+      expect(hookResult.result.current.isReplayActive).toBe(true);
+
+      bridge.sendToolInput.mockClear();
+
+      act(() => {
+        hookResult.result.current.exitReplay();
+      });
+
+      expect(hookResult.result.current.isReplayActive).toBe(false);
+      expect(bridge.sendToolInput).toHaveBeenCalledWith({
+        arguments: { code: "hello" },
+      });
+    });
   });
 });

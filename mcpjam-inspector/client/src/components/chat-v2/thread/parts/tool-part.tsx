@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Database,
   Layers,
+  ListVideo,
   Loader2,
   Maximize2,
   MessageCircle,
@@ -124,7 +125,7 @@ export function ToolPart({
   const [userExpanded, setUserExpanded] = useState(false);
   const isExpanded = needsApproval || userExpanded;
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "csp" | "context" | null
+    "data" | "state" | "csp" | "context" | "streaming" | null
   >("data");
   const [hasUsedSaveViewButton, setHasUsedSaveViewButton] = useState(true);
 
@@ -137,6 +138,12 @@ export function ToolPart({
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
+  );
+  const streamingHistoryCount = useWidgetDebugStore((s) =>
+    toolCallId ? (s.widgets.get(toolCallId)?.streamingHistoryCount ?? 0) : 0,
+  );
+  const setStreamingPlaybackActive = useWidgetDebugStore(
+    (s) => s.setStreamingPlaybackActive,
   );
   const hasWidgetDebug = !!widgetDebugInfo;
 
@@ -158,7 +165,7 @@ export function ToolPart({
 
   const debugOptions = useMemo(() => {
     const options: {
-      tab: "data" | "state" | "csp" | "context";
+      tab: "data" | "state" | "csp" | "context" | "streaming";
       icon: typeof Database;
       label: string;
       badge?: number;
@@ -184,20 +191,43 @@ export function ToolPart({
       badge: widgetDebugInfo?.csp?.violations?.length,
     });
 
+    if (uiType === UIType.MCP_APPS && streamingHistoryCount > 1) {
+      options.push({
+        tab: "streaming",
+        icon: ListVideo,
+        label: "Streaming",
+        badge: streamingHistoryCount,
+      });
+    }
+
     return options;
   }, [
     uiType,
     widgetDebugInfo?.csp?.violations?.length,
     widgetDebugInfo?.modelContext,
+    streamingHistoryCount,
   ]);
 
-  const handleDebugClick = (tab: "data" | "state" | "csp" | "context") => {
+  const handleDebugClick = (
+    tab: "data" | "state" | "csp" | "context" | "streaming",
+  ) => {
+    // Deactivate streaming playback when switching away from streaming tab
+    if (activeDebugTab === "streaming" && tab !== "streaming" && toolCallId) {
+      setStreamingPlaybackActive(toolCallId, false);
+    }
+
     if (activeDebugTab === tab) {
+      if (tab === "streaming" && toolCallId) {
+        setStreamingPlaybackActive(toolCallId, false);
+      }
       setActiveDebugTab(null);
       setUserExpanded(false);
     } else {
       setActiveDebugTab(tab);
       setUserExpanded(true);
+      if (tab === "streaming" && toolCallId) {
+        setStreamingPlaybackActive(toolCallId, true);
+      }
     }
   };
 
@@ -303,7 +333,9 @@ export function ToolPart({
             ? "State"
             : tab === "csp"
               ? "CSP"
-              : "Context";
+              : tab === "streaming"
+                ? "Streaming"
+                : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
@@ -311,7 +343,9 @@ export function ToolPart({
             ? "Widget State"
             : tab === "csp"
               ? "CSP"
-              : "Model Context";
+              : tab === "streaming"
+                ? "Streaming Playback"
+                : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -326,7 +360,7 @@ export function ToolPart({
               className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors cursor-pointer relative ${
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
-                  : badge && badge > 0
+                  : badge && badge > 0 && tab !== "streaming"
                     ? "text-destructive hover:text-destructive hover:bg-destructive/10"
                     : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
@@ -337,8 +371,12 @@ export function ToolPart({
               </span>
               {badge !== undefined && badge > 0 && (
                 <Badge
-                  variant="destructive"
-                  className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none text-white"
+                  variant={tab === "streaming" ? "secondary" : "destructive"}
+                  className={`absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none ${
+                    tab === "streaming"
+                      ? "text-muted-foreground"
+                      : "text-white"
+                  }`}
                 >
                   {badge}
                 </Badge>
@@ -665,6 +703,12 @@ export function ToolPart({
                   No model context set by this widget.
                 </div>
               )}
+            </div>
+          )}
+          {hasWidgetDebug && activeDebugTab === "streaming" && (
+            <div className="text-[11px] text-muted-foreground/70">
+              Streaming playback controls are above the widget.{" "}
+              {streamingHistoryCount} streaming snapshots recorded.
             </div>
           )}
           {!hasWidgetDebug && (
