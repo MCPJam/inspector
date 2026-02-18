@@ -22,6 +22,7 @@ import {
   sessionAuthMiddleware,
   scrubTokenFromUrl,
 } from "./middleware/session-auth";
+import { resolveRequestSessionId } from "./middleware/client-manager-session";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 
@@ -82,8 +83,14 @@ function logBox(content: string, title?: string) {
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
+import { initElicitationCallback } from "./routes/mcp/elicitation";
 import { rpcLogBus } from "./services/rpc-log-bus";
+import { progressStore } from "./services/progress-store";
 import { tunnelManager } from "./services/tunnel-manager";
+import {
+  createClientManagerStore,
+  readSessionStoreOptionsFromEnv,
+} from "./services/client-manager-store";
 import {
   SERVER_PORT,
   SERVER_HOSTNAME,
@@ -218,24 +225,45 @@ if (!process.env.CONVEX_HTTP_URL) {
   );
 }
 
-// Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
-const mcpClientManager = new MCPClientManager(
-  {},
-  {
-    rpcLogger: ({ direction, message, serverId }) => {
-      rpcLogBus.publish({
-        serverId,
-        direction,
-        timestamp: new Date().toISOString(),
-        message,
-      });
-    },
+const mcpClientManagerStore = createClientManagerStore({
+  hostedMode: HOSTED_MODE,
+  managerFactory: (sessionId) => {
+    const manager = new MCPClientManager(
+      {},
+      {
+        rpcLogger: ({ direction, message, serverId }) => {
+          rpcLogBus.publish({
+            sessionId,
+            serverId,
+            direction,
+            timestamp: new Date().toISOString(),
+            message,
+          });
+        },
+        progressHandler: ({
+          serverId,
+          progressToken,
+          progress,
+          total,
+          message,
+        }) => {
+          progressStore.publish({
+            sessionId,
+            serverId,
+            progressToken,
+            progress,
+            total,
+            message,
+            timestamp: new Date().toISOString(),
+          });
+        },
+      },
+    );
+
+    initElicitationCallback(manager);
+    return manager;
   },
-);
-// Middleware to inject client manager into context
-app.use("*", async (c, next) => {
-  c.mcpClientManager = mcpClientManager;
-  await next();
+  sessionStoreOptions: readSessionStoreOptionsFromEnv(),
 });
 
 // ===== SECURITY MIDDLEWARE STACK =====
@@ -251,6 +279,14 @@ app.use("*", originValidationMiddleware);
 app.use("*", sessionAuthMiddleware);
 
 // ===== END SECURITY MIDDLEWARE =====
+
+// Resolve a manager only after the security stack has run.
+app.use("*", async (c, next) => {
+  const sessionId = resolveRequestSessionId(c, HOSTED_MODE);
+  c.mcpSessionId = sessionId;
+  c.mcpClientManager = mcpClientManagerStore.getManager(sessionId);
+  await next();
+});
 
 // Middleware - only enable HTTP request logging in dev mode or when --verbose is passed
 const enableHttpLogs =
@@ -410,14 +446,16 @@ const server = serve({
 
 // Handle graceful shutdown
 process.on("SIGINT", async () => {
-  console.log("\n🛑 Shutting down gracefully...");
+  appLogger.info("\n🛑 Shutting down gracefully...");
+  await mcpClientManagerStore.dispose();
   await tunnelManager.closeAll();
   server.close();
   process.exit(0);
 });
 
 process.on("SIGTERM", async () => {
-  console.log("\n🛑 Shutting down gracefully...");
+  appLogger.info("\n🛑 Shutting down gracefully...");
+  await mcpClientManagerStore.dispose();
   await tunnelManager.closeAll();
   server.close();
   process.exit(0);

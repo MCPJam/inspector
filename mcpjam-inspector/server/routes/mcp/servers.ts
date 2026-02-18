@@ -237,6 +237,7 @@ servers.post("/reconnect", async (c) => {
 // Stream JSON-RPC messages over SSE for all servers.
 servers.get("/rpc/stream", async (c) => {
   const serverIds = c.mcpClientManager.listServers();
+  const sessionId = c.mcpSessionId;
   const url = new URL(c.req.url);
   const replay = parseInt(url.searchParams.get("replay") || "0", 10);
 
@@ -254,7 +255,7 @@ servers.get("/rpc/stream", async (c) => {
       // Replay recent messages for all known servers
       try {
         const recent = rpcLogBus.getBuffer(
-          serverIds,
+          { serverIds, sessionId },
           isNaN(replay) ? 0 : replay,
         );
         for (const evt of recent) {
@@ -263,9 +264,12 @@ servers.get("/rpc/stream", async (c) => {
       } catch {}
 
       // Subscribe to live events for all known servers
-      const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
-        send({ type: "rpc", ...evt });
-      });
+      const unsubscribe = rpcLogBus.subscribe(
+        { serverIds, sessionId },
+        (evt: RpcLogEvent) => {
+          send({ type: "rpc", ...evt });
+        },
+      );
 
       // Keepalive comments
       const keepalive = setInterval(() => {
