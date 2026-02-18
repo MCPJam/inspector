@@ -115,13 +115,26 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByText("MCPJam Pro")).toBeInTheDocument();
+    expect(screen.getByText("Billing")).toBeInTheDocument();
+    expect(screen.getByText("Subscription status")).toBeInTheDocument();
+    expect(screen.getByText("Not subscribed")).toBeInTheDocument();
+    expect(screen.getByText("Current period ends")).toBeInTheDocument();
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.getByText("Billing account")).toBeInTheDocument();
+    expect(screen.getByText("Not connected")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Upgrade to MCPJam Pro" }),
     ).toBeInTheDocument();
   });
 
   it("shows Manage subscription CTA for Pro plan", () => {
+    const periodEnd = 1_705_000_000_000;
+    const formattedPeriodEnd = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(new Date(periodEnd));
+
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
         organizationId: "org-1",
@@ -131,7 +144,7 @@ describe("OrganizationsTab billing", () => {
         canManageBilling: true,
         isOwner: true,
         hasCustomer: true,
-        stripeCurrentPeriodEnd: 1_705_000_000_000,
+        stripeCurrentPeriodEnd: periodEnd,
         stripePriceId: "price_123",
       },
       isLoadingBilling: false,
@@ -144,6 +157,11 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
+    expect(screen.getByText("Subscription status")).toBeInTheDocument();
+    expect(screen.getByText("active")).toBeInTheDocument();
+    expect(screen.getByText("Billing account")).toBeInTheDocument();
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(screen.getByText(formattedPeriodEnd)).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Manage subscription" }),
     ).toBeInTheDocument();
