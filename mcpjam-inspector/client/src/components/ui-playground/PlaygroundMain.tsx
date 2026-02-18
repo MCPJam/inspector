@@ -46,6 +46,7 @@ import {
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
+import { GOOSE_CHAT_BACKGROUND } from "@/config/goose-host-context";
 import {
   DisplayContextHeader,
   PRESET_DEVICE_CONFIGS,
@@ -273,7 +274,9 @@ export function PlaygroundMain({
   const chatBg =
     hostStyle === "chatgpt"
       ? CHATGPT_CHAT_BACKGROUND
-      : CLAUDE_DESKTOP_CHAT_BACKGROUND;
+      : hostStyle === "goose"
+        ? GOOSE_CHAT_BACKGROUND
+        : CLAUDE_DESKTOP_CHAT_BACKGROUND;
   const hostBackgroundColor = chatBg[themeMode];
 
   // Check if thread is empty

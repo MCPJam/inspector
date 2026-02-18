@@ -879,10 +879,13 @@ export function DisplayContextHeader({
                   <Palette className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
                 <Button
-                  variant={hostStyle === "claude" ? "secondary" : "ghost"}
+                  variant="ghost"
                   size="icon"
                   onClick={() => setHostStyle("claude")}
-                  className="h-6 w-6"
+                  className={cn(
+                    "h-6 w-6",
+                    hostStyle === "claude" && "ring-2 ring-primary",
+                  )}
                 >
                   <img
                     src="/claude_logo.png"
@@ -891,14 +894,36 @@ export function DisplayContextHeader({
                   />
                 </Button>
                 <Button
-                  variant={hostStyle === "chatgpt" ? "secondary" : "ghost"}
+                  variant="ghost"
                   size="icon"
                   onClick={() => setHostStyle("chatgpt")}
-                  className="h-6 w-6"
+                  className={cn(
+                    "h-6 w-6",
+                    hostStyle === "chatgpt" && "ring-2 ring-primary",
+                  )}
                 >
                   <img
                     src="/openai_logo.png"
                     alt="ChatGPT"
+                    className="h-3.5 w-3.5 object-contain"
+                  />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setHostStyle("goose")}
+                  className={cn(
+                    "h-6 w-6",
+                    hostStyle === "goose" && "ring-2 ring-primary",
+                  )}
+                >
+                  <img
+                    src={
+                      themeMode === "dark"
+                        ? "/goose_logo_dark.png"
+                        : "/goose_logo.svg"
+                    }
+                    alt="Goose"
                     className="h-3.5 w-3.5 object-contain"
                   />
                 </Button>

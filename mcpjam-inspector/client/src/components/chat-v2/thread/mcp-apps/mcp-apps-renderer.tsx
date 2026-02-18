@@ -55,6 +55,7 @@ import {
   CHATGPT_FONT_CSS,
   CHATGPT_PLATFORM,
 } from "@/config/chatgpt-host-context";
+import { getGooseStyleVariables } from "@/config/goose-host-context";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
@@ -668,14 +669,12 @@ export function MCPAppsRenderer({
 
   // CSS Variables for theming (SEP-1865 styles.variables)
   // These are sent via hostContext.styles.variables - the SDK should pass them through
-  const useChatGPTStyle = isPlaygroundActive && hostStyle === "chatgpt";
-  const styleVariables = useMemo(
-    () =>
-      useChatGPTStyle
-        ? getChatGPTStyleVariables(themeMode)
-        : getClaudeDesktopStyleVariables(themeMode),
-    [themeMode, useChatGPTStyle],
-  );
+  const styleVariables = useMemo(() => {
+    if (!isPlaygroundActive) return getClaudeDesktopStyleVariables(themeMode);
+    if (hostStyle === "chatgpt") return getChatGPTStyleVariables(themeMode);
+    if (hostStyle === "goose") return getGooseStyleVariables(themeMode);
+    return getClaudeDesktopStyleVariables(themeMode);
+  }, [themeMode, isPlaygroundActive, hostStyle]);
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
   // removed — width is now fully host-controlled.
@@ -686,14 +685,20 @@ export function MCPAppsRenderer({
       availableDisplayModes: ["inline", "pip", "fullscreen"],
       locale,
       timeZone,
-      platform: useChatGPTStyle ? CHATGPT_PLATFORM : CLAUDE_DESKTOP_PLATFORM,
+      platform:
+        isPlaygroundActive && hostStyle === "chatgpt"
+          ? CHATGPT_PLATFORM
+          : CLAUDE_DESKTOP_PLATFORM,
       userAgent: navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,
       styles: {
         variables: styleVariables,
         css: {
-          fonts: useChatGPTStyle ? CHATGPT_FONT_CSS : CLAUDE_DESKTOP_FONT_CSS,
+          fonts:
+            isPlaygroundActive && hostStyle === "chatgpt"
+              ? CHATGPT_FONT_CSS
+              : CLAUDE_DESKTOP_FONT_CSS,
         },
       },
       toolInfo: {
@@ -718,7 +723,8 @@ export function MCPAppsRenderer({
       deviceCapabilities,
       safeAreaInsets,
       styleVariables,
-      useChatGPTStyle,
+      isPlaygroundActive,
+      hostStyle,
       toolCallId,
       toolName,
       toolMetadata,

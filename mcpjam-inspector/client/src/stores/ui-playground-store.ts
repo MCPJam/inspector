@@ -12,7 +12,7 @@ import type { FormField } from "@/lib/tool-form";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 
 export type DeviceType = "mobile" | "tablet" | "desktop" | "custom";
-export type HostStyle = "claude" | "chatgpt";
+export type HostStyle = "claude" | "chatgpt" | "goose";
 
 /** Device viewport configurations - shared across playground and MCP apps renderer */
 export const DEVICE_VIEWPORT_CONFIGS: Record<
