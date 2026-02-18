@@ -14,6 +14,7 @@ import {
   injectOpenAICompat,
   injectScripts,
   buildCspHeader,
+  buildCspMetaContent,
   buildChatGptRuntimeHead,
   type CspMode,
   type WidgetCspMeta,
@@ -255,7 +256,17 @@ apps.post("/chatgpt-apps/widget-content", async (c) =>
         runtimeConfig,
       });
 
-      const modifiedHtml = injectScripts(htmlContent, runtimeHeadContent);
+      let modifiedHtml = injectScripts(htmlContent, runtimeHeadContent);
+
+      // Inject CSP meta tag for blob URL enforcement in hosted mode.
+      // In local mode, CSP is enforced via HTTP headers on the widget-content response.
+      // In hosted mode, the HTML is returned as JSON and loaded as a blob URL,
+      // which has no HTTP headers. The meta tag provides equivalent enforcement.
+      if (cspConfig.headerString) {
+        const metaCspContent = buildCspMetaContent(cspConfig.headerString);
+        const cspMetaTag = `<meta http-equiv="Content-Security-Policy" content="${metaCspContent}">`;
+        modifiedHtml = injectScripts(modifiedHtml, cspMetaTag);
+      }
 
       return {
         html: modifiedHtml,
