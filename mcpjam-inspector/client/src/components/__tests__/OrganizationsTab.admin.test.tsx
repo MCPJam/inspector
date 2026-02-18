@@ -140,7 +140,7 @@ function createMember({
   };
 }
 
-describe("OrganizationsTab admin console", () => {
+describe("OrganizationsTab member management", () => {
   let currentUserEmail = "owner@example.com";
   let activeMembers = [
     createMember({ email: "owner@example.com", role: "owner", isOwner: true }),
@@ -208,12 +208,11 @@ describe("OrganizationsTab admin console", () => {
     mockUpdateOrganizationLogo.mockResolvedValue({ success: true });
   });
 
-  it("shows admin console for owners and allows role changes", async () => {
+  it("shows members section for owners and allows role changes", async () => {
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByText("Admin Console")).toBeInTheDocument();
-    expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
-    expect(screen.getByText("Roles")).toBeInTheDocument();
+    expect(screen.getByText("Members")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Email address")).toHaveClass("sm:w-80");
 
     fireEvent.click(screen.getByText("change-role-member@example.com"));
 
@@ -241,14 +240,12 @@ describe("OrganizationsTab admin console", () => {
     });
   });
 
-  it("shows admin console for admins with read-only membership controls", () => {
+  it("shows members section for admins with read-only membership controls", () => {
     currentUserEmail = "admin@example.com";
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByText("Admin Console")).toBeInTheDocument();
-    expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
-    expect(screen.getByText("Roles")).toBeInTheDocument();
+    expect(screen.getByText("Members")).toBeInTheDocument();
     expect(
       screen.queryByText("change-role-member@example.com"),
     ).not.toBeInTheDocument();
@@ -257,8 +254,27 @@ describe("OrganizationsTab admin console", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides admin console for non-admin members", () => {
+  it("shows members section for non-admin members without admin controls", () => {
     currentUserEmail = "member@example.com";
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        organizationId: "org-1",
+        organizationName: "Acme Org",
+        plan: "oss",
+        subscriptionStatus: null,
+        canManageBilling: false,
+        isOwner: false,
+        hasCustomer: false,
+        stripeCurrentPeriodEnd: null,
+        stripePriceId: null,
+      },
+      isLoadingBilling: false,
+      isStartingCheckout: false,
+      isOpeningPortal: false,
+      error: null,
+      startCheckout: vi.fn(),
+      openPortal: vi.fn(),
+    });
 
     render(<OrganizationsTab organizationId="org-1" />);
 
@@ -267,5 +283,14 @@ describe("OrganizationsTab admin console", () => {
       screen.queryByTestId("organization-audit-log"),
     ).not.toBeInTheDocument();
     expect(screen.getByText("Members")).toBeInTheDocument();
+    expect(
+      screen.getByText("Only organization owners can manage billing."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Upgrade to MCPJam Pro" }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByText("change-role-member@example.com"),
+    ).not.toBeInTheDocument();
   });
 });

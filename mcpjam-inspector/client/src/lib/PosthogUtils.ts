@@ -11,6 +11,7 @@ export const options = {
   loaded: (posthog: any) => {
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
+      platform: detectPlatform(),
     });
   },
 };
@@ -25,6 +26,11 @@ export const getPostHogKey = () =>
 export const getPostHogOptions = () => (isPostHogDisabled ? {} : options);
 
 export function detectPlatform() {
+  // Check if running in hosted/web mode
+  if (import.meta.env.VITE_MCPJAM_HOSTED_MODE === "true") {
+    return "web";
+  }
+
   // Check if running in Docker
   const isDocker =
     import.meta.env.VITE_DOCKER === "true" ||

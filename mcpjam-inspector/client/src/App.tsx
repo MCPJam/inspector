@@ -48,10 +48,8 @@ import type { ActiveServerSelectorProps } from "./components/ActiveServerSelecto
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
-import {
-  HostedShellGate,
-  type HostedShellGateState,
-} from "./components/hosted/HostedShellGate";
+import { HostedShellGate } from "./components/hosted/HostedShellGate";
+import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import { resolveHostedNavigation } from "./lib/hosted-navigation";
@@ -66,7 +64,12 @@ export default function App() {
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
-  const { getAccessToken, signIn } = useAuth();
+  const {
+    getAccessToken,
+    signIn,
+    user: workOsUser,
+    isLoading: isWorkOsLoading,
+  } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const convexUser = useQuery(
     "users:getCurrentUser" as any,
@@ -325,15 +328,14 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  const hostedShellGateState: HostedShellGateState = !HOSTED_MODE
-    ? "ready"
-    : isAuthLoading
-      ? "auth-loading"
-      : !isAuthenticated
-        ? "logged-out"
-        : isLoadingRemoteWorkspaces
-          ? "workspace-loading"
-          : "ready";
+  const hostedShellGateState = resolveHostedShellGateState({
+    hostedMode: HOSTED_MODE,
+    isConvexAuthLoading: isAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+    isWorkOsLoading,
+    hasWorkOsUser: !!workOsUser,
+    isLoadingRemoteWorkspaces,
+  });
 
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
