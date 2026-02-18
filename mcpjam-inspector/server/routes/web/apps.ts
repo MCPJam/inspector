@@ -256,17 +256,21 @@ apps.post("/chatgpt-apps/widget-content", async (c) =>
         runtimeConfig,
       });
 
-      let modifiedHtml = injectScripts(htmlContent, runtimeHeadContent);
-
-      // Inject CSP meta tag for blob URL enforcement in hosted mode.
+      // Inject CSP meta tag before scripts for blob URL enforcement in hosted mode.
       // In local mode, CSP is enforced via HTTP headers on the widget-content response.
       // In hosted mode, the HTML is returned as JSON and loaded as a blob URL,
       // which has no HTTP headers. The meta tag provides equivalent enforcement.
+      // Per CSP spec, the meta tag should appear before any scripts in <head>.
+      let cspMetaTag = "";
       if (cspConfig.headerString) {
         const metaCspContent = buildCspMetaContent(cspConfig.headerString);
-        const cspMetaTag = `<meta http-equiv="Content-Security-Policy" content="${metaCspContent}">`;
-        modifiedHtml = injectScripts(modifiedHtml, cspMetaTag);
+        cspMetaTag = `<meta http-equiv="Content-Security-Policy" content="${metaCspContent.replace(/"/g, "&quot;")}">`;
       }
+
+      const modifiedHtml = injectScripts(
+        htmlContent,
+        cspMetaTag + runtimeHeadContent,
+      );
 
       return {
         html: modifiedHtml,
