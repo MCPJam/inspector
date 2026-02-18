@@ -72,7 +72,7 @@ Hosted V1 is explicitly **ephemeral** for chat/widget runtime state.
    - no connection reuse across different HTTP requests.
 9. **JWT validation is fully delegated to Convex.** The inspector forwards the user's WorkOS JWT in the `Authorization` header. Convex validates it with `ctx.auth.getUserIdentity()` using the existing WorkOS auth config (RS256, JWKS, issuer, audience — all handled by Convex internally). Convex resolves the user from the JWT `sub` claim (WorkOS external ID) via the `users.by_externalId` index. The inspector never validates JWTs, never fetches JWKS, and never sends a `userId`. No service-to-service token. Every hosted request hits Convex for auth; this is acceptable in V1 because the auth call piggybacks on the `serverConfig` resolution round-trip that is required regardless.
 10. Rollback is env var change + Railway release rollback. No in-app breakglass mechanism.
-11. All hosted error responses use shape: `{ "code": "<ERROR_CODE>", "message": "<human-readable detail>" }`. The baseline error codes are:
+11. All hosted error responses use shape: `{ "code": "<ERROR_CODE>", "message": "<human-readable detail>" }`. **Transition note:** OAuth proxy routes (`/api/web/oauth/*`) temporarily include a legacy `error` key alongside `code` + `message` for one release to avoid breaking callers that still parse the pre-normalization `{ error }` shape. This compat key will be removed in V1.1. The baseline error codes are:
     - `UNAUTHORIZED` — missing or invalid bearer token (401).
     - `FORBIDDEN` — authenticated but not a member of the target workspace (403).
     - `NOT_FOUND` — server or resource does not exist or does not belong to the workspace (404).
@@ -215,6 +215,11 @@ Hosted support must be implemented with isolation and reuse, not full duplicatio
    - `client/src/hooks/hosted/*`
 3. New hosted containers:
    - `client/src/components/hosted/*`
+
+### Mode-aware client abstractions
+1. `client/src/lib/apis/mode-client.ts` provides `runByMode({ hosted, local })`, `ensureLocalMode(message)`, and `isHostedMode()` as the standard branching primitives for the API layer. All CRUD-style API modules (`mcp-tools-api`, `mcp-resources-api`, `mcp-prompts-api`, `mcp-tasks-api`, `mcp-tokenizer-api`) delegate through `runByMode` instead of inlining `if (HOSTED_MODE)` guards. Exported function signatures are unchanged.
+2. `client/src/lib/hosted-navigation.ts` provides `resolveHostedNavigation(target, hostedMode)` which centralizes hash normalization, hosted tab allowlist enforcement, and navigation side-effect flags (`shouldSelectAllServers`, `shouldClearChatMessages`, `organizationId`). `App.tsx` uses a single `applyNavigation` callback for both hash-change and manual navigation, eliminating the duplicated `applyHash` / `handleNavigate` logic.
+3. Widget fetch extraction: `chatgpt-widget-loaders.ts` provides `loadHostedChatGptWidget` and `loadLocalChatGptWidget` (separate functions — the two paths are structurally different: blob URL vs. server-relative URL). `mcp-apps/fetch-widget-content.ts` provides a unified `fetchMcpAppsWidgetContent` (single function — both modes use the same flow, differing only in endpoint and payload shape).
 
 ### Reuse policy
 1. Reuse shared presentational components from existing chat/widget renderers.
@@ -523,3 +528,13 @@ Commit coverage: `e5e3d4955`, `eed42c04b`, `85215752c`.
 | §5 #15 | Documented modular `/api/web/*` route composition and shared auth/error helpers | Replaced monolithic route implementation with clearer domain ownership and safer common middleware patterns |
 | §5 #16 | Documented shared `server/utils/route-handlers.ts` for resources/prompts/tools-list | Removed duplicated business logic across web and mcp route families while preserving mode-specific contracts |
 | §11 Unit #7, §11 Integration #22-23, §14 #11 | Added explicit regression expectations for shared-handler refactor | Prevents contract drift while allowing maintainability refactors |
+
+### Hosted V1 maintainability refactor (2026-02-17)
+
+Readability and maintainability improvements. No behavioral changes except OAuth error shape normalization.
+
+| Section | What changed | Why |
+|---------|-------------|-----|
+| §5 #11 | Added transition note: OAuth proxy routes temporarily include legacy `error` key alongside `code` + `message` | OAuth routes previously returned inconsistent shapes (`{ error }` from `OAuthProxyError`, `{ code, message }` from `mapRuntimeError`, inline `{ error }` from metadata status check). Normalized to `{ code, message }` with a one-release compat `error` key to avoid breaking existing callers |
+| §8 "Mode-aware client abstractions" | Added new subsection documenting `mode-client.ts`, `hosted-navigation.ts`, `chatgpt-widget-loaders.ts`, and `fetch-widget-content.ts` | Replaced ~65 inline `if (HOSTED_MODE)` branches across API layer with `runByMode`/`ensureLocalMode` abstractions; deduplicated `App.tsx` navigation logic into `resolveHostedNavigation`; extracted widget fetch logic from renderers into focused loader modules |
+| §8 "Hosted shell and navigation policy" | Navigation deduplication is now implemented via `resolveHostedNavigation` in `hosted-navigation.ts` | `applyHash()` and `handleNavigate()` in `App.tsx` shared ~10 identical lines each; replaced with a single `applyNavigation` callback |
