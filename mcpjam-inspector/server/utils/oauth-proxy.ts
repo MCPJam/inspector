@@ -14,6 +14,7 @@ export interface OAuthProxyRequest {
   method?: string;
   body?: unknown;
   headers?: Record<string, string>;
+  httpsOnly?: boolean;
 }
 
 export interface OAuthProxyResponse {
@@ -23,7 +24,7 @@ export interface OAuthProxyResponse {
   body: unknown;
 }
 
-function validateUrl(url: string): URL {
+function validateUrl(url: string, httpsOnly = false): URL {
   if (!url) {
     throw new OAuthProxyError(400, "Missing url parameter");
   }
@@ -35,7 +36,14 @@ function validateUrl(url: string): URL {
     throw new OAuthProxyError(400, "Invalid URL format");
   }
 
-  if (targetUrl.protocol !== "https:" && targetUrl.protocol !== "http:") {
+  if (httpsOnly) {
+    if (targetUrl.protocol !== "https:") {
+      throw new OAuthProxyError(
+        400,
+        "Only HTTPS targets are allowed in hosted mode",
+      );
+    }
+  } else if (targetUrl.protocol !== "https:" && targetUrl.protocol !== "http:") {
     throw new OAuthProxyError(400, "Invalid protocol");
   }
 
@@ -45,7 +53,7 @@ function validateUrl(url: string): URL {
 export async function executeOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const targetUrl = validateUrl(req.url);
+  const targetUrl = validateUrl(req.url, req.httpsOnly);
   const method = req.method ?? "GET";
   const customHeaders = req.headers;
 
@@ -113,8 +121,9 @@ export async function executeOAuthProxy(
 
 export async function fetchOAuthMetadata(
   url: string,
+  httpsOnly = false,
 ): Promise<{ metadata: Record<string, unknown>; status?: undefined } | { status: number; statusText: string }> {
-  const metadataUrl = validateUrl(url);
+  const metadataUrl = validateUrl(url, httpsOnly);
 
   const response = await fetch(metadataUrl.toString(), {
     method: "GET",

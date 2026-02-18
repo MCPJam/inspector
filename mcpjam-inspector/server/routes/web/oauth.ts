@@ -27,7 +27,7 @@ oauthWeb.post("/proxy", async (c) => {
     assertBearerToken(c);
 
     const { url, method, body, headers } = await c.req.json();
-    const result = await executeOAuthProxy({ url, method, body, headers });
+    const result = await executeOAuthProxy({ url, method, body, headers, httpsOnly: true });
     return c.json(result);
   } catch (error) {
     if (error instanceof OAuthProxyError) {
@@ -53,7 +53,7 @@ oauthWeb.get("/metadata", async (c) => {
       return c.json({ error: "Missing url parameter" }, 400);
     }
 
-    const result = await fetchOAuthMetadata(url);
+    const result = await fetchOAuthMetadata(url, true);
     if ("status" in result && result.status !== undefined) {
       return c.json(
         {
