@@ -546,8 +546,8 @@ export function ChatTabV2({
     onChangeFileAttachments: setFileAttachments,
     skillResults,
     onChangeSkillResults: setSkillResults,
-    xrayMode,
-    onXrayModeChange: setXrayMode,
+    xrayMode: HOSTED_MODE ? false : xrayMode,
+    onXrayModeChange: HOSTED_MODE ? undefined : setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
   };
