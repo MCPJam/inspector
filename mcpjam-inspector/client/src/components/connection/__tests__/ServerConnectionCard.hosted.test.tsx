@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { toast } from "sonner";
 import { ServerConnectionCard } from "../ServerConnectionCard";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
@@ -51,9 +52,6 @@ vi.mock("sonner", () => ({
   },
 }));
 
-const HOSTED_HINT =
-  "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
-
 const createServer = (
   overrides: Partial<ServerWithName> = {},
 ): ServerWithName =>
@@ -84,13 +82,12 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
       />,
     );
 
-    expect(screen.getByText("HTTP blocked in hosted mode")).toBeInTheDocument();
-
     const toggle = screen.getByRole("switch");
-    expect(toggle).toBeDisabled();
-    expect(toggle).toHaveAttribute("title", HOSTED_HINT);
-
     fireEvent.click(toggle);
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "HTTP servers are not supported in hosted mode",
+    );
     expect(onReconnect).not.toHaveBeenCalled();
   });
 });
