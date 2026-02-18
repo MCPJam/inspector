@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { toast } from "sonner";
 import { ServerConnectionCard } from "../ServerConnectionCard";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
@@ -75,7 +76,7 @@ describe("ServerConnectionCard", () => {
 
   const defaultProps = {
     onDisconnect: vi.fn(),
-    onReconnect: vi.fn(),
+    onReconnect: vi.fn().mockResolvedValue(undefined),
     onEdit: vi.fn(),
     onRemove: vi.fn(),
   };
@@ -195,7 +196,7 @@ describe("ServerConnectionCard", () => {
 
     it("calls onReconnect when toggling on", () => {
       const server = createServer({ connectionStatus: "disconnected" });
-      const onReconnect = vi.fn();
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
       render(
         <ServerConnectionCard
           server={server}
@@ -208,6 +209,32 @@ describe("ServerConnectionCard", () => {
       fireEvent.click(toggle);
 
       expect(onReconnect).toHaveBeenCalledWith("test-server", undefined);
+    });
+
+    it("catches rejected reconnect promises and clears reconnect loading state", async () => {
+      const server = createServer({ connectionStatus: "disconnected" });
+      const onReconnect = vi.fn().mockImplementation(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            setTimeout(() => reject(new Error("reconnect failed")), 20);
+          }),
+      );
+
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onReconnect={onReconnect}
+        />,
+      );
+
+      const toggle = screen.getByRole("switch");
+      fireEvent.click(toggle);
+
+      await waitFor(() => {
+        expect((toast.error as Mock).mock.calls.length).toBeGreaterThan(0);
+      });
+      expect(toggle).not.toBeDisabled();
     });
   });
 

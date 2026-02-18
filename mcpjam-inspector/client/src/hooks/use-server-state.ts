@@ -1121,7 +1121,20 @@ export function useServerState({
     async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
       logger.info("Reconnecting to server", { serverName, options });
       const server = effectiveServers[serverName];
-      if (!server) throw new Error(`Server ${serverName} not found`);
+      if (!server) {
+        const errorMessage = `Server ${serverName} not found`;
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: serverName,
+          error: errorMessage,
+        });
+        logger.error("Reconnection failed", {
+          serverName,
+          error: errorMessage,
+        });
+        toast.error(errorMessage);
+        return;
+      }
 
       dispatch({
         type: "RECONNECT_REQUEST",
@@ -1180,7 +1193,7 @@ export function useServerState({
           fetchAndStoreInitInfo(serverName).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
-          return { success: true } as const;
+          return;
         }
         dispatch({
           type: "CONNECT_FAILURE",
@@ -1220,7 +1233,7 @@ export function useServerState({
           fetchAndStoreInitInfo(serverName).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
-          return { success: true } as const;
+          return;
         }
         dispatch({
           type: "CONNECT_FAILURE",
@@ -1244,7 +1257,6 @@ export function useServerState({
           serverName,
           error: errorMessage,
         });
-        throw error;
       }
     },
     [effectiveServers, fetchAndStoreInitInfo, logger, dispatch],

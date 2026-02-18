@@ -33,7 +33,7 @@ export interface ActiveServerSelectorProps {
   onServerChange: (server: string) => void;
   onMultiServerToggle: (server: string) => void;
   onConnect: (formData: ServerFormData) => void;
-  onReconnect?: (serverName: string) => void;
+  onReconnect?: (serverName: string) => Promise<void>;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   serversWithViews?: Set<string>; // Set of server names that have saved views
@@ -281,7 +281,7 @@ export function ActiveServerSelector({
                       if (isHostedHttpReconnectBlocked) {
                         return;
                       }
-                      onReconnect(name);
+                      void onReconnect(name);
                     }}
                     className={cn(
                       "ml-auto p-1 rounded-md transition-colors",

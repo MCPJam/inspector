@@ -48,6 +48,10 @@ import type { ActiveServerSelectorProps } from "./components/ActiveServerSelecto
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
+import {
+  HostedShellGate,
+  type HostedShellGateState,
+} from "./components/hosted/HostedShellGate";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import {
@@ -71,7 +75,7 @@ export default function App() {
   >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const posthog = usePostHog();
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, signIn } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const convexUser = useQuery(
     "users:getCurrentUser" as any,
@@ -312,6 +316,16 @@ export default function App() {
     return <LoadingScreen />;
   }
 
+  const hostedShellGateState: HostedShellGateState = !HOSTED_MODE
+    ? "ready"
+    : isAuthLoading
+      ? "auth-loading"
+      : !isAuthenticated
+        ? "logged-out"
+        : isLoadingRemoteWorkspaces
+          ? "workspace-loading"
+          : "ready";
+
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
@@ -486,7 +500,14 @@ export default function App() {
           }}
           required
         />
-        {appContent}
+        <HostedShellGate
+          state={hostedShellGateState}
+          onSignIn={() => {
+            signIn();
+          }}
+        >
+          {appContent}
+        </HostedShellGate>
       </AppStateProvider>
     </PreferencesStoreProvider>
   );

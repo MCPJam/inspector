@@ -73,7 +73,7 @@ interface ServerConnectionCardProps {
   onReconnect: (
     serverName: string,
     options?: { forceOAuthFlow?: boolean },
-  ) => void;
+  ) => Promise<void>;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
@@ -215,7 +215,7 @@ export function ServerConnectionCard({
   const handleReconnect = async (options?: { forceOAuthFlow?: boolean }) => {
     setIsReconnecting(true);
     try {
-      onReconnect(server.name, options);
+      await onReconnect(server.name, options);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -396,7 +396,7 @@ export function ServerConnectionCard({
                     if (!checked) {
                       onDisconnect(server.name);
                     } else {
-                      handleReconnect();
+                      void handleReconnect();
                     }
                   }}
                   className="cursor-pointer scale-75"
@@ -426,7 +426,7 @@ export function ServerConnectionCard({
                         const shouldForceOAuth =
                           server.useOAuth === true ||
                           server.oauthTokens != null;
-                        handleReconnect(
+                        void handleReconnect(
                           shouldForceOAuth
                             ? { forceOAuthFlow: true }
                             : undefined,

@@ -60,12 +60,12 @@ const defaultProps: ActiveServerSelectorProps = {
   onServerChange: vi.fn(),
   onMultiServerToggle: vi.fn(),
   onConnect: vi.fn(),
-  onReconnect: vi.fn(),
+  onReconnect: vi.fn().mockResolvedValue(undefined),
 };
 
 describe("ActiveServerSelector hosted reconnect guard", () => {
   it("disables reconnect for hosted non-HTTPS servers", () => {
-    const onReconnect = vi.fn();
+    const onReconnect = vi.fn().mockResolvedValue(undefined);
     render(
       <ActiveServerSelector
         {...defaultProps}
@@ -94,7 +94,7 @@ describe("ActiveServerSelector hosted reconnect guard", () => {
   });
 
   it("keeps reconnect enabled for hosted HTTPS servers", () => {
-    const onReconnect = vi.fn();
+    const onReconnect = vi.fn().mockResolvedValue(undefined);
     render(
       <ActiveServerSelector
         {...defaultProps}

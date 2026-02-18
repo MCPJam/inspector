@@ -72,7 +72,7 @@ const createServer = (
 
 describe("ServerConnectionCard hosted reconnect guard", () => {
   it("blocks reconnect switch for non-HTTPS servers in hosted mode", () => {
-    const onReconnect = vi.fn();
+    const onReconnect = vi.fn().mockResolvedValue(undefined);
     const server = createServer();
 
     render(

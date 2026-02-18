@@ -36,6 +36,7 @@ Hosted V1 is explicitly **ephemeral** for chat/widget runtime state.
 6. Hosted tools/resources/prompts operations.
 7. Hosted widget-content paths for MCP Apps and ChatGPT Apps.
 8. Hosted observability, rate limits, and rollout guardrails.
+9. Hosted OAuth proxy for MCP servers that require OAuth authentication (CORS bypass for metadata discovery, client registration, and token exchange).
 
 ---
 
@@ -44,7 +45,7 @@ Hosted V1 is explicitly **ephemeral** for chat/widget runtime state.
 1. Durable widget/file artifact platform.
 2. Restart-proof or multi-instance-proof widget/file continuity.
 3. Tasks, elicitation, tunnels, adapter-http, manager-http, OAuth debugger in hosted mode.
-4. OAuth-required MCP server connections in hosted mode.
+4. ~~OAuth-required MCP server connections in hosted mode.~~ **Moved to in-scope** — see §3 #9.
 5. Share links and shared transcripts.
 6. Connection pooling across requests.
 7. Resource templates in hosted mode.
@@ -91,6 +92,12 @@ Hosted V1 is explicitly **ephemeral** for chat/widget runtime state.
     - `handleMCPJamFreeChatModel` already accepts `mcpClientManager` as a parameter and `tools` as pre-wired AI SDK tools whose execute functions close over the manager reference. Passing an ephemeral manager requires a small addition: an optional `onStreamComplete` callback in `MCPJamHandlerOptions`, invoked in `createUIMessageStream`'s `onFinish`. No other changes to the stream handler.
     - Chat-v2 multi-step reuse works automatically — the manager holds connections until `disconnectAllServers()` is called, so all steps within a single request share the same connections.
     - Connection caching across requests (keyed by `{userId, workspaceId, serverId}` with TTL) is a V1.1 optimization. V1 pays the per-request connect/disconnect latency cost (~1-5s overhead) in exchange for complete isolation and statelessness.
+14. **Hosted OAuth uses a CORS proxy with HTTPS-only enforcement.** The MCP Auth spec mandates HTTPS for all authorization server endpoints. The client-side MCP SDK OAuth flow (metadata discovery, client registration, token exchange) cannot reach these endpoints directly due to CORS. The inspector provides authenticated proxy routes (`/api/web/oauth/proxy`, `/api/web/oauth/metadata`) that forward requests to the target OAuth/authorization server. These routes:
+    - Require bearer JWT authentication (same as all `/api/web/*` routes).
+    - Enforce **HTTPS-only** targets — HTTP URLs are rejected with 400. This is both spec-compliant and prevents SSRF to internal HTTP services.
+    - Share implementation with the local-mode `/api/mcp/oauth/*` routes via `server/utils/oauth-proxy.ts` (code deduplication). The local routes retain HTTP support for local development.
+    - The OAuth flow itself runs entirely in the client (MCP SDK `auth()` function). The proxy only handles CORS bypass. OAuth tokens are stored client-side in `localStorage` and sent to execution routes via `oauthAccessToken`/`oauthTokens` request fields.
+    - Workspace/server-scoped URL restriction (limiting proxy targets to discovered OAuth endpoints only) is deferred to V1.1. The residual risk is mitigated by: authentication (bearer JWT required), HTTPS-only enforcement, and Railway's isolated container network (no internal HTTPS services reachable).
 
 ---
 
@@ -99,33 +106,38 @@ Hosted V1 is explicitly **ephemeral** for chat/widget runtime state.
 All routes require bearer JWT (forwarded to Convex for validation). No exceptions — the hosted ChatGPT Apps renderer uses the MCP Apps pattern (authenticated POST + `SandboxedIframe` injection) to avoid unauthenticated iframe `src` URLs.
 
 1. `POST /api/web/servers/validate`
-   Request: `{ workspaceId, serverId }`
-   Behavior: Authorizes via Convex, then connects to the MCP server, runs `initialize`, and disconnects. Returns success if the server is reachable and responds to the MCP handshake. This is a full executor round-trip.
+   Request: `{ workspaceId, serverId, oauthAccessToken? }`
+   Behavior: Authorizes via Convex, then connects to the MCP server, runs `initialize`, and disconnects. Returns success if the server is reachable and responds to the MCP handshake. This is a full executor round-trip. For OAuth-enabled servers, `oauthAccessToken` is required and injected as `Authorization: Bearer` on the MCP connection.
 2. `POST /api/web/chat-v2`
-   Request: `ChatV2Request + { workspaceId, selectedServerIds: string[] }`
-   Note: The hosted field name is `selectedServerIds`. The existing local-mode `ChatV2Request` uses `selectedServers`. Hosted routes use `selectedServerIds` exclusively; the local-mode field name is unchanged.
+   Request: `ChatV2Request + { workspaceId, selectedServerIds: string[], oauthTokens?: Record<string, string> }`
+   Note: The hosted field name is `selectedServerIds`. The existing local-mode `ChatV2Request` uses `selectedServers`. Hosted routes use `selectedServerIds` exclusively; the local-mode field name is unchanged. `oauthTokens` maps server IDs to OAuth access tokens for servers that require OAuth.
 3. `POST /api/web/tools/list`
-   Request: `{ workspaceId, serverId, modelId?, cursor? }`
+   Request: `{ workspaceId, serverId, oauthAccessToken?, modelId?, cursor? }`
 4. `POST /api/web/tools/execute`
-   Request: `{ workspaceId, serverId, toolName, parameters }`
+   Request: `{ workspaceId, serverId, oauthAccessToken?, toolName, parameters }`
 5. `POST /api/web/resources/list`
-   Request: `{ workspaceId, serverId, cursor? }`
+   Request: `{ workspaceId, serverId, oauthAccessToken?, cursor? }`
 6. `POST /api/web/resources/read`
-   Request: `{ workspaceId, serverId, uri }`
+   Request: `{ workspaceId, serverId, oauthAccessToken?, uri }`
 7. `POST /api/web/prompts/list`
-   Request: `{ workspaceId, serverId, cursor? }`
+   Request: `{ workspaceId, serverId, oauthAccessToken?, cursor? }`
 8. `POST /api/web/prompts/list-multi`
-   Request: `{ workspaceId, serverIds: string[] }`
+   Request: `{ workspaceId, serverIds: string[], oauthTokens?: Record<string, string> }`
    Behavior: Batch-lists prompts for multiple servers in one call. Required by the chat input prompts popover.
 9. `POST /api/web/prompts/get`
-   Request: `{ workspaceId, serverId, promptName, arguments? }`
+   Request: `{ workspaceId, serverId, oauthAccessToken?, promptName, arguments? }`
    Behavior: Fetches prompt content with user-supplied arguments. Required for prompt execution.
 10. `POST /api/web/apps/mcp-apps/widget-content`
-    Request: existing payload + `{ workspaceId, serverId }`
+    Request: existing payload + `{ workspaceId, serverId, oauthAccessToken? }`
 11. `POST /api/web/apps/chatgpt-apps/widget-content`
-    Request: `{ workspaceId, serverId, uri, toolInput, toolOutput, toolResponseMetadata, toolId, toolName, theme, cspMode, locale?, deviceType? }`
+    Request: `{ workspaceId, serverId, oauthAccessToken?, uri, toolInput, toolOutput, toolResponseMetadata, toolId, toolName, theme, cspMode, locale?, deviceType? }`
     Response: `{ html, csp, prefersBorder, closeWidget, widgetDescription? }`
     Behavior: Single-step ChatGPT Apps widget content fetch. Server fetches the resource from the MCP server, builds the HTML with injected runtime config, extracts CSP metadata, and returns everything as JSON. The hosted client renderer injects the HTML into a `SandboxedIframe` via `postMessage`/`srcdoc` (same pattern as MCP Apps), avoiding the need for unauthenticated iframe `src` URLs. This replaces the local-mode 3-step flow (`widget/store` → `widget-html/:toolId` → `widget-content/:toolId`) which requires server-side widget state and unauthenticated GET endpoints.
+12. `POST /api/web/oauth/proxy`
+    Request: `{ url, method?, body?, headers? }`
+    Behavior: Authenticated CORS proxy for OAuth token exchange and client registration. HTTPS-only targets enforced. Mirrors `/api/mcp/oauth/proxy` but requires bearer JWT.
+13. `GET /api/web/oauth/metadata?url=https://...`
+    Behavior: Authenticated CORS proxy for OAuth metadata discovery. HTTPS-only targets enforced. Mirrors `/api/mcp/oauth/metadata` but requires bearer JWT.
 
 Max request body: 1MB for all JSON endpoints.
 
@@ -168,8 +180,8 @@ All required Convex infrastructure already exists:
    Request: `{ workspaceId, serverId }`
    Implementation: new HTTP route handler (~60 lines) following existing patterns:
    - `ctx.auth.getUserIdentity()` → `users.by_externalId(identity.subject)` → `workspaceMembers.by_workspace_and_user(workspaceId, userId)` → `db.get(serverId)` + verify `server.workspaceId` matches.
-   - **Must reject servers with out-of-scope configurations:** `transportType === "stdio"` → error (hosted cannot spawn subprocesses, §4.3); `useOAuth === true` → error (OAuth-required servers are out of scope, §4.4). These checks use existing `servers` table fields (`transportType`, `useOAuth`).
-   - Returns `{ authorized, role, serverConfig }` where `serverConfig` contains: `{ transportType, url, headers }`.
+   - **Must reject servers with out-of-scope configurations:** `transportType === "stdio"` → error (hosted cannot spawn subprocesses, §4.3). This check uses the existing `servers` table field (`transportType`).
+   - Returns `{ authorized, role, serverConfig }` where `serverConfig` contains: `{ transportType, url, headers, useOAuth }`. The `useOAuth` flag tells the inspector whether the server requires OAuth authentication — when `true`, the inspector must provide an `oauthAccessToken` in execution requests.
    - Sensitive fields (headers containing auth tokens) transit over HTTPS (Convex endpoints are HTTPS by default).
 
 Not in V1:
@@ -221,6 +233,7 @@ This eliminates unauthenticated GET endpoints, server-side widget state, and the
 4. Max request body: 1MB for all hosted JSON endpoints. Enforced via Hono `bodyLimit` middleware (`hono/body-limit`) applied to all `/api/web/*` routes.
 5. Return explicit structured errors for unsupported hosted features using locked error shape and error codes (see section 5, item 11).
 6. Hosted CORS restricts `Access-Control-Allow-Origin` to exact origins from `WEB_ALLOWED_ORIGINS`.
+7. Hosted OAuth proxy (`/api/web/oauth/*`) enforces HTTPS-only targets. HTTP URLs are rejected with 400. This prevents SSRF to internal HTTP services (cloud metadata endpoints, internal APIs). See §5 #14.
 
 ---
 
@@ -274,9 +287,13 @@ Not required in V1:
 12. Convex `/web/authorize` denies non-member access to workspace.
 13. Convex `/web/authorize` denies access when server does not belong to workspace.
 14. Convex `/web/authorize` rejects `transportType=stdio` servers.
-15. Convex `/web/authorize` rejects `useOAuth=true` servers.
-16. Chat-v2 `onFinish` cleanup fires `disconnectAllServers()` on normal completion.
-17. Chat-v2 `onFinish` cleanup fires `disconnectAllServers()` on client abort.
+15. Convex `/web/authorize` returns `useOAuth` flag in `serverConfig` for OAuth-enabled servers.
+16. Hosted OAuth proxy rejects HTTP target URLs with 400 (HTTPS-only enforcement).
+17. Hosted OAuth proxy requires bearer JWT authentication.
+18. OAuth-enabled server validation succeeds when `oauthAccessToken` is provided.
+19. Chat-v2 with OAuth-enabled servers injects `Authorization: Bearer` on MCP connections using `oauthTokens` map.
+20. Chat-v2 `onFinish` cleanup fires `disconnectAllServers()` on normal completion.
+21. Chat-v2 `onFinish` cleanup fires `disconnectAllServers()` on client abort.
 
 ### E2E
 1. Workspace member validates server, chats, executes tools, sees widget output.
@@ -328,6 +345,7 @@ Removed from V1:
 5. Cross-workspace leakage tests pass with zero critical findings.
 6. Hosted behavior is explicitly documented as ephemeral (non-durable).
 7. Hosted `chat-v2` reuses per-server connections for the duration of a single request and always tears them down at request end.
+8. OAuth-enabled MCP servers can be validated and used in hosted chat/tools via the hosted OAuth proxy.
 
 ---
 
@@ -423,3 +441,21 @@ The iframe auth blocker (browsers cannot set `Authorization` headers on iframe `
 | §6 header | Removed "unless noted" caveat — all hosted routes now require bearer JWT with no exceptions | MCP Apps pattern eliminates the only candidate for unauthenticated routes |
 | §6 #11 | Replaced 3-step ChatGPT Apps flow (`widget/store` → `widget-html/:toolId` → `widget-content/:toolId`) with single `POST /api/web/apps/chatgpt-apps/widget-content` | Local-mode 3-step flow requires unauthenticated GET for iframe `src`. Hosted renderer uses authenticated POST + `SandboxedIframe` `postMessage`/`srcdoc` injection (same pattern as MCP Apps). Scope reduction: 3 endpoints → 1, no server-side widget store needed |
 | §8 | Added "Hosted ChatGPT Apps renderer" subsection | New component in `client/src/components/hosted/` that reuses `SandboxedIframe`. Local-mode `chatgpt-app-renderer.tsx` is unchanged. The hosted renderer is a separate, simpler component |
+
+### Hosted OAuth support (2026-02-17)
+
+OAuth-required MCP server connections are now in-scope for hosted mode. The inspector provides authenticated CORS proxy routes for OAuth flows (metadata discovery, client registration, token exchange) with HTTPS-only enforcement.
+
+| Section | What changed | Why |
+|---------|-------------|-----|
+| §3 #9 | Added hosted OAuth proxy to in-scope | OAuth-required MCP servers are common; blocking them would limit hosted mode utility |
+| §4 #4 | Struck through "OAuth-required MCP server connections" as out-of-scope | Moved to in-scope (§3 #9) |
+| §5 #14 | Added locked decision: hosted OAuth CORS proxy with HTTPS-only enforcement | Documents proxy architecture, HTTPS-only security posture, code deduplication with local mode, and deferred URL scoping |
+| §6 #1-9 | Added `oauthAccessToken?` field to all single-server route requests | OAuth-enabled servers require access token injection as `Authorization: Bearer` on MCP connections |
+| §6 #2, #8 | Added `oauthTokens?: Record<string, string>` to multi-server routes (`chat-v2`, `prompts/list-multi`) | Maps server IDs to OAuth access tokens for multi-server operations |
+| §6 #12-13 | Added `POST /api/web/oauth/proxy` and `GET /api/web/oauth/metadata` routes | Authenticated CORS proxy for OAuth token exchange, client registration, and metadata discovery |
+| §7 `/web/authorize` | Removed `useOAuth === true → error` rejection; `serverConfig` now returns `useOAuth` flag | Inspector needs to know which servers require OAuth so it can enforce token requirements client-side |
+| §9 #7 | Added HTTPS-only enforcement security requirement for hosted OAuth proxy | Prevents SSRF to internal HTTP services; MCP Auth spec mandates HTTPS for all auth server endpoints |
+| §11 Integration #15 | Changed from "rejects `useOAuth=true`" to "returns `useOAuth` flag in `serverConfig`" | `/web/authorize` no longer rejects OAuth servers |
+| §11 Integration #16-19 | Added OAuth-specific integration tests (HTTPS-only enforcement, proxy auth, OAuth server validation, chat with OAuth tokens) | Coverage for new OAuth proxy and execution paths |
+| §14 #8 | Added OAuth server acceptance criterion | OAuth-enabled servers must be validatable and usable in hosted mode |

@@ -3,7 +3,10 @@ import type { HttpServerConfig } from "@mcpjam/sdk";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
-import { validateHostedServer } from "@/lib/apis/web/servers-api";
+import {
+  validateHostedServer,
+  type HostedServerValidateResponse,
+} from "@/lib/apis/web/servers-api";
 
 /**
  * Extracts an OAuth access token from an HttpServerConfig's Authorization header.
@@ -17,6 +20,42 @@ function extractOAuthToken(serverConfig: MCPServerConfig): string | undefined {
     return authHeader.slice("Bearer ".length);
   }
   return undefined;
+}
+
+function normalizeHostedValidationError(error: unknown): string {
+  if (
+    error instanceof Error &&
+    error.message === "Hosted workspace is not available yet"
+  ) {
+    return "Hosted workspace is still loading. Please try again in a moment.";
+  }
+
+  if (
+    error instanceof Error &&
+    error.message.startsWith("Hosted server not found for ")
+  ) {
+    return "Hosted server metadata is still syncing. Please retry.";
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return "Hosted validation failed";
+}
+
+async function safeValidateHostedServer(
+  serverId: string,
+  serverConfig: MCPServerConfig,
+): Promise<HostedServerValidateResponse & { error?: string }> {
+  try {
+    return await validateHostedServer(serverId, extractOAuthToken(serverConfig));
+  } catch (error) {
+    return {
+      success: false,
+      error: normalizeHostedValidationError(error),
+    };
+  }
 }
 
 // Helper to add timeout to authFetch requests
@@ -51,7 +90,7 @@ export async function testConnection(
   serverId: string,
 ) {
   if (HOSTED_MODE) {
-    return validateHostedServer(serverId, extractOAuthToken(serverConfig));
+    return safeValidateHostedServer(serverId, serverConfig);
   }
 
   const res = await authFetchWithTimeout(
@@ -95,7 +134,7 @@ export async function reconnectServer(
   serverConfig: MCPServerConfig,
 ) {
   if (HOSTED_MODE) {
-    return validateHostedServer(serverId, extractOAuthToken(serverConfig));
+    return safeValidateHostedServer(serverId, serverConfig);
   }
 
   const res = await authFetchWithTimeout(
