@@ -4,7 +4,7 @@ description: "Build and test ChatGPT apps and MCP apps locally with a full widge
 icon: "Cube"
 ---
 
-The App Builder is a local development environment for building [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps (Claude)](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865). It provides a full widget emulator so you can quickly view and iterate on your apps without needing ngrok or a ChatGPT subscription.
+The App Builder is a local development environment for building [ChatGPT apps](https://developers.openai.com/apps-sdk/) and [MCP apps](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865). It provides widget emulation with debugging tools that help you see what's happening under the hood in your server — all running locally without needing ngrok or a ChatGPT/Claude subscription.
 
 <Frame>
   <img
@@ -14,17 +14,6 @@ The App Builder is a local development environment for building [ChatGPT apps](h
     width="1000"
   />
 </Frame>
-
-## Key Features
-
-The App Builder provides everything you need to develop and test apps locally:
-
-- **Widget Preview** - Instantly view your widgets by manually invoking tools or chatting with your server using an LLM
-- **Full Protocol Support** - Complete support for `window.openai` API including `widgetState`, `callTool`, `structuredContent`, `sendFollowUpMessage`, and `displayMode`
-- **MCP Apps Support** - Full support for MCP Apps (SEP-1865) including all JSON-RPC message types like `tools/call`, `ui/initialize`, `ui/message`, and `ui/open-link`
-- **Device Emulation** - Test your widgets across Desktop, Tablet, and Mobile viewports
-- **CSP Testing** - Validate your Content Security Policy configurations
-- **Comprehensive Logging** - View all JSON-RPC messages and `window.openai` API calls in real-time
 
 ## Getting Started
 
@@ -36,25 +25,35 @@ To start building apps with MCPJam:
 
 When a tool returns a widget (either via `openai/outputTemplate` for ChatGPT apps or `ui.resourceUri` for MCP apps), it will render immediately in the widget emulator.
 
-## Widget Emulator Features
+## Display Context
 
 ### Device Viewports
 
 Test your widgets across different device types to ensure responsive design:
 
-- **Desktop** - Standard desktop viewport for full-screen experiences
-- **Tablet** - Medium-sized viewport for tablet devices
-- **Mobile** - Small viewport mimicking phone screens
-
-Switch between viewports using the device selector in the emulator toolbar. Your widget will automatically receive the appropriate device context via the `window.openai.userAgent.device.type` property.
+- **Desktop** (1280x800) - Standard desktop viewport for full-screen experiences
+- **Tablet** (820x1180) - Medium-sized viewport for tablet devices
+- **Mobile** (430x932) - Small viewport mimicking phone screens
+- **Custom** - Set arbitrary width and height values between 100 and 2560 pixels
 
 ### Theme Testing
 
-Toggle between light and dark modes to test your widget's appearance in both themes. The theme preference is passed to your widget through the `window.openai` API, allowing your app to adapt its styling accordingly.
+Toggle between light and dark modes to test your widget's appearance in both themes.
+
+### Host Styles
+
+Switch between Claude and ChatGPT host styles to prev and chat thread look in each host environment. For MCP Apps that use the MCP Apps style variables, the ChatGPT toggle translates the widget's styles to ChatGPT's design tokens.
 
 ### Locale Configuration
 
 Test your app's internationalization by selecting different locales from the locale selector. Choose from common BCP 47 locales (e.g., `en-US`, `es-ES`, `ja-JP`, `fr-FR`) to verify that your widget properly handles different languages and regions.
+
+### Content Security Policy (CSP)
+
+The App Builder includes CSP enforcement controls to help you test widget security configurations. Switch between two CSP modes using the shield icon:
+
+- **Permissive** (default) - Allows all HTTPS resources, suitable for development
+- **Strict** - Only allows domains declared in your widget's CSP metadata (`openai/widgetCSP` for ChatGPT Apps, `ui.csp` for MCP Apps)
 
 ### Device Capabilities
 
@@ -63,7 +62,7 @@ Configure device-specific capabilities to test different interaction patterns:
 - **Hover** - Enable/disable hover support to test mouse-based interactions vs touch-only interfaces
 - **Touch** - Toggle touch input to simulate mobile and tablet devices
 
-These settings affect `window.openai.userAgent.capabilities.hover` and `window.openai.userAgent.capabilities.touch`.
+
 
 ### Safe Area Insets
 
@@ -76,57 +75,108 @@ Simulate device notches, rounded corners, and gesture areas with configurable sa
   - Android gesture navigation (24px top, 16px bottom)
 - **Custom Values** - Manually adjust top, bottom, left, and right insets
 
-Your widget receives these values through `window.openai.safeArea.insets` and can adjust its layout to avoid being obscured by system UI.
+### Timezone
 
-## Display Modes
+Select a timezone from the toolbar to test time-aware widgets. The selector includes 19 IANA timezones covering all major regions, plus `UTC`.
 
-ChatGPT apps can request different display modes to optimize their presentation:
+<Note>
+  The timezone selector is only available for MCP Apps (SEP-1865).
+</Note>
+
+## Widget Controls
+
+### Protocol Selector
+
+When an MCP App includes ChatGPT compatibility metadata (`openai/outputTemplate` alongside `ui.resourceUri`), a protocol toggle appears in the left panel header. This lets you switch which host bridge the emulator uses to render the widget:
+
+- **ChatGPT Apps** - Renders using the `window.openai` host bridge
+- **MCP Apps** - Renders using the `ui/*` JSON-RPC host bridge
+
+The toggle only appears for tools with both metadata keys. Tools that use a single protocol are rendered using that protocol automatically.
+
+### Display Modes
+
+The App Builder supports all three display modes for both ChatGPT Apps and MCP Apps:
 
 - **Inline** (default) - Widget renders within the chat message flow
 - **Picture-in-Picture** - Widget floats at the top of the screen, staying visible while scrolling
 - **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
 
-Widgets can request display mode changes using:
-```javascript
-window.openai.requestDisplayMode({ mode: 'pip' })
-window.openai.requestDisplayMode({ mode: 'fullscreen' })
-```
+Widgets can request display mode changes from their code. Users can exit PiP or fullscreen modes by clicking the close button.
 
-Users can exit PiP or fullscreen modes by clicking the close button.
+### Debugging Tools
 
-## Content Security Policy (CSP)
+Each tool result in the chat thread has a row of icons in its header. Click any icon to toggle the corresponding debug panel below the widget.
 
-The App Builder includes CSP enforcement controls to help you test widget security configurations. Switch between two CSP modes using the shield icon:
+#### Data
 
-- **Permissive** (default) - Allows all HTTPS resources, suitable for development
-- **Strict** - Only allows domains declared in your widget's `openai/widgetCSP` metadata
+Inspect the raw tool input, output, and error details for each tool call.
 
-When a widget violates CSP rules in strict mode, you'll see a badge showing the number of blocked requests. Click the CSP debug tab to view:
+#### Widget State (ChatGPT Apps only)
 
-- **Suggested fix** - Copyable JSON snippet to add to your `openai/widgetCSP` field
-- **Blocked requests** - List of all CSP violations with directive and URI details
-- **Declared domains** - The `connect_domains` and `resource_domains` your widget currently declares
+View the current `widgetState` object and see when it was last updated. This is the state your widget sets via `window.openai.setWidgetState` that gets passed back to the model.
 
-This helps you identify which external resources your widget needs and configure proper CSP declarations before deploying to production.
+#### Model Context (MCP Apps only)
 
-## Debugging Tools
+View the context your widget has sent back to the model via `ui/update-model-context`. This panel only appears when the widget has set model context.
 
-The App Builder provides several debugging views to help you understand your widget's behavior:
+#### CSP Debugging
 
-- **Data View** (database icon) - Inspect tool input, output, and error details
-- **Widget State View** (box icon) - View the current widget state and see when it was last updated
-- **Globals View** (globe icon) - Examine global values passed to the widget (theme, display mode, locale, device capabilities)
-- **CSP View** (shield icon) - Monitor Content Security Policy violations and get suggested fixes
+When a widget violates CSP rules in strict mode, you'll see a badge showing the number of blocked requests. The CSP debug tab shows:
 
-Click any icon in the tool header to toggle the corresponding debug panel.
+- **Suggested fix** - Copyable JSON snippet to add to your `openai/widgetCSP` or `ui.csp` field
+- **Blocked requests** - List of CSP violations with the directive and source that was blocked
+- **Declared domains** - The connect, resource, frame, and base URI domains your widget currently declares
 
-## JSON-RPC Logging
+#### Save View
 
-All communication between the inspector and your MCP server is logged in real-time. This includes:
+Save a snapshot of the tool execution to the [Views](/inspector/views) tab for later browsing, editing, and sharing.
+
+### JSON-RPC Logging
+
+All communication between the inspector and your MCP server is logged in real-time. The logger panel is embedded in the bottom of the left panel, below the tools list.
+
+Each log entry shows the **direction** (client-to-server or server-to-client), the **method name**, and a **timestamp**. Logged messages include:
 
 - Tool invocation requests and responses
 - `window.openai` API calls from your widget
 - Widget state updates
 - JSON-RPC message types for MCP Apps (`tools/call`, `ui/initialize`, `ui/message`, etc.)
 
-Use the logger panel to debug issues and understand the complete flow of messages.
+Click any log entry to expand it and see the full JSON payload.
+
+## Chat Controls
+
+### Model Selector
+
+Choose which LLM model to use for the chat conversation. The selector supports models from multiple providers, including Anthropic and OpenAI. You can also bring your own API key to use custom providers.
+
+### System Prompt & Temperature
+
+Configure the system prompt and temperature for the LLM. Click the settings icon to open a dialog where you can edit the system prompt text and adjust the temperature slider.
+
+### Tool Approval
+
+Toggle tool approval to require manual confirmation before the LLM executes any tool call. When enabled, each tool invocation pauses and waits for your approval before running.
+
+### X-Ray
+
+X-Ray lets you inspect the exact payload that would be sent to the AI model. This is useful for debugging tool schemas, verifying system prompts, and understanding what the LLM actually sees when processing a conversation.
+
+Click the **scan-search icon** in the chat input toolbar to open X-Ray. The chat thread is replaced with a read-only JSON viewer showing three top-level fields:
+
+- **`system`** - The full system prompt, including appended skill-tool instructions
+- **`tools`** - A map of every available tool with its name, description, and JSON Schema input definition
+- **`messages`** - The current conversation history as it would be sent to the model
+
+The payload updates automatically as the conversation changes. Click **Copy payload** to copy the full JSON to your clipboard.
+
+<Tip>
+  Send at least one message before opening X-Ray — the payload is only
+  generated once there are messages in the thread.
+</Tip>
+
+## Related Features
+
+- [Views](/inspector/views) - Save and share tool execution snapshots, edit inputs/outputs, and preview widgets offline
+- [Skills](/inspector/skills) - Extend the inspector with custom skills
