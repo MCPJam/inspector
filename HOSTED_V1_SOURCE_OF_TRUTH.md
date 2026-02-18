@@ -98,6 +98,16 @@ Hosted V1 is explicitly **ephemeral** for chat/widget runtime state.
     - Share implementation with the local-mode `/api/mcp/oauth/*` routes via `server/utils/oauth-proxy.ts` (code deduplication). The local routes retain HTTP support for local development.
     - The OAuth flow itself runs entirely in the client (MCP SDK `auth()` function). The proxy only handles CORS bypass. OAuth tokens are stored client-side in `localStorage` and sent to execution routes via `oauthAccessToken`/`oauthTokens` request fields.
     - Workspace/server-scoped URL restriction (limiting proxy targets to discovered OAuth endpoints only) is deferred to V1.1. The residual risk is mitigated by: authentication (bearer JWT required), HTTPS-only enforcement, and Railway's isolated container network (no internal HTTPS services reachable).
+15. **Hosted web routing is modular with shared auth/error primitives.** `/api/web/*` is implemented as domain route modules (`servers`, `tools`, `resources`, `prompts`, `chat-v2`, `apps`, `oauth`) mounted from `server/routes/web/index.ts`. Shared helpers in `server/routes/web/auth.ts` + `server/routes/web/errors.ts` centralize bearer extraction, Zod parsing, per-request manager lifecycle, and web error mapping.
+16. **Resources/prompts/tools-list business logic is shared across web and mcp routes.** `server/utils/route-handlers.ts` contains pure manager-based handlers for:
+    - `resources/list`, `resources/read`
+    - `prompts/list`, `prompts/list-multi`, `prompts/get`
+    - `tools/list`
+    Mode-specific behavior remains in route wrappers (web vs mcp error contracts, Zod vs manual validation, MCP server ID normalization, MCP task/elicitation execute flow).
+17. **Hosted shell/UI policy is enforced client-side.**
+    - The app shell is blocked by `HostedShellGate` until auth/workspace state is ready.
+    - Hosted tab allowlist is enforced in sidebar rendering and hash routing (blocked tabs redirect to `#servers`; aliases normalize as `registry → servers`, `chat → chat-v2`).
+    - Local-only controls are hidden/disabled in hosted mode (provider key management in Settings, XRay toggles in chat/playground, reconnect for insecure `http://` server URLs).
 
 ---
 
@@ -220,6 +230,23 @@ The hosted ChatGPT Apps renderer is a **new component** in `client/src/component
 
 This eliminates unauthenticated GET endpoints, server-side widget state, and the iframe auth blocker entirely. The existing `chatgpt-app-renderer.tsx` is unchanged — local mode continues to use its current 3-step flow. The hosted renderer is a separate, simpler component that reuses `SandboxedIframe` and the shared presentational shell.
 
+### Hosted shell and navigation policy
+1. Wrap the full app shell with `HostedShellGate` and explicit states (`auth-loading`, `workspace-loading`, `logged-out`, `ready`).
+2. Enforce a hosted tab allowlist for both sidebar items and hash navigation.
+3. Redirect blocked hash tabs to `#servers` with a user-visible error.
+4. Keep local-only debug/admin surfaces hidden in hosted mode (skills, oauth-flow, tasks, evals, tracing, auth, XRay toggles).
+
+### Hosted settings and provider controls
+1. Hosted settings keep product settings (for example theme/about), but hide local provider credential management:
+   - provider API key editors,
+   - self-hosted provider endpoint editors,
+   - custom provider create/update/delete controls.
+2. Hosted clients continue to never send provider API keys in request payloads.
+
+### Hosted request context plumbing
+1. Hosted requests that target servers must resolve server name → hosted server ID and attach `workspaceId` + OAuth tokens using shared helpers (`buildHostedServerRequest`, `buildHostedServerBatchRequest`).
+2. The same hosted context helpers are reused by chat, playground, and modal widget fetch paths to keep hosted payload shape consistent.
+
 ---
 
 ## 9) Security Requirements
@@ -234,6 +261,9 @@ This eliminates unauthenticated GET endpoints, server-side widget state, and the
 5. Return explicit structured errors for unsupported hosted features using locked error shape and error codes (see section 5, item 11).
 6. Hosted CORS restricts `Access-Control-Allow-Origin` to exact origins from `WEB_ALLOWED_ORIGINS`.
 7. Hosted OAuth proxy (`/api/web/oauth/*`) enforces HTTPS-only targets. HTTP URLs are rejected with 400. This prevents SSRF to internal HTTP services (cloud metadata endpoints, internal APIs). See §5 #14.
+8. Hosted client navigation is allowlist-only: blocked hash tabs must not render and must redirect to `#servers`.
+9. Hosted UI must not expose local provider credential entry surfaces or XRay toggles.
+10. Hosted server connection UX must reject insecure `http://` URLs for new/edited configs and disable reconnect actions for legacy insecure entries until corrected.
 
 ---
 
@@ -271,6 +301,11 @@ Not required in V1:
 4. Hosted chat mode refuses startup if `CONVEX_HTTP_URL` is missing (required for `/stream` hop).
 5. Chat logging redacts provider auth headers and secrets.
 6. Request body over 1MB rejected.
+7. `server/utils/route-handlers.ts` parity tests cover cursor forwarding, fallback defaults, prompt argument stringification, and tool token counting behavior.
+8. Hosted tab policy tests cover allowlist + alias normalization + blocked-tab behavior.
+9. Hosted shell gate tests cover all gate states and blocked interaction semantics.
+10. Hosted settings tests verify provider-management UI is hidden.
+11. Hosted UI tests verify reconnect controls are disabled for insecure HTTP server URLs.
 
 ### Integration
 1. Hosted strict startup disables legacy session-token path.
@@ -294,11 +329,16 @@ Not required in V1:
 19. Chat-v2 with OAuth-enabled servers injects `Authorization: Bearer` on MCP connections using `oauthTokens` map.
 20. Chat-v2 `onFinish` cleanup fires `disconnectAllServers()` on normal completion.
 21. Chat-v2 `onFinish` cleanup fires `disconnectAllServers()` on client abort.
+22. Shared route handlers preserve hosted route payload contract for `resources/*`, `prompts/*`, and `tools/list`.
+23. MCP `tools/list` keeps case-insensitive `serverId` normalization after shared handler extraction.
+24. Hosted hash routing redirects blocked tabs to `#servers`.
 
 ### E2E
 1. Workspace member validates server, chats, executes tools, sees widget output.
 2. Non-member gets forbidden.
 3. Unsupported hosted controls hidden in UI and blocked server-side.
+4. Hosted shell blocks interaction before auth/workspace readiness and only allowlisted tabs are reachable.
+5. Hosted Settings does not expose provider credential management.
 
 Removed from V1:
 1. Artifact durability across restart.
@@ -346,6 +386,9 @@ Removed from V1:
 6. Hosted behavior is explicitly documented as ephemeral (non-durable).
 7. Hosted `chat-v2` reuses per-server connections for the duration of a single request and always tears them down at request end.
 8. OAuth-enabled MCP servers can be validated and used in hosted chat/tools via the hosted OAuth proxy.
+9. Hosted shell gate + tab policy prevents unsupported/unauthorized UI surfaces from being reachable.
+10. Hosted settings and chat/playground surfaces do not expose local provider credentials or XRay controls.
+11. Shared route handler extraction keeps route contracts stable while removing duplicated business logic.
 
 ---
 
@@ -459,3 +502,24 @@ OAuth-required MCP server connections are now in-scope for hosted mode. The insp
 | §11 Integration #15 | Changed from "rejects `useOAuth=true`" to "returns `useOAuth` flag in `serverConfig`" | `/web/authorize` no longer rejects OAuth servers |
 | §11 Integration #16-19 | Added OAuth-specific integration tests (HTTPS-only enforcement, proxy auth, OAuth server validation, chat with OAuth tokens) | Coverage for new OAuth proxy and execution paths |
 | §14 #8 | Added OAuth server acceptance criterion | OAuth-enabled servers must be validatable and usable in hosted mode |
+
+### Hosted shell and UI policy hardening (2026-02-17 to 2026-02-18)
+
+Commit coverage: `6d1599436`, `18f65c6a4`, `9f0ff8f19`, `e3d6d24f1`, `af0442105`, `9e8064f21`.
+
+| Section | What changed | Why |
+|---------|-------------|-----|
+| §5 #17, §8 "Hosted shell and navigation policy", §9 #8, §11 Unit #8-9, §14 #9 | Added explicit hosted shell gate + allowlist-based tab routing policy | Prevented partial/unauthenticated shell access and blocked non-hosted tabs via direct hash navigation |
+| §8 "Hosted settings and provider controls", §9 #9, §11 Unit #10, §14 #10 | Hid local provider credential management in hosted Settings | Hosted clients should not manage local provider API keys/endpoints/custom providers |
+| §9 #10, §11 Unit #11 | Added hosted HTTPS UX guardrails for server management | Hosted mode now rejects insecure HTTP server URLs and disables reconnect for legacy insecure entries |
+| §8 "Hosted request context plumbing" | Standardized hosted request payload building for modal/playground/widget flows | Ensures `workspaceId`, hosted `serverId`, and OAuth token injection stay consistent outside core chat routes |
+
+### Route decomposition and shared handlers (2026-02-18)
+
+Commit coverage: `e5e3d4955`, `eed42c04b`, `85215752c`.
+
+| Section | What changed | Why |
+|---------|-------------|-----|
+| §5 #15 | Documented modular `/api/web/*` route composition and shared auth/error helpers | Replaced monolithic route implementation with clearer domain ownership and safer common middleware patterns |
+| §5 #16 | Documented shared `server/utils/route-handlers.ts` for resources/prompts/tools-list | Removed duplicated business logic across web and mcp route families while preserving mode-specific contracts |
+| §11 Unit #7, §11 Integration #22-23, §14 #11 | Added explicit regression expectations for shared-handler refactor | Prevents contract drift while allowing maintainability refactors |
