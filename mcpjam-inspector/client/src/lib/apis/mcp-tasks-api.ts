@@ -1,6 +1,6 @@
 import type { MCPTask, MCPListTasksResult } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
-import { HOSTED_MODE } from "@/lib/config";
+import { ensureLocalMode, runByMode } from "@/lib/apis/mode-client";
 
 // Re-export SDK types for convenience
 export type Task = MCPTask;
@@ -10,9 +10,7 @@ export async function listTasks(
   serverId: string,
   cursor?: string,
 ): Promise<ListTasksResult> {
-  if (HOSTED_MODE) {
-    throw new Error("Tasks are not supported in hosted mode");
-  }
+  ensureLocalMode("Tasks are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/tasks/list", {
     method: "POST",
@@ -32,9 +30,7 @@ export async function listTasks(
 }
 
 export async function getTask(serverId: string, taskId: string): Promise<Task> {
-  if (HOSTED_MODE) {
-    throw new Error("Tasks are not supported in hosted mode");
-  }
+  ensureLocalMode("Tasks are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/tasks/get", {
     method: "POST",
@@ -57,9 +53,7 @@ export async function getTaskResult(
   serverId: string,
   taskId: string,
 ): Promise<unknown> {
-  if (HOSTED_MODE) {
-    throw new Error("Tasks are not supported in hosted mode");
-  }
+  ensureLocalMode("Tasks are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/tasks/result", {
     method: "POST",
@@ -85,9 +79,7 @@ export async function cancelTask(
   serverId: string,
   taskId: string,
 ): Promise<Task> {
-  if (HOSTED_MODE) {
-    throw new Error("Tasks are not supported in hosted mode");
-  }
+  ensureLocalMode("Tasks are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/tasks/cancel", {
     method: "POST",
@@ -122,32 +114,35 @@ export interface TaskCapabilities {
 export async function getTaskCapabilities(
   serverId: string,
 ): Promise<TaskCapabilities> {
-  if (HOSTED_MODE) {
-    void serverId;
-    return {
-      supportsToolCalls: false,
-      supportsList: false,
-      supportsCancel: false,
-    };
-  }
+  return runByMode({
+    hosted: async () => {
+      void serverId;
+      return {
+        supportsToolCalls: false,
+        supportsList: false,
+        supportsCancel: false,
+      };
+    },
+    local: async () => {
+      const res = await authFetch("/api/mcp/tasks/capabilities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverId }),
+      });
 
-  const res = await authFetch("/api/mcp/tasks/capabilities", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId }),
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {}
+
+      if (!res.ok) {
+        throw new Error(
+          body?.error || `Get task capabilities failed (${res.status})`,
+        );
+      }
+      return body as TaskCapabilities;
+    },
   });
-
-  let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
-
-  if (!res.ok) {
-    throw new Error(
-      body?.error || `Get task capabilities failed (${res.status})`,
-    );
-  }
-  return body as TaskCapabilities;
 }
 
 // Progress notification data
@@ -164,9 +159,7 @@ export interface ProgressEvent {
 export async function getLatestProgress(
   serverId: string,
 ): Promise<ProgressEvent | null> {
-  if (HOSTED_MODE) {
-    throw new Error("Tasks are not supported in hosted mode");
-  }
+  ensureLocalMode("Tasks are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/tasks/progress", {
     method: "POST",
@@ -189,9 +182,7 @@ export async function getLatestProgress(
 export async function getAllProgress(
   serverId: string,
 ): Promise<ProgressEvent[]> {
-  if (HOSTED_MODE) {
-    throw new Error("Tasks are not supported in hosted mode");
-  }
+  ensureLocalMode("Tasks are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/tasks/progress/all", {
     method: "POST",
@@ -226,12 +217,7 @@ export async function respondToTaskElicitation(
   action: "accept" | "decline" | "cancel",
   content?: Record<string, unknown>,
 ): Promise<{ ok: boolean }> {
-  if (HOSTED_MODE) {
-    void requestId;
-    void action;
-    void content;
-    throw new Error("Elicitation is not supported in hosted mode");
-  }
+  ensureLocalMode("Elicitation is not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/elicitation/respond", {
     method: "POST",

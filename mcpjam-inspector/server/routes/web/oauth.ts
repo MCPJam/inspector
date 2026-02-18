@@ -1,6 +1,6 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { logger } from "../../utils/logger.js";
 import {
   executeOAuthProxy,
   fetchOAuthMetadata,
@@ -8,12 +8,51 @@ import {
 } from "../../utils/oauth-proxy.js";
 import {
   assertBearerToken,
+  ErrorCode,
   WebRouteError,
-  webError,
   mapRuntimeError,
 } from "./errors.js";
 
 const oauthWeb = new Hono();
+
+function statusToErrorCode(status: number): ErrorCode {
+  if (status === 400) return ErrorCode.VALIDATION_ERROR;
+  if (status === 401) return ErrorCode.UNAUTHORIZED;
+  if (status === 403) return ErrorCode.FORBIDDEN;
+  if (status === 404) return ErrorCode.NOT_FOUND;
+  if (status === 429) return ErrorCode.RATE_LIMITED;
+  if (status === 502) return ErrorCode.SERVER_UNREACHABLE;
+  if (status === 504) return ErrorCode.TIMEOUT;
+  return ErrorCode.INTERNAL_ERROR;
+}
+
+function webErrorCompat(c: Context, routeError: WebRouteError) {
+  // TODO(hosted-v1.1): Remove `error` once clients migrate to `{ code, message }`.
+  // This compatibility key exists for one release to avoid breaking callers that
+  // still parse legacy `{ error }` payloads on oauth routes.
+  return c.json(
+    {
+      code: routeError.code,
+      message: routeError.message,
+      error: routeError.message,
+    },
+    routeError.status as ContentfulStatusCode,
+  );
+}
+
+function toRouteError(error: unknown): WebRouteError {
+  if (error instanceof WebRouteError) {
+    return error;
+  }
+  if (error instanceof OAuthProxyError) {
+    return new WebRouteError(
+      error.status,
+      statusToErrorCode(error.status),
+      error.message,
+    );
+  }
+  return mapRuntimeError(error);
+}
 
 /**
  * Proxy OAuth token exchange and client registration requests.
@@ -30,11 +69,7 @@ oauthWeb.post("/proxy", async (c) => {
     const result = await executeOAuthProxy({ url, method, body, headers, httpsOnly: true });
     return c.json(result);
   } catch (error) {
-    if (error instanceof OAuthProxyError) {
-      return c.json({ error: error.message }, error.status as ContentfulStatusCode);
-    }
-    const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message);
+    return webErrorCompat(c, toRouteError(error));
   }
 });
 
@@ -50,26 +85,25 @@ oauthWeb.get("/metadata", async (c) => {
 
     const url = c.req.query("url");
     if (!url) {
-      return c.json({ error: "Missing url parameter" }, 400);
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Missing url parameter",
+      );
     }
 
     const result = await fetchOAuthMetadata(url, true);
     if ("status" in result && result.status !== undefined) {
-      return c.json(
-        {
-          error: `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
-        },
-        result.status as ContentfulStatusCode,
+      throw new WebRouteError(
+        result.status,
+        statusToErrorCode(result.status),
+        `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
       );
     }
 
     return c.json(result.metadata);
   } catch (error) {
-    if (error instanceof OAuthProxyError) {
-      return c.json({ error: error.message }, error.status as ContentfulStatusCode);
-    }
-    const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message);
+    return webErrorCompat(c, toRouteError(error));
   }
 });
 

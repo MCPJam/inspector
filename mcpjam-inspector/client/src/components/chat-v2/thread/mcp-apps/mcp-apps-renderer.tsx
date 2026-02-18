@@ -29,7 +29,6 @@ import {
 } from "@/components/ui/sandboxed-iframe";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
-import { buildHostedServerRequest } from "@/lib/apis/web/context";
 import {
   useTrafficLogStore,
   extractMethod,
@@ -60,6 +59,7 @@ import {
   handleUploadFileMessage,
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
+import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
@@ -483,36 +483,6 @@ export function MCPAppsRenderer({
           return;
         }
 
-        const hostedServerRequest = HOSTED_MODE
-          ? buildHostedServerRequest(serverId)
-          : null;
-        const contentResponse = await authFetch(
-          HOSTED_MODE
-            ? "/api/web/apps/mcp-apps/widget-content"
-            : "/api/apps/mcp-apps/widget-content",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...(hostedServerRequest ?? { serverId }),
-              resourceUri,
-              toolInput: toolInputRef.current,
-              toolOutput: toolOutputRef.current,
-              toolId: toolCallId,
-              toolName,
-              theme: themeModeRef.current,
-              cspMode, // Pass CSP mode preference
-            }),
-          },
-        );
-        if (!contentResponse.ok) {
-          const errorData = await contentResponse.json().catch(() => ({}));
-          throw new Error(
-            errorData.message ||
-              errorData.error ||
-              `Failed to fetch widget: ${contentResponse.statusText}`,
-          );
-        }
         const {
           html,
           csp,
@@ -521,7 +491,16 @@ export function MCPAppsRenderer({
           mimeTypeWarning: warning,
           mimeTypeValid: valid,
           prefersBorder,
-        } = await contentResponse.json();
+        } = await fetchMcpAppsWidgetContent({
+          serverId,
+          resourceUri,
+          toolInput: toolInputRef.current,
+          toolOutput: toolOutputRef.current,
+          toolId: toolCallId,
+          toolName,
+          theme: themeModeRef.current,
+          cspMode,
+        });
 
         if (!valid) {
           setLoadError(

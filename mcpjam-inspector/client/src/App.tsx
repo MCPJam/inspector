@@ -1,5 +1,5 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
@@ -54,19 +54,8 @@ import {
 } from "./components/hosted/HostedShellGate";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
-import {
-  isHostedHashTabAllowed,
-  normalizeHostedHashTab,
-} from "./lib/hosted-tab-policy";
+import { resolveHostedNavigation } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
-
-const getNormalizedHashParts = (hashValue: string): string[] => {
-  const rawHash = hashValue.replace(/^#/, "");
-  const trimmedHash = rawHash.startsWith("/") ? rawHash.slice(1) : rawHash;
-  const hashParts = (trimmedHash || "servers").split("/");
-  hashParts[0] = normalizeHostedHashTab(hashParts[0] || "servers");
-  return hashParts;
-};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -215,25 +204,25 @@ export default function App() {
     return serverNames;
   }, [viewsByServer, serversById]);
 
-  // Sync tab with hash on mount and when hash changes
-  useEffect(() => {
-    const applyHash = () => {
-      const currentHash = window.location.hash || "#servers";
-      const normalizedParts = getNormalizedHashParts(currentHash);
-      const normalizedHash = normalizedParts.join("/");
-      const currentHashWithoutPrefix = currentHash
-        .replace(/^#/, "")
-        .replace(/^\/+/, "");
+  const applyNavigation = useCallback(
+    (
+      target: string,
+      options?: { updateHash?: boolean; enforceCanonicalHash?: boolean },
+    ) => {
+      const resolved = resolveHostedNavigation(target, HOSTED_MODE);
 
-      if ((currentHashWithoutPrefix || "servers") !== normalizedHash) {
-        window.location.hash = normalizedHash;
+      if (
+        options?.enforceCanonicalHash &&
+        resolved.rawSection !== resolved.normalizedSection
+      ) {
+        if (window.location.hash !== `#${resolved.normalizedSection}`) {
+          window.location.hash = resolved.normalizedSection;
+        }
         return;
       }
 
-      const normalizedTab = normalizedParts[0] || "servers";
-
-      if (HOSTED_MODE && !isHostedHashTabAllowed(normalizedTab)) {
-        toast.error(`${normalizedTab} is not available in hosted mode.`);
+      if (resolved.isBlocked) {
+        toast.error(`${resolved.normalizedTab} is not available in hosted mode.`);
         setActiveOrganizationId(undefined);
         setActiveTab("servers");
         setChatHasMessages(false);
@@ -243,54 +232,34 @@ export default function App() {
         return;
       }
 
-      // Handle organizations/:orgId route
-      if (normalizedTab === "organizations" && normalizedParts[1]) {
-        setActiveOrganizationId(normalizedParts[1]);
-      } else {
-        setActiveOrganizationId(undefined);
-      }
-
-      setActiveTab(normalizedTab);
-      if (normalizedTab === "chat-v2") {
+      setActiveOrganizationId(resolved.organizationId);
+      if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
       }
-      if (normalizedTab !== "chat-v2") {
+      if (resolved.shouldClearChatMessages) {
         setChatHasMessages(false);
       }
+      if (options?.updateHash) {
+        window.location.hash = resolved.normalizedSection;
+      }
+      setActiveTab(resolved.normalizedTab);
+    },
+    [setSelectedMultipleServersToAllServers],
+  );
+
+  // Sync tab with hash on mount and when hash changes
+  useEffect(() => {
+    const applyHash = () => {
+      const currentHash = window.location.hash || "#servers";
+      applyNavigation(currentHash, { enforceCanonicalHash: true });
     };
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [setSelectedMultipleServersToAllServers]);
+  }, [applyNavigation]);
 
   const handleNavigate = (section: string) => {
-    const normalizedParts = getNormalizedHashParts(section);
-    const normalizedSection = normalizedParts.join("/");
-    const normalizedTab = normalizedParts[0] || "servers";
-
-    if (HOSTED_MODE && !isHostedHashTabAllowed(normalizedTab)) {
-      toast.error(`${normalizedTab} is not available in hosted mode.`);
-      setActiveTab("servers");
-      setActiveOrganizationId(undefined);
-      setChatHasMessages(false);
-      window.location.hash = "servers";
-      return;
-    }
-
-    if (normalizedTab === "organizations" && normalizedParts[1]) {
-      setActiveOrganizationId(normalizedParts[1]);
-    } else {
-      setActiveOrganizationId(undefined);
-    }
-
-    if (normalizedTab === "chat-v2") {
-      setSelectedMultipleServersToAllServers();
-    }
-    if (normalizedTab !== "chat-v2") {
-      setChatHasMessages(false);
-    }
-    window.location.hash = normalizedSection;
-    setActiveTab(normalizedTab);
+    applyNavigation(section, { updateHash: true });
   };
 
   if (isDebugCallback) {

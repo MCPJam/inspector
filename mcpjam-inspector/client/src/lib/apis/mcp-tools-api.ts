@@ -6,8 +6,8 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPTask, TaskOptions } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
-import { HOSTED_MODE } from "@/lib/config";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
+import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
@@ -53,31 +53,34 @@ export async function listTools({
   modelId?: string | undefined;
   cursor?: string | undefined;
 }): Promise<ListToolsResultWithMetadata> {
-  if (HOSTED_MODE) {
-    if (!serverId) {
-      throw new Error("serverId is required in hosted mode");
-    }
-    return (await listHostedTools({
-      serverNameOrId: serverId,
-      modelId,
-      cursor,
-    })) as ListToolsResultWithMetadata;
-  }
-
-  const res = await authFetch("/api/mcp/tools/list", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, modelId, cursor }),
+  return runByMode({
+    hosted: async () => {
+      if (!serverId) {
+        throw new Error("serverId is required in hosted mode");
+      }
+      return (await listHostedTools({
+        serverNameOrId: serverId,
+        modelId,
+        cursor,
+      })) as ListToolsResultWithMetadata;
+    },
+    local: async () => {
+      const res = await authFetch("/api/mcp/tools/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverId, modelId, cursor }),
+      });
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {}
+      if (!res.ok) {
+        const message = body?.error || `List tools failed (${res.status})`;
+        throw new Error(message);
+      }
+      return body as ListToolsResultWithMetadata;
+    },
   });
-  let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
-  if (!res.ok) {
-    const message = body?.error || `List tools failed (${res.status})`;
-    throw new Error(message);
-  }
-  return body as ListToolsResultWithMetadata;
 }
 
 export async function executeToolApi(
@@ -86,38 +89,41 @@ export async function executeToolApi(
   parameters: Record<string, unknown>,
   taskOptions?: TaskOptions,
 ): Promise<ToolExecutionResponse> {
-  if (HOSTED_MODE) {
-    try {
-      return (await executeHostedTool({
-        serverNameOrId: serverId,
-        toolName,
-        parameters,
-        taskOptions: taskOptions as Record<string, unknown> | undefined,
-      })) as ToolExecutionResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { error: message };
-    }
-  }
+  return runByMode({
+    hosted: async () => {
+      try {
+        return (await executeHostedTool({
+          serverNameOrId: serverId,
+          toolName,
+          parameters,
+          taskOptions: taskOptions as Record<string, unknown> | undefined,
+        })) as ToolExecutionResponse;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { error: message };
+      }
+    },
+    local: async () => {
+      const res = await authFetch("/api/mcp/tools/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverId, toolName, parameters, taskOptions }),
+      });
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {}
+      if (!res.ok) {
+        // Surface server-provided error message if present
+        const message = body?.error || `Execute tool failed (${res.status})`;
+        return { error: message } as ToolExecutionResponse;
+      }
 
-  const res = await authFetch("/api/mcp/tools/execute", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, toolName, parameters, taskOptions }),
+      // Server now returns { status: "task_created", task: { taskId, ... } } for task-augmented requests
+      // per MCP Tasks spec (2025-11-25)
+      return body as ToolExecutionResponse;
+    },
   });
-  let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
-  if (!res.ok) {
-    // Surface server-provided error message if present
-    const message = body?.error || `Execute tool failed (${res.status})`;
-    return { error: message } as ToolExecutionResponse;
-  }
-
-  // Server now returns { status: "task_created", task: { taskId, ... } } for task-augmented requests
-  // per MCP Tasks spec (2025-11-25)
-  return body as ToolExecutionResponse;
 }
 
 export async function callTool(
@@ -145,7 +151,7 @@ export async function respondToElicitationApi(
   requestId: string,
   response: ElicitResult,
 ): Promise<ToolExecutionResponse> {
-  if (HOSTED_MODE) {
+  if (isHostedMode()) {
     return {
       error: "Elicitation responses are not supported in hosted mode",
     };

@@ -92,6 +92,13 @@ const chatgptAppsWidgetContentSchema = workspaceServerSchema.extend({
 
 // ── Sandbox Proxy Routes ─────────────────────────────────────────────
 
+/**
+ * Hosted auth exception:
+ * These sandbox-proxy HTML routes intentionally do not require bearer auth.
+ * They are bootstrap documents for sandboxed iframe runtimes and contain no
+ * workspace/user data by themselves. All data-bearing widget routes remain
+ * authenticated POST APIs.
+ */
 apps.get("/mcp-apps/sandbox-proxy", (c) => {
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
