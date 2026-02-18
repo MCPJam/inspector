@@ -418,6 +418,30 @@
   animation: validation-pulse 0.5s ease-in-out 2;
 }
 
+/* CSP alert blink - blinks when violations detected */
+@keyframes csp-alert-blink {
+  0% {
+    color: inherit;
+    border-color: inherit;
+  }
+  30% {
+    color: var(--color-destructive);
+    border-color: var(--color-destructive);
+  }
+  70% {
+    color: var(--color-destructive);
+    border-color: var(--color-destructive);
+  }
+  100% {
+    color: inherit;
+    border-color: inherit;
+  }
+}
+
+.animate-csp-alert-blink {
+  animation: csp-alert-blink 2s ease-in-out 3;
+}
+
 /* Font code variable for theme */
 @theme inline {
   --font-code: var(--font-code);

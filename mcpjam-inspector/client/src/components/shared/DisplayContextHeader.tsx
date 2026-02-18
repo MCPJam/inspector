@@ -7,7 +7,7 @@
  * Reads/writes to useUIPlaygroundStore for state management.
  */
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   Smartphone,
   Tablet,
@@ -41,7 +41,9 @@ import {
   type DeviceType,
   type CspMode,
 } from "@/stores/ui-playground-store";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { cn } from "@/lib/utils";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
@@ -177,6 +179,23 @@ export function DisplayContextHeader({
   const activeCspMode = protocol === UIType.MCP_APPS ? mcpAppsCspMode : cspMode;
   const setActiveCspMode =
     protocol === UIType.MCP_APPS ? setMcpAppsCspMode : setCspMode;
+
+  // CSP violations across all widgets - blink only when new violations appear
+  const violationCount = useWidgetDebugStore((s) =>
+    Array.from(s.widgets.values()).reduce(
+      (sum, w) => sum + (w.csp?.violations?.length ?? 0),
+      0,
+    ),
+  );
+  const [shouldBlink, setShouldBlink] = useState(false);
+  const prevViolationCount = useRef(violationCount);
+
+  useEffect(() => {
+    if (violationCount > prevViolationCount.current) {
+      setShouldBlink(true);
+    }
+    prevViolationCount.current = violationCount;
+  }, [violationCount]);
 
   // Theme handling
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -402,7 +421,13 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
+                      className={cn(
+                        "h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs",
+                        shouldBlink &&
+                          activeCspMode === "widget-declared" &&
+                          "animate-csp-alert-blink",
+                      )}
+                      onAnimationEnd={() => setShouldBlink(false)}
                     >
                       <Shield className="h-3.5 w-3.5" />
                       <span>
@@ -739,7 +764,13 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
+                      className={cn(
+                        "h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs",
+                        shouldBlink &&
+                          mcpAppsCspMode === "widget-declared" &&
+                          "animate-csp-alert-blink",
+                      )}
+                      onAnimationEnd={() => setShouldBlink(false)}
                     >
                       <Shield className="h-3.5 w-3.5" />
                       <span>
