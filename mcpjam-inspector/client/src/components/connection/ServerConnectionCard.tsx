@@ -51,13 +51,26 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
+
+function isHostedInsecureHttpServer(server: ServerWithName): boolean {
+  if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
+    return false;
+  }
+
+  try {
+    return new URL(server.config.url.toString()).protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
     options?: { forceOAuthFlow?: boolean },
-  ) => void;
+  ) => Promise<void>;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
@@ -125,6 +138,11 @@ export function ServerConnectionCard({
   const hasTunnel = Boolean(tunnelUrl);
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
+  const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
+  const isReconnectMenuDisabled =
+    isReconnecting ||
+    server.connectionStatus === "connecting" ||
+    server.connectionStatus === "oauth-flow";
 
   // Load tools when server is connected
   useEffect(() => {
@@ -191,7 +209,7 @@ export function ServerConnectionCard({
   const handleReconnect = async (options?: { forceOAuthFlow?: boolean }) => {
     setIsReconnecting(true);
     try {
-      onReconnect(server.name, options);
+      await onReconnect(server.name, options);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
@@ -352,10 +370,16 @@ export function ServerConnectionCard({
                       platform: detectPlatform(),
                       environment: detectEnvironment(),
                     });
+                    if (checked && isHostedHttpReconnectBlocked) {
+                      toast.error(
+                        "HTTP servers are not supported in hosted mode",
+                      );
+                      return;
+                    }
                     if (!checked) {
                       onDisconnect(server.name);
                     } else {
-                      handleReconnect();
+                      void handleReconnect();
                     }
                   }}
                   className="cursor-pointer scale-75"
@@ -374,6 +398,12 @@ export function ServerConnectionCard({
                   <DropdownMenuContent align="end" className="w-44">
                     <DropdownMenuItem
                       onClick={() => {
+                        if (isHostedHttpReconnectBlocked) {
+                          toast.error(
+                            "HTTP servers are not supported in hosted mode",
+                          );
+                          return;
+                        }
                         posthog.capture("reconnect_server_clicked", {
                           location: "server_connection_card",
                           platform: detectPlatform(),
@@ -382,17 +412,13 @@ export function ServerConnectionCard({
                         const shouldForceOAuth =
                           server.useOAuth === true ||
                           server.oauthTokens != null;
-                        handleReconnect(
+                        void handleReconnect(
                           shouldForceOAuth
                             ? { forceOAuthFlow: true }
                             : undefined,
                         );
                       }}
-                      disabled={
-                        isReconnecting ||
-                        server.connectionStatus === "connecting" ||
-                        server.connectionStatus === "oauth-flow"
-                      }
+                      disabled={isReconnectMenuDisabled}
                       className="text-xs cursor-pointer"
                     >
                       {isReconnecting ? (

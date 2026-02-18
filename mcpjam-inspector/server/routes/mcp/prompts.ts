@@ -1,21 +1,24 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
 import { logger } from "../../utils/logger";
+import {
+  listPrompts,
+  listPromptsMulti,
+  getPrompt,
+} from "../../utils/route-handlers.js";
 
 const prompts = new Hono();
 
 // List prompts endpoint
 prompts.post("/list", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as { serverId?: string };
-
-    if (!serverId) {
+    const body = (await c.req.json()) as { serverId?: string };
+    if (!body.serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-
-    const mcpClientManager = c.mcpClientManager;
-    const { prompts } = await mcpClientManager.listPrompts(serverId);
-    return c.json({ prompts });
+    return c.json(
+      await listPrompts(c.mcpClientManager, body as { serverId: string }),
+    );
   } catch (error) {
     logger.error("Error fetching prompts", error, { serverId: "unknown" });
     return c.json(
@@ -31,47 +34,34 @@ prompts.post("/list", async (c) => {
 // Batch list prompts endpoint
 prompts.post("/list-multi", async (c) => {
   try {
-    const { serverIds } = (await c.req.json()) as { serverIds?: string[] };
-
-    if (!Array.isArray(serverIds) || serverIds.length === 0) {
+    const body = (await c.req.json()) as { serverIds?: string[] };
+    if (!Array.isArray(body.serverIds) || body.serverIds.length === 0) {
       return c.json(
         { success: false, error: "serverIds must be a non-empty array" },
         400,
       );
     }
 
-    const mcpClientManager = c.mcpClientManager;
-    const promptsByServer: Record<string, unknown[]> = {};
-    const errors: Record<string, string> = {};
+    const result = await listPromptsMulti(c.mcpClientManager, {
+      serverIds: body.serverIds,
+    });
 
-    await Promise.all(
-      serverIds.map(async (serverId) => {
-        try {
-          const { prompts } = await mcpClientManager.listPrompts(serverId);
-          promptsByServer[serverId] = prompts ?? [];
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error";
-          // Only log unexpected errors (not "Unknown MCP server" which is expected during startup race conditions)
-          if (!errorMessage.includes("Unknown MCP server")) {
-            logger.error(
-              `Error fetching prompts for server ${serverId}`,
-              error,
-              { serverId },
-            );
-          }
-          errors[serverId] = errorMessage;
-          promptsByServer[serverId] = [];
+    // Selective logging: suppress "Unknown MCP server" (expected during startup race conditions)
+    if (result.errors) {
+      for (const [serverId, msg] of Object.entries(
+        result.errors as Record<string, string>,
+      )) {
+        if (!msg.includes("Unknown MCP server")) {
+          logger.error(
+            `Error fetching prompts for server ${serverId}`,
+            new Error(msg),
+            { serverId },
+          );
         }
-      }),
-    );
-
-    const payload: Record<string, unknown> = { prompts: promptsByServer };
-    if (Object.keys(errors).length > 0) {
-      payload.errors = errors;
+      }
     }
 
-    return c.json(payload);
+    return c.json(result);
   } catch (error) {
     logger.error("Error fetching batch prompts", error);
     return c.json(
@@ -87,40 +77,25 @@ prompts.post("/list-multi", async (c) => {
 // Get prompt endpoint
 prompts.post("/get", async (c) => {
   try {
-    const { serverId, name, args } = (await c.req.json()) as {
+    const body = (await c.req.json()) as {
       serverId?: string;
       name?: string;
       args?: Record<string, unknown>;
     };
-
-    if (!serverId) {
+    if (!body.serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-
-    if (!name) {
-      return c.json(
-        {
-          success: false,
-          error: "Prompt name is required",
-        },
-        400,
-      );
+    if (!body.name) {
+      return c.json({ success: false, error: "Prompt name is required" }, 400);
     }
 
-    const mcpClientManager = c.mcpClientManager;
-
-    const promptArguments = args
-      ? Object.fromEntries(
-          Object.entries(args).map(([key, value]) => [key, String(value)]),
-        )
-      : undefined;
-
-    const content = await mcpClientManager.getPrompt(serverId, {
-      name,
-      arguments: promptArguments,
-    });
-
-    return c.json({ content });
+    return c.json(
+      await getPrompt(c.mcpClientManager, {
+        serverId: body.serverId,
+        name: body.name,
+        arguments: body.args,
+      }),
+    );
   } catch (error) {
     logger.error("Error getting prompt", error);
     return c.json(

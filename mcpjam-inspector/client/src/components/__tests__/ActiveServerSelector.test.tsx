@@ -540,7 +540,7 @@ describe("ActiveServerSelector", () => {
         }),
       };
 
-      const onReconnect = vi.fn();
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
 
       render(
         <ActiveServerSelector
@@ -556,7 +556,7 @@ describe("ActiveServerSelector", () => {
     });
 
     it("calls onReconnect when clicked", () => {
-      const onReconnect = vi.fn();
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
       const serverConfigs = {
         "server-1": createServer({ name: "server-1" }),
       };
@@ -574,7 +574,7 @@ describe("ActiveServerSelector", () => {
     });
 
     it("does not change selection when reconnecting a non-active server", () => {
-      const onReconnect = vi.fn();
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
       const onServerChange = vi.fn();
       const serverConfigs = {
         "active-server": createServer({
@@ -605,7 +605,7 @@ describe("ActiveServerSelector", () => {
     });
 
     it("keeps selection when reconnecting the active server", () => {
-      const onReconnect = vi.fn();
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
       const onServerChange = vi.fn();
       const serverConfigs = {
         "active-server": createServer({

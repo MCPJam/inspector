@@ -1,5 +1,7 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
+import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
@@ -46,6 +48,14 @@ import type { ActiveServerSelectorProps } from "./components/ActiveServerSelecto
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
+import {
+  HostedShellGate,
+  type HostedShellGateState,
+} from "./components/hosted/HostedShellGate";
+import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
+import { HOSTED_MODE } from "./lib/config";
+import { resolveHostedNavigation } from "./lib/hosted-navigation";
+import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -53,7 +63,10 @@ export default function App() {
     string | undefined
   >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
+  const [callbackCompleted, setCallbackCompleted] = useState(false);
+  const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
+  const { getAccessToken, signIn } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const convexUser = useQuery(
     "users:getCurrentUser" as any,
@@ -96,14 +109,32 @@ export default function App() {
   // Ensure a `users` row exists after Convex auth
   useEnsureDbUser();
 
-  const isDebugCallback = useMemo(
-    () => window.location.pathname.startsWith("/oauth/callback/debug"),
-    [],
+  const isDebugCallback = window.location.pathname.startsWith(
+    "/oauth/callback/debug",
   );
-  const isOAuthCallback = useMemo(
-    () => window.location.pathname === "/callback",
-    [],
-  );
+  const isOAuthCallback = window.location.pathname === "/callback";
+
+  useEffect(() => {
+    if (!isOAuthCallback) {
+      setCallbackCompleted(false);
+      setCallbackRecoveryExpired(false);
+      return;
+    }
+
+    // Let AuthKit + Convex auth settle before leaving /callback.
+    if (!isAuthLoading && isAuthenticated) {
+      window.history.replaceState({}, "", "/");
+      setCallbackCompleted(true);
+      setCallbackRecoveryExpired(false);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setCallbackRecoveryExpired(true);
+    }, 15000);
+
+    return () => clearTimeout(timeout);
+  }, [isOAuthCallback, isAuthLoading, isAuthenticated]);
 
   const {
     appState,
@@ -158,6 +189,28 @@ export default function App() {
     isAuthenticated,
     workspaceId: convexWorkspaceId,
   });
+  const hostedServerIdsByName = useMemo(
+    () =>
+      Object.fromEntries(
+        Array.from(serversById.entries()).map(([id, name]) => [name, id]),
+      ),
+    [serversById],
+  );
+  const oauthTokensByServerId = useMemo(
+    () =>
+      buildOAuthTokensByServerId(
+        Object.keys(hostedServerIdsByName),
+        (name) => hostedServerIdsByName[name],
+        (name) => appState.servers[name]?.oauthTokens?.access_token,
+      ),
+    [hostedServerIdsByName, appState.servers],
+  );
+  useHostedApiContext({
+    workspaceId: convexWorkspaceId,
+    serverIdsByName: hostedServerIdsByName,
+    getAccessToken,
+    oauthTokensByServerId,
+  });
 
   // Compute the set of server names that have saved views
   const serversWithViews = useMemo(() => {
@@ -171,67 +224,99 @@ export default function App() {
     return serverNames;
   }, [viewsByServer, serversById]);
 
+  const applyNavigation = useCallback(
+    (
+      target: string,
+      options?: { updateHash?: boolean; enforceCanonicalHash?: boolean },
+    ) => {
+      const resolved = resolveHostedNavigation(target, HOSTED_MODE);
+
+      if (
+        options?.enforceCanonicalHash &&
+        resolved.rawSection !== resolved.normalizedSection
+      ) {
+        if (window.location.hash !== `#${resolved.normalizedSection}`) {
+          window.location.hash = resolved.normalizedSection;
+        }
+        return;
+      }
+
+      if (resolved.isBlocked) {
+        toast.error(
+          `${resolved.normalizedTab} is not available in hosted mode.`,
+        );
+        setActiveOrganizationId(undefined);
+        setActiveTab("servers");
+        setChatHasMessages(false);
+        if (window.location.hash !== "#servers") {
+          window.location.hash = "servers";
+        }
+        return;
+      }
+
+      setActiveOrganizationId(resolved.organizationId);
+      if (resolved.shouldSelectAllServers) {
+        setSelectedMultipleServersToAllServers();
+      }
+      if (resolved.shouldClearChatMessages) {
+        setChatHasMessages(false);
+      }
+      if (options?.updateHash) {
+        window.location.hash = resolved.normalizedSection;
+      }
+      setActiveTab(resolved.normalizedTab);
+    },
+    [setSelectedMultipleServersToAllServers],
+  );
+
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
     const applyHash = () => {
-      const hash = (window.location.hash || "#servers").replace("#", "");
-
-      // Remove leading slash before splitting to avoid empty first element
-      const trimmedHash = hash.startsWith("/") ? hash.slice(1) : hash;
-      const hashParts = trimmedHash.split("/");
-
-      // Extract the top-level tab (e.g., "evals/suite/123" -> "evals")
-      const topLevelTab = hashParts[0];
-
-      // Handle organizations/:orgId route
-      if (hashParts[0] === "organizations" && hashParts[1]) {
-        setActiveOrganizationId(hashParts[1]);
-      } else {
-        setActiveOrganizationId(undefined);
-      }
-
-      const normalizedTab =
-        topLevelTab === "registry" ? "servers" : topLevelTab;
-
-      setActiveTab(normalizedTab);
-      if (normalizedTab === "chat" || normalizedTab === "chat-v2") {
-        setSelectedMultipleServersToAllServers();
-      }
-      if (normalizedTab !== "chat-v2") {
-        setChatHasMessages(false);
-      }
+      const currentHash = window.location.hash || "#servers";
+      applyNavigation(currentHash, { enforceCanonicalHash: true });
     };
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [setSelectedMultipleServersToAllServers]);
+  }, [applyNavigation]);
 
   const handleNavigate = (section: string) => {
-    if (section === "chat" || section === "chat-v2") {
-      setSelectedMultipleServersToAllServers();
-    }
-    if (section !== "chat-v2") {
-      setChatHasMessages(false);
-    }
-    window.location.hash = section;
-    setActiveTab(section);
+    applyNavigation(section, { updateHash: true });
   };
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
 
-  if (isOAuthCallback) {
-    // Handle the actual OAuth callback - AuthKit will process this automatically
-    // Show a loading screen while the OAuth flow completes
-    useEffect(() => {
-      // Fallback: redirect to home after 5 seconds if still stuck
-      const timeout = setTimeout(() => {
-        window.location.href = "/";
-      }, 5000);
-
-      return () => clearTimeout(timeout);
-    }, []);
+  if (isOAuthCallback && !callbackCompleted) {
+    if (callbackRecoveryExpired) {
+      return (
+        <div
+          className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center"
+          data-testid="callback-auth-timeout"
+        >
+          <p className="text-sm text-muted-foreground">
+            Sign-in is taking longer than expected.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="rounded bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+              onClick={() => signIn()}
+            >
+              Try sign in again
+            </button>
+            <button
+              type="button"
+              className="rounded border px-4 py-2 text-sm font-medium"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
 
     return <CompletingSignInLoading />;
   }
@@ -239,6 +324,16 @@ export default function App() {
   if (isLoading) {
     return <LoadingScreen />;
   }
+
+  const hostedShellGateState: HostedShellGateState = !HOSTED_MODE
+    ? "ready"
+    : isAuthLoading
+      ? "auth-loading"
+      : !isAuthenticated
+        ? "logged-out"
+        : isLoadingRemoteWorkspaces
+          ? "workspace-loading"
+          : "ready";
 
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
@@ -414,7 +509,14 @@ export default function App() {
           }}
           required
         />
-        {appContent}
+        <HostedShellGate
+          state={hostedShellGateState}
+          onSignIn={() => {
+            signIn();
+          }}
+        >
+          {appContent}
+        </HostedShellGate>
       </AppStateProvider>
     </PreferencesStoreProvider>
   );

@@ -49,6 +49,7 @@ export interface MCPJamHandlerOptions {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  onStreamComplete?: () => Promise<void> | void;
 }
 
 interface StepContext {
@@ -656,6 +657,7 @@ export async function handleMCPJamFreeChatModel(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    onStreamComplete,
   } = options;
 
   const toolDefs = serializeToolsForConvex(tools);
@@ -723,6 +725,16 @@ export async function handleMCPJamFreeChatModel(
           type: "error",
           errorText: error instanceof Error ? error.message : String(error),
         });
+      }
+    },
+    onFinish: async () => {
+      try {
+        await onStreamComplete?.();
+      } catch (cleanupError) {
+        logger.error(
+          "[mcpjam-stream-handler] Error while running stream cleanup",
+          cleanupError,
+        );
       }
     },
   });

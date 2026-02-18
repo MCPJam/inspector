@@ -26,6 +26,7 @@ import {
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
+import { HOSTED_MODE } from "@/lib/config";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
@@ -177,10 +178,14 @@ export function useServerState({
     if (!formData.url || formData.url.trim() === "") {
       return "URL is required for HTTP connections";
     }
+    let parsedUrl: URL;
     try {
-      new URL(formData.url);
+      parsedUrl = new URL(formData.url);
     } catch (err) {
       return `Invalid URL format: ${formData.url} ${err}`;
+    }
+    if (HOSTED_MODE && parsedUrl.protocol !== "https:") {
+      return "Hosted mode requires HTTPS server URLs";
     }
     return null;
   };
@@ -1116,7 +1121,20 @@ export function useServerState({
     async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
       logger.info("Reconnecting to server", { serverName, options });
       const server = effectiveServers[serverName];
-      if (!server) throw new Error(`Server ${serverName} not found`);
+      if (!server) {
+        const errorMessage = `Server ${serverName} not found`;
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: serverName,
+          error: errorMessage,
+        });
+        logger.error("Reconnection failed", {
+          serverName,
+          error: errorMessage,
+        });
+        toast.error(errorMessage);
+        return;
+      }
 
       dispatch({
         type: "RECONNECT_REQUEST",
@@ -1175,7 +1193,7 @@ export function useServerState({
           fetchAndStoreInitInfo(serverName).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
-          return { success: true } as const;
+          return;
         }
         dispatch({
           type: "CONNECT_FAILURE",
@@ -1215,7 +1233,7 @@ export function useServerState({
           fetchAndStoreInitInfo(serverName).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
-          return { success: true } as const;
+          return;
         }
         dispatch({
           type: "CONNECT_FAILURE",
@@ -1239,7 +1257,6 @@ export function useServerState({
           serverName,
           error: errorMessage,
         });
-        throw error;
       }
     },
     [effectiveServers, fetchAndStoreInitInfo, logger, dispatch],

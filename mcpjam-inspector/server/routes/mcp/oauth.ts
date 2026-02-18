@@ -1,6 +1,11 @@
 import { Hono } from "hono";
-import { ContentfulStatusCode } from "hono/utils/http-status";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "../../utils/logger";
+import {
+  executeOAuthProxy,
+  fetchOAuthMetadata,
+  OAuthProxyError,
+} from "../../utils/oauth-proxy.js";
 
 const oauth = new Hono();
 
@@ -219,96 +224,16 @@ oauth.post("/debug/proxy", async (c) => {
  */
 oauth.post("/proxy", async (c) => {
   try {
-    const {
-      url,
-      method = "GET",
-      body,
-      headers: customHeaders,
-    } = await c.req.json();
-
-    if (!url) {
-      return c.json({ error: "Missing url parameter" }, 400);
-    }
-
-    // Validate URL format
-    let targetUrl: URL;
-    try {
-      targetUrl = new URL(url);
-      if (targetUrl.protocol !== "https:" && targetUrl.protocol !== "http:") {
-        return c.json({ error: "Invalid protocol" }, 400);
-      }
-    } catch (error) {
-      return c.json({ error: "Invalid URL format" }, 400);
-    }
-
-    // Build request headers
-    const requestHeaders: Record<string, string> = {
-      "User-Agent": "MCP-Inspector/1.0",
-      ...customHeaders,
-    };
-
-    // Determine content type from custom headers or default to JSON
-    const contentType =
-      customHeaders?.["Content-Type"] || customHeaders?.["content-type"];
-    const isFormUrlEncoded = contentType?.includes(
-      "application/x-www-form-urlencoded",
-    );
-
-    if (method === "POST" && body && !contentType) {
-      requestHeaders["Content-Type"] = "application/json";
-    }
-
-    // Make request to target server
-    const fetchOptions: RequestInit = {
-      method,
-      headers: requestHeaders,
-    };
-
-    if (method === "POST" && body) {
-      if (isFormUrlEncoded && typeof body === "object") {
-        // Convert object to URL-encoded string
-        const params = new URLSearchParams();
-        for (const [key, value] of Object.entries(body)) {
-          params.append(key, String(value));
-        }
-        fetchOptions.body = params.toString();
-      } else if (typeof body === "string") {
-        // Body is already a JSON string from frontend serialization, use as-is
-        fetchOptions.body = body;
-      } else {
-        // Body is an object, stringify it
-        fetchOptions.body = JSON.stringify(body);
-      }
-    }
-
-    const response = await fetch(targetUrl.toString(), fetchOptions);
-
-    // Capture ALL response headers (no CORS restrictions on backend)
-    const headers: Record<string, string> = {};
-    response.headers.forEach((value, key) => {
-      headers[key] = value;
-    });
-
-    let responseBody: any = null;
-    try {
-      responseBody = await response.json();
-    } catch {
-      // Response might not be JSON
-      try {
-        responseBody = await response.text();
-      } catch {
-        responseBody = null;
-      }
-    }
-
-    // Return full response with headers
-    return c.json({
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-      body: responseBody,
-    });
+    const { url, method, body, headers } = await c.req.json();
+    const result = await executeOAuthProxy({ url, method, body, headers });
+    return c.json(result);
   } catch (error) {
+    if (error instanceof OAuthProxyError) {
+      return c.json(
+        { error: error.message },
+        error.status as ContentfulStatusCode,
+      );
+    }
     logger.error("OAuth proxy error", error);
     return c.json(
       {
@@ -327,48 +252,28 @@ oauth.post("/proxy", async (c) => {
 oauth.get("/metadata", async (c) => {
   try {
     const url = c.req.query("url");
-
     if (!url) {
       return c.json({ error: "Missing url parameter" }, 400);
     }
 
-    // Validate URL format
-    let metadataUrl: URL;
-    try {
-      metadataUrl = new URL(url);
-      if (
-        metadataUrl.protocol !== "https:" &&
-        metadataUrl.protocol !== "http:"
-      ) {
-        return c.json({ error: "Invalid protocol" }, 400);
-      }
-    } catch (error) {
-      return c.json({ error: "Invalid URL format" }, 400);
-    }
-
-    // Fetch OAuth metadata from the server
-    const response = await fetch(metadataUrl.toString(), {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "MCP-Inspector/1.0",
-      },
-    });
-
-    if (!response.ok) {
+    const result = await fetchOAuthMetadata(url);
+    if ("status" in result && result.status !== undefined) {
       return c.json(
         {
-          error: `Failed to fetch OAuth metadata: ${response.status} ${response.statusText}`,
+          error: `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
         },
-        response.status as ContentfulStatusCode,
+        result.status as ContentfulStatusCode,
       );
     }
 
-    const metadata = (await response.json()) as Record<string, unknown>;
-
-    // Return the metadata with proper CORS headers
-    return c.json(metadata);
+    return c.json(result.metadata);
   } catch (error) {
+    if (error instanceof OAuthProxyError) {
+      return c.json(
+        { error: error.message },
+        error.status as ContentfulStatusCode,
+      );
+    }
     logger.error("OAuth metadata proxy error", error);
     return c.json(
       {

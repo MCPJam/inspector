@@ -9,6 +9,7 @@ import {
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { generateRandomString } from "./state-machines/shared/helpers";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -40,9 +41,10 @@ function createOAuthFetchInterceptor(): typeof fetch {
     // Proxy OAuth requests through our server
     try {
       const isMetadata = url.includes("/.well-known/");
+      const proxyBase = HOSTED_MODE ? "/api/web/oauth" : "/api/mcp/oauth";
       const proxyUrl = isMetadata
-        ? `/api/mcp/oauth/metadata?url=${encodeURIComponent(url)}`
-        : `/api/mcp/oauth/proxy`;
+        ? `${proxyBase}/metadata?url=${encodeURIComponent(url)}`
+        : `${proxyBase}/proxy`;
 
       if (isMetadata) {
         return await authFetch(proxyUrl, { ...init, method: "GET" });

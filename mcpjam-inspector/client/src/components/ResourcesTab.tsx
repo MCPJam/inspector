@@ -28,6 +28,7 @@ import {
 } from "@/lib/apis/mcp-resources-api";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { parseTemplate } from "url-template";
+import { HOSTED_MODE } from "@/lib/config";
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -113,9 +114,17 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
   useEffect(() => {
     if (serverConfig && serverName) {
       fetchResources();
-      fetchTemplates();
+      if (!HOSTED_MODE) {
+        fetchTemplates();
+      }
     }
   }, [serverConfig, serverName]);
+
+  useEffect(() => {
+    if (HOSTED_MODE && activeTab === "templates") {
+      setActiveTab("resources");
+    }
+  }, [activeTab]);
 
   const fetchResources = async (cursor?: string, append = false) => {
     if (!serverName) return;
@@ -342,19 +351,21 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
                 {resources.length}
               </span>
             </button>
-            <button
-              onClick={() => setActiveTab("templates")}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeTab === "templates"
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Templates
-              <span className="ml-1 text-[10px] font-mono opacity-70">
-                {templates.length}
-              </span>
-            </button>
+            {!HOSTED_MODE && (
+              <button
+                onClick={() => setActiveTab("templates")}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  activeTab === "templates"
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Templates
+                <span className="ml-1 text-[10px] font-mono opacity-70">
+                  {templates.length}
+                </span>
+              </button>
+            )}
           </div>
 
           {/* Action buttons */}

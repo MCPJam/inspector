@@ -14,6 +14,7 @@ import { Button } from "./ui/button";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { Plus, Pencil, Trash2 } from "lucide-react";
+import { HOSTED_MODE } from "@/lib/config";
 import type { CustomProvider } from "@mcpjam/sdk";
 
 interface ProviderConfig {
@@ -284,87 +285,91 @@ export function SettingsTab() {
           />
         </SettingsSection>
 
-        {/* LLM Providers */}
-        <SettingsSection title="LLM Providers">
-          {providerConfigs.map((config) => (
-            <ProviderRow
-              key={config.id}
-              logo={config.logo}
-              logoAlt={config.logoAlt}
-              name={config.name}
-              isConfigured={hasToken(config.id as keyof typeof tokens)}
-              onEdit={() => handleEdit(config.id)}
-            />
-          ))}
-          {selfHostedProviders.map((provider) => (
-            <ProviderRow
-              key={provider.id}
-              logo={provider.logo}
-              logoAlt={provider.name}
-              name={provider.name}
-              isConfigured={provider.isConfigured}
-              onEdit={provider.onEdit}
-              configType={provider.configType}
-            />
-          ))}
-        </SettingsSection>
+        {!HOSTED_MODE && (
+          <>
+            {/* LLM Providers */}
+            <SettingsSection title="LLM Providers">
+              {providerConfigs.map((config) => (
+                <ProviderRow
+                  key={config.id}
+                  logo={config.logo}
+                  logoAlt={config.logoAlt}
+                  name={config.name}
+                  isConfigured={hasToken(config.id as keyof typeof tokens)}
+                  onEdit={() => handleEdit(config.id)}
+                />
+              ))}
+              {selfHostedProviders.map((provider) => (
+                <ProviderRow
+                  key={provider.id}
+                  logo={provider.logo}
+                  logoAlt={provider.name}
+                  name={provider.name}
+                  isConfigured={provider.isConfigured}
+                  onEdit={provider.onEdit}
+                  configType={provider.configType}
+                />
+              ))}
+            </SettingsSection>
 
-        {/* Custom Providers */}
-        <SettingsSection title="Custom Providers">
-          {customProviders.map((cp, index) => (
-            <div
-              key={`${cp.name}-${index}`}
-              className="flex items-center justify-between px-4 py-3 rounded-md border border-success/30 transition-colors"
-            >
-              <div className="flex items-center gap-3">
-                <div className="size-5 rounded-sm bg-primary/10 flex items-center justify-center">
-                  <span className="text-xs font-bold text-primary">
-                    {cp.name[0]?.toUpperCase()}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-sm font-medium">{cp.name}</span>
-                  <span className="text-xs text-muted-foreground ml-2">
-                    {cp.modelIds.length} model
-                    {cp.modelIds.length !== 1 ? "s" : ""}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8"
-                  onClick={() => {
-                    setEditingCustomProviderIndex(index);
-                    setCustomProviderDialogOpen(true);
-                  }}
+            {/* Custom Providers */}
+            <SettingsSection title="Custom Providers">
+              {customProviders.map((cp, index) => (
+                <div
+                  key={`${cp.name}-${index}`}
+                  className="flex items-center justify-between px-4 py-3 rounded-md border border-success/30 transition-colors"
                 >
-                  <Pencil className="size-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => removeCustomProvider(index)}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            </div>
-          ))}
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => {
-              setEditingCustomProviderIndex(null);
-              setCustomProviderDialogOpen(true);
-            }}
-          >
-            <Plus className="size-4 mr-2" />
-            Add Custom Provider
-          </Button>
-        </SettingsSection>
+                  <div className="flex items-center gap-3">
+                    <div className="size-5 rounded-sm bg-primary/10 flex items-center justify-center">
+                      <span className="text-xs font-bold text-primary">
+                        {cp.name[0]?.toUpperCase()}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-sm font-medium">{cp.name}</span>
+                      <span className="text-xs text-muted-foreground ml-2">
+                        {cp.modelIds.length} model
+                        {cp.modelIds.length !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      onClick={() => {
+                        setEditingCustomProviderIndex(index);
+                        setCustomProviderDialogOpen(true);
+                      }}
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => removeCustomProvider(index)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setEditingCustomProviderIndex(null);
+                  setCustomProviderDialogOpen(true);
+                }}
+              >
+                <Plus className="size-4 mr-2" />
+                Add Custom Provider
+              </Button>
+            </SettingsSection>
+          </>
+        )}
 
         {/* Dialogs */}
         <ProviderConfigDialog

@@ -44,6 +44,7 @@
     "dev": "run-script-os",
     "dev:default": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:hosted": "cross-env VITE_MCPJAM_HOSTED_MODE=true WEB_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 npm run dev",
     "dev:convex": "convex dev",
     "dev:server": "cross-env ENVIRONMENT=dev tsx watch --include 'evals-cli/src/**/*.ts' --exclude 'evals-cli/dist/**' --exclude 'evals-cli/node_modules/**' server/index.ts",
     "dev:client": "vite --config client/vite.config.ts",

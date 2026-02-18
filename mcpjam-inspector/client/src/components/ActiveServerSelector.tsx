@@ -8,6 +8,23 @@ import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { hasOAuthConfig } from "@/lib/oauth/mcp-oauth";
 import { ConfirmChatResetDialog } from "./chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
+import { HOSTED_MODE } from "@/lib/config";
+
+const HOSTED_HTTPS_REQUIRED_HINT =
+  "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
+
+function isHostedInsecureHttpServer(server: ServerWithName): boolean {
+  if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
+    return false;
+  }
+
+  try {
+    return new URL(server.config.url.toString()).protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 export interface ActiveServerSelectorProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServer: string;
@@ -16,7 +33,7 @@ export interface ActiveServerSelectorProps {
   onServerChange: (server: string) => void;
   onMultiServerToggle: (server: string) => void;
   onConnect: (formData: ServerFormData) => void;
-  onReconnect?: (serverName: string) => void;
+  onReconnect?: (serverName: string) => Promise<void>;
   showOnlyOAuthServers?: boolean; // Only show servers that use OAuth
   showOnlyServersWithViews?: boolean; // Only show servers that have saved views
   serversWithViews?: Set<string>; // Set of server names that have saved views
@@ -202,6 +219,8 @@ export function ActiveServerSelector({
             const isSelected = isMultiSelectEnabled
               ? selectedMultipleServers.includes(name)
               : selectedServer === name;
+            const isHostedHttpReconnectBlocked =
+              isHostedInsecureHttpServer(serverConfig);
 
             return (
               <button
@@ -259,10 +278,23 @@ export function ActiveServerSelector({
                       e.nativeEvent.stopImmediatePropagation();
                       // Also prevent default to avoid double actions if standard button behavior applies
                       e.preventDefault();
-                      onReconnect(name);
+                      if (isHostedHttpReconnectBlocked) {
+                        return;
+                      }
+                      onReconnect(name).catch(() => {});
                     }}
-                    className="ml-auto p-1 rounded-md hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors"
-                    title="Reconnect"
+                    className={cn(
+                      "ml-auto p-1 rounded-md transition-colors",
+                      isHostedHttpReconnectBlocked
+                        ? "cursor-not-allowed text-muted-foreground/40"
+                        : "hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground",
+                    )}
+                    title={
+                      isHostedHttpReconnectBlocked
+                        ? HOSTED_HTTPS_REQUIRED_HINT
+                        : "Reconnect"
+                    }
+                    aria-disabled={isHostedHttpReconnectBlocked}
                   >
                     <RefreshCw className="w-3 h-3" />
                   </div>

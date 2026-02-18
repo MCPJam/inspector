@@ -1,9 +1,12 @@
 import type { MCPResourceTemplate } from "@mcpjam/sdk";
 import { authFetch } from "@/lib/session-token";
+import { ensureLocalMode } from "@/lib/apis/mode-client";
 
 export async function listResourceTemplates(
   serverId: string,
 ): Promise<MCPResourceTemplate[]> {
+  ensureLocalMode("Resource templates are not supported in hosted mode");
+
   const res = await authFetch("/api/mcp/resource-templates/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
