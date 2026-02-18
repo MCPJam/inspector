@@ -884,7 +884,7 @@ export function DisplayContextHeader({
                   onClick={() => setHostStyle("claude")}
                   className={cn(
                     "h-6 w-6",
-                    hostStyle === "claude" && "ring-2 ring-primary",
+                    hostStyle === "claude" && "ring-1 ring-primary",
                   )}
                 >
                   <img
@@ -899,7 +899,7 @@ export function DisplayContextHeader({
                   onClick={() => setHostStyle("chatgpt")}
                   className={cn(
                     "h-6 w-6",
-                    hostStyle === "chatgpt" && "ring-2 ring-primary",
+                    hostStyle === "chatgpt" && "ring-1 ring-primary",
                   )}
                 >
                   <img
@@ -914,7 +914,7 @@ export function DisplayContextHeader({
                   onClick={() => setHostStyle("goose")}
                   className={cn(
                     "h-6 w-6",
-                    hostStyle === "goose" && "ring-2 ring-primary",
+                    hostStyle === "goose" && "ring-1 ring-primary",
                   )}
                 >
                   <img
