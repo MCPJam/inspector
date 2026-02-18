@@ -48,9 +48,7 @@ import type { ActiveServerSelectorProps } from "./components/ActiveServerSelecto
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
-import {
-  HostedShellGate,
-} from "./components/hosted/HostedShellGate";
+import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
