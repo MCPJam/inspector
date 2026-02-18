@@ -7,7 +7,7 @@
  * Reads/writes to useUIPlaygroundStore for state management.
  */
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   Smartphone,
   Tablet,
@@ -41,7 +41,9 @@ import {
   type DeviceType,
   type CspMode,
 } from "@/stores/ui-playground-store";
+import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { cn } from "@/lib/utils";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
@@ -178,6 +180,23 @@ export function DisplayContextHeader({
   const setActiveCspMode =
     protocol === UIType.MCP_APPS ? setMcpAppsCspMode : setCspMode;
 
+  // CSP violations across all widgets - blink only when new violations appear
+  const violationCount = useWidgetDebugStore((s) =>
+    Array.from(s.widgets.values()).reduce(
+      (sum, w) => sum + (w.csp?.violations?.length ?? 0),
+      0,
+    ),
+  );
+  const [shouldBlink, setShouldBlink] = useState(false);
+  const prevViolationCount = useRef(violationCount);
+
+  useEffect(() => {
+    if (violationCount > prevViolationCount.current) {
+      setShouldBlink(true);
+    }
+    prevViolationCount.current = violationCount;
+  }, [violationCount]);
+
   // Theme handling
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
@@ -228,7 +247,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <DeviceIcon className="h-3.5 w-3.5" />
                       <span>{deviceConfig.label}</span>
@@ -358,7 +377,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <Globe className="h-3.5 w-3.5" />
                       <span>{locale}</span>
@@ -402,7 +421,13 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className={cn(
+                        "h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs",
+                        shouldBlink &&
+                          activeCspMode === "widget-declared" &&
+                          "animate-csp-alert-blink",
+                      )}
+                      onAnimationEnd={() => setShouldBlink(false)}
                     >
                       <Shield className="h-3.5 w-3.5" />
                       <span>
@@ -444,7 +469,7 @@ export function DisplayContextHeader({
             </Popover>
 
             {/* Capabilities toggles */}
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-0.5 rounded-md border p-0.5 bg-background shadow-xs">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -460,7 +485,7 @@ export function DisplayContextHeader({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Hover</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs font-light text-primary-foreground/90">
                     {capabilities.hover ? "Enabled" : "Disabled"}
                   </p>
                 </TooltipContent>
@@ -480,7 +505,7 @@ export function DisplayContextHeader({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Touch</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs font-light text-primary-foreground/90">
                     {capabilities.touch ? "Enabled" : "Disabled"}
                   </p>
                 </TooltipContent>
@@ -490,7 +515,7 @@ export function DisplayContextHeader({
             {/* Safe area editor */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <div>
+                <div className="rounded-md border p-0.5 bg-background shadow-xs">
                   <SafeAreaEditor />
                 </div>
               </TooltipTrigger>
@@ -515,7 +540,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <DeviceIcon className="h-3.5 w-3.5" />
                       <span>{deviceConfig.label}</span>
@@ -645,7 +670,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <Globe className="h-3.5 w-3.5" />
                       <span>{locale}</span>
@@ -692,7 +717,7 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
                     >
                       <Clock className="h-3.5 w-3.5" />
                       <span>
@@ -739,7 +764,13 @@ export function DisplayContextHeader({
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-xs gap-1.5"
+                      className={cn(
+                        "h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs",
+                        shouldBlink &&
+                          mcpAppsCspMode === "widget-declared" &&
+                          "animate-csp-alert-blink",
+                      )}
+                      onAnimationEnd={() => setShouldBlink(false)}
                     >
                       <Shield className="h-3.5 w-3.5" />
                       <span>
@@ -782,7 +813,7 @@ export function DisplayContextHeader({
             </Popover>
 
             {/* Capabilities toggles */}
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-0.5 rounded-md border p-0.5 bg-background shadow-xs">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -798,7 +829,7 @@ export function DisplayContextHeader({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Hover</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs font-light text-primary-foreground/90">
                     {capabilities.hover ? "Enabled" : "Disabled"}
                   </p>
                 </TooltipContent>
@@ -818,7 +849,7 @@ export function DisplayContextHeader({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="font-medium">Touch</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs font-light text-primary-foreground/90">
                     {capabilities.touch ? "Enabled" : "Disabled"}
                   </p>
                 </TooltipContent>
@@ -828,7 +859,7 @@ export function DisplayContextHeader({
             {/* Safe area editor */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <div>
+                <div className="rounded-md border p-0.5 bg-background shadow-xs">
                   <SafeAreaEditor />
                 </div>
               </TooltipTrigger>
@@ -843,7 +874,7 @@ export function DisplayContextHeader({
         {(showChatGPTControls || showMCPAppsControls) && (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="flex items-center gap-0.5 rounded-md border-2 border-border/50 p-0.5">
+              <div className="flex items-center gap-0.5 rounded-md border p-0.5 bg-background shadow-xs">
                 <div className="flex items-center justify-center h-6 w-6">
                   <Palette className="h-3.5 w-3.5 text-muted-foreground" />
                 </div>
@@ -885,7 +916,7 @@ export function DisplayContextHeader({
                 variant="ghost"
                 size="icon"
                 onClick={handleThemeChange}
-                className="h-7 w-7"
+                className="h-7 w-7 border bg-background shadow-xs"
               >
                 {themeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
