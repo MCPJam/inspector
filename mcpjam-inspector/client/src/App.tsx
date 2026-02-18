@@ -54,6 +54,7 @@ import {
   isHostedHashTabAllowed,
   normalizeHostedHashTab,
 } from "./lib/hosted-tab-policy";
+import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 
 const getNormalizedHashParts = (hashValue: string): string[] => {
   const rawHash = hashValue.replace(/^#/, "");
@@ -182,16 +183,15 @@ export default function App() {
       ),
     [serversById],
   );
-  const oauthTokensByServerId = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const [name, serverId] of Object.entries(hostedServerIdsByName)) {
-      const server = appState.servers[name];
-      if (server?.oauthTokens?.access_token) {
-        map[serverId] = server.oauthTokens.access_token;
-      }
-    }
-    return Object.keys(map).length > 0 ? map : undefined;
-  }, [hostedServerIdsByName, appState.servers]);
+  const oauthTokensByServerId = useMemo(
+    () =>
+      buildOAuthTokensByServerId(
+        Object.keys(hostedServerIdsByName),
+        (name) => hostedServerIdsByName[name],
+        (name) => appState.servers[name]?.oauthTokens?.access_token,
+      ),
+    [hostedServerIdsByName, appState.servers],
+  );
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,

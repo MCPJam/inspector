@@ -37,6 +37,16 @@ import {
   MCP_APPS_SANDBOX_PROXY_HTML,
 } from "../apps/SandboxProxyHtml.bundled.js";
 import type { HttpServerConfig } from "@mcpjam/sdk";
+import {
+  ErrorCode,
+  WebRouteError,
+  webError,
+  parseErrorMessage,
+  mapRuntimeError,
+  assertBearerToken,
+  readJsonBody,
+  parseWithSchema,
+} from "./errors.js";
 import oauthWeb from "./oauth.js";
 
 const web = new Hono();
@@ -59,98 +69,6 @@ function buildFrameAncestors(): string {
     }
   }
   return `frame-ancestors ${Array.from(origins).join(" ")}`;
-}
-
-const ErrorCode = {
-  UNAUTHORIZED: "UNAUTHORIZED",
-  FORBIDDEN: "FORBIDDEN",
-  NOT_FOUND: "NOT_FOUND",
-  VALIDATION_ERROR: "VALIDATION_ERROR",
-  RATE_LIMITED: "RATE_LIMITED",
-  FEATURE_NOT_SUPPORTED: "FEATURE_NOT_SUPPORTED",
-  SERVER_UNREACHABLE: "SERVER_UNREACHABLE",
-  TIMEOUT: "TIMEOUT",
-  INTERNAL_ERROR: "INTERNAL_ERROR",
-} as const;
-
-type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
-
-class WebRouteError extends Error {
-  status: number;
-  code: ErrorCode;
-
-  constructor(status: number, code: ErrorCode, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
-
-function webError(c: any, status: number, code: ErrorCode, message: string) {
-  return c.json({ code, message }, status);
-}
-
-function parseErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function mapRuntimeError(error: unknown): WebRouteError {
-  if (error instanceof WebRouteError) return error;
-
-  const message = parseErrorMessage(error);
-  const lower = message.toLowerCase();
-
-  if (lower.includes("timed out") || lower.includes("timeout")) {
-    return new WebRouteError(504, ErrorCode.TIMEOUT, message);
-  }
-
-  if (
-    lower.includes("connect") ||
-    lower.includes("connection") ||
-    lower.includes("refused") ||
-    lower.includes("econn")
-  ) {
-    return new WebRouteError(502, ErrorCode.SERVER_UNREACHABLE, message);
-  }
-
-  return new WebRouteError(500, ErrorCode.INTERNAL_ERROR, message);
-}
-
-function assertBearerToken(c: any): string {
-  const authHeader = c.req.header("authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    throw new WebRouteError(
-      401,
-      ErrorCode.UNAUTHORIZED,
-      "Missing or invalid bearer token",
-    );
-  }
-  return authHeader.slice("Bearer ".length);
-}
-
-async function readJsonBody<T>(c: any): Promise<T> {
-  try {
-    return (await c.req.json()) as T;
-  } catch {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid JSON body",
-    );
-  }
-}
-
-function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
-  const parsed = schema.safeParse(data);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      issue?.message ?? "Request validation failed",
-    );
-  }
-  return parsed.data;
 }
 
 const workspaceServerSchema = z.object({
@@ -202,6 +120,10 @@ const hostedChatSchema = z
     oauthTokens: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();
+
+function buildSingleServerOAuthTokens(serverId: string, token?: string) {
+  return token ? { [serverId]: token } : undefined;
+}
 
 type ConvexAuthorizeResponse = {
   authorized: boolean;
@@ -620,35 +542,25 @@ web.post("/servers/validate", async (c) =>
       workspaceServerSchema,
       await readJsonBody<unknown>(c),
     );
-    const auth = await authorizeServer(
-      bearerToken,
-      body.workspaceId,
+
+    const oauthTokens = buildSingleServerOAuthTokens(
       body.serverId,
+      body.oauthAccessToken,
     );
 
-    if (auth.serverConfig.useOAuth && !body.oauthAccessToken) {
-      throw new WebRouteError(
-        401,
-        ErrorCode.UNAUTHORIZED,
-        `Server "${body.serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
-      );
-    }
-
-    const manager = new MCPClientManager(
-      {
-        [body.serverId]: toHttpConfig(auth, WEB_CONNECT_TIMEOUT_MS, body.oauthAccessToken),
-      },
-      {
-        defaultTimeout: WEB_CONNECT_TIMEOUT_MS,
+    return withManager(
+      createAuthorizedManager(
+        bearerToken,
+        body.workspaceId,
+        [body.serverId],
+        WEB_CONNECT_TIMEOUT_MS,
+        oauthTokens,
+      ),
+      async (manager) => {
+        await manager.getToolsForAiSdk([body.serverId]);
+        return { success: true, status: "connected" };
       },
     );
-
-    try {
-      await manager.getToolsForAiSdk([body.serverId]);
-      return { success: true, status: "connected" };
-    } finally {
-      await manager.disconnectAllServers();
-    }
   }),
 );
 
@@ -660,9 +572,10 @@ web.post("/tools/list", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
-    const oauthTokens = body.oauthAccessToken
-      ? { [body.serverId]: body.oauthAccessToken }
-      : undefined;
+    const oauthTokens = buildSingleServerOAuthTokens(
+      body.serverId,
+      body.oauthAccessToken,
+    );
 
     return withManager(
       createAuthorizedManager(
@@ -709,9 +622,10 @@ web.post("/tools/execute", async (c) =>
       );
     }
 
-    const oauthTokens = body.oauthAccessToken
-      ? { [body.serverId]: body.oauthAccessToken }
-      : undefined;
+    const oauthTokens = buildSingleServerOAuthTokens(
+      body.serverId,
+      body.oauthAccessToken,
+    );
 
     return withManager(
       createAuthorizedManager(
@@ -744,9 +658,10 @@ web.post("/resources/list", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
-    const oauthTokens = body.oauthAccessToken
-      ? { [body.serverId]: body.oauthAccessToken }
-      : undefined;
+    const oauthTokens = buildSingleServerOAuthTokens(
+      body.serverId,
+      body.oauthAccessToken,
+    );
 
     return withManager(
       createAuthorizedManager(
@@ -778,9 +693,10 @@ web.post("/resources/read", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
-    const oauthTokens = body.oauthAccessToken
-      ? { [body.serverId]: body.oauthAccessToken }
-      : undefined;
+    const oauthTokens = buildSingleServerOAuthTokens(
+      body.serverId,
+      body.oauthAccessToken,
+    );
 
     return withManager(
       createAuthorizedManager(
@@ -808,9 +724,10 @@ web.post("/prompts/list", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
-    const oauthTokens = body.oauthAccessToken
-      ? { [body.serverId]: body.oauthAccessToken }
-      : undefined;
+    const oauthTokens = buildSingleServerOAuthTokens(
+      body.serverId,
+      body.oauthAccessToken,
+    );
 
     return withManager(
       createAuthorizedManager(
@@ -887,9 +804,10 @@ web.post("/prompts/get", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
-    const oauthTokens = body.oauthAccessToken
-      ? { [body.serverId]: body.oauthAccessToken }
-      : undefined;
+    const oauthTokens = buildSingleServerOAuthTokens(
+      body.serverId,
+      body.oauthAccessToken,
+    );
 
     return withManager(
       createAuthorizedManager(
@@ -1115,9 +1033,10 @@ web.post("/apps/mcp-apps/widget-content", async (c) =>
     const resolvedResourceUri = body.template || body.resourceUri;
     const effectiveCspMode = body.cspMode ?? "widget-declared";
 
-    const oauthTokens = body.oauthAccessToken
-      ? { [body.serverId]: body.oauthAccessToken }
-      : undefined;
+    const oauthTokens = buildSingleServerOAuthTokens(
+      body.serverId,
+      body.oauthAccessToken,
+    );
 
     return withManager(
       createAuthorizedManager(
@@ -1225,9 +1144,10 @@ web.post("/apps/chatgpt-apps/widget-content", async (c) =>
       await readJsonBody<unknown>(c),
     ) as ChatGptWidgetBody & { oauthAccessToken?: string };
 
-    const oauthTokens = body.oauthAccessToken
-      ? { [body.serverId]: body.oauthAccessToken }
-      : undefined;
+    const oauthTokens = buildSingleServerOAuthTokens(
+      body.serverId,
+      body.oauthAccessToken,
+    );
 
     return withManager(
       createAuthorizedManager(

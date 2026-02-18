@@ -41,6 +41,7 @@ import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
+import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -130,17 +131,15 @@ export function ChatTabV2({
         .filter((serverId): serverId is string => !!serverId),
     [selectedConnectedServerNames, serversByName],
   );
-  const hostedOAuthTokens = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const serverName of selectedConnectedServerNames) {
-      const serverId = serversByName.get(serverName);
-      const server = appState.servers[serverName];
-      if (serverId && server?.oauthTokens?.access_token) {
-        map[serverId] = server.oauthTokens.access_token;
-      }
-    }
-    return Object.keys(map).length > 0 ? map : undefined;
-  }, [selectedConnectedServerNames, serversByName, appState.servers]);
+  const hostedOAuthTokens = useMemo(
+    () =>
+      buildOAuthTokensByServerId(
+        selectedConnectedServerNames,
+        (name) => serversByName.get(name),
+        (name) => appState.servers[name]?.oauthTokens?.access_token,
+      ),
+    [selectedConnectedServerNames, serversByName, appState.servers],
+  );
 
   // Use shared chat session hook
   const {
