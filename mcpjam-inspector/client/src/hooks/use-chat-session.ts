@@ -57,6 +57,8 @@ export interface UseChatSessionOptions {
   hostedWorkspaceId?: string | null;
   /** Hosted server IDs mapped from selected server names */
   hostedSelectedServerIds?: string[];
+  /** OAuth tokens for hosted servers keyed by server ID */
+  hostedOAuthTokens?: Record<string, string>;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
   initialSystemPrompt?: string;
   /** Initial temperature (defaults to 0.7) */
@@ -141,6 +143,7 @@ export function useChatSession({
   selectedServers,
   hostedWorkspaceId,
   hostedSelectedServerIds = [],
+  hostedOAuthTokens,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
   onReset,
@@ -272,6 +275,9 @@ export function useChatSession({
           ? {
               workspaceId: hostedWorkspaceId,
               selectedServerIds: hostedSelectedServerIds,
+              ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
+                ? { oauthTokens: hostedOAuthTokens }
+                : {}),
             }
           : { selectedServers }),
         requireToolApproval: requireToolApprovalRef.current,
@@ -293,6 +299,7 @@ export function useChatSession({
     selectedServers,
     hostedWorkspaceId,
     hostedSelectedServerIds,
+    hostedOAuthTokens,
     // requireToolApproval read from ref at request time
   ]);
 

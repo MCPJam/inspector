@@ -37,6 +37,7 @@ import {
   MCP_APPS_SANDBOX_PROXY_HTML,
 } from "../apps/SandboxProxyHtml.bundled.js";
 import type { HttpServerConfig } from "@mcpjam/sdk";
+import oauthWeb from "./oauth.js";
 
 const web = new Hono();
 
@@ -155,6 +156,7 @@ function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
 const workspaceServerSchema = z.object({
   workspaceId: z.string().min(1),
   serverId: z.string().min(1),
+  oauthAccessToken: z.string().optional(),
 });
 
 const toolsListSchema = workspaceServerSchema.extend({
@@ -183,6 +185,7 @@ const promptsListSchema = workspaceServerSchema.extend({
 const promptsListMultiSchema = z.object({
   workspaceId: z.string().min(1),
   serverIds: z.array(z.string().min(1)).min(1),
+  oauthTokens: z.record(z.string(), z.string()).optional(),
 });
 
 const promptsGetSchema = workspaceServerSchema.extend({
@@ -196,6 +199,7 @@ const hostedChatSchema = z
   .object({
     workspaceId: z.string().min(1),
     selectedServerIds: z.array(z.string().min(1)),
+    oauthTokens: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();
 
@@ -206,6 +210,7 @@ type ConvexAuthorizeResponse = {
     transportType: "stdio" | "http";
     url?: string;
     headers?: Record<string, string>;
+    useOAuth?: boolean;
   };
 };
 
@@ -275,6 +280,7 @@ async function authorizeServer(
 function toHttpConfig(
   authResponse: ConvexAuthorizeResponse,
   timeoutMs: number,
+  oauthAccessToken?: string,
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     throw new WebRouteError(
@@ -292,7 +298,13 @@ function toHttpConfig(
     );
   }
 
-  const headers = authResponse.serverConfig.headers ?? {};
+  const headers: Record<string, string> = {
+    ...(authResponse.serverConfig.headers ?? {}),
+  };
+
+  if (oauthAccessToken) {
+    headers["Authorization"] = `Bearer ${oauthAccessToken}`;
+  }
 
   return {
     url: authResponse.serverConfig.url,
@@ -308,12 +320,23 @@ async function createAuthorizedManager(
   workspaceId: string,
   serverIds: string[],
   timeoutMs: number,
+  oauthTokens?: Record<string, string>,
 ): Promise<MCPClientManager> {
   const uniqueServerIds = Array.from(new Set(serverIds));
   const configEntries = await Promise.all(
     uniqueServerIds.map(async (serverId) => {
       const auth = await authorizeServer(bearerToken, workspaceId, serverId);
-      return [serverId, toHttpConfig(auth, timeoutMs)] as const;
+      const oauthToken = oauthTokens?.[serverId];
+
+      if (auth.serverConfig.useOAuth && !oauthToken) {
+        throw new WebRouteError(
+          401,
+          ErrorCode.UNAUTHORIZED,
+          `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
+        );
+      }
+
+      return [serverId, toHttpConfig(auth, timeoutMs, oauthToken)] as const;
     }),
   );
 
@@ -602,9 +625,18 @@ web.post("/servers/validate", async (c) =>
       body.workspaceId,
       body.serverId,
     );
+
+    if (auth.serverConfig.useOAuth && !body.oauthAccessToken) {
+      throw new WebRouteError(
+        401,
+        ErrorCode.UNAUTHORIZED,
+        `Server "${body.serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
+      );
+    }
+
     const manager = new MCPClientManager(
       {
-        [body.serverId]: toHttpConfig(auth, WEB_CONNECT_TIMEOUT_MS),
+        [body.serverId]: toHttpConfig(auth, WEB_CONNECT_TIMEOUT_MS, body.oauthAccessToken),
       },
       {
         defaultTimeout: WEB_CONNECT_TIMEOUT_MS,
@@ -628,12 +660,17 @@ web.post("/tools/list", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
+    const oauthTokens = body.oauthAccessToken
+      ? { [body.serverId]: body.oauthAccessToken }
+      : undefined;
+
     return withManager(
       createAuthorizedManager(
         bearerToken,
         body.workspaceId,
         [body.serverId],
         WEB_CALL_TIMEOUT_MS,
+        oauthTokens,
       ),
       async (manager) => {
         const result = await manager.listTools(
@@ -672,12 +709,17 @@ web.post("/tools/execute", async (c) =>
       );
     }
 
+    const oauthTokens = body.oauthAccessToken
+      ? { [body.serverId]: body.oauthAccessToken }
+      : undefined;
+
     return withManager(
       createAuthorizedManager(
         bearerToken,
         body.workspaceId,
         [body.serverId],
         WEB_CALL_TIMEOUT_MS,
+        oauthTokens,
       ),
       async (manager) => {
         const result = await manager.executeTool(
@@ -702,12 +744,17 @@ web.post("/resources/list", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
+    const oauthTokens = body.oauthAccessToken
+      ? { [body.serverId]: body.oauthAccessToken }
+      : undefined;
+
     return withManager(
       createAuthorizedManager(
         bearerToken,
         body.workspaceId,
         [body.serverId],
         WEB_CALL_TIMEOUT_MS,
+        oauthTokens,
       ),
       async (manager) => {
         const result = await manager.listResources(
@@ -731,12 +778,17 @@ web.post("/resources/read", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
+    const oauthTokens = body.oauthAccessToken
+      ? { [body.serverId]: body.oauthAccessToken }
+      : undefined;
+
     return withManager(
       createAuthorizedManager(
         bearerToken,
         body.workspaceId,
         [body.serverId],
         WEB_CALL_TIMEOUT_MS,
+        oauthTokens,
       ),
       async (manager) => {
         const content = await manager.readResource(body.serverId, {
@@ -756,12 +808,17 @@ web.post("/prompts/list", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
+    const oauthTokens = body.oauthAccessToken
+      ? { [body.serverId]: body.oauthAccessToken }
+      : undefined;
+
     return withManager(
       createAuthorizedManager(
         bearerToken,
         body.workspaceId,
         [body.serverId],
         WEB_CALL_TIMEOUT_MS,
+        oauthTokens,
       ),
       async (manager) => {
         const result = await manager.listPrompts(
@@ -791,6 +848,7 @@ web.post("/prompts/list-multi", async (c) =>
         body.workspaceId,
         body.serverIds,
         WEB_CALL_TIMEOUT_MS,
+        body.oauthTokens,
       ),
       async (manager) => {
         const promptsByServer: Record<string, unknown[]> = {};
@@ -829,12 +887,17 @@ web.post("/prompts/get", async (c) =>
       await readJsonBody<unknown>(c),
     );
 
+    const oauthTokens = body.oauthAccessToken
+      ? { [body.serverId]: body.oauthAccessToken }
+      : undefined;
+
     return withManager(
       createAuthorizedManager(
         bearerToken,
         body.workspaceId,
         [body.serverId],
         WEB_CALL_TIMEOUT_MS,
+        oauthTokens,
       ),
       async (manager) => {
         const promptArguments = body.arguments
@@ -900,6 +963,7 @@ web.post("/chat-v2", async (c) => {
       hostedBody.workspaceId,
       selectedServerIds,
       WEB_STREAM_TIMEOUT_MS,
+      hostedBody.oauthTokens,
     );
 
     try {
@@ -1035,9 +1099,10 @@ web.post("/apps/mcp-apps/widget-content", async (c) =>
         template: z.string().optional(),
         viewMode: z.string().optional(),
         viewParams: z.record(z.string(), z.unknown()).optional(),
+        oauthAccessToken: z.string().optional(),
       }),
       await readJsonBody<unknown>(c),
-    ) as MpcAppsWidgetBody;
+    ) as MpcAppsWidgetBody & { oauthAccessToken?: string };
 
     if (body.template && !body.template.startsWith("ui://")) {
       throw new WebRouteError(
@@ -1050,12 +1115,17 @@ web.post("/apps/mcp-apps/widget-content", async (c) =>
     const resolvedResourceUri = body.template || body.resourceUri;
     const effectiveCspMode = body.cspMode ?? "widget-declared";
 
+    const oauthTokens = body.oauthAccessToken
+      ? { [body.serverId]: body.oauthAccessToken }
+      : undefined;
+
     return withManager(
       createAuthorizedManager(
         bearerToken,
         body.workspaceId,
         [body.serverId],
         WEB_CALL_TIMEOUT_MS,
+        oauthTokens,
       ),
       async (manager) => {
         const resourceResult = await manager.readResource(body.serverId, {
@@ -1150,9 +1220,14 @@ web.post("/apps/chatgpt-apps/widget-content", async (c) =>
         cspMode: z.enum(["permissive", "widget-declared"]).optional(),
         locale: z.string().optional(),
         deviceType: z.enum(["mobile", "tablet", "desktop"]).optional(),
+        oauthAccessToken: z.string().optional(),
       }),
       await readJsonBody<unknown>(c),
-    ) as ChatGptWidgetBody;
+    ) as ChatGptWidgetBody & { oauthAccessToken?: string };
+
+    const oauthTokens = body.oauthAccessToken
+      ? { [body.serverId]: body.oauthAccessToken }
+      : undefined;
 
     return withManager(
       createAuthorizedManager(
@@ -1160,6 +1235,7 @@ web.post("/apps/chatgpt-apps/widget-content", async (c) =>
         body.workspaceId,
         [body.serverId],
         WEB_CALL_TIMEOUT_MS,
+        oauthTokens,
       ),
       async (manager) => {
         const content = await manager.readResource(body.serverId, {
@@ -1255,6 +1331,9 @@ web.get("/apps/chatgpt-apps/file/:id", async (c) =>
     );
   }),
 );
+
+// Mount OAuth proxy routes (authenticated, for hosted mode)
+web.route("/oauth", oauthWeb);
 
 web.onError((error, c) => {
   const routeError = mapRuntimeError(error);

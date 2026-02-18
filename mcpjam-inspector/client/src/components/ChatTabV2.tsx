@@ -130,6 +130,17 @@ export function ChatTabV2({
         .filter((serverId): serverId is string => !!serverId),
     [selectedConnectedServerNames, serversByName],
   );
+  const hostedOAuthTokens = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const serverName of selectedConnectedServerNames) {
+      const serverId = serversByName.get(serverName);
+      const server = appState.servers[serverName];
+      if (serverId && server?.oauthTokens?.access_token) {
+        map[serverId] = server.oauthTokens.access_token;
+      }
+    }
+    return Object.keys(map).length > 0 ? map : undefined;
+  }, [selectedConnectedServerNames, serversByName, appState.servers]);
 
   // Use shared chat session hook
   const {
@@ -165,6 +176,7 @@ export function ChatTabV2({
     selectedServers: selectedConnectedServerNames,
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
+    hostedOAuthTokens,
     onReset: () => {
       setInput("");
       setWidgetStateQueue([]);

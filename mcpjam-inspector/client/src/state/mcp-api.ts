@@ -1,8 +1,23 @@
 import { MCPServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig } from "@mcpjam/sdk";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { validateHostedServer } from "@/lib/apis/web/servers-api";
+
+/**
+ * Extracts an OAuth access token from an HttpServerConfig's Authorization header.
+ * Returns undefined if the config isn't an HTTP config or has no Bearer token.
+ */
+function extractOAuthToken(serverConfig: MCPServerConfig): string | undefined {
+  const httpConfig = serverConfig as HttpServerConfig;
+  const authHeader = (httpConfig?.requestInit?.headers as Record<string, string>)
+    ?.["Authorization"];
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.slice("Bearer ".length);
+  }
+  return undefined;
+}
 
 // Helper to add timeout to authFetch requests
 async function authFetchWithTimeout(
@@ -36,8 +51,7 @@ export async function testConnection(
   serverId: string,
 ) {
   if (HOSTED_MODE) {
-    void serverConfig;
-    return validateHostedServer(serverId);
+    return validateHostedServer(serverId, extractOAuthToken(serverConfig));
   }
 
   const res = await authFetchWithTimeout(
@@ -81,8 +95,7 @@ export async function reconnectServer(
   serverConfig: MCPServerConfig,
 ) {
   if (HOSTED_MODE) {
-    void serverConfig;
-    return validateHostedServer(serverId);
+    return validateHostedServer(serverId, extractOAuthToken(serverConfig));
   }
 
   const res = await authFetchWithTimeout(

@@ -6,6 +6,7 @@ export interface HostedApiContext {
   workspaceId: string | null;
   serverIdsByName: Record<string, string>;
   getAccessToken?: GetAccessTokenFn;
+  oauthTokensByServerId?: Record<string, string>;
 }
 
 const EMPTY_CONTEXT: HostedApiContext = {
@@ -72,24 +73,47 @@ export function resolveHostedServerIds(serverNamesOrIds: string[]): string[] {
   return resolved;
 }
 
+export function getHostedOAuthToken(serverId: string): string | undefined {
+  return hostedApiContext.oauthTokensByServerId?.[serverId];
+}
+
 export function buildHostedServerRequest(serverNameOrId: string): {
   workspaceId: string;
   serverId: string;
+  oauthAccessToken?: string;
 } {
+  const serverId = resolveHostedServerId(serverNameOrId);
+  const oauthToken = getHostedOAuthToken(serverId);
   return {
     workspaceId: getHostedWorkspaceId(),
-    serverId: resolveHostedServerId(serverNameOrId),
+    serverId,
+    ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
   };
 }
 
 export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   workspaceId: string;
   serverIds: string[];
+  oauthTokens?: Record<string, string>;
 } {
+  const serverIds = resolveHostedServerIds(serverNamesOrIds);
+  const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   return {
     workspaceId: getHostedWorkspaceId(),
-    serverIds: resolveHostedServerIds(serverNamesOrIds),
+    serverIds,
+    ...(oauthTokens ? { oauthTokens } : {}),
   };
+}
+
+export function buildHostedOAuthTokensMap(
+  serverIds: string[],
+): Record<string, string> | undefined {
+  const map: Record<string, string> = {};
+  for (const id of serverIds) {
+    const token = getHostedOAuthToken(id);
+    if (token) map[id] = token;
+  }
+  return Object.keys(map).length > 0 ? map : undefined;
 }
 
 export async function getHostedAuthorizationHeader(): Promise<string | null> {

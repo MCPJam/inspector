@@ -182,10 +182,21 @@ export default function App() {
       ),
     [serversById],
   );
+  const oauthTokensByServerId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const [name, serverId] of Object.entries(hostedServerIdsByName)) {
+      const server = appState.servers[name];
+      if (server?.oauthTokens?.access_token) {
+        map[serverId] = server.oauthTokens.access_token;
+      }
+    }
+    return Object.keys(map).length > 0 ? map : undefined;
+  }, [hostedServerIdsByName, appState.servers]);
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,
+    oauthTokensByServerId,
   });
 
   // Compute the set of server names that have saved views
