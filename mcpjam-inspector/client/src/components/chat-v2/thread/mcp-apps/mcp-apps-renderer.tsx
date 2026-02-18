@@ -17,10 +17,7 @@ import {
   useCallback,
   type CSSProperties,
 } from "react";
-import {
-  useToolInputStreaming,
-  type ToolState,
-} from "./useToolInputStreaming";
+import { useToolInputStreaming, type ToolState } from "./useToolInputStreaming";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useUIPlaygroundStore,
@@ -301,17 +298,20 @@ export function MCPAppsRenderer({
   const themeModeRef = useRef(themeMode);
   themeModeRef.current = themeMode;
 
-  const { canRenderStreamingInput, signalStreamingRender, resetStreamingState } =
-    useToolInputStreaming({
-      bridgeRef,
-      isReady,
-      isReadyRef,
-      toolState,
-      toolInput,
-      toolOutput,
-      toolErrorText,
-      toolCallId,
-    });
+  const {
+    canRenderStreamingInput,
+    signalStreamingRender,
+    resetStreamingState,
+  } = useToolInputStreaming({
+    bridgeRef,
+    isReady,
+    isReadyRef,
+    toolState,
+    toolInput,
+    toolOutput,
+    toolErrorText,
+    toolCallId,
+  });
 
   // Fetch widget HTML when tool is active (streaming, input ready, or output available) or CSP mode changes
   useEffect(() => {

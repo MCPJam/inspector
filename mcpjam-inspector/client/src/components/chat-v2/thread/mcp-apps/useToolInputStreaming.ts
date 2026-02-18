@@ -386,5 +386,9 @@ export function useToolInputStreaming({
     return () => resetStreamingState();
   }, [resetStreamingState]);
 
-  return { canRenderStreamingInput, signalStreamingRender, resetStreamingState };
+  return {
+    canRenderStreamingInput,
+    signalStreamingRender,
+    resetStreamingState,
+  };
 }
