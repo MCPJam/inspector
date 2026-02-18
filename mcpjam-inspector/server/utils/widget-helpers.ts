@@ -101,7 +101,9 @@ html, body {
 
 const CONFIG_SCRIPT_ID = "openai-runtime-config";
 
-export function buildRuntimeConfigScript(config: Record<string, unknown>): string {
+export function buildRuntimeConfigScript(
+  config: Record<string, unknown>,
+): string {
   return `<script type="application/json" id="${CONFIG_SCRIPT_ID}">${serializeForInlineScript(config)}</script>`;
 }
 

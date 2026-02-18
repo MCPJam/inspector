@@ -108,7 +108,11 @@ export async function prepareChatV2(
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>
     scrubChatGPTAppsToolResultsForBackend(
-      scrubMcpAppsToolResultsForBackend(msgs, mcpClientManager, selectedServers),
+      scrubMcpAppsToolResultsForBackend(
+        msgs,
+        mcpClientManager,
+        selectedServers,
+      ),
       mcpClientManager,
       selectedServers,
     );

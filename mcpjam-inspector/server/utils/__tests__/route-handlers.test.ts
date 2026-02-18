@@ -17,9 +17,13 @@ import { countToolsTokens } from "../tokenizer-helpers.js";
 
 function createMockManager(overrides: Record<string, any> = {}) {
   return {
-    listResources: vi.fn().mockResolvedValue({ resources: [], nextCursor: undefined }),
+    listResources: vi
+      .fn()
+      .mockResolvedValue({ resources: [], nextCursor: undefined }),
     readResource: vi.fn().mockResolvedValue({ contents: [] }),
-    listPrompts: vi.fn().mockResolvedValue({ prompts: [], nextCursor: undefined }),
+    listPrompts: vi
+      .fn()
+      .mockResolvedValue({ prompts: [], nextCursor: undefined }),
     getPrompt: vi.fn().mockResolvedValue({ messages: [] }),
     listTools: vi.fn().mockResolvedValue({ tools: [] }),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
@@ -41,7 +45,9 @@ describe("listResources", () => {
       cursor: "cur",
     });
 
-    expect(manager.listResources).toHaveBeenCalledWith("srv", { cursor: "cur" });
+    expect(manager.listResources).toHaveBeenCalledWith("srv", {
+      cursor: "cur",
+    });
     expect(result.resources).toHaveLength(1);
     expect(result.nextCursor).toBe("next");
   });
@@ -146,7 +152,10 @@ describe("getPrompt", () => {
     await getPrompt(manager, {
       serverId: "srv",
       name: "test-prompt",
-      arguments: { count: 42 as unknown as string, flag: true as unknown as string },
+      arguments: {
+        count: 42 as unknown as string,
+        flag: true as unknown as string,
+      },
     });
 
     expect(manager.getPrompt).toHaveBeenCalledWith("srv", {

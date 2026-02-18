@@ -43,7 +43,10 @@ function validateUrl(url: string, httpsOnly = false): URL {
         "Only HTTPS targets are allowed in hosted mode",
       );
     }
-  } else if (targetUrl.protocol !== "https:" && targetUrl.protocol !== "http:") {
+  } else if (
+    targetUrl.protocol !== "https:" &&
+    targetUrl.protocol !== "http:"
+  ) {
     throw new OAuthProxyError(400, "Invalid protocol");
   }
 
@@ -122,7 +125,10 @@ export async function executeOAuthProxy(
 export async function fetchOAuthMetadata(
   url: string,
   httpsOnly = false,
-): Promise<{ metadata: Record<string, unknown>; status?: undefined } | { status: number; statusText: string }> {
+): Promise<
+  | { metadata: Record<string, unknown>; status?: undefined }
+  | { status: number; statusText: string }
+> {
   const metadataUrl = validateUrl(url, httpsOnly);
 
   const response = await fetch(metadataUrl.toString(), {
