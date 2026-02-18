@@ -20,6 +20,7 @@ import {
   MousePointer2,
   Hand,
   Settings2,
+  Palette,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -159,6 +160,10 @@ export function DisplayContextHeader({
   const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
   const capabilities = useUIPlaygroundStore((s) => s.capabilities);
   const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
+
+  // Host style (Claude / ChatGPT)
+  const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
+  const setHostStyle = useUIPlaygroundStore((s) => s.setHostStyle);
 
   // CSP mode (ChatGPT Apps)
   const cspMode = useUIPlaygroundStore((s) => s.cspMode);
@@ -832,6 +837,44 @@ export function DisplayContextHeader({
               </TooltipContent>
             </Tooltip>
           </>
+        )}
+
+        {/* Host style toggle (Claude / ChatGPT) */}
+        {(showChatGPTControls || showMCPAppsControls) && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-0.5 rounded-md border-2 border-border/50 p-0.5">
+                <div className="flex items-center justify-center h-6 w-6">
+                  <Palette className="h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+                <Button
+                  variant={hostStyle === "claude" ? "secondary" : "ghost"}
+                  size="icon"
+                  onClick={() => setHostStyle("claude")}
+                  className="h-6 w-6"
+                >
+                  <img
+                    src="/claude_logo.png"
+                    alt="Claude"
+                    className="h-3.5 w-3.5 object-contain"
+                  />
+                </Button>
+                <Button
+                  variant={hostStyle === "chatgpt" ? "secondary" : "ghost"}
+                  size="icon"
+                  onClick={() => setHostStyle("chatgpt")}
+                  className="h-6 w-6"
+                >
+                  <img
+                    src="/openai_logo.png"
+                    alt="ChatGPT"
+                    className="h-3.5 w-3.5 object-contain"
+                  />
+                </Button>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Host Styles</TooltipContent>
+          </Tooltip>
         )}
 
         {/* Theme toggle */}

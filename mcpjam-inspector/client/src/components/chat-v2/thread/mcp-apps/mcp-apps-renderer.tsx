@@ -50,6 +50,11 @@ import {
   CLAUDE_DESKTOP_FONT_CSS,
   CLAUDE_DESKTOP_PLATFORM,
 } from "@/config/claude-desktop-host-context";
+import {
+  getChatGPTStyleVariables,
+  CHATGPT_FONT_CSS,
+  CHATGPT_PLATFORM,
+} from "@/config/chatgpt-host-context";
 import { isVisibleToModelOnly } from "@/lib/mcp-ui/mcp-apps-utils";
 import { LoggingTransport } from "./mcp-apps-logging-transport";
 import { McpAppsModal } from "./mcp-apps-modal";
@@ -249,8 +254,9 @@ export function MCPAppsRenderer({
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  // Get CSP mode from playground store when in playground, otherwise use widget-declared
+  // Get CSP mode and host style from playground store when in playground
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
+  const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
@@ -660,9 +666,13 @@ export function MCPAppsRenderer({
 
   // CSS Variables for theming (SEP-1865 styles.variables)
   // These are sent via hostContext.styles.variables - the SDK should pass them through
+  const useChatGPTStyle = isPlaygroundActive && hostStyle === "chatgpt";
   const styleVariables = useMemo(
-    () => getClaudeDesktopStyleVariables(themeMode),
-    [themeMode],
+    () =>
+      useChatGPTStyle
+        ? getChatGPTStyleVariables(themeMode)
+        : getClaudeDesktopStyleVariables(themeMode),
+    [themeMode, useChatGPTStyle],
   );
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
@@ -674,13 +684,15 @@ export function MCPAppsRenderer({
       availableDisplayModes: ["inline", "pip", "fullscreen"],
       locale,
       timeZone,
-      platform: CLAUDE_DESKTOP_PLATFORM,
+      platform: useChatGPTStyle ? CHATGPT_PLATFORM : CLAUDE_DESKTOP_PLATFORM,
       userAgent: navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,
       styles: {
         variables: styleVariables,
-        css: { fonts: CLAUDE_DESKTOP_FONT_CSS },
+        css: {
+          fonts: useChatGPTStyle ? CHATGPT_FONT_CSS : CLAUDE_DESKTOP_FONT_CSS,
+        },
       },
       toolInfo: {
         id: toolCallId,
@@ -704,6 +716,7 @@ export function MCPAppsRenderer({
       deviceCapabilities,
       safeAreaInsets,
       styleVariables,
+      useChatGPTStyle,
       toolCallId,
       toolName,
       toolMetadata,

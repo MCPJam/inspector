@@ -43,6 +43,9 @@ import {
   type DeviceType,
   type DisplayMode,
 } from "@/stores/ui-playground-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
+import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import {
   DisplayContextHeader,
   PRESET_DEVICE_CONFIGS,
@@ -262,6 +265,16 @@ export function PlaygroundMain({
 
   // Currently selected protocol (detected from tool metadata)
   const selectedProtocol = useUIPlaygroundStore((s) => s.selectedProtocol);
+
+  // Host chat background: actual chat area colors from each host's UI
+  // (separate from the 76 MCP spec widget design tokens)
+  const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const chatBg =
+    hostStyle === "chatgpt"
+      ? CHATGPT_CHAT_BACKGROUND
+      : CLAUDE_DESKTOP_CHAT_BACKGROUND;
+  const hostBackgroundColor = chatBg[themeMode];
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -602,9 +615,7 @@ export function PlaygroundMain({
         <div
           className={cn(
             "flex-shrink-0 max-w-3xl mx-auto w-full",
-            isThreadEmpty
-              ? "px-4 pb-4"
-              : "bg-background/80 backdrop-blur-sm p-3",
+            isThreadEmpty ? "px-4 pb-4" : "p-3",
           )}
         >
           {errorMessage && (
@@ -693,13 +704,14 @@ export function PlaygroundMain({
       {/* Device frame container */}
       <div className="flex-1 flex items-center justify-center min-h-0 overflow-auto">
         <div
-          className="relative bg-background flex flex-col overflow-hidden"
+          className="relative flex flex-col overflow-hidden"
           style={{
             width: deviceConfig.width,
             maxWidth: "100%",
             height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
             maxHeight: "100%",
             transform: isWidgetFullscreen ? "none" : "translateZ(0)",
+            backgroundColor: hostBackgroundColor,
           }}
         >
           {/* X-Ray mode: show raw JSON view of AI payload */}
@@ -720,7 +732,7 @@ export function PlaygroundMain({
                 </StickToBottom.Content>
                 <ScrollToBottomButton />
               </div>
-              <div className="flex-shrink-0 bg-background/80 backdrop-blur-sm border-t border-border">
+              <div className="flex-shrink-0 border-t border-border">
                 <div className="max-w-xl mx-auto w-full p-3">
                   <ChatInput
                     {...sharedChatInputProps}
