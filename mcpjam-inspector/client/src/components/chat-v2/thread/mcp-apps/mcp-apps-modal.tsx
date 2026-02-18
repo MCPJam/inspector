@@ -10,6 +10,8 @@ import {
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+import { buildHostedServerRequest } from "@/lib/apis/web/context";
 import { extractMethod } from "@/stores/traffic-log-store";
 import {
   AppBridge,
@@ -93,13 +95,18 @@ export function McpAppsModal({
 
     const fetchModalHtml = async () => {
       try {
+        const hostedServerRequest = HOSTED_MODE
+          ? buildHostedServerRequest(serverId)
+          : null;
         const contentResponse = await authFetch(
-          "/api/apps/mcp-apps/widget-content",
+          HOSTED_MODE
+            ? "/api/web/apps/mcp-apps/widget-content"
+            : "/api/apps/mcp-apps/widget-content",
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              serverId,
+              ...(hostedServerRequest ?? { serverId }),
               resourceUri,
               toolInput: toolInputRef.current,
               toolOutput: toolOutputRef.current,
