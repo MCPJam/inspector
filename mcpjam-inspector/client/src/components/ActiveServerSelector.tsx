@@ -281,7 +281,7 @@ export function ActiveServerSelector({
                       if (isHostedHttpReconnectBlocked) {
                         return;
                       }
-                      void onReconnect(name);
+                      onReconnect(name).catch(() => {});
                     }}
                     className={cn(
                       "ml-auto p-1 rounded-md transition-colors",
