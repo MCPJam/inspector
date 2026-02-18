@@ -6,7 +6,6 @@ import type {
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps";
 import { CORS_ORIGINS } from "../../config.js";
-import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   CHATGPT_APPS_SANDBOX_PROXY_HTML,
   MCP_APPS_SANDBOX_PROXY_HTML,
@@ -20,13 +19,10 @@ import {
   type WidgetCspMeta,
 } from "../../utils/widget-helpers.js";
 import {
-  buildSingleServerOAuthTokens,
-  createAuthorizedManager,
-  withManager,
+  workspaceServerSchema,
+  withEphemeralConnection,
   handleRoute,
   assertBearerToken,
-  readJsonBody,
-  parseWithSchema,
   ErrorCode,
   WebRouteError,
 } from "./auth.js";
@@ -63,6 +59,37 @@ function extractHtmlFromResourceContent(content: unknown): string {
   return "";
 }
 
+// ── Schemas ─────────────────────────────────────────────────────────
+
+const mcpAppsWidgetContentSchema = workspaceServerSchema.extend({
+  resourceUri: z.string().min(1),
+  toolInput: z.record(z.string(), z.unknown()).default({}),
+  toolOutput: z.unknown().optional(),
+  toolId: z.string().min(1),
+  toolName: z.string().min(1),
+  theme: z.enum(["light", "dark"]).optional(),
+  cspMode: z.enum(["permissive", "widget-declared"]).optional(),
+  template: z.string().optional(),
+  viewMode: z.string().optional(),
+  viewParams: z.record(z.string(), z.unknown()).optional(),
+});
+
+const chatgptAppsWidgetContentSchema = workspaceServerSchema.extend({
+  uri: z.string().min(1),
+  toolInput: z.record(z.string(), z.unknown()).default({}),
+  toolOutput: z.unknown().optional(),
+  toolResponseMetadata: z
+    .record(z.string(), z.unknown())
+    .nullable()
+    .optional(),
+  toolId: z.string().min(1),
+  toolName: z.string().min(1),
+  theme: z.enum(["light", "dark"]).optional(),
+  cspMode: z.enum(["permissive", "widget-declared"]).optional(),
+  locale: z.string().optional(),
+  deviceType: z.enum(["mobile", "tablet", "desktop"]).optional(),
+});
+
 // ── Sandbox Proxy Routes ─────────────────────────────────────────────
 
 apps.get("/mcp-apps/sandbox-proxy", (c) => {
@@ -83,250 +110,172 @@ apps.get("/chatgpt-apps/sandbox-proxy", (c) => {
 
 // ── MCP Apps Widget Content ──────────────────────────────────────────
 
-type MpcAppsWidgetBody = {
-  workspaceId: string;
-  serverId: string;
-  resourceUri: string;
-  toolInput: Record<string, unknown>;
-  toolOutput: unknown;
-  toolId: string;
-  toolName: string;
-  theme?: "light" | "dark";
-  cspMode?: CspMode;
-  template?: string;
-  viewMode?: string;
-  viewParams?: Record<string, unknown>;
-};
-
 apps.post("/mcp-apps/widget-content", async (c) =>
-  handleRoute(c, async () => {
-    const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(
-      z.object({
-        workspaceId: z.string().min(1),
-        serverId: z.string().min(1),
-        resourceUri: z.string().min(1),
-        toolInput: z.record(z.string(), z.unknown()).default({}),
-        toolOutput: z.unknown().optional(),
-        toolId: z.string().min(1),
-        toolName: z.string().min(1),
-        theme: z.enum(["light", "dark"]).optional(),
-        cspMode: z.enum(["permissive", "widget-declared"]).optional(),
-        template: z.string().optional(),
-        viewMode: z.string().optional(),
-        viewParams: z.record(z.string(), z.unknown()).optional(),
-        oauthAccessToken: z.string().optional(),
-      }),
-      await readJsonBody<unknown>(c),
-    ) as MpcAppsWidgetBody & { oauthAccessToken?: string };
+  withEphemeralConnection(
+    c,
+    mcpAppsWidgetContentSchema,
+    async (manager, body) => {
+      if (body.template && !body.template.startsWith("ui://")) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "Template must use ui:// protocol",
+        );
+      }
 
-    if (body.template && !body.template.startsWith("ui://")) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Template must use ui:// protocol",
-      );
-    }
+      const resolvedResourceUri = body.template || body.resourceUri;
+      const effectiveCspMode = body.cspMode ?? "widget-declared";
 
-    const resolvedResourceUri = body.template || body.resourceUri;
-    const effectiveCspMode = body.cspMode ?? "widget-declared";
+      const resourceResult = await manager.readResource(body.serverId, {
+        uri: resolvedResourceUri,
+      });
 
-    const oauthTokens = buildSingleServerOAuthTokens(
-      body.serverId,
-      body.oauthAccessToken,
-    );
+      const contents = (resourceResult as any)?.contents || [];
+      const content = contents[0];
+      if (!content) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "No content in resource",
+        );
+      }
 
-    return withManager(
-      createAuthorizedManager(
-        bearerToken,
-        body.workspaceId,
-        [body.serverId],
-        WEB_CALL_TIMEOUT_MS,
-        oauthTokens,
-      ),
-      async (manager) => {
-        const resourceResult = await manager.readResource(body.serverId, {
-          uri: resolvedResourceUri,
-        });
+      const contentMimeType = (content as { mimeType?: string }).mimeType;
+      const mimeTypeValid = contentMimeType === MCP_APPS_MIMETYPE;
+      const mimeTypeWarning = !mimeTypeValid
+        ? contentMimeType
+          ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+          : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
+        : null;
 
-        const contents = (resourceResult as any)?.contents || [];
-        const content = contents[0];
-        if (!content) {
-          throw new WebRouteError(404, ErrorCode.NOT_FOUND, "No content in resource");
-        }
+      let html = extractHtmlFromResourceContent(content);
+      if (!html) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "No HTML content in resource",
+        );
+      }
 
-        const contentMimeType = (content as { mimeType?: string }).mimeType;
-        const mimeTypeValid = contentMimeType === MCP_APPS_MIMETYPE;
-        const mimeTypeWarning = !mimeTypeValid
-          ? contentMimeType
-            ? `Invalid mimetype "${contentMimeType}" - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-            : `Missing mimetype - SEP-1865 requires "${MCP_APPS_MIMETYPE}"`
-          : null;
+      const uiMeta = (content._meta as { ui?: any } | undefined)?.ui as
+        | {
+            csp?: McpUiResourceCsp;
+            permissions?: McpUiResourcePermissions;
+            prefersBorder?: boolean;
+          }
+        | undefined;
 
-        let html = extractHtmlFromResourceContent(content);
-        if (!html) {
-          throw new WebRouteError(404, ErrorCode.NOT_FOUND, "No HTML content in resource");
-        }
+      html = injectOpenAICompat(html, {
+        toolId: body.toolId,
+        toolName: body.toolName,
+        toolInput: body.toolInput ?? {},
+        toolOutput: body.toolOutput,
+        theme: body.theme,
+        viewMode: body.viewMode,
+        viewParams: body.viewParams,
+      });
 
-        const uiMeta = (content._meta as { ui?: any } | undefined)?.ui as
-          | {
-              csp?: McpUiResourceCsp;
-              permissions?: McpUiResourcePermissions;
-              prefersBorder?: boolean;
-            }
-          | undefined;
-
-        html = injectOpenAICompat(html, {
-          toolId: body.toolId,
-          toolName: body.toolName,
-          toolInput: body.toolInput ?? {},
-          toolOutput: body.toolOutput,
-          theme: body.theme,
-          viewMode: body.viewMode,
-          viewParams: body.viewParams,
-        });
-
-        return {
-          html,
-          csp: effectiveCspMode === "permissive" ? undefined : uiMeta?.csp,
-          permissions: uiMeta?.permissions,
-          permissive: effectiveCspMode === "permissive",
-          cspMode: effectiveCspMode,
-          prefersBorder: uiMeta?.prefersBorder,
-          mimeType: contentMimeType,
-          mimeTypeValid,
-          mimeTypeWarning,
-        };
-      },
-    );
-  }),
+      return {
+        html,
+        csp: effectiveCspMode === "permissive" ? undefined : uiMeta?.csp,
+        permissions: uiMeta?.permissions,
+        permissive: effectiveCspMode === "permissive",
+        cspMode: effectiveCspMode,
+        prefersBorder: uiMeta?.prefersBorder,
+        mimeType: contentMimeType,
+        mimeTypeValid,
+        mimeTypeWarning,
+      };
+    },
+  ),
 );
 
 // ── ChatGPT Apps Widget Content ──────────────────────────────────────
 
-type ChatGptWidgetBody = {
-  workspaceId: string;
-  serverId: string;
-  uri: string;
-  toolInput: Record<string, unknown>;
-  toolOutput: unknown;
-  toolResponseMetadata?: Record<string, unknown> | null;
-  toolId: string;
-  toolName: string;
-  theme?: "light" | "dark";
-  cspMode?: CspMode;
-  locale?: string;
-  deviceType?: "mobile" | "tablet" | "desktop";
-};
-
 apps.post("/chatgpt-apps/widget-content", async (c) =>
-  handleRoute(c, async () => {
-    const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(
-      z.object({
-        workspaceId: z.string().min(1),
-        serverId: z.string().min(1),
-        uri: z.string().min(1),
-        toolInput: z.record(z.string(), z.unknown()).default({}),
-        toolOutput: z.unknown().optional(),
-        toolResponseMetadata: z
-          .record(z.string(), z.unknown())
-          .nullable()
-          .optional(),
-        toolId: z.string().min(1),
-        toolName: z.string().min(1),
-        theme: z.enum(["light", "dark"]).optional(),
-        cspMode: z.enum(["permissive", "widget-declared"]).optional(),
-        locale: z.string().optional(),
-        deviceType: z.enum(["mobile", "tablet", "desktop"]).optional(),
-        oauthAccessToken: z.string().optional(),
-      }),
-      await readJsonBody<unknown>(c),
-    ) as ChatGptWidgetBody & { oauthAccessToken?: string };
+  withEphemeralConnection(
+    c,
+    chatgptAppsWidgetContentSchema,
+    async (manager, body) => {
+      const content = await manager.readResource(body.serverId, {
+        uri: body.uri,
+      });
+      const contentsArray = Array.isArray((content as any)?.contents)
+        ? (content as any).contents
+        : [];
+      const firstContent = contentsArray[0];
+      if (!firstContent) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "No HTML content found",
+        );
+      }
 
-    const oauthTokens = buildSingleServerOAuthTokens(
-      body.serverId,
-      body.oauthAccessToken,
-    );
+      const htmlContent = extractHtmlFromResourceContent(firstContent);
+      if (!htmlContent) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "No HTML content found",
+        );
+      }
 
-    return withManager(
-      createAuthorizedManager(
-        bearerToken,
-        body.workspaceId,
-        [body.serverId],
-        WEB_CALL_TIMEOUT_MS,
-        oauthTokens,
-      ),
-      async (manager) => {
-        const content = await manager.readResource(body.serverId, {
-          uri: body.uri,
-        });
-        const contentsArray = Array.isArray((content as any)?.contents)
-          ? (content as any).contents
-          : [];
-        const firstContent = contentsArray[0];
-        if (!firstContent) {
-          throw new WebRouteError(404, ErrorCode.NOT_FOUND, "No HTML content found");
-        }
+      const resourceMeta = firstContent?._meta as
+        | Record<string, unknown>
+        | undefined;
+      const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
+        | WidgetCspMeta
+        | undefined;
+      const effectiveCspMode = body.cspMode ?? "widget-declared";
+      const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw, {
+        frameAncestors: buildFrameAncestors(),
+      });
 
-        const htmlContent = extractHtmlFromResourceContent(firstContent);
-        if (!htmlContent) {
-          throw new WebRouteError(404, ErrorCode.NOT_FOUND, "No HTML content found");
-        }
+      const runtimeConfig = {
+        toolId: body.toolId,
+        toolName: body.toolName,
+        toolInput: body.toolInput,
+        toolOutput: body.toolOutput ?? null,
+        toolResponseMetadata: body.toolResponseMetadata ?? null,
+        theme: body.theme ?? "dark",
+        locale: body.locale ?? "en-US",
+        deviceType: body.deviceType ?? "desktop",
+        viewMode: "inline",
+        viewParams: {},
+        useMapPendingCalls: true,
+      };
 
-        const resourceMeta = firstContent?._meta as Record<string, unknown> | undefined;
-        const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
-          | WidgetCspMeta
-          | undefined;
-        const effectiveCspMode = body.cspMode ?? "widget-declared";
-        const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw, {
-          frameAncestors: buildFrameAncestors(),
-        });
+      const runtimeHeadContent = buildChatGptRuntimeHead({
+        htmlContent,
+        runtimeConfig,
+      });
 
-        const runtimeConfig = {
-          toolId: body.toolId,
-          toolName: body.toolName,
-          toolInput: body.toolInput,
-          toolOutput: body.toolOutput ?? null,
-          toolResponseMetadata: body.toolResponseMetadata ?? null,
-          theme: body.theme ?? "dark",
-          locale: body.locale ?? "en-US",
-          deviceType: body.deviceType ?? "desktop",
-          viewMode: "inline",
-          viewParams: {},
-          useMapPendingCalls: true,
-        };
+      const modifiedHtml = injectScripts(htmlContent, runtimeHeadContent);
 
-        const runtimeHeadContent = buildChatGptRuntimeHead({
-          htmlContent,
-          runtimeConfig,
-        });
-
-        const modifiedHtml = injectScripts(htmlContent, runtimeHeadContent);
-
-        return {
-          html: modifiedHtml,
-          csp: {
-            mode: cspConfig.mode,
-            connectDomains: cspConfig.connectDomains,
-            resourceDomains: cspConfig.resourceDomains,
-            frameDomains: cspConfig.frameDomains,
-            headerString: cspConfig.headerString,
-            widgetDeclared: widgetCspRaw ?? null,
-          },
-          widgetDescription: resourceMeta?.["openai/widgetDescription"] as
-            | string
-            | undefined,
-          prefersBorder:
-            (resourceMeta?.["openai/widgetPrefersBorder"] as boolean | undefined) ??
-            true,
-          closeWidget:
-            (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ??
-            false,
-        };
-      },
-    );
-  }),
+      return {
+        html: modifiedHtml,
+        csp: {
+          mode: cspConfig.mode,
+          connectDomains: cspConfig.connectDomains,
+          resourceDomains: cspConfig.resourceDomains,
+          frameDomains: cspConfig.frameDomains,
+          headerString: cspConfig.headerString,
+          widgetDeclared: widgetCspRaw ?? null,
+        },
+        widgetDescription: resourceMeta?.["openai/widgetDescription"] as
+          | string
+          | undefined,
+        prefersBorder:
+          (resourceMeta?.["openai/widgetPrefersBorder"] as
+            | boolean
+            | undefined) ?? true,
+        closeWidget:
+          (resourceMeta?.["openai/closeWidget"] as boolean | undefined) ??
+          false,
+      };
+    },
+  ),
 );
 
 // ── File stubs (not supported in hosted mode) ────────────────────────

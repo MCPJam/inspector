@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
+import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -238,6 +239,82 @@ export async function handleRoute<T>(
     const routeError = mapRuntimeError(error);
     return webError(c, routeError.status, routeError.code, routeError.message);
   }
+}
+
+// ── Ephemeral Connection Helper ──────────────────────────────────────
+
+/**
+ * Resolve server IDs and OAuth tokens from parsed request body.
+ *
+ * Supports two shapes:
+ *   - Single-server: { serverId, oauthAccessToken? }
+ *   - Multi-server:  { serverIds, oauthTokens? }
+ */
+function resolveConnectionParams(body: Record<string, unknown>): {
+  serverIds: string[];
+  oauthTokens: Record<string, string> | undefined;
+} {
+  if (Array.isArray(body.serverIds)) {
+    return {
+      serverIds: body.serverIds as string[],
+      oauthTokens: body.oauthTokens as Record<string, string> | undefined,
+    };
+  }
+  return {
+    serverIds: [body.serverId as string],
+    oauthTokens: buildSingleServerOAuthTokens(
+      body.serverId as string,
+      body.oauthAccessToken as string | undefined,
+    ),
+  };
+}
+
+/**
+ * Stateless per-request lifecycle: authorize → connect → execute → disconnect.
+ *
+ * Creates an ephemeral MCPClientManager scoped to a single request. Connections
+ * are always torn down in `finally`, even on error. This is the hosted-mode
+ * counterpart to the persistent singleton manager used by local /api/mcp routes.
+ *
+ * Handles the full request pipeline:
+ *   1. Extract bearer token from Authorization header
+ *   2. Parse + validate request body against the given Zod schema
+ *   3. Resolve server IDs and OAuth tokens from the parsed body
+ *   4. Authorize each server via Convex and create ephemeral MCP connections
+ *   5. Execute `fn` with the live manager and parsed body
+ *   6. Disconnect all servers (finally)
+ *   7. Return JSON response (or structured error)
+ *
+ * Not suitable for streaming routes (chat-v2) — those need manual lifecycle
+ * management via `onStreamComplete` because the Response is returned before
+ * the stream finishes.
+ */
+export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
+  c: any,
+  schema: S,
+  fn: (manager: InstanceType<typeof MCPClientManager>, body: z.infer<S>) => Promise<T>,
+  options?: { timeoutMs?: number },
+) {
+  return handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const body = parseWithSchema(schema, await readJsonBody<unknown>(c));
+    // Cast for internal plumbing — all web schemas include workspaceId + serverId(s).
+    // The strongly-typed `body` is passed through to `fn` unchanged.
+    const raw = body as Record<string, unknown>;
+    const { serverIds, oauthTokens } = resolveConnectionParams(raw);
+    const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+
+    return withManager(
+      createAuthorizedManager(
+        bearerToken,
+        raw.workspaceId as string,
+        serverIds,
+        timeoutMs,
+        oauthTokens,
+      ),
+      (manager) => fn(manager, body as z.infer<S>),
+    );
+  });
 }
 
 // Re-export commonly used error utilities for convenience
