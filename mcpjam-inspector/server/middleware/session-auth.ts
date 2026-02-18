@@ -90,6 +90,11 @@ export async function sessionAuthMiddleware(
     return next();
   }
 
+  // Hosted web routes use bearer auth and Convex authorization, not session tokens.
+  if (path.startsWith("/api/web/")) {
+    return next();
+  }
+
   // Allow unprotected API routes without auth
   if (UNPROTECTED_ROUTES.some((route) => path === route)) {
     return next();

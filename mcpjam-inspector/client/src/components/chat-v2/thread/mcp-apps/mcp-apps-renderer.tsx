@@ -28,6 +28,7 @@ import {
   SandboxedIframeHandle,
 } from "@/components/ui/sandboxed-iframe";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 import {
   useTrafficLogStore,
   extractMethod,
@@ -63,7 +64,10 @@ import {
   handleUploadFileMessage,
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
+import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
+import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
+import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -487,30 +491,6 @@ export function MCPAppsRenderer({
           return;
         }
 
-        const contentResponse = await authFetch(
-          "/api/apps/mcp-apps/widget-content",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serverId,
-              resourceUri,
-              toolInput: toolInputRef.current,
-              toolOutput: toolOutputRef.current,
-              toolId: toolCallId,
-              toolName,
-              theme: themeModeRef.current,
-              cspMode, // Pass CSP mode preference
-            }),
-          },
-        );
-        if (!contentResponse.ok) {
-          const errorData = await contentResponse.json().catch(() => ({}));
-          throw new Error(
-            errorData.error ||
-              `Failed to fetch widget: ${contentResponse.statusText}`,
-          );
-        }
         const {
           html,
           csp,
@@ -519,7 +499,16 @@ export function MCPAppsRenderer({
           mimeTypeWarning: warning,
           mimeTypeValid: valid,
           prefersBorder,
-        } = await contentResponse.json();
+        } = await fetchMcpAppsWidgetContent({
+          serverId,
+          resourceUri,
+          toolInput: toolInputRef.current,
+          toolOutput: toolOutputRef.current,
+          toolId: toolCallId,
+          toolName,
+          theme: themeModeRef.current,
+          cspMode,
+        });
 
         if (!valid) {
           setLoadError(
@@ -821,40 +810,29 @@ export function MCPAppsRenderer({
       };
 
       bridge.onreadresource = async ({ uri }) => {
-        const response = await authFetch(`/api/mcp/resources/read`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverId: serverIdRef.current, uri }),
-        });
-        if (!response.ok) {
-          throw new Error(`Resource read failed: ${response.statusText}`);
-        }
-        const result = await response.json();
+        const result = await readResource(serverIdRef.current, uri);
         return result.content;
       };
 
       bridge.onlistresources = async (params) => {
-        const response = await authFetch(`/api/mcp/resources/list`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverId: serverIdRef.current,
-            ...(params ?? {}),
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(`Resource list failed: ${response.statusText}`);
-        }
-        return response.json();
+        return listResources(
+          serverIdRef.current,
+          (params as { cursor?: string } | undefined)?.cursor,
+        );
       };
 
-      bridge.onlistresourcetemplates = async (params) => {
+      bridge.onlistresourcetemplates = async (_params) => {
+        if (HOSTED_MODE) {
+          throw new Error(
+            "Resource templates are not supported in hosted mode",
+          );
+        }
+
         const response = await authFetch(`/api/mcp/resource-templates/list`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             serverId: serverIdRef.current,
-            ...(params ?? {}),
           }),
         });
         if (!response.ok) {
@@ -866,18 +844,9 @@ export function MCPAppsRenderer({
       };
 
       bridge.onlistprompts = async (params) => {
-        const response = await authFetch(`/api/mcp/prompts/list`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverId: serverIdRef.current,
-            ...(params ?? {}),
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(`Prompt list failed: ${response.statusText}`);
-        }
-        return response.json();
+        void params;
+        const prompts = await listPrompts(serverIdRef.current);
+        return { prompts };
       };
 
       bridge.onloggingmessage = ({ level, data, logger }) => {

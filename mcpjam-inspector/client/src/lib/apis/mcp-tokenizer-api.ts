@@ -3,32 +3,42 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import { runByMode } from "@/lib/apis/mode-client";
 
 export async function countMCPToolsTokens(
   selectedServers: string[],
   modelId: string,
 ): Promise<Record<string, number>> {
-  const res = await authFetch("/api/mcp/tokenizer/count-tools", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ selectedServers, modelId }),
+  return runByMode({
+    hosted: async () => {
+      void selectedServers;
+      void modelId;
+      return {};
+    },
+    local: async () => {
+      const res = await authFetch("/api/mcp/tokenizer/count-tools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedServers, modelId }),
+      });
+
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {}
+
+      if (!res.ok) {
+        const message = body?.error || `Count tokens failed (${res.status})`;
+        throw new Error(message);
+      }
+
+      if (!body.ok) {
+        throw new Error(body.error || "Failed to count tokens");
+      }
+
+      return body.tokenCounts ?? {};
+    },
   });
-
-  let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
-
-  if (!res.ok) {
-    const message = body?.error || `Count tokens failed (${res.status})`;
-    throw new Error(message);
-  }
-
-  if (!body.ok) {
-    throw new Error(body.error || "Failed to count tokens");
-  }
-
-  return body.tokenCounts ?? {};
 }
 
 /**
@@ -38,25 +48,34 @@ export async function countTextTokens(
   text: string,
   modelId: string,
 ): Promise<number> {
-  const res = await authFetch("/api/mcp/tokenizer/count-text", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, modelId }),
+  return runByMode({
+    hosted: async () => {
+      void text;
+      void modelId;
+      return 0;
+    },
+    local: async () => {
+      const res = await authFetch("/api/mcp/tokenizer/count-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, modelId }),
+      });
+
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {}
+
+      if (!res.ok) {
+        const message = body?.error || `Count tokens failed (${res.status})`;
+        throw new Error(message);
+      }
+
+      if (!body.ok) {
+        throw new Error(body.error || "Failed to count tokens");
+      }
+
+      return body.tokenCount ?? 0;
+    },
   });
-
-  let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
-
-  if (!res.ok) {
-    const message = body?.error || `Count tokens failed (${res.status})`;
-    throw new Error(message);
-  }
-
-  if (!body.ok) {
-    throw new Error(body.error || "Failed to count tokens");
-  }
-
-  return body.tokenCount ?? 0;
 }

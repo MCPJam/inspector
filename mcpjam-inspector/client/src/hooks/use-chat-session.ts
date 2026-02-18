@@ -48,10 +48,17 @@ import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers"
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
   selectedServers: string[];
+  /** Active Convex workspace ID when running in hosted mode */
+  hostedWorkspaceId?: string | null;
+  /** Hosted server IDs mapped from selected server names */
+  hostedSelectedServerIds?: string[];
+  /** OAuth tokens for hosted servers keyed by server ID */
+  hostedOAuthTokens?: Record<string, string>;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
   initialSystemPrompt?: string;
   /** Initial temperature (defaults to 0.7) */
@@ -134,6 +141,9 @@ export interface UseChatSessionReturn {
 
 export function useChatSession({
   selectedServers,
+  hostedWorkspaceId,
+  hostedSelectedServerIds = [],
+  hostedOAuthTokens,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
   onReset,
@@ -185,7 +195,7 @@ export function useChatSession({
 
   // Build available models
   const availableModels = useMemo(() => {
-    return buildAvailableModels({
+    const models = buildAvailableModels({
       hasToken,
       getOpenRouterSelectedModels,
       isOllamaRunning,
@@ -193,6 +203,10 @@ export function useChatSession({
       getAzureBaseUrl,
       customProviders,
     });
+    if (HOSTED_MODE) {
+      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
+    }
+    return models;
   }, [
     hasToken,
     getOpenRouterSelectedModels,
@@ -246,16 +260,28 @@ export function useChatSession({
       string
     >;
 
+    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
+
     return new DefaultChatTransport({
-      api: "/api/mcp/chat-v2",
+      api: chatApi,
       body: () => ({
         model: selectedModel,
-        apiKey: apiKey,
+        ...(HOSTED_MODE ? {} : { apiKey }),
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
-        selectedServers,
+        ...(HOSTED_MODE
+          ? {
+              workspaceId: hostedWorkspaceId,
+              selectedServerIds: hostedSelectedServerIds,
+              ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
+                ? { oauthTokens: hostedOAuthTokens }
+                : {}),
+            }
+          : { selectedServers }),
         requireToolApproval: requireToolApprovalRef.current,
-        ...(customProviders.length > 0 ? { customProviders } : {}),
+        ...(!HOSTED_MODE && customProviders.length > 0
+          ? { customProviders }
+          : {}),
       }),
       headers:
         Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
@@ -269,6 +295,9 @@ export function useChatSession({
     temperature,
     systemPrompt,
     selectedServers,
+    hostedWorkspaceId,
+    hostedSelectedServerIds,
+    hostedOAuthTokens,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -497,12 +526,23 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  const isAuthReady = !isMcpJamModel || (isAuthenticated && !!authHeaders);
-  const disableForAuthentication = !isAuthenticated && isMcpJamModel;
-  const authHeadersNotReady = isMcpJamModel && isAuthenticated && !authHeaders;
+  const requiresAuthForChat = HOSTED_MODE || isMcpJamModel;
+  const isAuthReady =
+    !requiresAuthForChat || (isAuthenticated && !!authHeaders);
+  const disableForAuthentication = !isAuthenticated && requiresAuthForChat;
+  const authHeadersNotReady =
+    requiresAuthForChat && isAuthenticated && !authHeaders;
+  const hostedContextNotReady =
+    HOSTED_MODE &&
+    (!hostedWorkspaceId ||
+      (selectedServers.length > 0 &&
+        hostedSelectedServerIds.length !== selectedServers.length));
   const isStreaming = status === "streaming" || status === "submitted";
   const submitBlocked =
-    disableForAuthentication || isAuthLoading || authHeadersNotReady;
+    disableForAuthentication ||
+    isAuthLoading ||
+    authHeadersNotReady ||
+    hostedContextNotReady;
   const inputDisabled = status !== "ready" || submitBlocked;
 
   return {

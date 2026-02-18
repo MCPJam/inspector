@@ -80,7 +80,10 @@ function SortableServerCard({
   id: string;
   server: ServerWithName;
   onDisconnect: (name: string) => void;
-  onReconnect: (name: string, opts?: { forceOAuthFlow?: boolean }) => void;
+  onReconnect: (
+    name: string,
+    opts?: { forceOAuthFlow?: boolean },
+  ) => Promise<void>;
   onEdit: (server: ServerWithName) => void;
   onRemove: (name: string) => void;
 }) {
@@ -119,7 +122,7 @@ interface ServersTabProps {
   onReconnect: (
     serverName: string,
     options?: { forceOAuthFlow?: boolean },
-  ) => void;
+  ) => Promise<void>;
   onUpdate: (
     originalServerName: string,
     formData: ServerFormData,

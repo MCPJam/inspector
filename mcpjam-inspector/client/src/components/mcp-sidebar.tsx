@@ -28,6 +28,7 @@ import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@/components/ui/button";
+import { HOSTED_MODE } from "@/lib/config";
 import {
   listTools,
   type ListToolsResultWithMetadata,
@@ -37,6 +38,10 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  isHostedSidebarTabAllowed,
+  normalizeHostedHashTab,
+} from "@/lib/hosted-tab-policy";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 // Define sections with their respective items
@@ -138,6 +143,19 @@ const navigationSections = [
   },
 ];
 
+const hostedNavigationSections = navigationSections
+  .map((section) => ({
+    ...section,
+    items: section.items.filter((item) =>
+      isHostedSidebarTabAllowed(
+        normalizeHostedHashTab(
+          item.url.startsWith("#") ? item.url.slice(1) : item.url,
+        ),
+      ),
+    ),
+  }))
+  .filter((section) => section.items.length > 0);
+
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
   activeTab?: string;
@@ -237,6 +255,9 @@ export function MCPSidebar({
         subMessage: "Get started",
       }
     : null;
+  const visibleNavigationSections = HOSTED_MODE
+    ? hostedNavigationSections
+    : navigationSections;
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -266,7 +287,7 @@ export function MCPSidebar({
         )}
       </SidebarHeader>
       <SidebarContent>
-        {navigationSections.map((section, sectionIndex) => (
+        {visibleNavigationSections.map((section, sectionIndex) => (
           <React.Fragment key={section.id}>
             <NavMain
               items={section.items.map((item) => ({
@@ -279,7 +300,7 @@ export function MCPSidebar({
               }
             />
             {/* Add subtle divider between sections (except after the last section) */}
-            {sectionIndex < navigationSections.length - 1 && (
+            {sectionIndex < visibleNavigationSections.length - 1 && (
               <div className="mx-4 my-2 border-t border-border/50" />
             )}
           </React.Fragment>

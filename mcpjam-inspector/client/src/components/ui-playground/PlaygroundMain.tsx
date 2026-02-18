@@ -59,6 +59,10 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { useConvexAuth } from "convex/react";
+import { useWorkspaceServers } from "@/hooks/useViews";
+import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import { HOSTED_MODE } from "@/lib/config";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -212,13 +216,39 @@ export function PlaygroundMain({
     return PRESET_DEVICE_CONFIGS[storeDeviceType];
   }, [storeDeviceType, customViewport]);
 
-  const { servers } = useSharedAppState();
+  const appState = useSharedAppState();
+  const servers = appState.servers;
+  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const selectedServers = useMemo(
     () =>
       serverName && servers[serverName]?.connectionStatus === "connected"
         ? [serverName]
         : [],
     [serverName, servers],
+  );
+
+  // Hosted mode context (workspaceId, serverIds, OAuth tokens)
+  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
+  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const { serversByName } = useWorkspaceServers({
+    isAuthenticated: isConvexAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+  const hostedSelectedServerIds = useMemo(
+    () =>
+      selectedServers
+        .map((name) => serversByName.get(name))
+        .filter((serverId): serverId is string => !!serverId),
+    [selectedServers, serversByName],
+  );
+  const hostedOAuthTokens = useMemo(
+    () =>
+      buildOAuthTokensByServerId(
+        selectedServers,
+        (name) => serversByName.get(name),
+        (name) => appState.servers[name]?.oauthTokens?.access_token,
+      ),
+    [selectedServers, serversByName, appState.servers],
   );
 
   // Use shared chat session hook
@@ -249,6 +279,9 @@ export function PlaygroundMain({
     addToolApprovalResponse,
   } = useChatSession({
     selectedServers,
+    hostedWorkspaceId: convexWorkspaceId,
+    hostedSelectedServerIds,
+    hostedOAuthTokens,
     onReset: () => {
       setInput("");
     },
@@ -521,8 +554,8 @@ export function PlaygroundMain({
     onChangeSkillResults: setSkillResults,
     fileAttachments,
     onChangeFileAttachments: setFileAttachments,
-    xrayMode,
-    onXrayModeChange: setXrayMode,
+    xrayMode: HOSTED_MODE ? false : xrayMode,
+    onXrayModeChange: HOSTED_MODE ? undefined : setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
   };

@@ -7,6 +7,7 @@ import {
   forwardRef,
   useMemo,
 } from "react";
+import { HOSTED_MODE } from "@/lib/config";
 
 export interface ChatGPTSandboxedIframeHandle {
   postMessage: (data: unknown) => void;
@@ -76,9 +77,12 @@ export const ChatGPTSandboxedIframe = forwardRef<
     const currentPort = window.location.port;
     const protocol = window.location.protocol;
 
-    // Swap localhost <-> 127.0.0.1 for cross-origin isolation
+    // Hosted mode keeps same-origin to support blob/data widget URLs.
+    // Local mode keeps localhost <-> 127.0.0.1 swapping for stronger isolation.
     let sandboxHost: string;
-    if (currentHost === "localhost") {
+    if (HOSTED_MODE) {
+      sandboxHost = currentHost;
+    } else if (currentHost === "localhost") {
       sandboxHost = "127.0.0.1";
     } else if (currentHost === "127.0.0.1") {
       sandboxHost = "localhost";
@@ -95,7 +99,10 @@ export const ChatGPTSandboxedIframe = forwardRef<
     const version = import.meta.env.PROD
       ? import.meta.env.VITE_BUILD_HASH || "v1"
       : Date.now();
-    const url = `${protocol}//${sandboxHost}${portSuffix}/api/apps/chatgpt-apps/sandbox-proxy?v=${version}`;
+    const proxyPath = HOSTED_MODE
+      ? "/api/web/apps/chatgpt-apps/sandbox-proxy"
+      : "/api/apps/chatgpt-apps/sandbox-proxy";
+    const url = `${protocol}//${sandboxHost}${portSuffix}${proxyPath}?v=${version}`;
     const origin = `${protocol}//${sandboxHost}${portSuffix}`;
 
     return [url, origin];

@@ -29,11 +29,16 @@ import { toast } from "sonner";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import type { CheckoutSession } from "@/shared/acp-types.ts";
 import { CheckoutDialog } from "./checkout-dialog";
-import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 import {
   handleGetFileDownloadUrlMessage,
   handleUploadFileMessage,
 } from "./mcp-apps/widget-file-messages";
+import {
+  loadHostedChatGptWidget,
+  loadLocalChatGptWidget,
+  type WidgetCspData,
+} from "./chatgpt-widget-loaders";
 
 type ToolState =
   | "input-streaming"
@@ -221,19 +226,6 @@ function getDeviceType(): "mobile" | "tablet" | "desktop" {
 // Default values for non-playground contexts (defined outside component to avoid infinite loops)
 const DEFAULT_CAPABILITIES = { hover: true, touch: false };
 const DEFAULT_SAFE_AREA_INSETS = { top: 0, bottom: 0, left: 0, right: 0 };
-interface WidgetCspData {
-  mode: CspMode;
-  connectDomains: string[];
-  resourceDomains: string[];
-  frameDomains?: string[];
-  headerString?: string;
-  /** Widget's actual openai/widgetCSP declaration (null if not declared) */
-  widgetDeclared?: {
-    connect_domains?: string[];
-    resource_domains?: string[];
-    frame_domains?: string[];
-  } | null;
-}
 
 function useWidgetFetch(
   toolState: ToolState | undefined,
@@ -266,6 +258,7 @@ function useWidgetFetch(
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   // Track if we should skip cached HTML (for live editing after initial load)
   const [skipCachedHtml, setSkipCachedHtml] = useState(false);
+  const hostedBlobUrlRef = useRef<string | null>(null);
   // Track serialized data to detect changes
   const prevDataRef = useRef<string | null>(null);
   // Track the tool call ID to detect view switches (more stable than URL)
@@ -308,6 +301,25 @@ function useWidgetFetch(
   toolResponseMetadataRef.current = toolResponseMetadata;
   const onCspConfigReceivedRef = useRef(onCspConfigReceived);
   onCspConfigReceivedRef.current = onCspConfigReceived;
+
+  useEffect(() => {
+    if (!HOSTED_MODE) return;
+    if (!hostedBlobUrlRef.current) return;
+    if (widgetUrl === hostedBlobUrlRef.current) return;
+
+    URL.revokeObjectURL(hostedBlobUrlRef.current);
+    hostedBlobUrlRef.current = null;
+  }, [widgetUrl]);
+
+  useEffect(
+    () => () => {
+      if (hostedBlobUrlRef.current) {
+        URL.revokeObjectURL(hostedBlobUrlRef.current);
+        hostedBlobUrlRef.current = null;
+      }
+    },
+    [],
+  );
 
   // Reset widget URL when CSP mode changes to trigger reload
   useEffect(() => {
@@ -376,7 +388,9 @@ function useWidgetFetch(
       widgetUrl &&
       ((canUseCachedHtml && widgetUrl === cachedWidgetHtmlUrl) ||
         (!canUseCachedHtml &&
-          widgetUrl.includes("/api/apps/chatgpt-apps/widget-content/")));
+          (HOSTED_MODE
+            ? widgetUrl.startsWith("blob:")
+            : widgetUrl.includes("/api/apps/chatgpt-apps/widget-content/"))));
 
     if (
       toolState !== "output-available" ||
@@ -404,6 +418,14 @@ function useWidgetFetch(
       setIsStoringWidget(true);
       setStoreError(null);
       try {
+        const requiredToolName = toolName;
+        if (!requiredToolName) {
+          throw new Error("Tool name is required");
+        }
+        if (!outputTemplate) {
+          throw new Error("Output template is required");
+        }
+
         // Try cached HTML first if available (for offline Views tab rendering)
         // Pass the Convex storage URL directly - it's publicly accessible and
         // the sandbox proxy can fetch it (unlike blob URLs which are origin-specific)
@@ -425,87 +447,83 @@ function useWidgetFetch(
           return;
         }
 
-        // Host-controlled values per SDK spec
-        const userLocation = null; // Coarse IP-based location
+        if (HOSTED_MODE) {
+          const hostedData = await loadHostedChatGptWidget({
+            serverId,
+            outputTemplate,
+            resolvedToolInput: resolvedToolInputRef.current,
+            resolvedToolOutput: resolvedToolOutputRef.current,
+            toolResponseMetadata: toolResponseMetadataRef.current,
+            resolvedToolCallId,
+            toolName: requiredToolName,
+            themeMode,
+            locale,
+            cspMode,
+            deviceType,
+          });
 
-        const storeResponse = await authFetch(
-          "/api/apps/chatgpt-apps/widget/store",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              serverId,
-              uri: outputTemplate,
-              toolInput: resolvedToolInputRef.current,
-              toolOutput: resolvedToolOutputRef.current,
-              toolResponseMetadata: toolResponseMetadataRef.current,
-              toolId: resolvedToolCallId,
-              toolName,
-              theme: themeMode,
-              locale, // BCP 47 locale from host
-              deviceType, // Device type from host (playground setting or computed)
-              userLocation, // Coarse location { country, region, city } or null
-              cspMode, // CSP enforcement mode
-              capabilities, // Device capabilities { hover, touch }
-              safeAreaInsets, // Safe area insets { top, bottom, left, right }
-            }),
-          },
-        );
-        if (!storeResponse.ok)
-          throw new Error(
-            `Failed to store widget data: ${storeResponse.statusText}`,
-          );
-        if (isCancelled) return;
-
-        // Check if widget should close and get CSP config
-        const htmlResponse = await fetch(
-          `/api/apps/chatgpt-apps/widget-html/${resolvedToolCallId}`,
-        );
-        if (htmlResponse.ok) {
-          const data = await htmlResponse.json();
-
-          // Update CSP info in widget debug store
-          if (data.csp && onCspConfigReceivedRef.current) {
-            onCspConfigReceivedRef.current({
-              mode: data.csp.mode,
-              connectDomains: data.csp.connectDomains,
-              resourceDomains: data.csp.resourceDomains,
-              frameDomains: data.csp.frameDomains,
-              headerString: data.csp.headerString,
-              widgetDeclared: data.csp.widgetDeclared,
-            });
+          if (hostedData.csp && onCspConfigReceivedRef.current) {
+            onCspConfigReceivedRef.current(hostedData.csp);
           }
-
-          if (data.closeWidget) {
+          if (hostedData.closeWidget) {
             setWidgetClosed(true);
             setWidgetClosedReason("completed");
             setIsStoringWidget(false);
             return;
           }
+          setPrefersBorder(hostedData.prefersBorder);
 
-          setPrefersBorder(data.prefersBorder ?? true);
-        }
-
-        // Fetch and cache the widget HTML for later saving
-        const widgetContentUrl = `/api/apps/chatgpt-apps/widget-content/${resolvedToolCallId}?csp_mode=${cspMode}`;
-        if (onWidgetHtmlCaptured) {
-          try {
-            const contentResponse = await fetch(widgetContentUrl);
-            if (contentResponse.ok) {
-              const html = await contentResponse.text();
-              onWidgetHtmlCaptured(resolvedToolCallId, html);
-            }
-          } catch (captureErr) {
-            console.warn(
-              "Failed to capture widget HTML for caching:",
-              captureErr,
-            );
+          if (onWidgetHtmlCaptured) {
+            onWidgetHtmlCaptured(resolvedToolCallId, hostedData.html);
           }
+
+          if (hostedBlobUrlRef.current) {
+            URL.revokeObjectURL(hostedBlobUrlRef.current);
+            hostedBlobUrlRef.current = null;
+          }
+
+          const blobUrl = URL.createObjectURL(
+            new Blob([hostedData.html], { type: "text/html" }),
+          );
+          hostedBlobUrlRef.current = blobUrl;
+          setWidgetUrl(blobUrl);
+          return;
         }
 
-        // Set the widget URL with CSP mode query param
-        // Use /widget-content directly so CSP headers are applied by the browser
-        setWidgetUrl(widgetContentUrl);
+        const localData = await loadLocalChatGptWidget({
+          serverId,
+          outputTemplate,
+          resolvedToolInput: resolvedToolInputRef.current,
+          resolvedToolOutput: resolvedToolOutputRef.current,
+          toolResponseMetadata: toolResponseMetadataRef.current,
+          resolvedToolCallId,
+          toolName: requiredToolName,
+          themeMode,
+          locale,
+          cspMode,
+          deviceType,
+          capabilities,
+          safeAreaInsets,
+          onWidgetHtmlCaptured,
+        });
+        if (isCancelled) return;
+
+        if (localData.csp && onCspConfigReceivedRef.current) {
+          onCspConfigReceivedRef.current(localData.csp);
+        }
+
+        if (localData.closeWidget) {
+          setWidgetClosed(true);
+          setWidgetClosedReason("completed");
+          setIsStoringWidget(false);
+          return;
+        }
+
+        setPrefersBorder(localData.prefersBorder);
+
+        // Set the widget URL with CSP mode query param.
+        // Use /widget-content directly so CSP headers are applied by the browser.
+        setWidgetUrl(localData.widgetContentUrl);
 
         // NOTE: We intentionally do NOT reset skipCachedHtml here.
         // Once in "live mode" (skipCachedHtml = true), we stay in live mode until

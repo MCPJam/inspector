@@ -14,6 +14,7 @@ import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
+import { HOSTED_MODE } from "./lib/config";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -41,6 +42,8 @@ if (isInIframe) {
 } else {
   const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
   const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
+  const workosDevMode =
+    (import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined) === "true";
 
   // Compute redirect URI safely across environments
   const workosRedirectUri = (() => {
@@ -98,6 +101,7 @@ if (isInIframe) {
     <AuthKitProvider
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
+      devMode={workosDevMode}
       {...workosClientOptions}
     >
       <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
@@ -111,10 +115,15 @@ if (isInIframe) {
     const root = createRoot(document.getElementById("root")!);
 
     try {
-      // Initialize session token BEFORE rendering
-      // This ensures all API calls have authentication
-      await initializeSessionToken();
-      console.log("[Auth] Session token initialized");
+      if (!HOSTED_MODE) {
+        // Initialize session token BEFORE rendering in local mode.
+        await initializeSessionToken();
+        console.log("[Auth] Session token initialized");
+      } else {
+        console.log(
+          "[Auth] Hosted mode active, skipping session token bootstrap",
+        );
+      }
     } catch (error) {
       console.error("[Auth] Failed to initialize session token:", error);
       // Show error UI instead of crashing

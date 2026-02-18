@@ -94,6 +94,7 @@ export function PartSwitch({
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
   >();
+  void messageParts;
 
   // Get auth and app state for saving views
   const { isAuthenticated } = useConvexAuth();

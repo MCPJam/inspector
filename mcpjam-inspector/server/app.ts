@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import fixPath from "fix-path";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -12,6 +13,7 @@ import { fileURLToPath } from "url";
 // Import routes
 import mcpRoutes from "./routes/mcp/index.js";
 import appsRoutes from "./routes/apps/index.js";
+import webRoutes from "./routes/web/index.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -81,6 +83,14 @@ export function createHonoApp() {
   // Generate session token for API authentication
   generateSessionToken();
   const app = new Hono();
+  const strictModeResponse = (c: any, path: string) =>
+    c.json(
+      {
+        code: "FEATURE_NOT_SUPPORTED",
+        message: `${path} is disabled in hosted mode`,
+      },
+      410,
+    );
 
   // Create the MCPJam client manager instance and wire RPC logging to SSE bus
   const mcpClientManager = new MCPClientManager(
@@ -129,7 +139,7 @@ export function createHonoApp() {
   });
 
   // ===== SECURITY MIDDLEWARE STACK =====
-  // Order matters: headers -> origin validation -> session auth
+  // Order matters: headers -> origin validation -> strict partition -> session auth
 
   // 1. Security headers (always applied)
   app.use("*", securityHeadersMiddleware);
@@ -137,7 +147,18 @@ export function createHonoApp() {
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
 
-  // 3. Session authentication (blocks unauthorized API requests)
+  // 3. Hosted mode partition blocks legacy API families.
+  if (HOSTED_MODE) {
+    app.use("/api/session-token", (c) =>
+      strictModeResponse(c, "/api/session-token"),
+    );
+    app.use("/api/mcp", (c) => strictModeResponse(c, "/api/mcp/*"));
+    app.use("/api/mcp/*", (c) => strictModeResponse(c, "/api/mcp/*"));
+    app.use("/api/apps", (c) => strictModeResponse(c, "/api/apps/*"));
+    app.use("/api/apps/*", (c) => strictModeResponse(c, "/api/apps/*"));
+  }
+
+  // 4. Session authentication (blocks unauthorized API requests)
   app.use("*", sessionAuthMiddleware);
 
   // ===== END SECURITY MIDDLEWARE =====
@@ -163,9 +184,28 @@ export function createHonoApp() {
     }),
   );
 
+  // Hosted web APIs enforce a 1MB max JSON body.
+  app.use(
+    "/api/web/*",
+    bodyLimit({
+      maxSize: 1024 * 1024,
+      onError: (c) =>
+        c.json(
+          {
+            code: "VALIDATION_ERROR",
+            message: "Request body exceeds 1MB limit",
+          },
+          400,
+        ),
+    }),
+  );
+
   // API Routes
-  app.route("/api/apps", appsRoutes);
-  app.route("/api/mcp", mcpRoutes);
+  if (!HOSTED_MODE) {
+    app.route("/api/apps", appsRoutes);
+    app.route("/api/mcp", mcpRoutes);
+  }
+  app.route("/api/web", webRoutes);
 
   // Health check
   app.get("/health", (c) => {
@@ -175,6 +215,10 @@ export function createHonoApp() {
   // Session token endpoint (for dev mode where HTML isn't served by this server)
   // Token is only served to localhost or allowed hosts (in hosted mode)
   app.get("/api/session-token", (c) => {
+    if (HOSTED_MODE) {
+      return strictModeResponse(c, "/api/session-token");
+    }
+
     const host = c.req.header("Host");
 
     if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {

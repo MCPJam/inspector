@@ -6,20 +6,12 @@ import {
   type ToolSet,
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
-import {
-  createLlmModel,
-  getInvalidAnthropicToolNames,
-  isAnthropicCompatibleModel,
-  scrubChatGPTAppsToolResultsForBackend,
-  scrubMcpAppsToolResultsForBackend,
-} from "../../utils/chat-helpers";
-import { isGPT5Model, isMCPJamProvidedModel } from "@/shared/types";
+import { createLlmModel } from "../../utils/chat-helpers";
+import { isMCPJamProvidedModel } from "@/shared/types";
 import { logger } from "../../utils/logger";
-import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
-
-const DEFAULT_TEMPERATURE = 0.7;
+import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 
 const chatV2 = new Hono();
 
@@ -47,63 +39,34 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "model is not supported" }, 400);
     }
 
-    // Get all tools (MCP + skills)
-    const mcpTools = await mcpClientManager.getToolsForAiSdk(
-      selectedServers,
-      requireToolApproval ? { needsApproval: requireToolApproval } : undefined,
-    );
-    const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-      await getSkillToolsAndPrompt();
-
-    // Apply needsApproval to skill tools when the flag is set
-    const finalSkillTools = requireToolApproval
-      ? Object.fromEntries(
-          Object.entries(skillTools).map(([name, t]) => [
-            name,
-            { ...t, needsApproval: true },
-          ]),
-        )
-      : skillTools;
-
-    const allTools = { ...mcpTools, ...finalSkillTools };
-
-    // Validate tool names for Anthropic-compatible models
-    if (isAnthropicCompatibleModel(modelDefinition, body.customProviders)) {
-      const invalidNames = getInvalidAnthropicToolNames(Object.keys(allTools));
-      if (invalidNames.length > 0) {
-        const nameList = invalidNames.map((n) => `'${n}'`).join(", ");
-        return c.json(
-          {
-            error:
-              `Invalid tool name(s) for Anthropic: ${nameList}. ` +
-              `Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).`,
-          },
-          400,
-        );
-      }
-    }
-
-    // Build enhanced system prompt
-    const enhancedSystemPrompt = systemPrompt
-      ? systemPrompt + skillsPromptSection
-      : skillsPromptSection;
-
-    // Resolve temperature (GPT-5 doesn't support it)
-    const resolvedTemperature = isGPT5Model(modelDefinition.id)
-      ? undefined
-      : (temperature ?? DEFAULT_TEMPERATURE);
-
-    // Helper to scrub messages for backend
-    const scrubMessages = (msgs: ModelMessage[]) =>
-      scrubChatGPTAppsToolResultsForBackend(
-        scrubMcpAppsToolResultsForBackend(
-          msgs,
-          mcpClientManager,
-          selectedServers,
-        ),
+    let prepared;
+    try {
+      prepared = await prepareChatV2({
         mcpClientManager,
         selectedServers,
-      );
+        modelDefinition,
+        systemPrompt,
+        temperature,
+        requireToolApproval,
+        customProviders: body.customProviders,
+      });
+    } catch (error) {
+      // prepareChatV2 throws on Anthropic validation errors — return 400.
+      // All other errors (e.g. getToolsForAiSdk failure) propagate to the
+      // outer catch which returns 500.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes("Invalid tool name(s) for Anthropic")) {
+        return c.json({ error: msg }, 400);
+      }
+      throw error;
+    }
+
+    const {
+      allTools,
+      enhancedSystemPrompt,
+      resolvedTemperature,
+      scrubMessages,
+    } = prepared;
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
