@@ -24,10 +24,8 @@ export function useEnsureDbUser() {
 
   useEffect(() => {
     if (isLoading) return;
-    if (!isAuthenticated && user) {
-      console.log("useEnsureDbUser: not authenticated");
-      throw new Error("Not authenticated");
-    }
+    // WorkOS user hydration can briefly lead Convex auth. This is expected
+    // during callback completion; wait for isAuthenticated instead of throwing.
     if (!isAuthenticated) return;
     if (!user) return;
 
