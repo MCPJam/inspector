@@ -69,6 +69,16 @@ vi.mock("../chat-input/prompts/mcp-prompt-result-card", () => ({
   ),
 }));
 
+vi.mock("../chat-input/skills/skill-result-card", () => ({
+  SkillResultCard: () => <div data-testid="skill-result-card">Skill Card</div>,
+}));
+
+vi.mock("../chat-input/attachments/file-attachment-card", () => ({
+  FileAttachmentCard: () => (
+    <div data-testid="file-attachment-card">File Attachment</div>
+  ),
+}));
+
 vi.mock("@/hooks/use-textarea-caret-position", () => ({
   useTextareaCaretPosition: () => ({ x: 0, y: 0, height: 20 }),
 }));
@@ -102,6 +112,8 @@ describe("ChatInput", () => {
     onChangeMcpPromptResults: vi.fn(),
     skillResults: [],
     onChangeSkillResults: vi.fn(),
+    onChangeFileAttachments: vi.fn(),
+    onRequireToolApprovalChange: vi.fn(),
   };
 
   beforeEach(() => {
@@ -316,6 +328,33 @@ describe("ChatInput", () => {
         expect(submitButton).not.toBeDisabled();
       }
     });
+
+    it("keeps submit enabled in minimal mode when prompt results exist", () => {
+      const mcpPromptResults = [
+        {
+          promptName: "test-prompt",
+          result: "test result",
+          serverName: "server",
+        },
+      ];
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          value=""
+          minimalMode={true}
+          mcpPromptResults={mcpPromptResults as any}
+        />,
+      );
+
+      const buttons = screen.getAllByRole("button");
+      const submitButton = buttons.find(
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      );
+      if (submitButton) {
+        expect(submitButton).not.toBeDisabled();
+      }
+    });
   });
 
   describe("keyboard handling", () => {
@@ -356,6 +395,47 @@ describe("ChatInput", () => {
       );
 
       expect(screen.getByTestId("context")).toBeInTheDocument();
+    });
+  });
+
+  describe("minimal mode", () => {
+    it("keeps prompts, files, system prompt, and tool approval controls available", () => {
+      render(<ChatInput {...defaultProps} minimalMode={true} />);
+
+      expect(screen.getByTestId("prompts-popover")).toBeInTheDocument();
+      expect(screen.getByTestId("system-prompt-selector")).toBeInTheDocument();
+      expect(screen.getByText("Tool Approval")).toBeInTheDocument();
+      expect(document.querySelector('input[type="file"]')).not.toBeNull();
+    });
+
+    it("hides context usage UI in minimal mode", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          minimalMode={true}
+          hasMessages={true}
+          tokenUsage={{
+            inputTokens: 100,
+            outputTokens: 50,
+            totalTokens: 150,
+          }}
+        />,
+      );
+
+      expect(screen.queryByTestId("context")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("context-trigger")).not.toBeInTheDocument();
+    });
+
+    it("hides x-ray toggle in minimal mode", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          minimalMode={true}
+          onXrayModeChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByText("X-Ray")).not.toBeInTheDocument();
     });
   });
 });

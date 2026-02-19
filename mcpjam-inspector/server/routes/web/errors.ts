@@ -17,11 +17,13 @@ export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 export class WebRouteError extends Error {
   status: number;
   code: ErrorCode;
+  details?: Record<string, unknown>;
 
-  constructor(status: number, code: ErrorCode, message: string) {
+  constructor(status: number, code: ErrorCode, message: string, details?: Record<string, unknown>) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -30,8 +32,9 @@ export function webError(
   status: number,
   code: ErrorCode,
   message: string,
+  details?: Record<string, unknown>,
 ) {
-  return c.json({ code, message }, status);
+  return c.json({ code, message, ...(details ? { details } : {}) }, status);
 }
 
 export function parseErrorMessage(error: unknown): string {

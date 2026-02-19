@@ -50,10 +50,22 @@ import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
+import {
+  SharedServerChatPage,
+  getSharedPathTokenFromLocation,
+} from "./components/hosted/SharedServerChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import { resolveHostedNavigation } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
+import {
+  clearSharedSignInReturnPath,
+  isSharedChatHash,
+  readSharedSignInReturnPath,
+  SHARED_OAUTH_PENDING_KEY,
+  writeSharedSignInReturnPath,
+} from "./lib/shared-server-session";
+import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -77,8 +89,43 @@ export default function App() {
   );
   const { sortedOrganizations, isLoading: isOrganizationsLoading } =
     useOrganizationQueries({ isAuthenticated });
+  const [sharedOAuthHandling, setSharedOAuthHandling] = useState(false);
+  const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
+  const isSharedChatRoute =
+    HOSTED_MODE &&
+    (!!sharedPathToken || isSharedChatHash(window.location.hash));
+
+  // Handle shared OAuth callback: detect code + pending flag before normal rendering
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get("code");
+    if (!code || !localStorage.getItem(SHARED_OAUTH_PENDING_KEY)) return;
+
+    let cancelled = false;
+    setSharedOAuthHandling(true);
+
+    handleOAuthCallback(code)
+      .then(() => {
+        if (cancelled) return;
+        localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
+        window.history.replaceState({}, "", "/#shared-chat");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
+        window.history.replaceState({}, "", "/#shared-chat");
+      })
+      .finally(() => {
+        if (!cancelled) setSharedOAuthHandling(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const shouldRequireOrganization =
+    !isSharedChatRoute &&
     isAuthenticated &&
     !isAuthLoading &&
     convexUser !== undefined &&
@@ -126,7 +173,9 @@ export default function App() {
 
     // Let AuthKit + Convex auth settle before leaving /callback.
     if (!isAuthLoading && isAuthenticated) {
-      window.history.replaceState({}, "", "/");
+      const sharedReturnPath = readSharedSignInReturnPath();
+      clearSharedSignInReturnPath();
+      window.history.replaceState({}, "", sharedReturnPath ?? "/");
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
       return;
@@ -213,6 +262,7 @@ export default function App() {
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,
     oauthTokensByServerId,
+    enabled: !isSharedChatRoute,
   });
 
   // Compute the set of server names that have saved views
@@ -232,6 +282,13 @@ export default function App() {
       target: string,
       options?: { updateHash?: boolean; enforceCanonicalHash?: boolean },
     ) => {
+      if (isSharedChatRoute) {
+        if (!isSharedChatHash(window.location.hash)) {
+          window.location.hash = "shared-chat";
+        }
+        return;
+      }
+
       const resolved = resolveHostedNavigation(target, HOSTED_MODE);
 
       if (
@@ -269,11 +326,15 @@ export default function App() {
       }
       setActiveTab(resolved.normalizedTab);
     },
-    [setSelectedMultipleServersToAllServers],
+    [isSharedChatRoute, setSelectedMultipleServersToAllServers],
   );
 
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
+    if (isSharedChatRoute) {
+      return;
+    }
+
     const applyHash = () => {
       const currentHash = window.location.hash || "#servers";
       applyNavigation(currentHash, { enforceCanonicalHash: true });
@@ -281,7 +342,7 @@ export default function App() {
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation]);
+  }, [applyNavigation, isSharedChatRoute]);
 
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });
@@ -289,6 +350,10 @@ export default function App() {
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
+  }
+
+  if (sharedOAuthHandling) {
+    return <LoadingScreen />;
   }
 
   if (isOAuthCallback && !callbackCompleted) {
@@ -335,6 +400,14 @@ export default function App() {
     isWorkOsLoading,
     hasWorkOsUser: !!workOsUser,
     isLoadingRemoteWorkspaces,
+  });
+  const sharedHostedShellGateState = resolveHostedShellGateState({
+    hostedMode: HOSTED_MODE,
+    isConvexAuthLoading: isAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+    isWorkOsLoading,
+    hasWorkOsUser: !!workOsUser,
+    isLoadingRemoteWorkspaces: false,
   });
 
   const shouldShowActiveServerSelector =
@@ -505,19 +578,28 @@ export default function App() {
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
         <CreateOrganizationDialog
-          open={shouldRequireOrganization}
+          open={!isSharedChatRoute && shouldRequireOrganization}
           onOpenChange={(open) => {
             void open;
           }}
           required
         />
         <HostedShellGate
-          state={hostedShellGateState}
+          state={
+            isSharedChatRoute ? sharedHostedShellGateState : hostedShellGateState
+          }
           onSignIn={() => {
+            if (sharedPathToken) {
+              writeSharedSignInReturnPath(window.location.pathname);
+            }
             signIn();
           }}
         >
-          {appContent}
+          {isSharedChatRoute ? (
+            <SharedServerChatPage pathToken={sharedPathToken} />
+          ) : (
+            appContent
+          )}
         </HostedShellGate>
       </AppStateProvider>
     </PreferencesStoreProvider>

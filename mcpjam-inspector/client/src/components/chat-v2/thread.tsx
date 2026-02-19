@@ -36,6 +36,7 @@ interface ThreadProps {
   onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
+  minimalMode?: boolean;
 }
 
 export function Thread({
@@ -57,6 +58,7 @@ export function Thread({
   onToolApprovalResponse,
   toolRenderOverrides,
   showSaveViewButton = true,
+  minimalMode = false,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -131,6 +133,7 @@ export function Thread({
             onToolApprovalResponse={onToolApprovalResponse}
             toolRenderOverrides={toolRenderOverrides}
             showSaveViewButton={showSaveViewButton}
+            minimalMode={minimalMode}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}

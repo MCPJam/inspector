@@ -47,6 +47,12 @@ interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
+  minimalMode?: boolean;
+  hostedWorkspaceIdOverride?: string;
+  hostedSelectedServerIdsOverride?: string[];
+  hostedOAuthTokensOverride?: Record<string, string>;
+  hostedShareToken?: string;
+  onOAuthRequired?: (serverUrl?: string) => void;
 }
 
 function ScrollToBottomButton() {
@@ -71,6 +77,12 @@ export function ChatTabV2({
   connectedOrConnectingServerConfigs,
   selectedServerNames,
   onHasMessagesChange,
+  minimalMode = false,
+  hostedWorkspaceIdOverride,
+  hostedSelectedServerIdsOverride,
+  hostedOAuthTokensOverride,
+  hostedShareToken,
+  onOAuthRequired,
 }: ChatTabProps) {
   const { signUp } = useAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -140,6 +152,12 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers],
   );
+  const effectiveHostedWorkspaceId =
+    hostedWorkspaceIdOverride ?? convexWorkspaceId;
+  const effectiveHostedSelectedServerIds =
+    hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
+  const effectiveHostedOAuthTokens =
+    hostedOAuthTokensOverride ?? hostedOAuthTokens;
 
   // Use shared chat session hook
   const {
@@ -173,9 +191,11 @@ export function ChatTabV2({
     addToolApprovalResponse,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
-    hostedWorkspaceId: convexWorkspaceId,
-    hostedSelectedServerIds,
-    hostedOAuthTokens,
+    hostedWorkspaceId: effectiveHostedWorkspaceId,
+    hostedSelectedServerIds: effectiveHostedSelectedServerIds,
+    hostedOAuthTokens: effectiveHostedOAuthTokens,
+    hostedShareToken,
+    minimalMode,
     onReset: () => {
       setInput("");
       setWidgetStateQueue([]);
@@ -403,7 +423,9 @@ export function ChatTabV2({
   const inputDisabled = status !== "ready" || submitBlocked;
 
   let placeholder =
-    'Ask something… Use Slash "/" commands for Skills & MCP prompts';
+    minimalMode
+      ? "Ask about this MCP server…"
+      : 'Ask something… Use Slash "/" commands for Skills & MCP prompts';
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -414,6 +436,31 @@ export function ChatTabV2({
   const showDisabledCallout = isThreadEmpty && shouldShowUpsell;
 
   const errorMessage = formatErrorMessage(error);
+
+  // Detect OAuth-required errors and notify parent
+  useEffect(() => {
+    if (!onOAuthRequired || !error) return;
+    const msg = error instanceof Error ? error.message : String(error);
+
+    // Try to parse structured error with oauthRequired flag
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed?.details?.oauthRequired) {
+        onOAuthRequired(parsed.details.serverUrl);
+        return;
+      }
+    } catch {
+      // not JSON, check message patterns
+    }
+
+    // Match known OAuth error patterns from server
+    const isOAuthError =
+      msg.includes("requires OAuth authentication") ||
+      (msg.includes("Authentication failed") && msg.includes("invalid_token"));
+    if (isOAuthError) {
+      onOAuthRequired();
+    }
+  }, [error, onOAuthRequired]);
 
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
@@ -546,10 +593,12 @@ export function ChatTabV2({
     onChangeFileAttachments: setFileAttachments,
     skillResults,
     onChangeSkillResults: setSkillResults,
-    xrayMode: HOSTED_MODE ? false : xrayMode,
-    onXrayModeChange: HOSTED_MODE ? undefined : setXrayMode,
+    xrayMode: HOSTED_MODE || minimalMode ? false : xrayMode,
+    onXrayModeChange:
+      HOSTED_MODE || minimalMode ? undefined : setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
+    minimalMode,
   };
 
   const showStarterPrompts =
@@ -562,7 +611,7 @@ export function ChatTabV2({
         className="flex-1 min-h-0 h-full"
       >
         <ResizablePanel
-          defaultSize={isJsonRpcPanelVisible ? 70 : 100}
+          defaultSize={minimalMode ? 100 : isJsonRpcPanelVisible ? 70 : 100}
           minSize={40}
           className="min-w-0"
         >
@@ -573,7 +622,7 @@ export function ChatTabV2({
             }}
           >
             {/* X-Ray mode: show raw JSON view of AI payload */}
-            {xrayMode && (
+            {!minimalMode && xrayMode && (
               <StickToBottom
                 className="relative flex flex-1 flex-col min-h-0"
                 resize="smooth"
@@ -629,6 +678,7 @@ export function ChatTabV2({
                       fullscreenChatPlaceholder={placeholder}
                       fullscreenChatDisabled={inputDisabled}
                       onToolApprovalResponse={addToolApprovalResponse}
+                      minimalMode={minimalMode}
                     />
                   </StickToBottom.Content>
                   <ScrollToBottomButton />
@@ -658,7 +708,7 @@ export function ChatTabV2({
             )}
 
             {/* Empty state: only shown when thread is empty and not in X-Ray mode */}
-            {!xrayMode && isThreadEmpty && (
+            {(!minimalMode || !xrayMode) && isThreadEmpty && (
               <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
                 <div className="w-full max-w-3xl space-y-6 py-8">
                   {isAuthLoading ? (
@@ -714,7 +764,7 @@ export function ChatTabV2({
           </div>
         </ResizablePanel>
 
-        {isJsonRpcPanelVisible ? (
+        {!minimalMode && isJsonRpcPanelVisible ? (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel
@@ -728,7 +778,7 @@ export function ChatTabV2({
               </div>
             </ResizablePanel>
           </>
-        ) : (
+        ) : minimalMode ? null : (
           <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
         )}
       </ResizablePanelGroup>

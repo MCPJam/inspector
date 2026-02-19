@@ -27,6 +27,7 @@ import { Skeleton } from "./ui/skeleton";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Workspace } from "@/state/app-types";
+import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWorkspaces";
 import {
   DndContext,
   closestCenter,
@@ -76,6 +77,7 @@ function SortableServerCard({
   onReconnect,
   onEdit,
   onRemove,
+  hostedServerId,
 }: {
   id: string;
   server: ServerWithName;
@@ -86,6 +88,7 @@ function SortableServerCard({
   ) => Promise<void>;
   onEdit: (server: ServerWithName) => void;
   onRemove: (name: string) => void;
+  hostedServerId?: string;
 }) {
   const {
     attributes,
@@ -110,6 +113,7 @@ function SortableServerCard({
         onReconnect={onReconnect}
         onEdit={onEdit}
         onRemove={onRemove}
+        hostedServerId={hostedServerId}
       />
     </div>
   );
@@ -241,6 +245,11 @@ export function ServersTab({
   const activeWorkspace = workspaces[activeWorkspaceId];
   const workspaceName = activeWorkspace?.name || "Workspace";
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
+  const { serversRecord: sharedWorkspaceServersRecord } =
+    useRemoteWorkspaceServers({
+      workspaceId: sharedWorkspaceId ?? null,
+      isAuthenticated,
+    });
 
   const handleEditServer = (server: ServerWithName) => {
     setServerToEdit(server);
@@ -390,6 +399,7 @@ export function ServersTab({
                       onReconnect={onReconnect}
                       onEdit={handleEditServer}
                       onRemove={onRemove}
+                      hostedServerId={sharedWorkspaceServersRecord[name]?._id}
                     />
                   );
                 })}
@@ -404,6 +414,7 @@ export function ServersTab({
                     onReconnect={onReconnect}
                     onEdit={handleEditServer}
                     onRemove={onRemove}
+                    hostedServerId={sharedWorkspaceServersRecord[activeId!]?._id}
                   />
                 </div>
               ) : null}

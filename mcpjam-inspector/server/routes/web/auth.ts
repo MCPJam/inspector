@@ -19,6 +19,8 @@ export const workspaceServerSchema = z.object({
   workspaceId: z.string().min(1),
   serverId: z.string().min(1),
   oauthAccessToken: z.string().optional(),
+  accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+  shareToken: z.string().min(1).optional(),
 });
 
 export const toolsListSchema = workspaceServerSchema.extend({
@@ -48,6 +50,8 @@ export const promptsListMultiSchema = z.object({
   workspaceId: z.string().min(1),
   serverIds: z.array(z.string().min(1)).min(1),
   oauthTokens: z.record(z.string(), z.string()).optional(),
+  accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+  shareToken: z.string().min(1).optional(),
 });
 
 export const promptsGetSchema = workspaceServerSchema.extend({
@@ -62,6 +66,8 @@ export const hostedChatSchema = z
     workspaceId: z.string().min(1),
     selectedServerIds: z.array(z.string().min(1)),
     oauthTokens: z.record(z.string(), z.string()).optional(),
+    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+    shareToken: z.string().min(1).optional(),
   })
   .passthrough();
 
@@ -76,6 +82,10 @@ export function buildSingleServerOAuthTokens(serverId: string, token?: string) {
 export type ConvexAuthorizeResponse = {
   authorized: boolean;
   role: "owner" | "admin" | "member";
+  accessLevel: "workspace_member" | "shared_chat";
+  permissions: {
+    chatOnly: boolean;
+  };
   serverConfig: {
     transportType: "stdio" | "http";
     url?: string;
@@ -88,6 +98,10 @@ export async function authorizeServer(
   bearerToken: string,
   workspaceId: string,
   serverId: string,
+  options?: {
+    accessScope?: "workspace_member" | "chat_v2";
+    shareToken?: string;
+  },
 ): Promise<ConvexAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -106,7 +120,12 @@ export async function authorizeServer(
         "Content-Type": "application/json",
         Authorization: `Bearer ${bearerToken}`,
       },
-      body: JSON.stringify({ workspaceId, serverId }),
+      body: JSON.stringify({
+        workspaceId,
+        serverId,
+        ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
+        ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
+      }),
     });
   } catch (error) {
     throw new WebRouteError(
@@ -182,41 +201,66 @@ function toHttpConfig(
   };
 }
 
+export interface AuthorizedManagerResult {
+  manager: MCPClientManager;
+  /** Maps serverId → serverUrl for servers that have useOAuth enabled */
+  oauthServerUrls: Record<string, string>;
+}
+
 export async function createAuthorizedManager(
   bearerToken: string,
   workspaceId: string,
   serverIds: string[],
   timeoutMs: number,
   oauthTokens?: Record<string, string>,
-): Promise<MCPClientManager> {
+  options?: {
+    accessScope?: "workspace_member" | "chat_v2";
+    shareToken?: string;
+  },
+): Promise<AuthorizedManagerResult> {
   const uniqueServerIds = Array.from(new Set(serverIds));
+  const oauthServerUrls: Record<string, string> = {};
   const configEntries = await Promise.all(
     uniqueServerIds.map(async (serverId) => {
-      const auth = await authorizeServer(bearerToken, workspaceId, serverId);
+      const auth = await authorizeServer(bearerToken, workspaceId, serverId, {
+        accessScope: options?.accessScope,
+        shareToken: options?.shareToken,
+      });
       const oauthToken = oauthTokens?.[serverId];
 
-      if (auth.serverConfig.useOAuth && !oauthToken) {
-        throw new WebRouteError(
-          401,
-          ErrorCode.UNAUTHORIZED,
-          `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
-        );
+      if (auth.serverConfig.useOAuth) {
+        if (auth.serverConfig.url) {
+          oauthServerUrls[serverId] = auth.serverConfig.url;
+        }
+        if (!oauthToken) {
+          throw new WebRouteError(
+            401,
+            ErrorCode.UNAUTHORIZED,
+            `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
+            {
+              oauthRequired: true,
+              serverUrl: auth.serverConfig.url,
+            },
+          );
+        }
       }
 
       return [serverId, toHttpConfig(auth, timeoutMs, oauthToken)] as const;
     }),
   );
 
-  return new MCPClientManager(Object.fromEntries(configEntries), {
+  const manager = new MCPClientManager(Object.fromEntries(configEntries), {
     defaultTimeout: timeoutMs,
   });
+  return { manager, oauthServerUrls };
 }
 
 export async function withManager<T>(
-  managerPromise: Promise<MCPClientManager>,
+  managerPromise: Promise<MCPClientManager> | Promise<AuthorizedManagerResult>,
   fn: (manager: MCPClientManager) => Promise<T>,
 ): Promise<T> {
-  const manager = await managerPromise;
+  const result = await managerPromise;
+  const manager = "manager" in result ? result.manager : result as MCPClientManager;
   try {
     return await fn(manager);
   } finally {
@@ -303,6 +347,14 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     const raw = body as Record<string, unknown>;
     const { serverIds, oauthTokens } = resolveConnectionParams(raw);
     const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+    const accessScope =
+      raw.accessScope === "workspace_member" || raw.accessScope === "chat_v2"
+        ? raw.accessScope
+        : undefined;
+    const shareToken =
+      typeof raw.shareToken === "string" && raw.shareToken.trim()
+        ? raw.shareToken
+        : undefined;
 
     return withManager(
       createAuthorizedManager(
@@ -311,6 +363,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         serverIds,
         timeoutMs,
         oauthTokens,
+        {
+          accessScope,
+          shareToken,
+        },
       ),
       (manager) => fn(manager, body as z.infer<S>),
     );

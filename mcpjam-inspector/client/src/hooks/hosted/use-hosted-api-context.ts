@@ -7,6 +7,8 @@ interface UseHostedApiContextOptions {
   serverIdsByName: Record<string, string>;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
+  shareToken?: string;
+  enabled?: boolean;
 }
 
 export function useHostedApiContext({
@@ -14,10 +16,16 @@ export function useHostedApiContext({
   serverIdsByName,
   getAccessToken,
   oauthTokensByServerId,
+  shareToken,
+  enabled = true,
 }: UseHostedApiContextOptions): void {
   useEffect(() => {
     if (!HOSTED_MODE) {
       setHostedApiContext(null);
+      return;
+    }
+
+    if (!enabled) {
       return;
     }
 
@@ -26,10 +34,18 @@ export function useHostedApiContext({
       serverIdsByName,
       getAccessToken,
       oauthTokensByServerId,
+      shareToken,
     });
 
     return () => {
       setHostedApiContext(null);
     };
-  }, [workspaceId, serverIdsByName, getAccessToken, oauthTokensByServerId]);
+  }, [
+    enabled,
+    workspaceId,
+    serverIdsByName,
+    getAccessToken,
+    oauthTokensByServerId,
+    shareToken,
+  ]);
 }

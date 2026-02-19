@@ -28,6 +28,7 @@ import {
 } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
+import { SHARED_OAUTH_PENDING_KEY } from "@/lib/shared-server-session";
 import { authFetch } from "@/lib/session-token";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
 
@@ -461,6 +462,9 @@ export function useServerState({
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     if (code) {
+      if (localStorage.getItem(SHARED_OAUTH_PENDING_KEY)) {
+        return; // Handled by App.tsx shared OAuth interception
+      }
       if (oauthCallbackHandledRef.current) {
         return;
       }

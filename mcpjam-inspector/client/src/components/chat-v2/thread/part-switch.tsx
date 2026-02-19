@@ -42,6 +42,56 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 
+function readToolResultObject(
+  result: unknown,
+): Record<string, unknown> | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  return result as Record<string, unknown>;
+}
+
+function readToolResultMeta(
+  result: unknown,
+): Record<string, unknown> | undefined {
+  const direct = readToolResultObject(result);
+  if (
+    direct?._meta &&
+    typeof direct._meta === "object" &&
+    direct._meta !== null
+  ) {
+    return direct._meta as Record<string, unknown>;
+  }
+
+  const nested = readToolResultObject(direct?.value);
+  if (
+    nested?._meta &&
+    typeof nested._meta === "object" &&
+    nested._meta !== null
+  ) {
+    return nested._meta as Record<string, unknown>;
+  }
+
+  return undefined;
+}
+
+function readToolResultServerId(result: unknown): string | undefined {
+  const direct = readToolResultObject(result);
+  if (typeof direct?._serverId === "string") {
+    return direct._serverId;
+  }
+
+  const nested = readToolResultObject(direct?.value);
+  if (typeof nested?._serverId === "string") {
+    return nested._serverId;
+  }
+
+  const meta = readToolResultMeta(result);
+  if (typeof meta?._serverId === "string") {
+    return meta._serverId;
+  }
+
+  return undefined;
+}
+
 export function PartSwitch({
   part,
   role,
@@ -63,6 +113,7 @@ export function PartSwitch({
   messageParts,
   toolRenderOverrides,
   showSaveViewButton = true,
+  minimalMode = false,
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -90,6 +141,7 @@ export function PartSwitch({
   messageParts?: AnyPart[];
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
+  minimalMode?: boolean;
 }) {
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
@@ -100,6 +152,7 @@ export function PartSwitch({
   const { isAuthenticated } = useConvexAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
+  const savingEnabled = isAuthenticated && !minimalMode;
 
   // Get the Convex workspace ID (sharedWorkspaceId) from the active workspace
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
@@ -120,7 +173,7 @@ export function PartSwitch({
 
   // Get existing view names for duplicate handling
   const { sortedViews } = useViewQueries({
-    isAuthenticated,
+    isAuthenticated: savingEnabled,
     workspaceId: convexWorkspaceId,
   });
   const existingViewNames = useMemo(
@@ -130,7 +183,7 @@ export function PartSwitch({
 
   // Instant save hook
   const { saveViewInstant, isSaving } = useSaveView({
-    isAuthenticated,
+    isAuthenticated: savingEnabled,
     workspaceId: convexWorkspaceId,
     serverName: currentServerName,
     existingViewNames,
@@ -210,7 +263,9 @@ export function PartSwitch({
       ? toolRenderOverrides?.[toolInfo.toolCallId]
       : undefined;
     const partToolMeta = toolsMetadata[toolInfo.toolName];
-    const effectiveToolMeta = renderOverride?.toolMetadata ?? partToolMeta;
+    const streamedToolMeta = readToolResultMeta(toolInfo.rawOutput);
+    const effectiveToolMeta =
+      renderOverride?.toolMetadata ?? partToolMeta ?? streamedToolMeta;
     const uiType = detectUIType(effectiveToolMeta, toolInfo.rawOutput);
     const uiResourceUri =
       renderOverride?.resourceUri ??
@@ -219,17 +274,21 @@ export function PartSwitch({
       uiType === UIType.MCP_UI ? extractUIResource(toolInfo.rawOutput) : null;
     const serverId =
       renderOverride?.serverId ??
-      getToolServerId(toolInfo.toolName, toolServerMap);
+      getToolServerId(toolInfo.toolName, toolServerMap) ??
+      readToolResultServerId(toolInfo.rawOutput);
+    const resolvedToolOutput = toolInfo.output ?? toolInfo.rawOutput;
 
     // Determine why save might be disabled
     const hasOutput =
-      toolInfo.output !== undefined ||
+      resolvedToolOutput !== undefined ||
       toolInfo.rawOutput !== undefined ||
       toolInfo.toolState === "output-available" ||
       toolInfo.toolState === "output-error";
 
     // Can save if we have output (or output-available state) or error
-    const canSaveView = isAuthenticated && !!convexWorkspaceId && hasOutput;
+    const canSaveView =
+      !minimalMode && isAuthenticated && !!convexWorkspaceId && hasOutput;
+    const allowSaveView = showSaveViewButton && !minimalMode;
 
     // Compute reason for disabled state
     let saveDisabledReason: string | undefined;
@@ -243,7 +302,7 @@ export function PartSwitch({
 
     // Create handler for this specific tool
     // Use rawOutput as fallback if output is undefined
-    const outputToSave = toolInfo.output ?? toolInfo.rawOutput;
+    const outputToSave = resolvedToolOutput;
     // OpenAI outputTemplate is stored under "openai/outputTemplate" key
     const outputTemplate = effectiveToolMeta?.["openai/outputTemplate"] as
       | string
@@ -268,12 +327,13 @@ export function PartSwitch({
           <ToolPart
             part={toolPart}
             uiType={uiType}
-            onSaveView={showSaveViewButton ? handleSaveView : undefined}
-            canSaveView={showSaveViewButton ? canSaveView : undefined}
+            onSaveView={allowSaveView ? handleSaveView : undefined}
+            canSaveView={allowSaveView ? canSaveView : undefined}
             saveDisabledReason={
-              showSaveViewButton ? saveDisabledReason : undefined
+              allowSaveView ? saveDisabledReason : undefined
             }
             isSaving={isSaving}
+            minimalMode={minimalMode}
             {...approvalProps}
           />
           <MCPUIResourcePart
@@ -300,9 +360,10 @@ export function PartSwitch({
             <ToolPart
               part={toolPart}
               uiType={uiType}
-              onSaveView={showSaveViewButton ? handleSaveView : undefined}
+              onSaveView={allowSaveView ? handleSaveView : undefined}
               canSaveView={false}
               isSaving={isSaving}
+              minimalMode={minimalMode}
               {...approvalProps}
             />
             <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
@@ -318,12 +379,13 @@ export function PartSwitch({
             <ToolPart
               part={toolPart}
               uiType={uiType}
-              onSaveView={showSaveViewButton ? handleSaveView : undefined}
-              canSaveView={showSaveViewButton ? canSaveView : undefined}
+              onSaveView={allowSaveView ? handleSaveView : undefined}
+              canSaveView={allowSaveView ? canSaveView : undefined}
               saveDisabledReason={
-                showSaveViewButton ? saveDisabledReason : undefined
+                allowSaveView ? saveDisabledReason : undefined
               }
               isSaving={isSaving}
+              minimalMode={minimalMode}
               {...approvalProps}
             />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
@@ -346,12 +408,13 @@ export function PartSwitch({
             onExitFullscreen={onExitFullscreen}
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
-            onSaveView={showSaveViewButton ? handleSaveView : undefined}
-            canSaveView={showSaveViewButton ? canSaveView : undefined}
+            onSaveView={allowSaveView ? handleSaveView : undefined}
+            canSaveView={allowSaveView ? canSaveView : undefined}
             saveDisabledReason={
-              showSaveViewButton ? saveDisabledReason : undefined
+              allowSaveView ? saveDisabledReason : undefined
             }
             isSaving={isSaving}
+            minimalMode={minimalMode}
             {...approvalProps}
           />
           <ChatGPTAppRenderer
@@ -360,7 +423,7 @@ export function PartSwitch({
             toolName={toolInfo.toolName}
             toolState={toolInfo.toolState}
             toolInput={toolInfo.input ?? null}
-            toolOutput={toolInfo.output ?? null}
+            toolOutput={resolvedToolOutput ?? null}
             toolMetadata={effectiveToolMeta ?? undefined}
             onSendFollowUp={onSendFollowUp}
             onCallTool={(toolName, params) =>
@@ -398,12 +461,13 @@ export function PartSwitch({
             <ToolPart
               part={toolPart}
               uiType={uiType}
-              onSaveView={showSaveViewButton ? handleSaveView : undefined}
-              canSaveView={showSaveViewButton ? canSaveView : undefined}
+              onSaveView={allowSaveView ? handleSaveView : undefined}
+              canSaveView={allowSaveView ? canSaveView : undefined}
               saveDisabledReason={
-                showSaveViewButton ? saveDisabledReason : undefined
+                allowSaveView ? saveDisabledReason : undefined
               }
               isSaving={isSaving}
+              minimalMode={minimalMode}
               {...approvalProps}
             />
             <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
@@ -427,12 +491,13 @@ export function PartSwitch({
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
             appSupportedDisplayModes={appSupportedDisplayModes}
-            onSaveView={showSaveViewButton ? handleSaveView : undefined}
-            canSaveView={showSaveViewButton ? canSaveView : undefined}
+            onSaveView={allowSaveView ? handleSaveView : undefined}
+            canSaveView={allowSaveView ? canSaveView : undefined}
             saveDisabledReason={
-              showSaveViewButton ? saveDisabledReason : undefined
+              allowSaveView ? saveDisabledReason : undefined
             }
             isSaving={isSaving}
+            minimalMode={minimalMode}
             {...approvalProps}
           />
           <MCPAppsRenderer
@@ -441,7 +506,7 @@ export function PartSwitch({
             toolName={toolInfo.toolName}
             toolState={toolInfo.toolState}
             toolInput={toolInfo.input}
-            toolOutput={toolInfo.output}
+            toolOutput={resolvedToolOutput}
             toolErrorText={toolInfo.errorText}
             resourceUri={uiResourceUri ?? "mcp://offline/view"}
             toolMetadata={effectiveToolMeta}
@@ -463,6 +528,7 @@ export function PartSwitch({
             onAppSupportedDisplayModesChange={setAppSupportedDisplayModes}
             isOffline={renderOverride?.isOffline}
             cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
+            minimalMode={minimalMode}
           />
         </>
       );
@@ -471,10 +537,11 @@ export function PartSwitch({
       <ToolPart
         part={toolPart}
         uiType={uiType}
-        onSaveView={showSaveViewButton ? handleSaveView : undefined}
-        canSaveView={showSaveViewButton ? canSaveView : undefined}
-        saveDisabledReason={showSaveViewButton ? saveDisabledReason : undefined}
+        onSaveView={allowSaveView ? handleSaveView : undefined}
+        canSaveView={allowSaveView ? canSaveView : undefined}
+        saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
         isSaving={isSaving}
+        minimalMode={minimalMode}
         {...approvalProps}
       />
     );
