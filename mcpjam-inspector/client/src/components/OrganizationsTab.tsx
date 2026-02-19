@@ -19,15 +19,17 @@ import {
   AlertTriangle,
   Building2,
   Camera,
+  CreditCard,
   Loader2,
   LogOut,
   RefreshCw,
   Trash2,
   UserPlus,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Organization,
   OrganizationMember,
@@ -39,7 +41,6 @@ import {
 } from "@/hooks/useOrganizations";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
-import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -142,7 +143,6 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     ? resolveOrganizationRole(currentMember)
     : null;
   const isOwner = currentRole === "owner";
-  const canAccessAdminConsole = isOwner || currentRole === "admin";
   const canEdit = currentRole === "owner" || currentRole === "admin";
   const canInvite = canEdit;
   const {
@@ -411,106 +411,253 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     billingStatus?.plan === "pro"
       ? "Manage subscription"
       : "Upgrade to MCPJam Pro";
+  const formattedPeriodEnd =
+    billingStatus?.stripeCurrentPeriodEnd != null
+      ? new Intl.DateTimeFormat(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(new Date(billingStatus.stripeCurrentPeriodEnd))
+      : "Not available";
+  const subscriptionStatusLabel = billingStatus?.subscriptionStatus
+    ? billingStatus.subscriptionStatus.replace(/_/g, " ")
+    : "Not subscribed";
+  const billingAccountLabel = billingStatus?.hasCustomer
+    ? "Connected"
+    : "Not connected";
 
   return (
-    <div className="p-8 max-w-4xl overflow-auto h-full">
-      {/* Organization Header - Similar to Profile */}
-      <div className="flex items-start gap-6 mb-12">
-        {/* Organization Avatar with Upload */}
-        <div className="relative group shrink-0">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleLogoFileChange}
-          />
-          <Avatar
-            className={`h-24 w-24 ${canEdit ? "cursor-pointer" : ""}`}
-            onClick={handleLogoClick}
-          >
-            <AvatarImage src={organization.logoUrl} alt={organization.name} />
-            <AvatarFallback className="bg-primary/10 text-primary text-4xl">
-              {initial}
-            </AvatarFallback>
-          </Avatar>
-          {/* Camera Icon Overlay - only show for users who can edit */}
-          {canEdit && (
-            <button
-              onClick={handleLogoClick}
-              disabled={isUploadingLogo}
-              className="absolute bottom-0 left-0 p-1.5 bg-background border border-border rounded-full shadow-sm hover:bg-accent transition-colors cursor-pointer"
-            >
-              {isUploadingLogo ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-5xl space-y-5 p-4 md:p-5">
+        <Card className="border-border/60">
+          <CardContent className="space-y-5 p-5">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center">
+              <div className="relative shrink-0">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoFileChange}
+                />
+                <Avatar
+                  className={`h-24 w-24 ${canEdit ? "cursor-pointer" : ""}`}
+                  onClick={handleLogoClick}
+                >
+                  <AvatarImage
+                    src={organization.logoUrl}
+                    alt={organization.name}
+                  />
+                  <AvatarFallback className="bg-muted text-3xl">
+                    {initial}
+                  </AvatarFallback>
+                </Avatar>
+                {canEdit ? (
+                  <button
+                    onClick={handleLogoClick}
+                    disabled={isUploadingLogo}
+                    className="absolute -bottom-1 -right-1 rounded-full border bg-background p-2"
+                    aria-label="Upload organization logo"
+                  >
+                    {isUploadingLogo ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    ) : (
+                      <Camera className="h-3.5 w-3.5 text-muted-foreground" />
+                    )}
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="flex-1">
+                {canEdit ? (
+                  <EditableText
+                    value={organization.name}
+                    onSave={handleSaveName}
+                    className="text-3xl font-semibold -ml-2"
+                    placeholder="Organization name"
+                  />
+                ) : (
+                  <h1 className="text-3xl font-semibold">
+                    {organization.name}
+                  </h1>
+                )}
+              </div>
+            </div>
+
+            <div className="h-px bg-border/70" />
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <h2 className="flex items-center gap-2 text-xl font-semibold">
+                  <Users className="size-4 text-muted-foreground" />
+                  Members
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Active members ({activeMembers.length})
+                  {pendingMembers.length > 0
+                    ? ` • Pending invites (${pendingMembers.length})`
+                    : ""}
+                </p>
+              </div>
+
+              {canInvite ? (
+                <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+                  <Input
+                    placeholder="Email address"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleInvite()}
+                    className="h-9 w-full sm:w-80"
+                  />
+                  <Button
+                    size="sm"
+                    className="h-9"
+                    onClick={handleInvite}
+                    disabled={!inviteEmail.trim() || isInviting}
+                  >
+                    <UserPlus className="mr-2 size-4" />
+                    {isInviting ? "Inviting..." : "Add member"}
+                  </Button>
+                </div>
+              ) : null}
+
+              {membersLoading ? (
+                <div className="flex items-center gap-2 py-3 text-muted-foreground">
+                  <RefreshCw className="size-4 animate-spin" />
+                  Loading members...
+                </div>
               ) : (
-                <Camera className="h-3.5 w-3.5 text-muted-foreground" />
+                <div className="space-y-1">
+                  {activeMembers.map((member) => {
+                    const memberRole = resolveOrganizationRole(member);
+                    return (
+                      <OrganizationMemberRow
+                        key={member._id}
+                        member={member}
+                        role={memberRole}
+                        currentUserEmail={currentUserEmail}
+                        canEditRole={isOwner && memberRole !== "owner"}
+                        isRoleUpdating={roleUpdatingEmail === member.email}
+                        onRoleChange={
+                          isOwner && memberRole !== "owner"
+                            ? (role) =>
+                                void handleChangeMemberRole(member, role)
+                            : undefined
+                        }
+                        onTransferOwnership={
+                          isOwner && memberRole !== "owner"
+                            ? () => setTransferTargetMember(member)
+                            : undefined
+                        }
+                        isTransferringOwnership={
+                          isTransferringOwnership &&
+                          transferTargetMember?.email === member.email
+                        }
+                        onRemove={
+                          canRemoveMember(member)
+                            ? () => handleRemoveMember(member.email)
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+                </div>
               )}
-            </button>
-          )}
-        </div>
 
-        {/* Organization Info */}
-        <div className="flex-1 pt-2">
-          {/* Editable Name */}
-          {canEdit ? (
-            <EditableText
-              value={organization.name}
-              onSave={handleSaveName}
-              className="text-3xl font-semibold -ml-2"
-              placeholder="Organization name"
-            />
-          ) : (
-            <h1 className="text-3xl font-semibold">{organization.name}</h1>
-          )}
-        </div>
-      </div>
+              {pendingMembers.length > 0 ? (
+                <div className="space-y-1 pt-2">
+                  {pendingMembers.map((member) => (
+                    <OrganizationMemberRow
+                      key={member._id}
+                      member={member}
+                      currentUserEmail={currentUserEmail}
+                      isPending
+                      onRemove={
+                        canRemovePendingMember()
+                          ? () => handleRemoveMember(member.email)
+                          : undefined
+                      }
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
 
-      <div className="mb-12">
-        <Card className="max-w-2xl">
-          <CardHeader>
-            <CardTitle>MCPJam Pro</CardTitle>
+        <Card className="border-border/60">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-xl">
+              <CreditCard className="size-4 text-muted-foreground" />
+              Billing
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              View your plan details and manage your subscription settings.
+            </p>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3 pt-0">
             {isLoadingBilling ? (
-              <p className="text-sm text-muted-foreground">
-                Loading billing status...
-              </p>
+              <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                Loading billing details...
+              </div>
             ) : billingStatus ? (
               <>
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Plan</span>
-                  <Badge
+                <div className="grid gap-3 rounded-md border border-border/70 p-3.5 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Current plan
+                    </p>
+                    <Badge
+                      variant={
+                        billingStatus.plan === "pro" ? "default" : "secondary"
+                      }
+                    >
+                      {billingStatus.plan.toUpperCase()}
+                    </Badge>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Subscription status
+                    </p>
+                    <p className="text-sm font-medium capitalize">
+                      {subscriptionStatusLabel}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Current period ends
+                    </p>
+                    <p className="text-sm font-medium">{formattedPeriodEnd}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Billing account
+                    </p>
+                    <p className="text-sm font-medium">{billingAccountLabel}</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <Button
+                    size="default"
+                    className="h-10 px-5"
                     variant={
-                      billingStatus.plan === "pro" ? "default" : "secondary"
+                      billingStatus.plan === "pro" ? "outline" : "default"
+                    }
+                    onClick={handleBillingAction}
+                    disabled={
+                      !billingStatus.canManageBilling || isBillingActionPending
                     }
                   >
-                    {billingStatus.plan.toUpperCase()}
-                  </Badge>
+                    {isBillingActionPending ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      billingActionLabel
+                    )}
+                  </Button>
                 </div>
-
-                <p className="text-sm text-muted-foreground">
-                  Subscription status:{" "}
-                  {billingStatus.subscriptionStatus ?? "not_started"}
-                </p>
-
-                <Button
-                  onClick={handleBillingAction}
-                  disabled={
-                    !billingStatus.canManageBilling || isBillingActionPending
-                  }
-                  className="cursor-pointer"
-                >
-                  {isBillingActionPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Loading...
-                    </>
-                  ) : (
-                    billingActionLabel
-                  )}
-                </Button>
-
                 {!billingStatus.canManageBilling ? (
                   <p className="text-xs text-muted-foreground">
                     Only organization owners can manage billing.
@@ -518,247 +665,47 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                 ) : null}
               </>
             ) : null}
-
             {billingError ? (
-              <p className="text-xs text-destructive">{billingError}</p>
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                {billingError}
+              </div>
             ) : null}
           </CardContent>
         </Card>
-      </div>
 
-      {canAccessAdminConsole ? (
-        <div className="mb-12">
-          <h2 className="text-xl font-semibold">Admin Console</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage organization membership and inspect audit activity.
-          </p>
-
-          <div className="space-y-8 mt-6">
-            <section>
-              <h3 className="text-lg font-semibold mb-4">
-                Member Administration
-              </h3>
-
-              <div className="mb-6 rounded-lg border bg-muted/20 p-4">
-                <h4 className="text-sm font-semibold mb-2">Roles</h4>
-                <div className="space-y-1 text-sm text-muted-foreground">
-                  <p>
-                    <span className="font-medium text-foreground">Owner:</span>{" "}
-                    Full control. Can change roles, transfer ownership, and
-                    delete the organization.
-                  </p>
-                  <p>
-                    <span className="font-medium text-foreground">Admin:</span>{" "}
-                    Can update org settings, invite/remove members, and view
-                    audit logs. Cannot change roles or transfer ownership.
-                  </p>
-                  <p>
-                    <span className="font-medium text-foreground">Member:</span>{" "}
-                    Standard access. No admin console access.
-                  </p>
-                </div>
-              </div>
-
-              {canInvite && (
-                <div className="mb-6">
-                  <label className="text-sm font-medium text-muted-foreground block mb-2">
-                    Invite New Member
-                  </label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Email address"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleInvite()}
-                      className="max-w-sm"
-                    />
-                    <Button
-                      onClick={handleInvite}
-                      disabled={!inviteEmail.trim() || isInviting}
-                    >
-                      <UserPlus className="size-4 mr-2" />
-                      {isInviting ? "Inviting..." : "Invite"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              <div className="mb-6">
-                <label className="text-sm font-medium text-muted-foreground block mb-2">
-                  Active Members ({activeMembers.length})
-                </label>
-                {membersLoading ? (
-                  <div className="flex items-center gap-2 text-muted-foreground py-4">
-                    <RefreshCw className="size-4 animate-spin" />
-                    Loading members...
-                  </div>
-                ) : (
-                  <div className="space-y-1 border rounded-lg p-2">
-                    {activeMembers.map((member) => {
-                      const memberRole = resolveOrganizationRole(member);
-                      return (
-                        <OrganizationMemberRow
-                          key={member._id}
-                          member={member}
-                          role={memberRole}
-                          currentUserEmail={currentUserEmail}
-                          canEditRole={isOwner && memberRole !== "owner"}
-                          isRoleUpdating={roleUpdatingEmail === member.email}
-                          onRoleChange={
-                            isOwner && memberRole !== "owner"
-                              ? (role) =>
-                                  void handleChangeMemberRole(member, role)
-                              : undefined
-                          }
-                          onTransferOwnership={
-                            isOwner && memberRole !== "owner"
-                              ? () => setTransferTargetMember(member)
-                              : undefined
-                          }
-                          isTransferringOwnership={
-                            isTransferringOwnership &&
-                            transferTargetMember?.email === member.email
-                          }
-                          onRemove={
-                            canRemoveMember(member)
-                              ? () => handleRemoveMember(member.email)
-                              : undefined
-                          }
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {pendingMembers.length > 0 && (
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground block mb-2">
-                    Pending Invitations ({pendingMembers.length})
-                  </label>
-                  <div className="space-y-1 border rounded-lg p-2 border-dashed">
-                    {pendingMembers.map((member) => (
-                      <OrganizationMemberRow
-                        key={member._id}
-                        member={member}
-                        currentUserEmail={currentUserEmail}
-                        isPending
-                        onRemove={
-                          canRemovePendingMember()
-                            ? () => handleRemoveMember(member.email)
-                            : undefined
-                        }
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
-
-            <OrganizationAuditLog
-              organizationId={organization._id}
-              organizationName={organization.name}
-              isAuthenticated={isAuthenticated}
-            />
-          </div>
-        </div>
-      ) : (
-        <div className="mb-12">
-          <h2 className="text-xl font-semibold mb-6">Members</h2>
-
-          <div className="mb-6">
-            <label className="text-sm font-medium text-muted-foreground block mb-2">
-              Active Members ({activeMembers.length})
-            </label>
-            {membersLoading ? (
-              <div className="flex items-center gap-2 text-muted-foreground py-4">
-                <RefreshCw className="size-4 animate-spin" />
-                Loading members...
-              </div>
-            ) : (
-              <div className="space-y-1 border rounded-lg p-2">
-                {activeMembers.map((member) => (
-                  <OrganizationMemberRow
-                    key={member._id}
-                    member={member}
-                    role={resolveOrganizationRole(member)}
-                    currentUserEmail={currentUserEmail}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {pendingMembers.length > 0 && (
-            <div>
-              <label className="text-sm font-medium text-muted-foreground block mb-2">
-                Pending Invitations ({pendingMembers.length})
-              </label>
-              <div className="space-y-1 border rounded-lg p-2 border-dashed">
-                {pendingMembers.map((member) => (
-                  <OrganizationMemberRow
-                    key={member._id}
-                    member={member}
-                    currentUserEmail={currentUserEmail}
-                    isPending
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Danger Zone */}
-      <div>
-        <h2 className="text-xl font-semibold mb-2 text-destructive flex items-center gap-2">
-          <AlertTriangle className="size-5" />
-          Danger Zone
-        </h2>
-        <p className="text-sm text-muted-foreground mb-4">
-          Irreversible and destructive actions
-        </p>
-
-        <div className="border border-destructive/50 rounded-lg p-6 space-y-6">
-          {!membersLoading && !isOwner && (
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium">Leave Organization</h3>
-                <p className="text-sm text-muted-foreground">
-                  Remove yourself from this organization. You will lose access
-                  to all organization resources.
-                </p>
-              </div>
+        <Card className="border-destructive/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-xl text-destructive">
+              <AlertTriangle className="size-4" />
+              Danger Zone
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              These actions are permanent and may remove access for members.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-2.5 pt-0">
+            {!membersLoading && !isOwner ? (
               <Button
                 variant="outline"
-                className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0 ml-4"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => setLeaveConfirmOpen(true)}
               >
-                <LogOut className="size-4 mr-2" />
-                Leave
+                <LogOut className="mr-2 size-4" />
+                Leave Organization
               </Button>
-            </div>
-          )}
-
-          {!membersLoading && isOwner && (
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium">Delete Organization</h3>
-                <p className="text-sm text-muted-foreground">
-                  Permanently delete this organization and all associated data.
-                </p>
-              </div>
+            ) : null}
+            {!membersLoading && isOwner ? (
               <Button
                 variant="outline"
-                className="text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0 ml-4"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => setDeleteConfirmOpen(true)}
               >
-                <Trash2 className="size-4 mr-2" />
-                Delete
+                <Trash2 className="mr-2 size-4" />
+                Delete Organization
               </Button>
-            </div>
-          )}
-        </div>
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Ownership Transfer Confirmation */}
