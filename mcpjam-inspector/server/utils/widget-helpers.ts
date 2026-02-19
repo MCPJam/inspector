@@ -243,6 +243,27 @@ export function buildCspHeader(
   };
 }
 
+// ── CSP meta tag helper ──────────────────────────────────────────────
+
+/**
+ * Strip directives not valid in <meta> CSP tags and return the cleaned string.
+ * Per CSP spec: frame-ancestors, report-uri, and sandbox are not
+ * allowed in meta element CSP declarations.
+ */
+export function buildCspMetaContent(headerString: string): string {
+  return headerString
+    .split(";")
+    .map((d) => d.trim())
+    .filter(
+      (d) =>
+        d.length > 0 &&
+        !d.startsWith("frame-ancestors") &&
+        !d.startsWith("report-uri") &&
+        !d.startsWith("sandbox"),
+    )
+    .join("; ");
+}
+
 // ── ChatGPT Apps runtime head builder ────────────────────────────────
 
 export function buildChatGptRuntimeHead(options: {
