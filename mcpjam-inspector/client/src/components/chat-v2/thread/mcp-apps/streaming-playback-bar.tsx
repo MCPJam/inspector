@@ -14,6 +14,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
@@ -53,71 +54,50 @@ function getPlaybackDelay(
   return Math.max(32, Math.min(scaled, maxGap));
 }
 
-function TickMarkRail({
+function findNearestEntryIndex(
+  entries: PartialHistoryEntry[],
+  timeMs: number,
+): number {
+  let lo = 0;
+  let hi = entries.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (entries[mid].elapsedFromStart < timeMs) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo > 0) {
+    const before = Math.abs(entries[lo - 1].elapsedFromStart - timeMs);
+    const after = Math.abs(entries[lo].elapsedFromStart - timeMs);
+    return before <= after ? lo - 1 : lo;
+  }
+  return lo;
+}
+
+function TimeSlider({
   entries,
   currentPosition,
-  onTickClick,
+  onSeek,
 }: {
   entries: PartialHistoryEntry[];
   currentPosition: number;
-  onTickClick: (position: number) => void;
+  onSeek: (position: number) => void;
 }) {
   const totalDuration =
     entries.length > 1 ? entries[entries.length - 1].elapsedFromStart : 1;
-
-  const progressPercent =
-    entries.length > 1
-      ? (entries[currentPosition].elapsedFromStart / totalDuration) * 100
-      : 100;
+  const currentTime = entries[currentPosition]?.elapsedFromStart ?? 0;
 
   return (
-    <div className="relative h-4 w-full mx-1">
-      {/* Track background */}
-      <div className="absolute top-1/2 left-0 right-0 h-0.5 -translate-y-1/2 bg-border/40 rounded-full" />
-      {/* Progress fill */}
-      <div
-        className="absolute top-1/2 left-0 h-0.5 -translate-y-1/2 bg-primary/50 rounded-full transition-all duration-75"
-        style={{ width: `${progressPercent}%` }}
-      />
-      {/* Tick marks */}
-      {entries.map((entry, index) => {
-        const leftPercent =
-          totalDuration > 0
-            ? (entry.elapsedFromStart / totalDuration) * 100
-            : (index / Math.max(entries.length - 1, 1)) * 100;
-
-        const isCurrent = index === currentPosition;
-        const isFinal = !!entry.isFinal;
-
-        return (
-          <Tooltip key={index}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => onTickClick(index)}
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 cursor-pointer"
-                style={{ left: `${leftPercent}%` }}
-                aria-label={`Step ${index + 1} (+${entry.elapsedFromStart}ms)`}
-              >
-                <span
-                  className={`block rounded-full transition-all ${
-                    isCurrent
-                      ? "h-3 w-3 bg-primary ring-2 ring-primary/30"
-                      : isFinal
-                        ? "h-2 w-2 bg-primary/70"
-                        : "h-1.5 w-1.5 bg-muted-foreground/40"
-                  }`}
-                />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-[10px]">
-              Step {index + 1} (+{entry.elapsedFromStart}ms)
-              {isFinal ? " (final)" : ""}
-            </TooltipContent>
-          </Tooltip>
-        );
-      })}
-    </div>
+    <Slider
+      min={0}
+      max={totalDuration}
+      value={[currentTime]}
+      onValueChange={([time]) => {
+        const index = findNearestEntryIndex(entries, time);
+        onSeek(index);
+      }}
+      className="flex-1 mx-1"
+      aria-label="Streaming timeline"
+    />
   );
 }
 
@@ -326,11 +306,11 @@ export function StreamingPlaybackBar({
           <span className="text-muted-foreground/50">+{elapsedMs}ms</span>
         </span>
 
-        {/* Timeline rail */}
-        <TickMarkRail
+        {/* Timeline slider */}
+        <TimeSlider
           entries={partialHistory}
           currentPosition={currentPosition}
-          onTickClick={(pos) => {
+          onSeek={(pos) => {
             stopPlayback();
             goToPosition(pos);
           }}

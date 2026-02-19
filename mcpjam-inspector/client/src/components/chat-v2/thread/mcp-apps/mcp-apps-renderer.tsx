@@ -253,6 +253,7 @@ export function MCPAppsRenderer({
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
+  const [replayResetNonce, setReplayResetNonce] = useState(0);
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
@@ -275,6 +276,11 @@ export function MCPAppsRenderer({
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const isReadyRef = useRef(false);
   const lastInlineHeightRef = useRef<string>("400px");
+  const replayResetNonceRef = useRef(0);
+  const pendingReplayResetRef = useRef<{
+    nonce: number;
+    resolve: () => void;
+  } | null>(null);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
@@ -303,6 +309,21 @@ export function MCPAppsRenderer({
   const themeModeRef = useRef(themeMode);
   themeModeRef.current = themeMode;
 
+  const requestReplaySessionReset = useCallback((): Promise<void> => {
+    setIsReady(false);
+    isReadyRef.current = false;
+
+    const nextNonce = replayResetNonceRef.current + 1;
+    replayResetNonceRef.current = nextNonce;
+    setReplayResetNonce(nextNonce);
+
+    return new Promise<void>((resolve) => {
+      // Unblock any older in-flight replay reset request.
+      pendingReplayResetRef.current?.resolve();
+      pendingReplayResetRef.current = { nonce: nextNonce, resolve };
+    });
+  }, []);
+
   const {
     canRenderStreamingInput,
     signalStreamingRender,
@@ -315,6 +336,7 @@ export function MCPAppsRenderer({
     bridgeRef,
     isReady,
     isReadyRef,
+    requestReplaySessionReset,
     toolState,
     toolInput,
     toolOutput,
@@ -639,6 +661,11 @@ export function MCPAppsRenderer({
       bridge.oninitialized = () => {
         setIsReady(true);
         isReadyRef.current = true;
+        const pendingReset = pendingReplayResetRef.current;
+        if (pendingReset && pendingReset.nonce === replayResetNonceRef.current) {
+          pendingReplayResetRef.current = null;
+          pendingReset.resolve();
+        }
         const appCaps = bridge.getAppCapabilities();
         onAppSupportedDisplayModesChangeRef.current?.(
           appCaps?.availableDisplayModes as DisplayMode[] | undefined,
@@ -890,6 +917,11 @@ export function MCPAppsRenderer({
     let isActive = true;
     bridge.connect(transport).catch((error) => {
       if (!isActive) return;
+      const pendingReset = pendingReplayResetRef.current;
+      if (pendingReset && pendingReset.nonce === replayResetNonceRef.current) {
+        pendingReplayResetRef.current = null;
+        pendingReset.resolve();
+      }
       setLoadError(
         error instanceof Error ? error.message : "Failed to connect MCP App",
       );
@@ -902,6 +934,11 @@ export function MCPAppsRenderer({
         bridge.teardownResource({}).catch(() => {});
       }
       bridge.close().catch(() => {});
+      const pendingReset = pendingReplayResetRef.current;
+      if (pendingReset && pendingReset.nonce === replayResetNonceRef.current) {
+        pendingReplayResetRef.current = null;
+        pendingReset.resolve();
+      }
       // Clear model context on widget teardown
       setWidgetModelContext(toolCallId, null);
     };
@@ -910,6 +947,7 @@ export function MCPAppsRenderer({
     serverId,
     toolCallId,
     widgetHtml,
+    replayResetNonce,
     registerBridgeHandlers,
     setWidgetModelContext,
   ]);
@@ -1192,6 +1230,7 @@ export function MCPAppsRenderer({
 
       {/* Uses SandboxedIframe for DRY double-iframe architecture */}
       <SandboxedIframe
+        key={`${toolCallId}:${replayResetNonce}`}
         ref={sandboxRef}
         html={widgetHtml}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"

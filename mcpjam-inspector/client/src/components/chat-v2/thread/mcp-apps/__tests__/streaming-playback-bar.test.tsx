@@ -149,6 +149,14 @@ describe("StreamingPlaybackBar", () => {
     expect(screen.getByLabelText("Playback speed")).toBeInTheDocument();
   });
 
+  it("renders timeline slider", () => {
+    const history = createHistory(4);
+    render(
+      <StreamingPlaybackBar {...defaultProps} partialHistory={history} />,
+    );
+    expect(screen.getByLabelText("Streaming timeline")).toBeInTheDocument();
+  });
+
   it("renders Raw JSON collapsible trigger", () => {
     const history = createHistory(4);
     render(
