@@ -6,7 +6,6 @@ import {
   Pause,
   SkipBack,
   SkipForward,
-  X,
   ChevronDown,
 } from "lucide-react";
 import {
@@ -28,7 +27,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import type { PartialHistoryEntry } from "./useToolInputStreaming";
 
 interface StreamingPlaybackBarProps {
@@ -115,9 +113,6 @@ export function StreamingPlaybackBar({
   const [playbackSpeed, setPlaybackSpeed] = useState("1");
   const [jsonPanelOpen, setJsonPanelOpen] = useState(false);
   const playTimerRef = useRef<number | null>(null);
-  const setStreamingPlaybackActive = useWidgetDebugStore(
-    (s) => s.setStreamingPlaybackActive,
-  );
 
   const lastIndex = partialHistory.length - 1;
 
@@ -177,12 +172,6 @@ export function StreamingPlaybackBar({
       }
     };
   }, []);
-
-  const handleClose = () => {
-    stopPlayback();
-    exitReplay();
-    setStreamingPlaybackActive(toolCallId, false);
-  };
 
   const handlePlayPause = () => {
     if (isPlaying) {
@@ -333,21 +322,6 @@ export function StreamingPlaybackBar({
             ))}
           </SelectContent>
         </Select>
-
-        {/* Close button */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label="Close playback"
-              onClick={handleClose}
-              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors cursor-pointer"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Close playback</TooltipContent>
-        </Tooltip>
       </div>
 
       {/* Collapsible JSON panel */}

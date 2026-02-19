@@ -17,7 +17,11 @@ import {
   useCallback,
   type CSSProperties,
 } from "react";
-import { useToolInputStreaming, type ToolState } from "./useToolInputStreaming";
+import {
+  useToolInputStreaming,
+  type ToolState,
+  type StreamingPlaybackData,
+} from "./useToolInputStreaming";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useUIPlaygroundStore,
@@ -65,7 +69,6 @@ import {
   handleUploadFileMessage,
 } from "./widget-file-messages";
 import { CheckoutDialogV2 } from "./checkout-dialog-v2";
-import { StreamingPlaybackBar } from "./streaming-playback-bar";
 import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
@@ -122,6 +125,8 @@ interface MCPAppsRendererProps {
   ) => void;
   /** Callback when app declares its supported display modes during ui/initialize */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
+  /** Callback when streaming playback data changes (for embedding playback bar elsewhere) */
+  onStreamingPlaybackDataChange?: (data: StreamingPlaybackData | null) => void;
   /** Whether the server is offline (for using cached content) */
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
@@ -151,6 +156,7 @@ export function MCPAppsRenderer({
   onExitFullscreen,
   onModelContextUpdate,
   onAppSupportedDisplayModesChange,
+  onStreamingPlaybackDataChange,
   isOffline,
   cachedWidgetHtmlUrl,
 }: MCPAppsRendererProps) {
@@ -476,10 +482,6 @@ export function MCPAppsRenderer({
   const setStreamingHistoryCount = useWidgetDebugStore(
     (s) => s.setStreamingHistoryCount,
   );
-  const streamingPlaybackActive = useWidgetDebugStore(
-    (s) => s.widgets.get(toolCallId)?.streamingPlaybackActive ?? false,
-  );
-
   // Clear CSP violations when CSP mode changes (stale data from previous mode)
   useEffect(() => {
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
@@ -559,6 +561,27 @@ export function MCPAppsRenderer({
       setStreamingHistoryCount(toolCallId, partialHistory.length);
     }
   }, [partialHistory.length, toolCallId, setStreamingHistoryCount]);
+
+  // Push streaming playback data to parent for embedding in ToolPart
+  useEffect(() => {
+    if (!onStreamingPlaybackDataChange) return;
+    if (partialHistory.length > 1) {
+      onStreamingPlaybackDataChange({
+        partialHistory,
+        replayToPosition,
+        exitReplay,
+        isReplayActive,
+      });
+    } else {
+      onStreamingPlaybackDataChange(null);
+    }
+  }, [
+    partialHistory,
+    replayToPosition,
+    exitReplay,
+    isReplayActive,
+    onStreamingPlaybackDataChange,
+  ]);
 
   // CSS Variables for theming (SEP-1865 styles.variables)
   // These are sent via hostContext.styles.variables - the SDK should pass them through
@@ -1218,16 +1241,6 @@ export function MCPAppsRenderer({
           <X className="w-4 h-4" />
         </button>
       )}
-      {streamingPlaybackActive && partialHistory.length > 1 && (
-        <StreamingPlaybackBar
-          partialHistory={partialHistory}
-          replayToPosition={replayToPosition}
-          exitReplay={exitReplay}
-          isReplayActive={isReplayActive}
-          toolCallId={toolCallId}
-        />
-      )}
-
       {/* Uses SandboxedIframe for DRY double-iframe architecture */}
       <SandboxedIframe
         key={`${toolCallId}:${replayResetNonce}`}

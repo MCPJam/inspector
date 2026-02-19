@@ -38,6 +38,8 @@ import {
 import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
+import type { StreamingPlaybackData } from "../mcp-apps/useToolInputStreaming";
+import { StreamingPlaybackBar } from "../mcp-apps/streaming-playback-bar";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 const SAVE_VIEW_BUTTON_USED_KEY = "mcpjam-save-view-button-used";
@@ -62,6 +64,7 @@ export function ToolPart({
   canSaveView,
   saveDisabledReason,
   isSaving,
+  streamingPlaybackData,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   uiType?: UIType | null;
@@ -75,6 +78,8 @@ export function ToolPart({
   onExitPip?: (toolCallId: string) => void;
   /** Display modes the app declared support for. If undefined, all modes are available. */
   appSupportedDisplayModes?: DisplayMode[];
+  /** Streaming playback data lifted from MCPAppsRenderer for embedding playback bar */
+  streamingPlaybackData?: StreamingPlaybackData | null;
   approvalId?: string;
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
@@ -142,9 +147,6 @@ export function ToolPart({
   const streamingHistoryCount = useWidgetDebugStore((s) =>
     toolCallId ? (s.widgets.get(toolCallId)?.streamingHistoryCount ?? 0) : 0,
   );
-  const setStreamingPlaybackActive = useWidgetDebugStore(
-    (s) => s.setStreamingPlaybackActive,
-  );
   const hasWidgetDebug = !!widgetDebugInfo;
 
   const showDisplayModeControls =
@@ -211,23 +213,20 @@ export function ToolPart({
   const handleDebugClick = (
     tab: "data" | "state" | "csp" | "context" | "streaming",
   ) => {
-    // Deactivate streaming playback when switching away from streaming tab
-    if (activeDebugTab === "streaming" && tab !== "streaming" && toolCallId) {
-      setStreamingPlaybackActive(toolCallId, false);
+    // Exit streaming replay when switching away from streaming tab
+    if (activeDebugTab === "streaming" && tab !== "streaming") {
+      streamingPlaybackData?.exitReplay();
     }
 
     if (activeDebugTab === tab) {
-      if (tab === "streaming" && toolCallId) {
-        setStreamingPlaybackActive(toolCallId, false);
+      if (tab === "streaming") {
+        streamingPlaybackData?.exitReplay();
       }
       setActiveDebugTab(null);
       setUserExpanded(false);
     } else {
       setActiveDebugTab(tab);
       setUserExpanded(true);
-      if (tab === "streaming" && toolCallId) {
-        setStreamingPlaybackActive(toolCallId, true);
-      }
     }
   };
 
@@ -705,12 +704,21 @@ export function ToolPart({
               )}
             </div>
           )}
-          {hasWidgetDebug && activeDebugTab === "streaming" && (
-            <div className="text-[11px] text-muted-foreground/70">
-              Streaming playback controls are above the widget.{" "}
-              {streamingHistoryCount} streaming snapshots recorded.
-            </div>
-          )}
+          {hasWidgetDebug && activeDebugTab === "streaming" &&
+            (streamingPlaybackData &&
+            streamingPlaybackData.partialHistory.length > 1 ? (
+              <StreamingPlaybackBar
+                partialHistory={streamingPlaybackData.partialHistory}
+                replayToPosition={streamingPlaybackData.replayToPosition}
+                exitReplay={streamingPlaybackData.exitReplay}
+                isReplayActive={streamingPlaybackData.isReplayActive}
+                toolCallId={toolCallId ?? ""}
+              />
+            ) : (
+              <div className="text-[11px] text-muted-foreground/70">
+                {streamingHistoryCount} streaming snapshots recorded.
+              </div>
+            ))}
           {!hasWidgetDebug && (
             <div className="space-y-4">
               {hasInput && (

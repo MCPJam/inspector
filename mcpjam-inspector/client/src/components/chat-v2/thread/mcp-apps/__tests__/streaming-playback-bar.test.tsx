@@ -3,15 +3,6 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { StreamingPlaybackBar } from "../streaming-playback-bar";
 import type { PartialHistoryEntry } from "../useToolInputStreaming";
 
-// Mock the widget debug store
-vi.mock("@/stores/widget-debug-store", () => ({
-  useWidgetDebugStore: vi.fn((selector: (s: any) => any) =>
-    selector({
-      setStreamingPlaybackActive: vi.fn(),
-    }),
-  ),
-}));
-
 function createHistory(count: number): PartialHistoryEntry[] {
   return Array.from({ length: count }, (_, i) => ({
     timestamp: 1000 + i * 100,
@@ -49,7 +40,6 @@ describe("StreamingPlaybackBar", () => {
     expect(screen.getByLabelText("Play")).toBeInTheDocument();
     expect(screen.getByLabelText("Next")).toBeInTheDocument();
     expect(screen.getByLabelText("Last")).toBeInTheDocument();
-    expect(screen.getByLabelText("Close playback")).toBeInTheDocument();
   });
 
   it("displays position label", () => {
@@ -122,22 +112,6 @@ describe("StreamingPlaybackBar", () => {
     // Now First and Previous should be disabled
     expect(screen.getByLabelText("First")).toBeDisabled();
     expect(screen.getByLabelText("Previous")).toBeDisabled();
-  });
-
-  it("Close button calls exitReplay", () => {
-    const history = createHistory(4);
-    const exitReplay = vi.fn();
-    render(
-      <StreamingPlaybackBar
-        {...defaultProps}
-        partialHistory={history}
-        exitReplay={exitReplay}
-      />,
-    );
-
-    fireEvent.click(screen.getByLabelText("Close playback"));
-
-    expect(exitReplay).toHaveBeenCalledTimes(1);
   });
 
   it("renders speed selector with default value", () => {

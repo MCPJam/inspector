@@ -30,6 +30,13 @@ export interface PartialHistoryEntry {
   isFinal?: boolean;
 }
 
+export interface StreamingPlaybackData {
+  partialHistory: PartialHistoryEntry[];
+  replayToPosition: (position: number) => void;
+  exitReplay: () => void;
+  isReplayActive: boolean;
+}
+
 export type ToolState =
   | "input-streaming"
   | "input-available"

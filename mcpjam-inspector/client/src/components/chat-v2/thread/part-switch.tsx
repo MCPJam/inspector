@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
+import type { StreamingPlaybackData } from "./mcp-apps/useToolInputStreaming";
 import { type ToolUIPart, type DynamicToolUIPart, type UITools } from "ai";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -94,6 +95,8 @@ export function PartSwitch({
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
   >();
+  const [streamingPlaybackData, setStreamingPlaybackData] =
+    useState<StreamingPlaybackData | null>(null);
   void messageParts;
 
   // Get auth and app state for saving views
@@ -427,6 +430,7 @@ export function PartSwitch({
             onRequestPip={onRequestPip}
             onExitPip={onExitPip}
             appSupportedDisplayModes={appSupportedDisplayModes}
+            streamingPlaybackData={streamingPlaybackData}
             onSaveView={showSaveViewButton ? handleSaveView : undefined}
             canSaveView={showSaveViewButton ? canSaveView : undefined}
             saveDisabledReason={
@@ -461,6 +465,7 @@ export function PartSwitch({
             onRequestFullscreen={onRequestFullscreen}
             onExitFullscreen={onExitFullscreen}
             onAppSupportedDisplayModesChange={setAppSupportedDisplayModes}
+            onStreamingPlaybackDataChange={setStreamingPlaybackData}
             isOffline={renderOverride?.isOffline}
             cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
           />
