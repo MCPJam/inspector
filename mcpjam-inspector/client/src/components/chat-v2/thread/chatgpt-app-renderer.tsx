@@ -696,6 +696,11 @@ export function ChatGPTAppRenderer({
   const previousWidgetStateRef = useRef<string | null>(null);
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
   const lastAppliedHeightRef = useRef<number>(0);
+  const effectiveDisplayModeRef = useRef(effectiveDisplayMode);
+
+  useEffect(() => {
+    effectiveDisplayModeRef.current = effectiveDisplayMode;
+  }, [effectiveDisplayMode]);
 
   // Host-backed navigation state for fullscreen header buttons
   const [canGoBack, setCanGoBack] = useState(false);
@@ -923,6 +928,7 @@ export function ChatGPTAppRenderer({
   // resize logic publishes the fresh height.
   useEffect(() => {
     if (!widgetUrl || effectiveDisplayMode !== "inline" || !isReady) return;
+    setContentWidth(undefined);
     sandboxRef.current?.postMessage({ type: "openai:requestResize" });
   }, [widgetUrl, effectiveDisplayMode, isReady]);
 
@@ -1003,7 +1009,11 @@ export function ChatGPTAppRenderer({
         case "openai:resize": {
           applyMeasuredHeight(event.data.height);
           const w = Number(event.data.width);
-          if (Number.isFinite(w) && w > 0) {
+          if (
+            Number.isFinite(w) &&
+            w > 0 &&
+            effectiveDisplayModeRef.current === "inline"
+          ) {
             setContentWidth(Math.ceil(w));
           }
           break;
