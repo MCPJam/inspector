@@ -696,6 +696,11 @@ export function ChatGPTAppRenderer({
   const previousWidgetStateRef = useRef<string | null>(null);
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
   const lastAppliedHeightRef = useRef<number>(0);
+  const effectiveDisplayModeRef = useRef(effectiveDisplayMode);
+
+  useEffect(() => {
+    effectiveDisplayModeRef.current = effectiveDisplayMode;
+  }, [effectiveDisplayMode]);
 
   // Host-backed navigation state for fullscreen header buttons
   const [canGoBack, setCanGoBack] = useState(false);
@@ -725,6 +730,16 @@ export function ChatGPTAppRenderer({
     : DEFAULT_SAFE_AREA_INSETS;
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
   const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
+  const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
+
+  // Clear CSP violations when CSP mode changes (stale data from previous mode)
+  const prevCspModeRef = useRef(cspMode);
+  useEffect(() => {
+    if (prevCspModeRef.current !== cspMode) {
+      clearCspViolations(resolvedToolCallId);
+      prevCspModeRef.current = cspMode;
+    }
+  }, [cspMode, resolvedToolCallId, clearCspViolations]);
 
   // Mobile playground mode detection
   const isMobilePlaygroundMode = isPlaygroundActive && deviceType === "mobile";
@@ -923,6 +938,7 @@ export function ChatGPTAppRenderer({
   // resize logic publishes the fresh height.
   useEffect(() => {
     if (!widgetUrl || effectiveDisplayMode !== "inline" || !isReady) return;
+    setContentWidth(undefined);
     sandboxRef.current?.postMessage({ type: "openai:requestResize" });
   }, [widgetUrl, effectiveDisplayMode, isReady]);
 
@@ -1003,7 +1019,11 @@ export function ChatGPTAppRenderer({
         case "openai:resize": {
           applyMeasuredHeight(event.data.height);
           const w = Number(event.data.width);
-          if (Number.isFinite(w) && w > 0) {
+          if (
+            Number.isFinite(w) &&
+            w > 0 &&
+            effectiveDisplayModeRef.current === "inline"
+          ) {
             setContentWidth(Math.ceil(w));
           }
           break;

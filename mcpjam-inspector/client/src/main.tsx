@@ -42,8 +42,12 @@ if (isInIframe) {
 } else {
   const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
   const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
-  const workosDevMode =
-    (import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined) === "true";
+  const workosDevMode = (() => {
+    const explicit = import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined;
+    if (explicit === "true") return true;
+    if (explicit === "false") return false;
+    return import.meta.env.DEV;
+  })();
 
   // Compute redirect URI safely across environments
   const workosRedirectUri = (() => {
