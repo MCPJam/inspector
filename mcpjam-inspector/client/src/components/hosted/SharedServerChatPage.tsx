@@ -3,6 +3,7 @@ import { useMutation } from "convex/react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Loader2, Link2Off, Lock } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -494,6 +495,27 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
     window.history.replaceState({}, "", "/#servers");
   };
 
+  const handleCopyLink = async () => {
+    const token = session?.token?.trim();
+    if (!token) {
+      toast.error("Share link unavailable");
+      return;
+    }
+
+    if (!navigator.clipboard?.writeText) {
+      toast.error("Copy is not available in this browser");
+      return;
+    }
+
+    const shareUrl = `${window.location.origin}/shared/${encodeURIComponent(token)}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast.success("Share link copied");
+    } catch {
+      toast.error("Failed to copy share link");
+    }
+  };
+
   if (isResolving || isCheckingOAuth) {
     return (
       <div className="flex h-svh min-h-0 items-center justify-center px-4">
@@ -559,9 +581,24 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
           <h1 className="truncate text-sm font-semibold text-foreground">
             {session.payload.serverName}
           </h1>
-          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleOpenMcpJam}>
-            Open MCPJam
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={handleCopyLink}
+            >
+              Copy link
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={handleOpenMcpJam}
+            >
+              Open MCPJam
+            </Button>
+          </div>
         </div>
       </header>
 
