@@ -394,7 +394,7 @@ export function ChatInput({
 
         <div className="@container/toolbar flex items-center justify-between gap-2 px-2 min-w-0">
           <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
-            {onChangeFileAttachments && (
+            {!minimalMode && onChangeFileAttachments && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -411,27 +411,31 @@ export function ChatInput({
                 <TooltipContent>Attach files</TooltipContent>
               </Tooltip>
             )}
-            <ModelSelector
-              currentModel={currentModel}
-              availableModels={availableModels}
-              onModelChange={onModelChange}
-              isLoading={isLoading}
-              hasMessages={hasMessages}
-            />
-            <SystemPromptSelector
-              systemPrompt={
-                systemPrompt ||
-                "You are a helpful assistant with access to MCP tools."
-              }
-              onSystemPromptChange={onSystemPromptChange}
-              temperature={temperature}
-              onTemperatureChange={onTemperatureChange}
-              isLoading={isLoading}
-              hasMessages={hasMessages}
-              onResetChat={onResetChat}
-              currentModel={currentModel}
-            />
-            {onRequireToolApprovalChange && (
+            {!minimalMode && (
+              <>
+                <ModelSelector
+                  currentModel={currentModel}
+                  availableModels={availableModels}
+                  onModelChange={onModelChange}
+                  isLoading={isLoading}
+                  hasMessages={hasMessages}
+                />
+                <SystemPromptSelector
+                  systemPrompt={
+                    systemPrompt ||
+                    "You are a helpful assistant with access to MCP tools."
+                  }
+                  onSystemPromptChange={onSystemPromptChange}
+                  temperature={temperature}
+                  onTemperatureChange={onTemperatureChange}
+                  isLoading={isLoading}
+                  hasMessages={hasMessages}
+                  onResetChat={onResetChat}
+                  currentModel={currentModel}
+                />
+              </>
+            )}
+            {!minimalMode && onRequireToolApprovalChange && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

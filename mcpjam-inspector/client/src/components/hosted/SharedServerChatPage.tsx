@@ -496,7 +496,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
 
   if (isResolving || isCheckingOAuth) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center px-4">
+      <div className="flex h-svh min-h-0 items-center justify-center px-4">
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span>
@@ -511,7 +511,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
 
   if (!session || !selectedServerName) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center px-4">
+      <div className="flex h-svh min-h-0 items-center justify-center px-4">
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
           <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted">
             <Link2Off className="h-5 w-5 text-muted-foreground" />
@@ -532,7 +532,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
 
   if (needsOAuth) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center px-4">
+      <div className="flex h-svh min-h-0 items-center justify-center px-4">
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
           <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted">
             <Lock className="h-5 w-5 text-muted-foreground" />
@@ -553,18 +553,13 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <header className="border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-3">
-          <div className="min-w-0">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Shared Server Chat
-            </p>
-            <h1 className="truncate text-sm font-semibold text-foreground">
-              {session.payload.serverName}
-            </h1>
-          </div>
-          <Button variant="outline" size="sm" onClick={handleOpenMcpJam}>
+    <div className="flex h-svh min-h-0 flex-col">
+      <header className="border-b border-border/50 bg-background/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
+          <h1 className="truncate text-sm font-semibold text-foreground">
+            {session.payload.serverName}
+          </h1>
+          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleOpenMcpJam}>
             Open MCPJam
           </Button>
         </div>
