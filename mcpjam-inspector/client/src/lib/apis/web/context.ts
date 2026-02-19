@@ -34,6 +34,28 @@ export function setHostedApiContext(next: HostedApiContext | null): void {
   resetTokenCache();
 }
 
+/**
+ * Eagerly inject a server-name → server-ID mapping into the hosted context,
+ * bridging the gap between when a Convex mutation completes and when the
+ * reactive subscription propagates the update through React.
+ *
+ * The next `setHostedApiContext` call from the subscription will overwrite
+ * this with identical data, so there is no risk of stale entries.
+ */
+export function injectHostedServerMapping(
+  serverName: string,
+  serverId: string,
+): void {
+  if (!HOSTED_MODE) return;
+  hostedApiContext = {
+    ...hostedApiContext,
+    serverIdsByName: {
+      ...hostedApiContext.serverIdsByName,
+      [serverName]: serverId,
+    },
+  };
+}
+
 export function getHostedWorkspaceId(): string {
   assertHostedMode();
 

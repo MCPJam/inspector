@@ -27,6 +27,7 @@ import {
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
+import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
@@ -198,9 +199,12 @@ export function useServerState({
   }, [appState.servers, dispatch]);
 
   const syncServerToConvex = useCallback(
-    async (serverName: string, serverEntry: ServerWithName) => {
+    async (
+      serverName: string,
+      serverEntry: ServerWithName,
+    ): Promise<string | undefined> => {
       if (useLocalFallback || !isAuthenticated || !effectiveActiveWorkspaceId) {
-        return;
+        return undefined;
       }
 
       const existingServer = activeWorkspaceServersFlat?.find(
@@ -235,23 +239,24 @@ export function useServerState({
             serverId: existingServer._id,
             ...payload,
           });
-          return;
+          return existingServer._id;
         }
 
-        await convexCreateServer({
+        const newId = await convexCreateServer({
           workspaceId: effectiveActiveWorkspaceId,
           ...payload,
         });
+        return newId as string | undefined;
       } catch (primaryError) {
         // Best-effort fallback for stale query snapshots:
         // if update failed, try create; if create failed, try update when possible.
         try {
           if (existingServer) {
-            await convexCreateServer({
+            const newId = await convexCreateServer({
               workspaceId: effectiveActiveWorkspaceId,
               ...payload,
             });
-            return;
+            return newId as string | undefined;
           }
           const retryExisting = activeWorkspaceServersFlat?.find(
             (s) => s.name === serverName,
@@ -261,7 +266,7 @@ export function useServerState({
               serverId: retryExisting._id,
               ...payload,
             });
-            return;
+            return retryExisting._id;
           }
         } catch (fallbackError) {
           logger.error("Failed to sync server to Convex", {
@@ -275,7 +280,7 @@ export function useServerState({
                 ? fallbackError.message
                 : "Unknown error",
           });
-          return;
+          return undefined;
         }
 
         logger.error("Failed to sync server to Convex", {
@@ -285,6 +290,7 @@ export function useServerState({
               ? primaryError.message
               : "Unknown error",
         });
+        return undefined;
       }
     },
     [
@@ -515,12 +521,29 @@ export function useServerState({
         enabled: true,
         useOAuth: formData.useOAuth ?? false,
       };
-      syncServerToConvex(formData.name, serverEntryForSave).catch((err) =>
-        logger.warn("Background sync to Convex failed (pre-connection)", {
-          serverName: formData.name,
-          err,
-        }),
-      );
+      if (HOSTED_MODE) {
+        try {
+          const serverId = await syncServerToConvex(
+            formData.name,
+            serverEntryForSave,
+          );
+          if (serverId) {
+            injectHostedServerMapping(formData.name, serverId);
+          }
+        } catch (err) {
+          logger.warn("Sync to Convex failed (pre-connection)", {
+            serverName: formData.name,
+            err,
+          });
+        }
+      } else {
+        syncServerToConvex(formData.name, serverEntryForSave).catch((err) =>
+          logger.warn("Background sync to Convex failed (pre-connection)", {
+            serverName: formData.name,
+            err,
+          }),
+        );
+      }
       if (!isAuthenticated) {
         const workspace = appState.workspaces[appState.activeWorkspaceId];
         if (workspace) {
