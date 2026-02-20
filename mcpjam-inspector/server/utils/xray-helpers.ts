@@ -91,6 +91,6 @@ export async function buildXRayPayload(
   return {
     system: enhancedSystemPrompt,
     tools: serializedTools,
-    messages: messages ?? [],
+    messages,
   };
 }
