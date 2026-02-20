@@ -342,6 +342,7 @@ export function ChatInput({
           setActionTrigger={setMcpPromptPopoverKeyTrigger}
           value={value}
           caretIndex={caretIndex}
+          minimalMode={minimalMode}
         />
 
         {/* Hidden file input */}

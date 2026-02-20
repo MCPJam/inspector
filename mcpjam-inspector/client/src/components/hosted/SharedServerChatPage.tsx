@@ -57,10 +57,22 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
     };
   }, [session]);
 
+  // Build OAuth tokens map early so both useHostedApiContext and ChatTabV2 can use it.
+  // The global hosted context needs it for widget-content and other direct API calls.
+  const oauthTokensForChat = useMemo(() => {
+    if (!session) return undefined;
+    const { serverName, serverId } = session.payload;
+    const tokens = getStoredTokens(serverName);
+    if (!tokens?.access_token) return undefined;
+    return { [serverId]: tokens.access_token };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, needsOAuth]);
+
   useHostedApiContext({
     workspaceId: session?.payload.workspaceId ?? null,
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,
+    oauthTokensByServerId: oauthTokensForChat,
     shareToken: session?.token,
   });
 
@@ -477,17 +489,6 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
       window.clearTimeout(timeout);
     };
   }, [needsOAuth, session]);
-
-  // Build OAuth tokens map for ChatTabV2
-  // Check both the payload flag and runtime-discovered need
-  const oauthTokensForChat = useMemo(() => {
-    if (!session) return undefined;
-    const { serverName, serverId } = session.payload;
-    const tokens = getStoredTokens(serverName);
-    if (!tokens?.access_token) return undefined;
-    return { [serverId]: tokens.access_token };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, needsOAuth]);
 
   const handleOpenMcpJam = () => {
     setSession(null);

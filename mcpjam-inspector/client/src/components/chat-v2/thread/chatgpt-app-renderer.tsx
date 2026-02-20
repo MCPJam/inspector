@@ -146,6 +146,8 @@ interface ChatGPTAppRendererProps {
   cachedWidgetHtmlUrl?: string;
   /** Optional initial widget state (used by view previews/editor) */
   initialWidgetState?: unknown;
+  /** Shared chat-only mode – suppresses auth-denied widget errors silently */
+  minimalMode?: boolean;
 }
 
 // ============================================================================
@@ -246,6 +248,7 @@ function useWidgetFetch(
   isOffline?: boolean,
   cachedWidgetHtmlUrl?: string,
   onWidgetHtmlCaptured?: (toolCallId: string, html: string) => void,
+  minimalMode?: boolean,
 ) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
@@ -531,10 +534,12 @@ function useWidgetFetch(
         // This prevents live previews from reverting to stale cached HTML during view editing.
       } catch (err) {
         if (isCancelled) return;
-        console.error("Error storing widget data:", err);
-        setStoreError(
-          err instanceof Error ? err.message : "Failed to prepare widget",
-        );
+        const errMsg = err instanceof Error ? err.message : "Failed to prepare widget";
+        // In shared/minimal mode, silently degrade on auth-denied widget errors
+        if (!(minimalMode && /oauth|unauthorized|401/i.test(errMsg))) {
+          console.error("Error storing widget data:", err);
+        }
+        setStoreError(errMsg);
       } finally {
         if (!isCancelled) setIsStoringWidget(false);
       }
@@ -605,6 +610,7 @@ export function ChatGPTAppRenderer({
   isOffline,
   cachedWidgetHtmlUrl,
   initialWidgetState,
+  minimalMode = false,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
@@ -786,6 +792,7 @@ export function ChatGPTAppRenderer({
     isOffline,
     cachedWidgetHtmlUrl,
     handleWidgetHtmlCaptured,
+    minimalMode,
   );
 
   const applyMeasuredHeight = useCallback(
@@ -1473,7 +1480,11 @@ export function ChatGPTAppRenderer({
         Loading ChatGPT App widget...
       </div>
     );
-  if (storeError)
+  if (storeError) {
+    // In shared/minimal mode, silently hide auth-denied widget errors (workspace-member-only endpoint)
+    if (minimalMode && /oauth|unauthorized|401/i.test(storeError)) {
+      return null;
+    }
     return (
       <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
         Failed to load widget: {storeError}
@@ -1485,6 +1496,7 @@ export function ChatGPTAppRenderer({
         )}
       </div>
     );
+  }
   if (widgetClosed)
     return (
       <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">

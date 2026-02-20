@@ -441,6 +441,7 @@ export function PartSwitch({
             initialWidgetState={renderOverride?.initialWidgetState}
             isOffline={renderOverride?.isOffline}
             cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
+            minimalMode={minimalMode}
           />
         </>
       );
