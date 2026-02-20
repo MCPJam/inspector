@@ -511,7 +511,7 @@ export function ToolPart({
                 <div className="h-4 w-px bg-border/40" />
               )}
               <span
-                className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
+                className="inline-flex items-center gap-1.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
                 onClick={(e) => e.stopPropagation()}
               >
                 {renderDebugOptionButtons()}

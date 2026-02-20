@@ -188,7 +188,7 @@ export function StreamingPlaybackBar({
   const elapsedMs = currentEntry?.elapsedFromStart ?? 0;
 
   return (
-    <div className="rounded-md border border-border/40 bg-muted/20 p-2 space-y-2">
+    <div className="space-y-2">
       {/* Transport controls row */}
       <div className="flex items-center gap-1.5">
         {/* Navigation buttons */}
