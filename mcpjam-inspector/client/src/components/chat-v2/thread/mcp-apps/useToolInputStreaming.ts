@@ -287,9 +287,9 @@ export function useToolInputStreaming({
 
       const entry = history[position];
       if (entry.isFinal) {
-        Promise.resolve(
-          bridge.sendToolInput({ arguments: entry.input }),
-        ).catch(() => {});
+        Promise.resolve(bridge.sendToolInput({ arguments: entry.input })).catch(
+          () => {},
+        );
       } else {
         Promise.resolve(
           bridge.sendToolInputPartial({ arguments: entry.input }),
@@ -402,7 +402,15 @@ export function useToolInputStreaming({
       partialInputTimerRef.current = null;
       flushPartialInput();
     }, PARTIAL_INPUT_THROTTLE_MS - elapsed);
-  }, [hasToolInputData, isReady, toolInput, toolState, bridgeRef, isReadyRef, recordPartialEntry]);
+  }, [
+    hasToolInputData,
+    isReady,
+    toolInput,
+    toolState,
+    bridgeRef,
+    isReadyRef,
+    recordPartialEntry,
+  ]);
 
   // 5. Complete input delivery
   useEffect(() => {

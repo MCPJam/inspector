@@ -685,7 +685,10 @@ export function MCPAppsRenderer({
         setIsReady(true);
         isReadyRef.current = true;
         const pendingReset = pendingReplayResetRef.current;
-        if (pendingReset && pendingReset.nonce === replayResetNonceRef.current) {
+        if (
+          pendingReset &&
+          pendingReset.nonce === replayResetNonceRef.current
+        ) {
           pendingReplayResetRef.current = null;
           pendingReset.resolve();
         }

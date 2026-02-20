@@ -372,9 +372,7 @@ export function ToolPart({
                 <Badge
                   variant={tab === "streaming" ? "secondary" : "destructive"}
                   className={`absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none ${
-                    tab === "streaming"
-                      ? "text-muted-foreground"
-                      : "text-white"
+                    tab === "streaming" ? "text-muted-foreground" : "text-white"
                   }`}
                 >
                   {badge}
@@ -704,7 +702,8 @@ export function ToolPart({
               )}
             </div>
           )}
-          {hasWidgetDebug && activeDebugTab === "streaming" &&
+          {hasWidgetDebug &&
+            activeDebugTab === "streaming" &&
             (streamingPlaybackData &&
             streamingPlaybackData.partialHistory.length > 1 ? (
               <StreamingPlaybackBar

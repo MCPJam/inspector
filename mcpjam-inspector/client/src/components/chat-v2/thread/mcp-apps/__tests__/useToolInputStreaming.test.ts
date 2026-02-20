@@ -566,7 +566,9 @@ describe("useToolInputStreaming", () => {
       rerender();
 
       // Includes all unique partials plus the final full input entry.
-      expect(result.current.partialHistory.length).toBeGreaterThan(partialCount);
+      expect(result.current.partialHistory.length).toBeGreaterThan(
+        partialCount,
+      );
     });
   });
 
@@ -616,8 +618,7 @@ describe("useToolInputStreaming", () => {
 
     it("replayToPosition(lastIndex) calls bridge.sendToolInput for final entry", () => {
       const { hookResult } = setupWithHistory(bridge);
-      const lastIndex =
-        hookResult.result.current.partialHistory.length - 1;
+      const lastIndex = hookResult.result.current.partialHistory.length - 1;
 
       act(() => {
         hookResult.result.current.replayToPosition(lastIndex);

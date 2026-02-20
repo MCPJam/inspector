@@ -1,11 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import {
-  Play,
-  Pause,
-  SkipBack,
-  SkipForward,
-  ChevronDown,
-} from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, ChevronDown } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -160,7 +154,14 @@ export function StreamingPlaybackBar({
         playTimerRef.current = null;
       }
     };
-  }, [isPlaying, currentPosition, lastIndex, playbackSpeed, partialHistory, replayToPosition]);
+  }, [
+    isPlaying,
+    currentPosition,
+    lastIndex,
+    playbackSpeed,
+    partialHistory,
+    replayToPosition,
+  ]);
 
   // Cleanup on unmount
   useEffect(() => {

@@ -31,9 +31,7 @@ describe("StreamingPlaybackBar", () => {
 
   it("renders all transport control buttons", () => {
     const history = createHistory(4);
-    render(
-      <StreamingPlaybackBar {...defaultProps} partialHistory={history} />,
-    );
+    render(<StreamingPlaybackBar {...defaultProps} partialHistory={history} />);
 
     expect(screen.getByLabelText("Previous")).toBeInTheDocument();
     expect(screen.getByLabelText("Play")).toBeInTheDocument();
@@ -42,9 +40,7 @@ describe("StreamingPlaybackBar", () => {
 
   it("displays position label", () => {
     const history = createHistory(4);
-    render(
-      <StreamingPlaybackBar {...defaultProps} partialHistory={history} />,
-    );
+    render(<StreamingPlaybackBar {...defaultProps} partialHistory={history} />);
 
     // Initially at last position: "4/4"
     expect(screen.getByText(/4\/4/)).toBeInTheDocument();
@@ -69,9 +65,7 @@ describe("StreamingPlaybackBar", () => {
 
   it("Next button is disabled at last position", () => {
     const history = createHistory(4);
-    render(
-      <StreamingPlaybackBar {...defaultProps} partialHistory={history} />,
-    );
+    render(<StreamingPlaybackBar {...defaultProps} partialHistory={history} />);
 
     const nextButton = screen.getByLabelText("Next");
     expect(nextButton).toBeDisabled();
@@ -79,26 +73,20 @@ describe("StreamingPlaybackBar", () => {
 
   it("renders speed selector with default value", () => {
     const history = createHistory(4);
-    render(
-      <StreamingPlaybackBar {...defaultProps} partialHistory={history} />,
-    );
+    render(<StreamingPlaybackBar {...defaultProps} partialHistory={history} />);
 
     expect(screen.getByLabelText("Playback speed")).toBeInTheDocument();
   });
 
   it("renders timeline slider", () => {
     const history = createHistory(4);
-    render(
-      <StreamingPlaybackBar {...defaultProps} partialHistory={history} />,
-    );
+    render(<StreamingPlaybackBar {...defaultProps} partialHistory={history} />);
     expect(screen.getByLabelText("Streaming timeline")).toBeInTheDocument();
   });
 
   it("renders Raw JSON collapsible trigger", () => {
     const history = createHistory(4);
-    render(
-      <StreamingPlaybackBar {...defaultProps} partialHistory={history} />,
-    );
+    render(<StreamingPlaybackBar {...defaultProps} partialHistory={history} />);
 
     expect(screen.getByText("Raw JSON")).toBeInTheDocument();
   });
