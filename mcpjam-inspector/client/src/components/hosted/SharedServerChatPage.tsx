@@ -38,11 +38,11 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
   const [session, setSession] = useState<SharedServerSession | null>(() =>
     readSharedServerSession(),
   );
-  const [isResolving, setIsResolving] = useState(false);
+  const [isResolving, setIsResolving] = useState(!!pathToken);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [needsOAuth, setNeedsOAuth] = useState(false);
   const [discoveredServerUrl, setDiscoveredServerUrl] = useState<string | null>(null);
-  const [isCheckingOAuth, setIsCheckingOAuth] = useState(false);
+  const [isCheckingOAuth, setIsCheckingOAuth] = useState(session !== null);
   const [oauthPreflightError, setOauthPreflightError] = useState<string | null>(
     null,
   );
@@ -517,80 +517,101 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
     }
   };
 
-  if (isResolving || isCheckingOAuth) {
-    return (
-      <div className="flex h-svh min-h-0 items-center justify-center px-4">
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span>
-            {oauthPreflightError
-              ? "Checking server authorization..."
-              : "Opening shared server chat..."}
-          </span>
-        </div>
-      </div>
-    );
-  }
+  const displayServerName = session?.payload.serverName || "\u00A0";
 
-  if (!session || !selectedServerName) {
-    return (
-      <div className="flex h-svh min-h-0 items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
-          <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-            <Link2Off className="h-5 w-5 text-muted-foreground" />
-          </div>
-          <h2 className="text-base font-semibold text-foreground">
-            Shared Link Unavailable
-          </h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {errorMessage || "This shared link is invalid or expired."}
-          </p>
-          <Button className="mt-4" onClick={handleOpenMcpJam}>
-            Open MCPJam
-          </Button>
+  const renderContent = () => {
+    if (isResolving || isCheckingOAuth) {
+      return (
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  if (needsOAuth) {
-    return (
-      <div className="flex h-svh min-h-0 items-center justify-center px-4">
-        <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
-          <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-            <Lock className="h-5 w-5 text-muted-foreground" />
+    if (!session || !selectedServerName) {
+      return (
+        <div className="flex flex-1 items-center justify-center px-4">
+          <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
+            <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+              <Link2Off className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <h2 className="text-base font-semibold text-foreground">
+              Shared Link Unavailable
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {errorMessage || "This shared link is invalid or expired."}
+            </p>
+            <Button className="mt-4" onClick={handleOpenMcpJam}>
+              Open MCPJam
+            </Button>
           </div>
-          <h2 className="text-base font-semibold text-foreground">
-            Authorization Required
-          </h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            This server requires OAuth authorization before you can chat. Click
-            below to authorize access.
-          </p>
-          <Button className="mt-4" onClick={handleAuthorize}>
-            Authorize
-          </Button>
         </div>
-      </div>
+      );
+    }
+
+    if (needsOAuth) {
+      return (
+        <div className="flex flex-1 items-center justify-center px-4">
+          <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
+            <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+              <Lock className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <h2 className="text-base font-semibold text-foreground">
+              Authorization Required
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Please authorize access to this app to continue.
+            </p>
+            <Button className="mt-4" onClick={handleAuthorize}>
+              Authorize
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {oauthPreflightError ? (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+            OAuth preflight hit an issue. Runtime OAuth detection remains enabled.
+          </div>
+        ) : null}
+
+        <div className="flex min-h-0 flex-1">
+          <ChatTabV2
+            connectedOrConnectingServerConfigs={sharedServerConfigs}
+            selectedServerNames={[selectedServerName!]}
+            minimalMode
+            hostedWorkspaceIdOverride={session!.payload.workspaceId}
+            hostedSelectedServerIdsOverride={[session!.payload.serverId]}
+            hostedOAuthTokensOverride={oauthTokensForChat}
+            hostedShareToken={session!.token}
+            onOAuthRequired={handleOAuthRequired}
+          />
+        </div>
+      </>
     );
-  }
+  };
 
   return (
     <div className="flex h-svh min-h-0 flex-col">
       <header className="border-b border-border/50 bg-background/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
           <h1 className="truncate text-sm font-semibold text-foreground">
-            {session.payload.serverName}
+            {displayServerName}
           </h1>
           <div className="flex items-center gap-1.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={handleCopyLink}
-            >
-              Copy link
-            </Button>
+            {session && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={handleCopyLink}
+              >
+                Copy link
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -603,24 +624,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
         </div>
       </header>
 
-      {oauthPreflightError ? (
-        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
-          OAuth preflight hit an issue. Runtime OAuth detection remains enabled.
-        </div>
-      ) : null}
-
-      <div className="flex min-h-0 flex-1">
-        <ChatTabV2
-          connectedOrConnectingServerConfigs={sharedServerConfigs}
-          selectedServerNames={[selectedServerName]}
-          minimalMode
-          hostedWorkspaceIdOverride={session.payload.workspaceId}
-          hostedSelectedServerIdsOverride={[session.payload.serverId]}
-          hostedOAuthTokensOverride={oauthTokensForChat}
-          hostedShareToken={session.token}
-          onOAuthRequired={handleOAuthRequired}
-        />
-      </div>
+      {renderContent()}
     </div>
   );
 }

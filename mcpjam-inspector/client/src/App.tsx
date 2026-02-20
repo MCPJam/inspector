@@ -389,7 +389,7 @@ export default function App() {
     return <CompletingSignInLoading />;
   }
 
-  if (isLoading) {
+  if (isLoading && !isSharedChatRoute) {
     return <LoadingScreen />;
   }
 
