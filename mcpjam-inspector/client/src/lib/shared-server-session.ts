@@ -26,8 +26,18 @@ export const SHARED_OAUTH_PENDING_KEY = "mcp-oauth-shared-chat-pending";
 export const SHARED_SIGN_IN_RETURN_PATH_STORAGE_KEY =
   "mcpjam_shared_signin_return_path_v1";
 
+export function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 export function extractSharedTokenFromPath(pathname: string): string | null {
-  const match = pathname.match(/^\/shared\/([^/?#]+)/);
+  const match = pathname.match(/^\/shared\/[^/?#]+\/([^/?#]+)/);
   if (!match || !match[1]) return null;
   try {
     return decodeURIComponent(match[1]).trim() || null;
@@ -36,9 +46,8 @@ export function extractSharedTokenFromPath(pathname: string): string | null {
   }
 }
 
-export function isSharedChatHash(hashValue: string): boolean {
-  const normalized = hashValue.replace(/^#\/?/, "").trim().toLowerCase();
-  return normalized === "shared-chat";
+export function hasActiveSharedSession(): boolean {
+  return readSharedServerSession() !== null;
 }
 
 export function readSharedServerSession(): SharedServerSession | null {

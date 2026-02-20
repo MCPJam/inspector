@@ -60,8 +60,10 @@ import { resolveHostedNavigation } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
   clearSharedSignInReturnPath,
-  isSharedChatHash,
+  hasActiveSharedSession,
+  readSharedServerSession,
   readSharedSignInReturnPath,
+  slugify,
   SHARED_OAUTH_PENDING_KEY,
   writeSharedSignInReturnPath,
 } from "./lib/shared-server-session";
@@ -93,7 +95,7 @@ export default function App() {
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
   const isSharedChatRoute =
     HOSTED_MODE &&
-    (!!sharedPathToken || isSharedChatHash(window.location.hash));
+    (!!sharedPathToken || hasActiveSharedSession());
 
   // Handle shared OAuth callback: detect code + pending flag before normal rendering
   useEffect(() => {
@@ -108,12 +110,20 @@ export default function App() {
       .then(() => {
         if (cancelled) return;
         localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
-        window.history.replaceState({}, "", "/#shared-chat");
+        const storedSession = readSharedServerSession();
+        const sharedHash = storedSession
+          ? slugify(storedSession.payload.serverName)
+          : "shared";
+        window.history.replaceState({}, "", `/#${sharedHash}`);
       })
       .catch(() => {
         if (cancelled) return;
         localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
-        window.history.replaceState({}, "", "/#shared-chat");
+        const storedSession = readSharedServerSession();
+        const sharedHash = storedSession
+          ? slugify(storedSession.payload.serverName)
+          : "shared";
+        window.history.replaceState({}, "", `/#${sharedHash}`);
       })
       .finally(() => {
         if (!cancelled) setSharedOAuthHandling(false);
@@ -283,8 +293,12 @@ export default function App() {
       options?: { updateHash?: boolean; enforceCanonicalHash?: boolean },
     ) => {
       if (isSharedChatRoute) {
-        if (!isSharedChatHash(window.location.hash)) {
-          window.location.hash = "shared-chat";
+        const storedSession = readSharedServerSession();
+        if (storedSession) {
+          const expectedHash = slugify(storedSession.payload.serverName);
+          if (window.location.hash !== `#${expectedHash}`) {
+            window.location.hash = expectedHash;
+          }
         }
         return;
       }

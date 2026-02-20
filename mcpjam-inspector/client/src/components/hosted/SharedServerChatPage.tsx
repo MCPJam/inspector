@@ -11,8 +11,8 @@ import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import {
   clearSharedServerSession,
   extractSharedTokenFromPath,
-  isSharedChatHash,
   readSharedServerSession,
+  slugify,
   SHARED_OAUTH_PENDING_KEY,
   type SharedServerSession,
   writeSharedServerSession,
@@ -23,7 +23,6 @@ interface SharedServerChatPageProps {
   pathToken?: string | null;
 }
 
-const SHARED_CHAT_HASH = "shared-chat";
 const OAUTH_PREFLIGHT_TOKEN_RETRY_MS = 250;
 const OAUTH_PREFLIGHT_REQUEST_RETRY_MS = 1000;
 const OAUTH_PREFLIGHT_VALIDATE_TOKEN_ATTEMPTS = 8;
@@ -119,8 +118,9 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
           writeSharedServerSession(nextSession);
           setSession(nextSession);
 
-          if (!isSharedChatHash(window.location.hash)) {
-            window.history.replaceState({}, "", "/#shared-chat");
+          const nextSlug = slugify(nextSession.payload.serverName);
+          if (window.location.hash !== `#${nextSlug}`) {
+            window.history.replaceState({}, "", `/#${nextSlug}`);
           }
         } catch (error) {
           if (cancelled) return;
@@ -143,8 +143,9 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
       if (recovered) {
         setSession(recovered);
         setErrorMessage(null);
-        if (!isSharedChatHash(window.location.hash)) {
-          window.history.replaceState({}, "", "/#shared-chat");
+        const recoveredSlug = slugify(recovered.payload.serverName);
+        if (window.location.hash !== `#${recoveredSlug}`) {
+          window.history.replaceState({}, "", `/#${recoveredSlug}`);
         }
         return;
       }
@@ -163,9 +164,10 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
   useEffect(() => {
     if (!session) return;
 
+    const expectedHash = slugify(session.payload.serverName);
     const enforceSharedHash = () => {
-      if (!isSharedChatHash(window.location.hash)) {
-        window.location.hash = SHARED_CHAT_HASH;
+      if (window.location.hash !== `#${expectedHash}`) {
+        window.location.hash = expectedHash;
       }
     };
 
@@ -436,7 +438,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
     if (!serverUrl) return;
 
     localStorage.setItem(SHARED_OAUTH_PENDING_KEY, "true");
-    localStorage.setItem("mcp-oauth-return-hash", "#shared-chat");
+    localStorage.setItem("mcp-oauth-return-hash", "#" + slugify(serverName));
 
     const result = await initiateOAuth({
       serverName,
@@ -508,7 +510,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
       return;
     }
 
-    const shareUrl = `${window.location.origin}/shared/${encodeURIComponent(token)}`;
+    const shareUrl = `${window.location.origin}/shared/${slugify(session.payload.serverName)}/${encodeURIComponent(token)}`;
     try {
       await navigator.clipboard.writeText(shareUrl);
       toast.success("Share link copied");
@@ -560,7 +562,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
               Authorization Required
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Please authorize access to this app to continue.
+              {selectedServerName} requires authorization to continue.
             </p>
             <Button className="mt-4" onClick={handleAuthorize}>
               Authorize

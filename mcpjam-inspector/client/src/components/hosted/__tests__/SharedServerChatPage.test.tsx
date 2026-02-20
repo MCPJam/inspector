@@ -89,7 +89,7 @@ describe("SharedServerChatPage", () => {
 
     await waitFor(() => {
       expect(mockClipboardWriteText).toHaveBeenCalledWith(
-        `${window.location.origin}/shared/token%20123`,
+        `${window.location.origin}/shared/server-one/token%20123`,
       );
     });
     expect(toastSuccess).toHaveBeenCalledWith("Share link copied");

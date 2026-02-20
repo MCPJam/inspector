@@ -3,10 +3,11 @@ import {
   clearSharedSignInReturnPath,
   clearSharedServerSession,
   extractSharedTokenFromPath,
-  isSharedChatHash,
+  hasActiveSharedSession,
   readSharedSignInReturnPath,
   readSharedServerSession,
   SHARED_SIGN_IN_RETURN_PATH_STORAGE_KEY,
+  slugify,
   writeSharedSignInReturnPath,
   writeSharedServerSession,
 } from "../shared-server-session";
@@ -17,16 +18,40 @@ describe("shared-server-session", () => {
     clearSharedSignInReturnPath();
   });
 
-  it("extracts token from /shared/<token> paths", () => {
-    expect(extractSharedTokenFromPath("/shared/abc123")).toBe("abc123");
-    expect(extractSharedTokenFromPath("/shared/abc%20123")).toBe("abc 123");
+  it("extracts token from /shared/<slug>/<token> paths", () => {
+    expect(extractSharedTokenFromPath("/shared/my-server/abc123")).toBe("abc123");
+    expect(extractSharedTokenFromPath("/shared/my%20server/abc%20123")).toBe("abc 123");
+    expect(extractSharedTokenFromPath("/shared/onlyone")).toBeNull();
     expect(extractSharedTokenFromPath("/settings")).toBeNull();
   });
 
-  it("detects canonical shared chat hash", () => {
-    expect(isSharedChatHash("#shared-chat")).toBe(true);
-    expect(isSharedChatHash("#/shared-chat")).toBe(true);
-    expect(isSharedChatHash("#chat-v2")).toBe(false);
+  it("slugifies server names", () => {
+    expect(slugify("My Cool Server")).toBe("my-cool-server");
+    expect(slugify("  spaced  out  ")).toBe("spaced-out");
+    expect(slugify("special!@#chars")).toBe("specialchars");
+    expect(slugify("under_scores")).toBe("under-scores");
+    expect(slugify("---dashes---")).toBe("dashes");
+  });
+
+  it("detects active shared session", () => {
+    expect(hasActiveSharedSession()).toBe(false);
+
+    writeSharedServerSession({
+      token: "t",
+      payload: {
+        workspaceId: "ws_1",
+        serverId: "srv_1",
+        serverName: "S",
+        mode: "invited_only",
+        viewerIsWorkspaceMember: false,
+        useOAuth: false,
+        serverUrl: null,
+        clientId: null,
+        oauthScopes: null,
+      },
+    });
+
+    expect(hasActiveSharedSession()).toBe(true);
   });
 
   it("round-trips session storage", () => {
@@ -101,8 +126,8 @@ describe("shared-server-session", () => {
   });
 
   it("round-trips shared sign-in return path", () => {
-    writeSharedSignInReturnPath("/shared/token-123");
-    expect(readSharedSignInReturnPath()).toBe("/shared/token-123");
+    writeSharedSignInReturnPath("/shared/server-one/token-123");
+    expect(readSharedSignInReturnPath()).toBe("/shared/server-one/token-123");
 
     clearSharedSignInReturnPath();
     expect(readSharedSignInReturnPath()).toBeNull();

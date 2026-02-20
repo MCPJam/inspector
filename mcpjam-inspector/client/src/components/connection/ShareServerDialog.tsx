@@ -42,6 +42,7 @@ import {
   useServerShareMutations,
   useServerShareSettings,
 } from "@/hooks/useServerShares";
+import { slugify } from "@/lib/shared-server-session";
 
 interface ShareServerDialogProps {
   isOpen: boolean;
@@ -124,9 +125,11 @@ export function ShareServerDialog({
   );
 
   const handleCopyLink = async () => {
-    if (!settings?.link?.path) return;
+    if (!settings?.link?.token) return;
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}${settings.link.path}`);
+      const slug = slugify(serverName);
+      const shareUrl = `${window.location.origin}/shared/${slug}/${encodeURIComponent(settings.link.token)}`;
+      await navigator.clipboard.writeText(shareUrl);
       toast.success("Share link copied");
     } catch {
       toast.error("Failed to copy link");
