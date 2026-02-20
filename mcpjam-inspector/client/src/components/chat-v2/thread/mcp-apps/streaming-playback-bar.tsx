@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  ChevronFirst,
-  ChevronLast,
   Play,
   Pause,
   SkipBack,
@@ -199,24 +197,6 @@ export function StreamingPlaybackBar({
             <TooltipTrigger asChild>
               <button
                 type="button"
-                aria-label="First"
-                disabled={currentPosition === 0}
-                onClick={() => {
-                  stopPlayback();
-                  goToPosition(0);
-                }}
-                className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              >
-                <ChevronFirst className="h-3.5 w-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>First</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
                 aria-label="Previous"
                 disabled={currentPosition === 0}
                 onClick={() => {
@@ -265,24 +245,6 @@ export function StreamingPlaybackBar({
               </button>
             </TooltipTrigger>
             <TooltipContent>Next</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="Last"
-                disabled={currentPosition >= lastIndex}
-                onClick={() => {
-                  stopPlayback();
-                  goToPosition(lastIndex);
-                }}
-                className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-background/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-              >
-                <ChevronLast className="h-3.5 w-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>Last</TooltipContent>
           </Tooltip>
         </div>
 

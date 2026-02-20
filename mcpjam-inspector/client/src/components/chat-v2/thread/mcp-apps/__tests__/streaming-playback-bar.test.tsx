@@ -35,11 +35,9 @@ describe("StreamingPlaybackBar", () => {
       <StreamingPlaybackBar {...defaultProps} partialHistory={history} />,
     );
 
-    expect(screen.getByLabelText("First")).toBeInTheDocument();
     expect(screen.getByLabelText("Previous")).toBeInTheDocument();
     expect(screen.getByLabelText("Play")).toBeInTheDocument();
     expect(screen.getByLabelText("Next")).toBeInTheDocument();
-    expect(screen.getByLabelText("Last")).toBeInTheDocument();
   });
 
   it("displays position label", () => {
@@ -77,41 +75,6 @@ describe("StreamingPlaybackBar", () => {
 
     const nextButton = screen.getByLabelText("Next");
     expect(nextButton).toBeDisabled();
-  });
-
-  it("First button calls replayToPosition with 0", () => {
-    const history = createHistory(4);
-    const replayToPosition = vi.fn();
-    render(
-      <StreamingPlaybackBar
-        {...defaultProps}
-        partialHistory={history}
-        replayToPosition={replayToPosition}
-      />,
-    );
-
-    fireEvent.click(screen.getByLabelText("First"));
-
-    expect(replayToPosition).toHaveBeenCalledWith(0);
-  });
-
-  it("First button is disabled at position 0", () => {
-    const history = createHistory(4);
-    const replayToPosition = vi.fn();
-    render(
-      <StreamingPlaybackBar
-        {...defaultProps}
-        partialHistory={history}
-        replayToPosition={replayToPosition}
-      />,
-    );
-
-    // Navigate to first position
-    fireEvent.click(screen.getByLabelText("First"));
-
-    // Now First and Previous should be disabled
-    expect(screen.getByLabelText("First")).toBeDisabled();
-    expect(screen.getByLabelText("Previous")).toBeDisabled();
   });
 
   it("renders speed selector with default value", () => {
