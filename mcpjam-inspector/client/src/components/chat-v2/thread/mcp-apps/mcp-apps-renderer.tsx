@@ -17,7 +17,11 @@ import {
   useCallback,
   type CSSProperties,
 } from "react";
-import { useToolInputStreaming, type ToolState } from "./useToolInputStreaming";
+import {
+  useToolInputStreaming,
+  type ToolState,
+  type StreamingPlaybackData,
+} from "./useToolInputStreaming";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   useUIPlaygroundStore,
@@ -121,6 +125,8 @@ interface MCPAppsRendererProps {
   ) => void;
   /** Callback when app declares its supported display modes during ui/initialize */
   onAppSupportedDisplayModesChange?: (modes: DisplayMode[] | undefined) => void;
+  /** Callback when streaming playback data changes (for embedding playback bar elsewhere) */
+  onStreamingPlaybackDataChange?: (data: StreamingPlaybackData | null) => void;
   /** Whether the server is offline (for using cached content) */
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
@@ -150,6 +156,7 @@ export function MCPAppsRenderer({
   onExitFullscreen,
   onModelContextUpdate,
   onAppSupportedDisplayModesChange,
+  onStreamingPlaybackDataChange,
   isOffline,
   cachedWidgetHtmlUrl,
 }: MCPAppsRendererProps) {
@@ -252,6 +259,7 @@ export function MCPAppsRenderer({
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
   const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
+  const [replayResetNonce, setReplayResetNonce] = useState(0);
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [modalParams, setModalParams] = useState<Record<string, unknown>>({});
@@ -274,6 +282,11 @@ export function MCPAppsRenderer({
   const hostContextRef = useRef<McpUiHostContext | null>(null);
   const isReadyRef = useRef(false);
   const lastInlineHeightRef = useRef<string>("400px");
+  const replayResetNonceRef = useRef(0);
+  const pendingReplayResetRef = useRef<{
+    nonce: number;
+    resolve: () => void;
+  } | null>(null);
 
   const onSendFollowUpRef = useRef(onSendFollowUp);
   const onCallToolRef = useRef(onCallTool);
@@ -302,14 +315,34 @@ export function MCPAppsRenderer({
   const themeModeRef = useRef(themeMode);
   themeModeRef.current = themeMode;
 
+  const requestReplaySessionReset = useCallback((): Promise<void> => {
+    setIsReady(false);
+    isReadyRef.current = false;
+
+    const nextNonce = replayResetNonceRef.current + 1;
+    replayResetNonceRef.current = nextNonce;
+    setReplayResetNonce(nextNonce);
+
+    return new Promise<void>((resolve) => {
+      // Unblock any older in-flight replay reset request.
+      pendingReplayResetRef.current?.resolve();
+      pendingReplayResetRef.current = { nonce: nextNonce, resolve };
+    });
+  }, []);
+
   const {
     canRenderStreamingInput,
     signalStreamingRender,
     resetStreamingState,
+    partialHistory,
+    replayToPosition,
+    exitReplay,
+    isReplayActive,
   } = useToolInputStreaming({
     bridgeRef,
     isReady,
     isReadyRef,
+    requestReplaySessionReset,
     toolState,
     toolInput,
     toolOutput,
@@ -446,7 +479,9 @@ export function MCPAppsRenderer({
     (s) => s.setWidgetModelContext,
   );
   const setWidgetHtmlStore = useWidgetDebugStore((s) => s.setWidgetHtml);
-
+  const setStreamingHistoryCount = useWidgetDebugStore(
+    (s) => s.setStreamingHistoryCount,
+  );
   // Clear CSP violations when CSP mode changes (stale data from previous mode)
   useEffect(() => {
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
@@ -518,6 +553,34 @@ export function MCPAppsRenderer({
     deviceCapabilities,
     safeAreaInsets,
     setWidgetGlobals,
+  ]);
+
+  // Write streaming history count to debug store
+  useEffect(() => {
+    if (partialHistory.length > 0) {
+      setStreamingHistoryCount(toolCallId, partialHistory.length);
+    }
+  }, [partialHistory.length, toolCallId, setStreamingHistoryCount]);
+
+  // Push streaming playback data to parent for embedding in ToolPart
+  useEffect(() => {
+    if (!onStreamingPlaybackDataChange) return;
+    if (partialHistory.length > 1) {
+      onStreamingPlaybackDataChange({
+        partialHistory,
+        replayToPosition,
+        exitReplay,
+        isReplayActive,
+      });
+    } else {
+      onStreamingPlaybackDataChange(null);
+    }
+  }, [
+    partialHistory,
+    replayToPosition,
+    exitReplay,
+    isReplayActive,
+    onStreamingPlaybackDataChange,
   ]);
 
   // CSS Variables for theming (SEP-1865 styles.variables)
@@ -621,6 +684,14 @@ export function MCPAppsRenderer({
       bridge.oninitialized = () => {
         setIsReady(true);
         isReadyRef.current = true;
+        const pendingReset = pendingReplayResetRef.current;
+        if (
+          pendingReset &&
+          pendingReset.nonce === replayResetNonceRef.current
+        ) {
+          pendingReplayResetRef.current = null;
+          pendingReset.resolve();
+        }
         const appCaps = bridge.getAppCapabilities();
         onAppSupportedDisplayModesChangeRef.current?.(
           appCaps?.availableDisplayModes as DisplayMode[] | undefined,
@@ -872,6 +943,11 @@ export function MCPAppsRenderer({
     let isActive = true;
     bridge.connect(transport).catch((error) => {
       if (!isActive) return;
+      const pendingReset = pendingReplayResetRef.current;
+      if (pendingReset && pendingReset.nonce === replayResetNonceRef.current) {
+        pendingReplayResetRef.current = null;
+        pendingReset.resolve();
+      }
       setLoadError(
         error instanceof Error ? error.message : "Failed to connect MCP App",
       );
@@ -884,6 +960,11 @@ export function MCPAppsRenderer({
         bridge.teardownResource({}).catch(() => {});
       }
       bridge.close().catch(() => {});
+      const pendingReset = pendingReplayResetRef.current;
+      if (pendingReset && pendingReset.nonce === replayResetNonceRef.current) {
+        pendingReplayResetRef.current = null;
+        pendingReset.resolve();
+      }
       // Clear model context on widget teardown
       setWidgetModelContext(toolCallId, null);
     };
@@ -892,6 +973,7 @@ export function MCPAppsRenderer({
     serverId,
     toolCallId,
     widgetHtml,
+    replayResetNonce,
     registerBridgeHandlers,
     setWidgetModelContext,
   ]);
@@ -1164,6 +1246,7 @@ export function MCPAppsRenderer({
       )}
       {/* Uses SandboxedIframe for DRY double-iframe architecture */}
       <SandboxedIframe
+        key={`${toolCallId}:${replayResetNonce}`}
         ref={sandboxRef}
         html={widgetHtml}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"

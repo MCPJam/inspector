@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Database,
   Layers,
+  ListVideo,
   Loader2,
   Maximize2,
   MessageCircle,
@@ -37,6 +38,8 @@ import {
 import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
+import type { StreamingPlaybackData } from "../mcp-apps/useToolInputStreaming";
+import { StreamingPlaybackBar } from "../mcp-apps/streaming-playback-bar";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 const SAVE_VIEW_BUTTON_USED_KEY = "mcpjam-save-view-button-used";
@@ -61,6 +64,7 @@ export function ToolPart({
   canSaveView,
   saveDisabledReason,
   isSaving,
+  streamingPlaybackData,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   uiType?: UIType | null;
@@ -74,6 +78,8 @@ export function ToolPart({
   onExitPip?: (toolCallId: string) => void;
   /** Display modes the app declared support for. If undefined, all modes are available. */
   appSupportedDisplayModes?: DisplayMode[];
+  /** Streaming playback data lifted from MCPAppsRenderer for embedding playback bar */
+  streamingPlaybackData?: StreamingPlaybackData | null;
   approvalId?: string;
   onApprove?: (id: string) => void;
   onDeny?: (id: string) => void;
@@ -124,7 +130,7 @@ export function ToolPart({
   const [userExpanded, setUserExpanded] = useState(false);
   const isExpanded = needsApproval || userExpanded;
   const [activeDebugTab, setActiveDebugTab] = useState<
-    "data" | "state" | "csp" | "context" | null
+    "data" | "state" | "csp" | "context" | "streaming" | null
   >("data");
   const [hasUsedSaveViewButton, setHasUsedSaveViewButton] = useState(true);
 
@@ -137,6 +143,9 @@ export function ToolPart({
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
+  );
+  const streamingHistoryCount = useWidgetDebugStore((s) =>
+    toolCallId ? (s.widgets.get(toolCallId)?.streamingHistoryCount ?? 0) : 0,
   );
   const hasWidgetDebug = !!widgetDebugInfo;
 
@@ -158,7 +167,7 @@ export function ToolPart({
 
   const debugOptions = useMemo(() => {
     const options: {
-      tab: "data" | "state" | "csp" | "context";
+      tab: "data" | "state" | "csp" | "context" | "streaming";
       icon: typeof Database;
       label: string;
       badge?: number;
@@ -184,15 +193,35 @@ export function ToolPart({
       badge: widgetDebugInfo?.csp?.violations?.length,
     });
 
+    if (uiType === UIType.MCP_APPS && streamingHistoryCount > 1) {
+      options.push({
+        tab: "streaming",
+        icon: ListVideo,
+        label: "Streaming",
+        badge: streamingHistoryCount,
+      });
+    }
+
     return options;
   }, [
     uiType,
     widgetDebugInfo?.csp?.violations?.length,
     widgetDebugInfo?.modelContext,
+    streamingHistoryCount,
   ]);
 
-  const handleDebugClick = (tab: "data" | "state" | "csp" | "context") => {
+  const handleDebugClick = (
+    tab: "data" | "state" | "csp" | "context" | "streaming",
+  ) => {
+    // Exit streaming replay when switching away from streaming tab
+    if (activeDebugTab === "streaming" && tab !== "streaming") {
+      streamingPlaybackData?.exitReplay();
+    }
+
     if (activeDebugTab === tab) {
+      if (tab === "streaming") {
+        streamingPlaybackData?.exitReplay();
+      }
       setActiveDebugTab(null);
       setUserExpanded(false);
     } else {
@@ -303,7 +332,9 @@ export function ToolPart({
             ? "State"
             : tab === "csp"
               ? "CSP"
-              : "Context";
+              : tab === "streaming"
+                ? "Streaming"
+                : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
@@ -311,7 +342,9 @@ export function ToolPart({
             ? "Widget State"
             : tab === "csp"
               ? "CSP"
-              : "Model Context";
+              : tab === "streaming"
+                ? "Streaming Playback"
+                : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -326,7 +359,7 @@ export function ToolPart({
               className={`inline-flex items-center gap-1 px-1.5 py-1 rounded transition-colors cursor-pointer relative ${
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
-                  : badge && badge > 0
+                  : badge && badge > 0 && tab !== "streaming"
                     ? "text-destructive hover:text-destructive hover:bg-destructive/10"
                     : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
@@ -337,8 +370,10 @@ export function ToolPart({
               </span>
               {badge !== undefined && badge > 0 && (
                 <Badge
-                  variant="destructive"
-                  className="absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none text-white"
+                  variant={tab === "streaming" ? "secondary" : "destructive"}
+                  className={`absolute -top-1.5 -right-1.5 h-3.5 min-w-[14px] px-1 text-[8px] leading-none ${
+                    tab === "streaming" ? "text-muted-foreground" : "text-white"
+                  }`}
                 >
                   {badge}
                 </Badge>
@@ -474,7 +509,7 @@ export function ToolPart({
                 <div className="h-4 w-px bg-border/40" />
               )}
               <span
-                className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
+                className="inline-flex items-center gap-1.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
                 onClick={(e) => e.stopPropagation()}
               >
                 {renderDebugOptionButtons()}
@@ -667,6 +702,22 @@ export function ToolPart({
               )}
             </div>
           )}
+          {hasWidgetDebug &&
+            activeDebugTab === "streaming" &&
+            (streamingPlaybackData &&
+            streamingPlaybackData.partialHistory.length > 1 ? (
+              <StreamingPlaybackBar
+                partialHistory={streamingPlaybackData.partialHistory}
+                replayToPosition={streamingPlaybackData.replayToPosition}
+                exitReplay={streamingPlaybackData.exitReplay}
+                isReplayActive={streamingPlaybackData.isReplayActive}
+                toolCallId={toolCallId ?? ""}
+              />
+            ) : (
+              <div className="text-[11px] text-muted-foreground/70">
+                {streamingHistoryCount} streaming snapshots recorded.
+              </div>
+            ))}
           {!hasWidgetDebug && (
             <div className="space-y-4">
               {hasInput && (

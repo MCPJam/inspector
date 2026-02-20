@@ -95,6 +95,10 @@ export interface WidgetDebugInfo {
   } | null;
   /** Cached widget HTML for offline rendering */
   widgetHtml?: string;
+  /** Number of recorded streaming history entries (for debug tab badge) */
+  streamingHistoryCount?: number;
+  /** Whether streaming playback is currently active */
+  streamingPlaybackActive?: boolean;
 }
 
 interface WidgetDebugStore {
@@ -147,6 +151,12 @@ interface WidgetDebugStore {
 
   // Set widget HTML for offline rendering cache
   setWidgetHtml: (toolCallId: string, html: string) => void;
+
+  // Set streaming history count for a widget
+  setStreamingHistoryCount: (toolCallId: string, count: number) => void;
+
+  // Set streaming playback active state for a widget
+  setStreamingPlaybackActive: (toolCallId: string, active: boolean) => void;
 }
 
 export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
@@ -172,6 +182,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: existing?.csp, // Preserve CSP violations across updates
         widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
         modelContext: existing?.modelContext, // Preserve model context across updates
+        streamingHistoryCount: existing?.streamingHistoryCount,
+        streamingPlaybackActive: existing?.streamingPlaybackActive,
         updatedAt: Date.now(),
       });
       return { widgets };
@@ -320,7 +332,39 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
         csp: existing?.csp,
         modelContext: existing?.modelContext,
+        streamingHistoryCount: existing?.streamingHistoryCount,
+        streamingPlaybackActive: existing?.streamingPlaybackActive,
         widgetHtml: html,
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  setStreamingHistoryCount: (toolCallId, count) => {
+    set((state) => {
+      const existing = state.widgets.get(toolCallId);
+      if (!existing) return state;
+
+      const widgets = new Map(state.widgets);
+      widgets.set(toolCallId, {
+        ...existing,
+        streamingHistoryCount: count,
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  setStreamingPlaybackActive: (toolCallId, active) => {
+    set((state) => {
+      const existing = state.widgets.get(toolCallId);
+      if (!existing) return state;
+
+      const widgets = new Map(state.widgets);
+      widgets.set(toolCallId, {
+        ...existing,
+        streamingPlaybackActive: active,
         updatedAt: Date.now(),
       });
       return { widgets };

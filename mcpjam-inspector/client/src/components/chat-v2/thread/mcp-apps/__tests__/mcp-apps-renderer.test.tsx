@@ -139,6 +139,9 @@ vi.mock("@/stores/widget-debug-store", () => ({
       clearCspViolations: stableStoreFns.clearCspViolations,
       setWidgetModelContext: stableStoreFns.setWidgetModelContext,
       setWidgetHtml: stableStoreFns.setWidgetHtml,
+      setStreamingHistoryCount: vi.fn(),
+      setStreamingPlaybackActive: vi.fn(),
+      widgets: new Map(),
     }),
 }));
 
@@ -156,9 +159,13 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   isVisibleToModelOnly: () => false,
 }));
 
-vi.mock("lucide-react", () => ({
-  X: (props: any) => <div {...props} />,
-}));
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react")>();
+  return {
+    ...actual,
+    X: (props: any) => <div {...props} />,
+  };
+});
 
 vi.mock("../mcp-apps-modal", () => ({
   McpAppsModal: () => null,
