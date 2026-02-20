@@ -139,3 +139,72 @@ export function readSharedSignInReturnPath(): string | null {
 export function clearSharedSignInReturnPath(): void {
   localStorage.removeItem(SHARED_SIGN_IN_RETURN_PATH_STORAGE_KEY);
 }
+
+// --- Pending server add (localStorage handoff from shared chat → main app) ---
+
+export const PENDING_SERVER_ADD_KEY = "mcpjam_pending_server_add_v1";
+
+const PENDING_SERVER_ADD_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+export interface PendingServerAdd {
+  serverName: string;
+  serverUrl: string;
+  useOAuth: boolean;
+  clientId: string | null;
+  oauthScopes: string[] | null;
+  createdAt: number;
+}
+
+export function writePendingServerAdd(
+  data: Omit<PendingServerAdd, "createdAt">,
+): void {
+  try {
+    localStorage.setItem(
+      PENDING_SERVER_ADD_KEY,
+      JSON.stringify({ ...data, createdAt: Date.now() }),
+    );
+  } catch {
+    // Ignore storage failures (private mode, disabled storage, etc).
+  }
+}
+
+export function readPendingServerAdd(): PendingServerAdd | null {
+  try {
+    const raw = localStorage.getItem(PENDING_SERVER_ADD_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<PendingServerAdd> | null;
+    if (!parsed || typeof parsed !== "object") return null;
+
+    if (
+      typeof parsed.serverName !== "string" ||
+      typeof parsed.serverUrl !== "string" ||
+      typeof parsed.useOAuth !== "boolean" ||
+      typeof parsed.createdAt !== "number"
+    ) {
+      return null;
+    }
+
+    if (Date.now() - parsed.createdAt > PENDING_SERVER_ADD_TTL_MS) {
+      localStorage.removeItem(PENDING_SERVER_ADD_KEY);
+      return null;
+    }
+
+    return {
+      serverName: parsed.serverName,
+      serverUrl: parsed.serverUrl,
+      useOAuth: parsed.useOAuth,
+      clientId: typeof parsed.clientId === "string" ? parsed.clientId : null,
+      oauthScopes: Array.isArray(parsed.oauthScopes)
+        ? parsed.oauthScopes
+        : null,
+      createdAt: parsed.createdAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingServerAdd(): void {
+  localStorage.removeItem(PENDING_SERVER_ADD_KEY);
+}

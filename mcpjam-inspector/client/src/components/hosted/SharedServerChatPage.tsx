@@ -16,18 +16,20 @@ import {
   SHARED_OAUTH_PENDING_KEY,
   type SharedServerSession,
   writeSharedServerSession,
+  writePendingServerAdd,
 } from "@/lib/shared-server-session";
 import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
 
 interface SharedServerChatPageProps {
   pathToken?: string | null;
+  onExitSharedChat?: () => void;
 }
 
 const OAUTH_PREFLIGHT_TOKEN_RETRY_MS = 250;
 const OAUTH_PREFLIGHT_REQUEST_RETRY_MS = 1000;
 const OAUTH_PREFLIGHT_VALIDATE_TOKEN_ATTEMPTS = 8;
 
-export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
+export function SharedServerChatPage({ pathToken, onExitSharedChat }: SharedServerChatPageProps) {
   const { getAccessToken } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const resolveShareForViewer = useMutation(
@@ -493,9 +495,22 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
   }, [needsOAuth, session]);
 
   const handleOpenMcpJam = () => {
-    setSession(null);
+    if (session) {
+      const effectiveServerUrl =
+        session.payload.serverUrl || discoveredServerUrl;
+      if (effectiveServerUrl) {
+        writePendingServerAdd({
+          serverName: session.payload.serverName,
+          serverUrl: effectiveServerUrl,
+          useOAuth: session.payload.useOAuth,
+          clientId: session.payload.clientId,
+          oauthScopes: session.payload.oauthScopes,
+        });
+      }
+    }
     clearSharedServerSession();
     window.history.replaceState({}, "", "/#servers");
+    onExitSharedChat?.();
   };
 
   const handleCopyLink = async () => {
@@ -544,7 +559,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
               {errorMessage || "This shared link is invalid or expired."}
             </p>
             <Button className="mt-4" onClick={handleOpenMcpJam}>
-              Open MCPJam
+              Open in MCPJam
             </Button>
           </div>
         </div>
@@ -620,7 +635,7 @@ export function SharedServerChatPage({ pathToken }: SharedServerChatPageProps) {
               className="text-muted-foreground"
               onClick={handleOpenMcpJam}
             >
-              Open MCPJam
+              Open in MCPJam
             </Button>
           </div>
         </div>

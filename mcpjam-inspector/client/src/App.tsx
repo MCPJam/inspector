@@ -66,6 +66,8 @@ import {
   slugify,
   SHARED_OAUTH_PENDING_KEY,
   writeSharedSignInReturnPath,
+  readPendingServerAdd,
+  clearPendingServerAdd,
 } from "./lib/shared-server-session";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
 
@@ -92,9 +94,11 @@ export default function App() {
   const { sortedOrganizations, isLoading: isOrganizationsLoading } =
     useOrganizationQueries({ isAuthenticated });
   const [sharedOAuthHandling, setSharedOAuthHandling] = useState(false);
+  const [exitedSharedChat, setExitedSharedChat] = useState(false);
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
   const isSharedChatRoute =
     HOSTED_MODE &&
+    !exitedSharedChat &&
     (!!sharedPathToken || hasActiveSharedSession());
 
   // Handle shared OAuth callback: detect code + pending flag before normal rendering
@@ -225,6 +229,36 @@ export default function App() {
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
   } = useAppState();
+
+  // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
+  useEffect(() => {
+    if (isSharedChatRoute) return;
+    if (isLoadingRemoteWorkspaces) return;
+    if (isAuthLoading) return;
+
+    const pending = readPendingServerAdd();
+    if (!pending) return;
+    clearPendingServerAdd();
+
+    if (workspaceServers[pending.serverName] !== undefined) {
+      return; // Server already exists
+    }
+
+    handleConnect({
+      name: pending.serverName,
+      type: "http",
+      url: pending.serverUrl,
+      useOAuth: pending.useOAuth,
+      clientId: pending.clientId ?? undefined,
+      oauthScopes: pending.oauthScopes ?? undefined,
+    });
+  }, [
+    isSharedChatRoute,
+    isLoadingRemoteWorkspaces,
+    isAuthLoading,
+    workspaceServers,
+    handleConnect,
+  ]);
 
   // Create effective app state that uses the correct workspaces (Convex when authenticated)
   const effectiveAppState = useMemo(
@@ -610,7 +644,10 @@ export default function App() {
           }}
         >
           {isSharedChatRoute ? (
-            <SharedServerChatPage pathToken={sharedPathToken} />
+            <SharedServerChatPage
+              pathToken={sharedPathToken}
+              onExitSharedChat={() => setExitedSharedChat(true)}
+            />
           ) : (
             appContent
           )}
