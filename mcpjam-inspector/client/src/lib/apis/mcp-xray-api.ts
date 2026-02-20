@@ -1,5 +1,7 @@
 import type { UIMessage } from "ai";
 import { authFetch } from "@/lib/session-token";
+import { runByMode } from "@/lib/apis/mode-client";
+import { getHostedXRayPayload } from "@/lib/apis/web/xray-api";
 
 interface SerializedTool {
   name: string;
@@ -22,32 +24,39 @@ export interface XRayPayloadRequest {
 export async function getXRayPayload(
   request: XRayPayloadRequest,
 ): Promise<XRayPayloadResponse> {
-  const res = await authFetch("/api/mcp/xray-payload", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
+  return runByMode({
+    hosted: async () => {
+      return getHostedXRayPayload(request);
+    },
+    local: async () => {
+      const res = await authFetch("/api/mcp/xray-payload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {}
+
+      if (!res.ok) {
+        const message =
+          body?.error || `Failed to get X-Ray payload (${res.status})`;
+        throw new Error(message);
+      }
+
+      if (
+        body === null ||
+        typeof body !== "object" ||
+        typeof body.system !== "string" ||
+        typeof body.tools !== "object" ||
+        !Array.isArray(body.messages)
+      ) {
+        throw new Error("Failed to parse X-Ray payload");
+      }
+
+      return body as XRayPayloadResponse;
+    },
   });
-
-  let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
-
-  if (!res.ok) {
-    const message =
-      body?.error || `Failed to get X-Ray payload (${res.status})`;
-    throw new Error(message);
-  }
-
-  if (
-    body === null ||
-    typeof body !== "object" ||
-    typeof body.system !== "string" ||
-    typeof body.tools !== "object" ||
-    !Array.isArray(body.messages)
-  ) {
-    throw new Error("Failed to parse X-Ray payload");
-  }
-
-  return body as XRayPayloadResponse;
 }

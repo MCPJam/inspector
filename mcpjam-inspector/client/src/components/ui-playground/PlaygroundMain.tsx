@@ -62,7 +62,6 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
-import { HOSTED_MODE } from "@/lib/config";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -554,8 +553,8 @@ export function PlaygroundMain({
     onChangeSkillResults: setSkillResults,
     fileAttachments,
     onChangeFileAttachments: setFileAttachments,
-    xrayMode: HOSTED_MODE ? false : xrayMode,
-    onXrayModeChange: HOSTED_MODE ? undefined : setXrayMode,
+    xrayMode,
+    onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
   };
