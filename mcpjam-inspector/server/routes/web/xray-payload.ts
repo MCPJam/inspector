@@ -11,7 +11,7 @@
 
 import { Hono } from "hono";
 import { z } from "zod";
-import { getSkillToolsAndPrompt } from "../../utils/skill-tools.js";
+import { buildXRayPayload } from "../../utils/xray-helpers.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
@@ -27,12 +27,6 @@ const xrayPayloadSchema = hostedChatSchema.extend({
   messages: z.array(z.unknown()).default([]),
   systemPrompt: z.string().optional(),
 });
-
-interface SerializedTool {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-}
 
 const xrayPayload = new Hono();
 
@@ -55,78 +49,12 @@ xrayPayload.post("/", async (c) => {
         body.oauthTokens,
       ),
       async (manager) => {
-        // Get MCP tools from selected servers
-        const mcpTools = await manager.getToolsForAiSdk(selectedServerIds);
-
-        // Get skill tools and system prompt section
-        // (returns empty in hosted mode since no local filesystem — that's expected)
-        const {
-          tools: skillTools,
-          systemPromptSection: skillsPromptSection,
-        } = await getSkillToolsAndPrompt();
-
-        // Merge MCP tools with skill tools (same as chat-v2.ts)
-        const allTools = { ...mcpTools, ...skillTools };
-
-        // Build enhanced system prompt (same as chat-v2.ts)
-        const enhancedSystemPrompt = systemPrompt
-          ? systemPrompt + skillsPromptSection
-          : skillsPromptSection;
-
-        // Serialize tools to JSON-compatible format
-        const serializedTools: Record<string, SerializedTool> = {};
-        for (const [name, tool] of Object.entries(allTools)) {
-          if (!tool) continue;
-
-          let serializedSchema: Record<string, unknown> | undefined;
-          // AI SDK tools use 'parameters' (Zod schema), MCP tools use 'inputSchema' (JSON Schema)
-          const schema =
-            (tool as any).parameters ?? (tool as any).inputSchema;
-
-          if (schema) {
-            if (
-              typeof schema === "object" &&
-              schema !== null &&
-              "jsonSchema" in (schema as Record<string, unknown>)
-            ) {
-              serializedSchema = (schema as any).jsonSchema as Record<
-                string,
-                unknown
-              >;
-            } else {
-              try {
-                serializedSchema = z.toJSONSchema(schema) as Record<
-                  string,
-                  unknown
-                >;
-              } catch {
-                serializedSchema = {
-                  type: "object",
-                  properties: {},
-                  additionalProperties: false,
-                };
-              }
-            }
-          }
-
-          serializedTools[name] = {
-            name,
-            description: (tool as any).description,
-            inputSchema:
-              serializedSchema ??
-              ({
-                type: "object",
-                properties: {},
-                additionalProperties: false,
-              } as any),
-          };
-        }
-
-        return {
-          system: enhancedSystemPrompt,
-          tools: serializedTools,
-          messages: messages ?? [],
-        };
+        return buildXRayPayload(
+          manager,
+          selectedServerIds,
+          messages ?? [],
+          systemPrompt,
+        );
       },
     );
   });

@@ -8,8 +8,9 @@ export async function getHostedXRayPayload(request: {
   systemPrompt?: string;
   selectedServers?: string[];
 }): Promise<XRayPayloadResponse> {
-  const { workspaceId, serverIds, oauthTokens } =
-    buildHostedServerBatchRequest(request.selectedServers ?? []);
+  const { workspaceId, serverIds, oauthTokens } = buildHostedServerBatchRequest(
+    request.selectedServers ?? [],
+  );
 
   return webPost("/api/web/xray-payload", {
     workspaceId,
