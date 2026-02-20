@@ -124,9 +124,9 @@ export function ShareServerDialog({
   );
 
   const handleCopyLink = async () => {
-    if (!settings?.link?.url) return;
+    if (!settings?.link?.path) return;
     try {
-      await navigator.clipboard.writeText(settings.link.url);
+      await navigator.clipboard.writeText(`${window.location.origin}${settings.link.path}`);
       toast.success("Share link copied");
     } catch {
       toast.error("Failed to copy link");
