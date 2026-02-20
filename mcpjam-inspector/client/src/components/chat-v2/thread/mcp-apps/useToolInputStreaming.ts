@@ -19,7 +19,6 @@ export const SIGNATURE_MAX_DEPTH = 4;
 export const SIGNATURE_MAX_ARRAY_ITEMS = 24;
 export const SIGNATURE_MAX_OBJECT_KEYS = 32;
 export const SIGNATURE_STRING_EDGE_LENGTH = 24;
-export const PARTIAL_HISTORY_MAX_ENTRIES = 200;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -257,8 +256,6 @@ export function useToolInputStreaming({
 
   const recordPartialEntry = useCallback(
     (input: Record<string, unknown>, isFinal?: boolean) => {
-      if (partialHistoryRef.current.length >= PARTIAL_HISTORY_MAX_ENTRIES)
-        return;
       const now = Date.now();
       if (recordingStartTimeRef.current === null) {
         recordingStartTimeRef.current = now;

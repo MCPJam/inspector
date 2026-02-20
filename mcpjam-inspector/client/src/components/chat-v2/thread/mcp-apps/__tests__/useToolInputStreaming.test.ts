@@ -5,7 +5,6 @@ import {
   useToolInputStreaming,
   PARTIAL_INPUT_THROTTLE_MS,
   STREAMING_REVEAL_FALLBACK_MS,
-  PARTIAL_HISTORY_MAX_ENTRIES,
   type ToolState,
 } from "../useToolInputStreaming";
 
@@ -543,7 +542,7 @@ describe("useToolInputStreaming", () => {
       expect(result.current.partialHistory).toEqual([]);
     });
 
-    it("history is capped at PARTIAL_HISTORY_MAX_ENTRIES", () => {
+    it("history keeps growing past 200 entries", () => {
       const props = createDefaultProps(bridge);
       props.toolState = "input-streaming";
 
@@ -552,7 +551,8 @@ describe("useToolInputStreaming", () => {
       );
 
       // Send many distinct partials
-      for (let i = 0; i < PARTIAL_HISTORY_MAX_ENTRIES + 50; i++) {
+      const partialCount = 250;
+      for (let i = 0; i < partialCount; i++) {
         act(() => {
           vi.advanceTimersByTime(PARTIAL_INPUT_THROTTLE_MS + 10);
         });
@@ -565,10 +565,8 @@ describe("useToolInputStreaming", () => {
       props.toolInput = { code: "final" };
       rerender();
 
-      // The final entry addition is also guarded, so total should be capped
-      expect(
-        result.current.partialHistory.length,
-      ).toBeLessThanOrEqual(PARTIAL_HISTORY_MAX_ENTRIES);
+      // Includes all unique partials plus the final full input entry.
+      expect(result.current.partialHistory.length).toBeGreaterThan(partialCount);
     });
   });
 
