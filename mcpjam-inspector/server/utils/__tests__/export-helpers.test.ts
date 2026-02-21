@@ -95,7 +95,7 @@ describe("exportServer", () => {
     expect(result.prompts).toEqual([]);
   });
 
-  it("strips extra fields from tool objects", async () => {
+  it("strips extra fields from exported objects", async () => {
     const manager = createMockManager({
       listTools: vi.fn().mockResolvedValue({
         tools: [
@@ -109,16 +109,48 @@ describe("exportServer", () => {
           },
         ],
       }),
+      listResources: vi.fn().mockResolvedValue({
+        resources: [
+          {
+            uri: "file:///x",
+            name: "x",
+            description: "X",
+            mimeType: "text/plain",
+            size: 1024,
+            _internal: true,
+          },
+        ],
+      }),
+      listPrompts: vi.fn().mockResolvedValue({
+        prompts: [
+          {
+            name: "p",
+            description: "P",
+            arguments: [],
+            _meta: { hidden: true },
+          },
+        ],
+      }),
     });
 
     const result = await exportServer(manager, "srv");
-    const tool = result.tools[0];
 
-    expect(Object.keys(tool)).toEqual([
+    expect(Object.keys(result.tools[0])).toEqual([
       "name",
       "description",
       "inputSchema",
       "outputSchema",
+    ]);
+    expect(Object.keys(result.resources[0])).toEqual([
+      "uri",
+      "name",
+      "description",
+      "mimeType",
+    ]);
+    expect(Object.keys(result.prompts[0])).toEqual([
+      "name",
+      "description",
+      "arguments",
     ]);
   });
 
