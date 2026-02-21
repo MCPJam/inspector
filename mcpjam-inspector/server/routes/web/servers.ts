@@ -31,10 +31,15 @@ servers.post("/check-oauth", async (c) =>
       workspaceServerSchema,
       await readJsonBody<unknown>(c),
     );
-    const auth = await authorizeServer(bearerToken, body.workspaceId, body.serverId, {
-      accessScope: body.accessScope,
-      shareToken: body.shareToken,
-    });
+    const auth = await authorizeServer(
+      bearerToken,
+      body.workspaceId,
+      body.serverId,
+      {
+        accessScope: body.accessScope,
+        shareToken: body.shareToken,
+      },
+    );
     return {
       useOAuth: auth.serverConfig.useOAuth ?? false,
       serverUrl: auth.serverConfig.url ?? null,

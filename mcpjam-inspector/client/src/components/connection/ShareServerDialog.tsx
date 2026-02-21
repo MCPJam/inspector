@@ -165,9 +165,7 @@ export function ShareServerDialog({
       setSettings(next);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to update share mode",
+        error instanceof Error ? error.message : "Failed to update share mode",
       );
     } finally {
       setIsMutating(false);

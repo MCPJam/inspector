@@ -634,7 +634,9 @@ export default function App() {
         />
         <HostedShellGate
           state={
-            isSharedChatRoute ? sharedHostedShellGateState : hostedShellGateState
+            isSharedChatRoute
+              ? sharedHostedShellGateState
+              : hostedShellGateState
           }
           onSignIn={() => {
             if (sharedPathToken) {

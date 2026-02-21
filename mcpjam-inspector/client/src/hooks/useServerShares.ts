@@ -58,8 +58,12 @@ export function useServerShareSettings({
 }
 
 export function useServerShareMutations() {
-  const ensureServerShare = useMutation("serverShares:ensureServerShare" as any);
-  const setServerShareMode = useMutation("serverShares:setServerShareMode" as any);
+  const ensureServerShare = useMutation(
+    "serverShares:ensureServerShare" as any,
+  );
+  const setServerShareMode = useMutation(
+    "serverShares:setServerShareMode" as any,
+  );
   const rotateServerShareLink = useMutation(
     "serverShares:rotateServerShareLink" as any,
   );

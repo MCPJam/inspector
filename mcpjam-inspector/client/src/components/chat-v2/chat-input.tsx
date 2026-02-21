@@ -546,9 +546,9 @@ export function ChatInput({
                   Object.keys(mcpToolsTokenCount).length > 0) ||
                 mcpToolsTokenCountLoading ? (
                   <ContextContent>
-                    {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
-                      <ContextContentHeader />
-                    )}
+                    {hasMessages &&
+                      tokenUsage &&
+                      tokenUsage.totalTokens > 0 && <ContextContentHeader />}
                     <ContextContentBody>
                       {hasMessages &&
                         tokenUsage &&

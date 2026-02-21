@@ -260,7 +260,8 @@ export async function withManager<T>(
   fn: (manager: MCPClientManager) => Promise<T>,
 ): Promise<T> {
   const result = await managerPromise;
-  const manager = "manager" in result ? result.manager : result as MCPClientManager;
+  const manager =
+    "manager" in result ? result.manager : (result as MCPClientManager);
   try {
     return await fn(manager);
   } finally {

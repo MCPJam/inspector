@@ -149,7 +149,13 @@ chatV2.post("/", async (c) => {
       });
     }
     const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message, routeError.details);
+    return webError(
+      c,
+      routeError.status,
+      routeError.code,
+      routeError.message,
+      routeError.details,
+    );
   }
 });
 

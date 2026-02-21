@@ -329,9 +329,7 @@ export function PartSwitch({
             uiType={uiType}
             onSaveView={allowSaveView ? handleSaveView : undefined}
             canSaveView={allowSaveView ? canSaveView : undefined}
-            saveDisabledReason={
-              allowSaveView ? saveDisabledReason : undefined
-            }
+            saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
             isSaving={isSaving}
             minimalMode={minimalMode}
             {...approvalProps}
@@ -410,9 +408,7 @@ export function PartSwitch({
             onExitPip={onExitPip}
             onSaveView={allowSaveView ? handleSaveView : undefined}
             canSaveView={allowSaveView ? canSaveView : undefined}
-            saveDisabledReason={
-              allowSaveView ? saveDisabledReason : undefined
-            }
+            saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
             isSaving={isSaving}
             minimalMode={minimalMode}
             {...approvalProps}
@@ -494,9 +490,7 @@ export function PartSwitch({
             appSupportedDisplayModes={appSupportedDisplayModes}
             onSaveView={allowSaveView ? handleSaveView : undefined}
             canSaveView={allowSaveView ? canSaveView : undefined}
-            saveDisabledReason={
-              allowSaveView ? saveDisabledReason : undefined
-            }
+            saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
             isSaving={isSaving}
             minimalMode={minimalMode}
             {...approvalProps}

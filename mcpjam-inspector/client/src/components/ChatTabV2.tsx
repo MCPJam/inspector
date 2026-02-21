@@ -422,10 +422,9 @@ export function ChatTabV2({
   const submitBlocked = baseSubmitBlocked;
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  let placeholder =
-    minimalMode
-      ? "Message…"
-      : 'Ask something… Use Slash "/" commands for Skills & MCP prompts';
+  let placeholder = minimalMode
+    ? "Message…"
+    : 'Ask something… Use Slash "/" commands for Skills & MCP prompts';
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -594,8 +593,7 @@ export function ChatTabV2({
     skillResults,
     onChangeSkillResults: setSkillResults,
     xrayMode: HOSTED_MODE || minimalMode ? false : xrayMode,
-    onXrayModeChange:
-      HOSTED_MODE || minimalMode ? undefined : setXrayMode,
+    onXrayModeChange: HOSTED_MODE || minimalMode ? undefined : setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
     minimalMode,
@@ -713,8 +711,9 @@ export function ChatTabV2({
             )}
 
             {/* Empty state: only shown when thread is empty and not in X-Ray mode */}
-            {(!minimalMode || !xrayMode) && isThreadEmpty && (
-              minimalMode ? (
+            {(!minimalMode || !xrayMode) &&
+              isThreadEmpty &&
+              (minimalMode ? (
                 <div className="flex-1 flex flex-col min-h-0">
                   {/* Spacer: centers loading/auth content, otherwise just pushes everything down */}
                   <div className="flex-1 flex flex-col items-center justify-center px-4">
@@ -807,8 +806,7 @@ export function ChatTabV2({
                     </div>
                   </div>
                 </div>
-              )
-            )}
+              ))}
 
             <ElicitationDialog
               elicitationRequest={elicitation}

@@ -414,7 +414,9 @@ export function ServersTab({
                     onReconnect={onReconnect}
                     onEdit={handleEditServer}
                     onRemove={onRemove}
-                    hostedServerId={sharedWorkspaceServersRecord[activeId!]?._id}
+                    hostedServerId={
+                      sharedWorkspaceServersRecord[activeId!]?._id
+                    }
                   />
                 </div>
               ) : null}

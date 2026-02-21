@@ -534,7 +534,8 @@ function useWidgetFetch(
         // This prevents live previews from reverting to stale cached HTML during view editing.
       } catch (err) {
         if (isCancelled) return;
-        const errMsg = err instanceof Error ? err.message : "Failed to prepare widget";
+        const errMsg =
+          err instanceof Error ? err.message : "Failed to prepare widget";
         // In shared/minimal mode, silently degrade on auth-denied widget errors
         if (!(minimalMode && /oauth|unauthorized|401/i.test(errMsg))) {
           console.error("Error storing widget data:", err);

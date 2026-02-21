@@ -19,7 +19,12 @@ export class WebRouteError extends Error {
   code: ErrorCode;
   details?: Record<string, unknown>;
 
-  constructor(status: number, code: ErrorCode, message: string, details?: Record<string, unknown>) {
+  constructor(
+    status: number,
+    code: ErrorCode,
+    message: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message);
     this.status = status;
     this.code = code;

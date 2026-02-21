@@ -1,6 +1,4 @@
-export type SharedServerShareMode =
-  | "any_signed_in_with_link"
-  | "invited_only";
+export type SharedServerShareMode = "any_signed_in_with_link" | "invited_only";
 
 export interface SharedServerBootstrapPayload {
   workspaceId: string;
@@ -83,10 +81,15 @@ export function readSharedServerSession(): SharedServerSession | null {
         serverName: payload.serverName,
         mode: payload.mode,
         viewerIsWorkspaceMember: payload.viewerIsWorkspaceMember,
-        useOAuth: typeof payload.useOAuth === "boolean" ? payload.useOAuth : false,
-        serverUrl: typeof payload.serverUrl === "string" ? payload.serverUrl : null,
-        clientId: typeof payload.clientId === "string" ? payload.clientId : null,
-        oauthScopes: Array.isArray(payload.oauthScopes) ? payload.oauthScopes : null,
+        useOAuth:
+          typeof payload.useOAuth === "boolean" ? payload.useOAuth : false,
+        serverUrl:
+          typeof payload.serverUrl === "string" ? payload.serverUrl : null,
+        clientId:
+          typeof payload.clientId === "string" ? payload.clientId : null,
+        oauthScopes: Array.isArray(payload.oauthScopes)
+          ? payload.oauthScopes
+          : null,
       },
     };
   } catch {

@@ -477,7 +477,9 @@ export function ToolPart({
           )}
           {showDebugControls && (
             <>
-              {showDisplayModeControls && <div className="h-4 w-px bg-border/40" />}
+              {showDisplayModeControls && (
+                <div className="h-4 w-px bg-border/40" />
+              )}
               <span
                 className="inline-flex items-center gap-0.5 border border-border/40 rounded-md p-0.5 bg-muted/30"
                 onClick={(e) => e.stopPropagation()}
@@ -599,8 +601,8 @@ export function ToolPart({
                     )}
                   </div>
                   <div className="text-[9px] text-muted-foreground/50 mt-2">
-                    Tip: Widget state persists across follow-up turns. Keep under
-                    4k tokens.
+                    Tip: Widget state persists across follow-up turns. Keep
+                    under 4k tokens.
                   </div>
                 </div>
               )}
@@ -655,7 +657,9 @@ export function ToolPart({
                             <JsonEditor
                               height="100%"
                               viewOnly
-                              value={widgetDebugInfo.modelContext.structuredContent}
+                              value={
+                                widgetDebugInfo.modelContext.structuredContent
+                              }
                               className="p-2 text-[11px]"
                               collapsible
                               defaultExpandDepth={2}

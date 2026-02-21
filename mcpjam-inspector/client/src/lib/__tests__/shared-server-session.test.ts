@@ -19,8 +19,12 @@ describe("shared-server-session", () => {
   });
 
   it("extracts token from /shared/<slug>/<token> paths", () => {
-    expect(extractSharedTokenFromPath("/shared/my-server/abc123")).toBe("abc123");
-    expect(extractSharedTokenFromPath("/shared/my%20server/abc%20123")).toBe("abc 123");
+    expect(extractSharedTokenFromPath("/shared/my-server/abc123")).toBe(
+      "abc123",
+    );
+    expect(extractSharedTokenFromPath("/shared/my%20server/abc%20123")).toBe(
+      "abc 123",
+    );
     expect(extractSharedTokenFromPath("/shared/onlyone")).toBeNull();
     expect(extractSharedTokenFromPath("/settings")).toBeNull();
   });

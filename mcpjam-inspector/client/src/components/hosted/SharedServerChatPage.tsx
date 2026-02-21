@@ -22,7 +22,9 @@ import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
 
 function extractConvexErrorMessage(raw: string): string {
   // Convex wraps errors as: "[CONVEX ...] Server Error Uncaught Error: <msg> at handler (...)"
-  const uncaughtMatch = raw.match(/Uncaught Error:\s*(.*?)\s*(?:\bat handler\b|$)/s);
+  const uncaughtMatch = raw.match(
+    /Uncaught Error:\s*(.*?)\s*(?:\bat handler\b|$)/s,
+  );
   if (uncaughtMatch) return uncaughtMatch[1].trim();
   return raw;
 }
@@ -36,7 +38,10 @@ const OAUTH_PREFLIGHT_TOKEN_RETRY_MS = 250;
 const OAUTH_PREFLIGHT_REQUEST_RETRY_MS = 1000;
 const OAUTH_PREFLIGHT_VALIDATE_TOKEN_ATTEMPTS = 8;
 
-export function SharedServerChatPage({ pathToken, onExitSharedChat }: SharedServerChatPageProps) {
+export function SharedServerChatPage({
+  pathToken,
+  onExitSharedChat,
+}: SharedServerChatPageProps) {
   const { getAccessToken } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const resolveShareForViewer = useMutation(
@@ -49,7 +54,9 @@ export function SharedServerChatPage({ pathToken, onExitSharedChat }: SharedServ
   const [isResolving, setIsResolving] = useState(!!pathToken);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [needsOAuth, setNeedsOAuth] = useState(false);
-  const [discoveredServerUrl, setDiscoveredServerUrl] = useState<string | null>(null);
+  const [discoveredServerUrl, setDiscoveredServerUrl] = useState<string | null>(
+    null,
+  );
   const [isCheckingOAuth, setIsCheckingOAuth] = useState(session !== null);
   const [oauthPreflightError, setOauthPreflightError] = useState<string | null>(
     null,
@@ -282,11 +289,14 @@ export function SharedServerChatPage({ pathToken, onExitSharedChat }: SharedServ
               body = "Unable to read validation error response body";
             }
 
-            console.error("[SharedServerChatPage] Stored OAuth token validation failed", {
-              status: validateRes.status,
-              statusText: validateRes.statusText,
-              body,
-            });
+            console.error(
+              "[SharedServerChatPage] Stored OAuth token validation failed",
+              {
+                status: validateRes.status,
+                statusText: validateRes.statusText,
+                body,
+              },
+            );
             setNeedsOAuth(true);
             return;
           }
@@ -603,7 +613,8 @@ export function SharedServerChatPage({ pathToken, onExitSharedChat }: SharedServ
       <>
         {oauthPreflightError ? (
           <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
-            OAuth preflight hit an issue. Runtime OAuth detection remains enabled.
+            OAuth preflight hit an issue. Runtime OAuth detection remains
+            enabled.
           </div>
         ) : null}
 
