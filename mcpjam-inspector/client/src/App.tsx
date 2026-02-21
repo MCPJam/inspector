@@ -110,25 +110,19 @@ export default function App() {
     let cancelled = false;
     setSharedOAuthHandling(true);
 
+    const cleanupOAuth = () => {
+      if (cancelled) return;
+      localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
+      const storedSession = readSharedServerSession();
+      const sharedHash = storedSession
+        ? slugify(storedSession.payload.serverName)
+        : "shared";
+      window.history.replaceState({}, "", `/#${sharedHash}`);
+    };
+
     handleOAuthCallback(code)
-      .then(() => {
-        if (cancelled) return;
-        localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
-        const storedSession = readSharedServerSession();
-        const sharedHash = storedSession
-          ? slugify(storedSession.payload.serverName)
-          : "shared";
-        window.history.replaceState({}, "", `/#${sharedHash}`);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
-        const storedSession = readSharedServerSession();
-        const sharedHash = storedSession
-          ? slugify(storedSession.payload.serverName)
-          : "shared";
-        window.history.replaceState({}, "", `/#${sharedHash}`);
-      })
+      .then(cleanupOAuth)
+      .catch(cleanupOAuth)
       .finally(() => {
         if (!cancelled) setSharedOAuthHandling(false);
       });
