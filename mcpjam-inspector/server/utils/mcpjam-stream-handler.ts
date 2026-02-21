@@ -337,6 +337,7 @@ async function processStream(
  */
 function emitToolResults(
   writer: StepContext["writer"],
+  mcpClientManager: MCPClientManager,
   newMessages: ModelMessage[],
 ) {
   for (const msg of newMessages) {
@@ -344,11 +345,48 @@ function emitToolResults(
       const toolMsg = msg as ToolModelMessage;
       for (const part of toolMsg.content) {
         if (part.type === "tool-result") {
+          const toolName =
+            typeof (part as any).toolName === "string"
+              ? ((part as any).toolName as string)
+              : undefined;
+          const serverId =
+            typeof (part as any).serverId === "string"
+              ? ((part as any).serverId as string)
+              : undefined;
+          const rawOutput = (part as any).result ?? part.output;
+
+          let outputForUi = rawOutput;
+          if (rawOutput && typeof rawOutput === "object") {
+            const rawOutputObj = rawOutput as Record<string, unknown>;
+            const existingMeta =
+              rawOutputObj._meta &&
+              typeof rawOutputObj._meta === "object" &&
+              rawOutputObj._meta !== null
+                ? (rawOutputObj._meta as Record<string, unknown>)
+                : {};
+            const toolMeta =
+              serverId && toolName
+                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
+                  {})
+                : {};
+
+            // Include descriptor metadata in streamed output so shared/minimal chat
+            // can render app widgets without a tools/list prefetch.
+            outputForUi = {
+              ...rawOutputObj,
+              _meta: {
+                ...toolMeta,
+                ...existingMeta,
+                ...(serverId ? { _serverId: serverId } : {}),
+              },
+            };
+          }
+
           writer.write({
             type: "tool-output-available",
             toolCallId: part.toolCallId,
             // Prefer full result (with _meta/structuredContent) for UI
-            output: (part as any).result ?? part.output,
+            output: outputForUi,
           });
         }
       }
@@ -412,6 +450,7 @@ async function handlePendingApprovals(
   writer: StepContext["writer"],
   messageHistory: ModelMessage[],
   tools: ToolSet,
+  mcpClientManager: MCPClientManager,
 ): Promise<boolean> {
   // Build approvalId → toolCallId map and toolCallId → toolName map from assistant messages
   const approvalIdToToolCallId = new Map<string, string>();
@@ -520,7 +559,7 @@ async function handlePendingApprovals(
     });
 
     const newMessages = messageHistory.slice(beforeExecLength);
-    emitToolResults(writer, newMessages);
+    emitToolResults(writer, mcpClientManager, newMessages);
     didHandle = true;
   }
 
@@ -625,7 +664,7 @@ async function processOneStep(
 
     // Emit results for newly executed tools
     const newMessages = messageHistory.slice(beforeExecLength);
-    emitToolResults(writer, newMessages);
+    emitToolResults(writer, mcpClientManager, newMessages);
 
     return { shouldContinue: true, didEmitFinish: false };
   }
@@ -676,6 +715,7 @@ export async function handleMCPJamFreeChatModel(
             writer,
             messageHistory,
             tools,
+            mcpClientManager,
           );
           if (handled) {
             // Approvals were processed — if there are still unresolved tool

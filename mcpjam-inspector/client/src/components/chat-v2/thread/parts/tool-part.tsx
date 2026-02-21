@@ -61,6 +61,7 @@ export function ToolPart({
   canSaveView,
   saveDisabledReason,
   isSaving,
+  minimalMode = false,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   uiType?: UIType | null;
@@ -85,6 +86,7 @@ export function ToolPart({
   saveDisabledReason?: string;
   /** Whether the view is currently being saved */
   isSaving?: boolean;
+  minimalMode?: boolean;
 }) {
   const posthog = usePostHog();
   const hasTrackedSkillLoad = useRef(false);
@@ -120,9 +122,10 @@ export function ToolPart({
     useState<ApprovalVisualState>("pending");
   const isDenied =
     approvalVisualState === "denied" || state === "output-denied";
+  const hideDiagnosticsUI = minimalMode;
   const hideAppControls = isDenied || needsApproval;
   const [userExpanded, setUserExpanded] = useState(false);
-  const isExpanded = needsApproval || userExpanded;
+  const isExpanded = needsApproval || (!hideDiagnosticsUI && userExpanded);
   const [activeDebugTab, setActiveDebugTab] = useState<
     "data" | "state" | "csp" | "context" | null
   >("data");
@@ -139,12 +142,13 @@ export function ToolPart({
     toolCallId ? s.widgets.get(toolCallId) : undefined,
   );
   const hasWidgetDebug = !!widgetDebugInfo;
+  const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
 
   const showDisplayModeControls =
     displayMode !== undefined &&
     onDisplayModeChange !== undefined &&
-    hasWidgetDebug &&
     !hideAppControls;
+  const showDebugControls = hasWidgetDebugUI && !hideAppControls;
 
   const displayModeOptions: {
     mode: DisplayMode;
@@ -416,6 +420,9 @@ export function ToolPart({
         type="button"
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
         onClick={() => {
+          if (hideDiagnosticsUI && !needsApproval) {
+            return;
+          }
           setUserExpanded((prev) => {
             const willExpand = !prev;
             if (willExpand && activeDebugTab === null) {
@@ -468,9 +475,9 @@ export function ToolPart({
               </div>
             </span>
           )}
-          {hasWidgetDebug && !hideAppControls && (
+          {showDebugControls && (
             <>
-              {showDisplayModeControls && hasWidgetDebug && (
+              {showDisplayModeControls && (
                 <div className="h-4 w-px bg-border/40" />
               )}
               <span
@@ -481,12 +488,15 @@ export function ToolPart({
               </span>
             </>
           )}
-          {onSaveView && uiType && uiType !== UIType.MCP_UI && (
-            <>
-              {hasWidgetDebug && <div className="h-4 w-px bg-border/40" />}
-              {renderSaveViewButton()}
-            </>
-          )}
+          {!hideDiagnosticsUI &&
+            onSaveView &&
+            uiType &&
+            uiType !== UIType.MCP_UI && (
+              <>
+                {hasWidgetDebugUI && <div className="h-4 w-px bg-border/40" />}
+                {renderSaveViewButton()}
+              </>
+            )}
           {toolState && StatusIcon && (
             <span
               className="inline-flex h-5 w-5 items-center justify-center"
@@ -496,7 +506,7 @@ export function ToolPart({
               <span className="sr-only">{toolState.label}</span>
             </span>
           )}
-          {!needsApproval && (
+          {!needsApproval && !hideDiagnosticsUI && (
             <ChevronDown
               className={`h-4 w-4 transition-transform duration-150 ${
                 isExpanded ? "rotate-180" : ""
@@ -508,126 +518,20 @@ export function ToolPart({
 
       {isExpanded && (
         <div className="border-t border-border/40 px-3 py-3">
-          {hasWidgetDebug && activeDebugTab === "data" && (
-            <div className="space-y-4">
-              {hasInput && (
-                <div className="space-y-1">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                    Input
-                  </div>
-                  <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditor
-                      height="100%"
-                      viewOnly
-                      value={inputData}
-                      className="p-2 text-[11px]"
-                      collapsible
-                      defaultExpandDepth={2}
-                    />
-                  </div>
-                </div>
-              )}
-              {hasOutput && (
-                <div className="space-y-1">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                    Result
-                  </div>
-                  <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditor
-                      height="100%"
-                      viewOnly
-                      value={outputData}
-                      className="p-2 text-[11px]"
-                      collapsible
-                      defaultExpandDepth={2}
-                    />
-                  </div>
-                </div>
-              )}
-              {hasError && (
-                <div className="space-y-1">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                    Error
-                  </div>
-                  <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
-                    {errorText}
-                  </div>
-                </div>
-              )}
-              {!hasInput && !hasOutput && !hasError && (
-                <div className="text-muted-foreground/70">
-                  No tool details available.
-                </div>
-              )}
-            </div>
-          )}
-          {hasWidgetDebug && activeDebugTab === "state" && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                  Widget State
-                </div>
-                <div className="text-[9px] text-muted-foreground/50">
-                  Updated:{" "}
-                  {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
-                </div>
-              </div>
-              <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                {widgetDebugInfo.widgetState ? (
-                  <JsonEditor
-                    height="100%"
-                    viewOnly
-                    value={widgetDebugInfo.widgetState}
-                    className="p-2 text-[11px]"
-                    collapsible
-                    defaultExpandDepth={2}
-                  />
-                ) : (
-                  <div className="p-2 text-[11px] text-muted-foreground">
-                    null (no state set)
-                  </div>
-                )}
-              </div>
-              <div className="text-[9px] text-muted-foreground/50 mt-2">
-                Tip: Widget state persists across follow-up turns. Keep under 4k
-                tokens.
-              </div>
-            </div>
-          )}
-          {hasWidgetDebug && activeDebugTab === "csp" && (
-            <CspDebugPanel
-              cspInfo={widgetDebugInfo.csp}
-              protocol={widgetDebugInfo.protocol}
-            />
-          )}
-          {hasWidgetDebug && activeDebugTab === "context" && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                  Model Context
-                </div>
-                {widgetDebugInfo.modelContext && (
-                  <div className="text-[9px] text-muted-foreground/50">
-                    Updated:{" "}
-                    {new Date(
-                      widgetDebugInfo.modelContext.updatedAt,
-                    ).toLocaleTimeString()}
-                  </div>
-                )}
-              </div>
-
-              {widgetDebugInfo.modelContext ? (
-                <div className="space-y-3">
-                  {widgetDebugInfo.modelContext.content && (
+          {!hideDiagnosticsUI && (
+            <>
+              {hasWidgetDebug && activeDebugTab === "data" && (
+                <div className="space-y-4">
+                  {hasInput && (
                     <div className="space-y-1">
-                      <div className="text-[10px] font-medium text-muted-foreground">
-                        Content (for model)
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                        Input
                       </div>
-                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
+                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                         <JsonEditor
                           height="100%"
                           viewOnly
-                          value={widgetDebugInfo.modelContext.content}
+                          value={inputData}
                           className="p-2 text-[11px]"
                           collapsible
                           defaultExpandDepth={2}
@@ -635,17 +539,16 @@ export function ToolPart({
                       </div>
                     </div>
                   )}
-
-                  {widgetDebugInfo.modelContext.structuredContent && (
+                  {hasOutput && (
                     <div className="space-y-1">
-                      <div className="text-[10px] font-medium text-muted-foreground">
-                        Structured Content
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                        Result
                       </div>
-                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
+                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
                         <JsonEditor
                           height="100%"
                           viewOnly
-                          value={widgetDebugInfo.modelContext.structuredContent}
+                          value={outputData}
                           className="p-2 text-[11px]"
                           collapsible
                           defaultExpandDepth={2}
@@ -653,75 +556,188 @@ export function ToolPart({
                       </div>
                     </div>
                   )}
-
+                  {hasError && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                        Error
+                      </div>
+                      <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                        {errorText}
+                      </div>
+                    </div>
+                  )}
+                  {!hasInput && !hasOutput && !hasError && (
+                    <div className="text-muted-foreground/70">
+                      No tool details available.
+                    </div>
+                  )}
+                </div>
+              )}
+              {hasWidgetDebug && activeDebugTab === "state" && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Widget State
+                    </div>
+                    <div className="text-[9px] text-muted-foreground/50">
+                      Updated:{" "}
+                      {new Date(widgetDebugInfo.updatedAt).toLocaleTimeString()}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
+                    {widgetDebugInfo.widgetState ? (
+                      <JsonEditor
+                        height="100%"
+                        viewOnly
+                        value={widgetDebugInfo.widgetState}
+                        className="p-2 text-[11px]"
+                        collapsible
+                        defaultExpandDepth={2}
+                      />
+                    ) : (
+                      <div className="p-2 text-[11px] text-muted-foreground">
+                        null (no state set)
+                      </div>
+                    )}
+                  </div>
                   <div className="text-[9px] text-muted-foreground/50 mt-2">
-                    This context will be included in future turns with the
-                    model. Each update overwrites the previous context from this
-                    widget.
-                  </div>
-                </div>
-              ) : (
-                <div className="text-muted-foreground/70 text-[11px]">
-                  No model context set by this widget.
-                </div>
-              )}
-            </div>
-          )}
-          {!hasWidgetDebug && (
-            <div className="space-y-4">
-              {hasInput && (
-                <div className="space-y-1">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                    Input
-                  </div>
-                  <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditor
-                      height="100%"
-                      viewOnly
-                      value={inputData}
-                      className="p-2 text-[11px]"
-                      collapsible
-                      defaultExpandDepth={2}
-                    />
+                    Tip: Widget state persists across follow-up turns. Keep
+                    under 4k tokens.
                   </div>
                 </div>
               )}
+              {hasWidgetDebug && activeDebugTab === "csp" && (
+                <CspDebugPanel
+                  cspInfo={widgetDebugInfo.csp}
+                  protocol={widgetDebugInfo.protocol}
+                />
+              )}
+              {hasWidgetDebug && activeDebugTab === "context" && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Model Context
+                    </div>
+                    {widgetDebugInfo.modelContext && (
+                      <div className="text-[9px] text-muted-foreground/50">
+                        Updated:{" "}
+                        {new Date(
+                          widgetDebugInfo.modelContext.updatedAt,
+                        ).toLocaleTimeString()}
+                      </div>
+                    )}
+                  </div>
 
-              {hasOutput && (
-                <div className="space-y-1">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                    Result
-                  </div>
-                  <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                    <JsonEditor
-                      height="100%"
-                      viewOnly
-                      value={outputData}
-                      className="p-2 text-[11px]"
-                      collapsible
-                      defaultExpandDepth={2}
-                    />
-                  </div>
-                </div>
-              )}
+                  {widgetDebugInfo.modelContext ? (
+                    <div className="space-y-3">
+                      {widgetDebugInfo.modelContext.content && (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-medium text-muted-foreground">
+                            Content (for model)
+                          </div>
+                          <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
+                            <JsonEditor
+                              height="100%"
+                              viewOnly
+                              value={widgetDebugInfo.modelContext.content}
+                              className="p-2 text-[11px]"
+                              collapsible
+                              defaultExpandDepth={2}
+                            />
+                          </div>
+                        </div>
+                      )}
 
-              {hasError && (
-                <div className="space-y-1">
-                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                    Error
-                  </div>
-                  <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
-                    {errorText}
-                  </div>
-                </div>
-              )}
+                      {widgetDebugInfo.modelContext.structuredContent && (
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-medium text-muted-foreground">
+                            Structured Content
+                          </div>
+                          <div className="rounded-md border border-border/30 bg-muted/20 max-h-[200px] overflow-auto">
+                            <JsonEditor
+                              height="100%"
+                              viewOnly
+                              value={
+                                widgetDebugInfo.modelContext.structuredContent
+                              }
+                              className="p-2 text-[11px]"
+                              collapsible
+                              defaultExpandDepth={2}
+                            />
+                          </div>
+                        </div>
+                      )}
 
-              {!hasInput && !hasOutput && !hasError && (
-                <div className="text-muted-foreground/70">
-                  No tool details available.
+                      <div className="text-[9px] text-muted-foreground/50 mt-2">
+                        This context will be included in future turns with the
+                        model. Each update overwrites the previous context from
+                        this widget.
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-muted-foreground/70 text-[11px]">
+                      No model context set by this widget.
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+              {!hasWidgetDebug && (
+                <div className="space-y-4">
+                  {hasInput && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                        Input
+                      </div>
+                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
+                        <JsonEditor
+                          height="100%"
+                          viewOnly
+                          value={inputData}
+                          className="p-2 text-[11px]"
+                          collapsible
+                          defaultExpandDepth={2}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {hasOutput && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                        Result
+                      </div>
+                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
+                        <JsonEditor
+                          height="100%"
+                          viewOnly
+                          value={outputData}
+                          className="p-2 text-[11px]"
+                          collapsible
+                          defaultExpandDepth={2}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {hasError && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                        Error
+                      </div>
+                      <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+                        {errorText}
+                      </div>
+                    </div>
+                  )}
+
+                  {!hasInput && !hasOutput && !hasError && (
+                    <div className="text-muted-foreground/70">
+                      No tool details available.
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
           {needsApproval && approvalVisualState === "pending" && (
             <div className="flex items-center gap-2 pt-2 border-t border-border/40 mt-3">

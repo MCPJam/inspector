@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { HOSTED_MODE } from "@/lib/config";
 import { setHostedApiContext } from "@/lib/apis/web/context";
 
@@ -7,6 +7,8 @@ interface UseHostedApiContextOptions {
   serverIdsByName: Record<string, string>;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
+  shareToken?: string;
+  enabled?: boolean;
 }
 
 export function useHostedApiContext({
@@ -14,10 +16,21 @@ export function useHostedApiContext({
   serverIdsByName,
   getAccessToken,
   oauthTokensByServerId,
+  shareToken,
+  enabled = true,
 }: UseHostedApiContextOptions): void {
-  useEffect(() => {
+  // useLayoutEffect so the global hosted context is set synchronously before
+  // any child useEffect hooks fire (e.g. fetchToolsMetadata in useChatSession).
+  // With useEffect, React's bottom-up ordering means child passive effects run
+  // between this effect's cleanup (which nulls the context) and its setup,
+  // causing "Hosted server not found" errors for shared-chat OAuth servers.
+  useLayoutEffect(() => {
     if (!HOSTED_MODE) {
       setHostedApiContext(null);
+      return;
+    }
+
+    if (!enabled) {
       return;
     }
 
@@ -26,10 +39,18 @@ export function useHostedApiContext({
       serverIdsByName,
       getAccessToken,
       oauthTokensByServerId,
+      shareToken,
     });
 
     return () => {
       setHostedApiContext(null);
     };
-  }, [workspaceId, serverIdsByName, getAccessToken, oauthTokensByServerId]);
+  }, [
+    enabled,
+    workspaceId,
+    serverIdsByName,
+    getAccessToken,
+    oauthTokensByServerId,
+    shareToken,
+  ]);
 }

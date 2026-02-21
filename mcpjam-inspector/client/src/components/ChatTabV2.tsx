@@ -47,6 +47,12 @@ interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
+  minimalMode?: boolean;
+  hostedWorkspaceIdOverride?: string;
+  hostedSelectedServerIdsOverride?: string[];
+  hostedOAuthTokensOverride?: Record<string, string>;
+  hostedShareToken?: string;
+  onOAuthRequired?: (serverUrl?: string) => void;
 }
 
 function ScrollToBottomButton() {
@@ -71,6 +77,12 @@ export function ChatTabV2({
   connectedOrConnectingServerConfigs,
   selectedServerNames,
   onHasMessagesChange,
+  minimalMode = false,
+  hostedWorkspaceIdOverride,
+  hostedSelectedServerIdsOverride,
+  hostedOAuthTokensOverride,
+  hostedShareToken,
+  onOAuthRequired,
 }: ChatTabProps) {
   const { signUp } = useAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -140,6 +152,12 @@ export function ChatTabV2({
       ),
     [selectedConnectedServerNames, serversByName, appState.servers],
   );
+  const effectiveHostedWorkspaceId =
+    hostedWorkspaceIdOverride ?? convexWorkspaceId;
+  const effectiveHostedSelectedServerIds =
+    hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
+  const effectiveHostedOAuthTokens =
+    hostedOAuthTokensOverride ?? hostedOAuthTokens;
 
   // Use shared chat session hook
   const {
@@ -173,9 +191,11 @@ export function ChatTabV2({
     addToolApprovalResponse,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
-    hostedWorkspaceId: convexWorkspaceId,
-    hostedSelectedServerIds,
-    hostedOAuthTokens,
+    hostedWorkspaceId: effectiveHostedWorkspaceId,
+    hostedSelectedServerIds: effectiveHostedSelectedServerIds,
+    hostedOAuthTokens: effectiveHostedOAuthTokens,
+    hostedShareToken,
+    minimalMode,
     onReset: () => {
       setInput("");
       setWidgetStateQueue([]);
@@ -402,8 +422,9 @@ export function ChatTabV2({
   const submitBlocked = baseSubmitBlocked;
   const inputDisabled = status !== "ready" || submitBlocked;
 
-  let placeholder =
-    'Ask something… Use Slash "/" commands for Skills & MCP prompts';
+  let placeholder = minimalMode
+    ? "Message…"
+    : 'Ask something… Use Slash "/" commands for Skills & MCP prompts';
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -414,6 +435,31 @@ export function ChatTabV2({
   const showDisabledCallout = isThreadEmpty && shouldShowUpsell;
 
   const errorMessage = formatErrorMessage(error);
+
+  // Detect OAuth-required errors and notify parent
+  useEffect(() => {
+    if (!onOAuthRequired || !error) return;
+    const msg = error instanceof Error ? error.message : String(error);
+
+    // Try to parse structured error with oauthRequired flag
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed?.details?.oauthRequired) {
+        onOAuthRequired(parsed.details.serverUrl);
+        return;
+      }
+    } catch {
+      // not JSON, check message patterns
+    }
+
+    // Match known OAuth error patterns from server
+    const isOAuthError =
+      msg.includes("requires OAuth authentication") ||
+      (msg.includes("Authentication failed") && msg.includes("invalid_token"));
+    if (isOAuthError) {
+      onOAuthRequired();
+    }
+  }, [error, onOAuthRequired]);
 
   const handleSignUp = () => {
     posthog.capture("sign_up_button_clicked", {
@@ -550,6 +596,7 @@ export function ChatTabV2({
     onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
+    minimalMode,
   };
 
   const showStarterPrompts =
@@ -562,7 +609,7 @@ export function ChatTabV2({
         className="flex-1 min-h-0 h-full"
       >
         <ResizablePanel
-          defaultSize={isJsonRpcPanelVisible ? 70 : 100}
+          defaultSize={minimalMode ? 100 : isJsonRpcPanelVisible ? 70 : 100}
           minSize={40}
           className="min-w-0"
         >
@@ -573,7 +620,7 @@ export function ChatTabV2({
             }}
           >
             {/* X-Ray mode: show raw JSON view of AI payload */}
-            {xrayMode && (
+            {!minimalMode && xrayMode && (
               <StickToBottom
                 className="relative flex flex-1 flex-col min-h-0"
                 resize="smooth"
@@ -629,6 +676,7 @@ export function ChatTabV2({
                       fullscreenChatPlaceholder={placeholder}
                       fullscreenChatDisabled={inputDisabled}
                       onToolApprovalResponse={addToolApprovalResponse}
+                      minimalMode={minimalMode}
                     />
                   </StickToBottom.Content>
                   <ScrollToBottomButton />
@@ -653,58 +701,112 @@ export function ChatTabV2({
                   <div className="max-w-4xl mx-auto p-4">
                     <ChatInput {...sharedChatInputProps} hasMessages />
                   </div>
+                  {minimalMode && (
+                    <p className="text-center text-xs text-muted-foreground/60 pb-3 -mt-2">
+                      AI can make mistakes. Please double-check responses.
+                    </p>
+                  )}
                 </div>
               </StickToBottom>
             )}
 
             {/* Empty state: only shown when thread is empty and not in X-Ray mode */}
-            {!xrayMode && isThreadEmpty && (
-              <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
-                <div className="w-full max-w-3xl space-y-6 py-8">
-                  {isAuthLoading ? (
-                    <div className="text-center space-y-4">
-                      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                      <p className="text-sm text-muted-foreground">
-                        Loading...
-                      </p>
-                    </div>
-                  ) : showDisabledCallout ? (
-                    <div className="space-y-4">
-                      <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
-                    </div>
-                  ) : null}
-
-                  <div className="space-y-4">
-                    {showStarterPrompts && (
-                      <div className="text-center">
-                        <p className="text-sm text-muted-foreground mb-3">
-                          Try one of these to get started
+            {(!minimalMode || !xrayMode) &&
+              isThreadEmpty &&
+              (minimalMode ? (
+                <div className="flex-1 flex flex-col min-h-0">
+                  {/* Spacer: centers loading/auth content, otherwise just pushes everything down */}
+                  <div className="flex-1 flex flex-col items-center justify-center px-4">
+                    {isAuthLoading ? (
+                      <div className="text-center space-y-4">
+                        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                        <p className="text-sm text-muted-foreground">
+                          Loading...
                         </p>
-                        <div className="flex flex-wrap justify-center gap-2">
-                          {STARTER_PROMPTS.map((prompt) => (
-                            <button
-                              key={prompt.text}
-                              type="button"
-                              onClick={() => handleStarterPrompt(prompt.text)}
-                              className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
-                            >
-                              {prompt.label}
-                            </button>
-                          ))}
-                        </div>
+                      </div>
+                    ) : showDisabledCallout ? (
+                      <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                    ) : null}
+                  </div>
+
+                  {/* Starter chips just above the input */}
+                  {showStarterPrompts && (
+                    <div className="flex flex-wrap justify-center gap-2 px-4 pb-4">
+                      {STARTER_PROMPTS.map((prompt) => (
+                        <button
+                          key={prompt.text}
+                          type="button"
+                          onClick={() => handleStarterPrompt(prompt.text)}
+                          className="rounded-full border border-border/40 bg-transparent px-3 py-1.5 text-xs text-muted-foreground transition hover:border-foreground/40 hover:bg-accent cursor-pointer font-light"
+                        >
+                          {prompt.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Input bar pinned to bottom */}
+                  <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                    {!isAuthLoading && (
+                      <div className="max-w-4xl mx-auto p-4">
+                        <ChatInput
+                          {...sharedChatInputProps}
+                          hasMessages={false}
+                        />
                       </div>
                     )}
-
-                    {!isAuthLoading && (
-                      <ChatInput
-                        {...sharedChatInputProps}
-                        hasMessages={false}
-                      />
-                    )}
+                    <p className="text-center text-xs text-muted-foreground/60 pb-3 -mt-2">
+                      AI can make mistakes. Please double-check responses.
+                    </p>
                   </div>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="flex-1 flex items-center justify-center overflow-y-auto px-4">
+                  <div className="w-full max-w-3xl space-y-6 py-8">
+                    {isAuthLoading ? (
+                      <div className="text-center space-y-4">
+                        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                        <p className="text-sm text-muted-foreground">
+                          Loading...
+                        </p>
+                      </div>
+                    ) : showDisabledCallout ? (
+                      <div className="space-y-4">
+                        <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                      </div>
+                    ) : null}
+
+                    <div className="space-y-4">
+                      {showStarterPrompts && (
+                        <div className="text-center">
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Try one of these to get started
+                          </p>
+                          <div className="flex flex-wrap justify-center gap-2">
+                            {STARTER_PROMPTS.map((prompt) => (
+                              <button
+                                key={prompt.text}
+                                type="button"
+                                onClick={() => handleStarterPrompt(prompt.text)}
+                                className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
+                              >
+                                {prompt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {!isAuthLoading && (
+                        <ChatInput
+                          {...sharedChatInputProps}
+                          hasMessages={false}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
 
             <ElicitationDialog
               elicitationRequest={elicitation}
@@ -714,7 +816,7 @@ export function ChatTabV2({
           </div>
         </ResizablePanel>
 
-        {isJsonRpcPanelVisible ? (
+        {!minimalMode && isJsonRpcPanelVisible ? (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel
@@ -728,7 +830,7 @@ export function ChatTabV2({
               </div>
             </ResizablePanel>
           </>
-        ) : (
+        ) : minimalMode ? null : (
           <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
         )}
       </ResizablePanelGroup>

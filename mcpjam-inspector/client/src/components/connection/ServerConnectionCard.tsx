@@ -23,6 +23,7 @@ import {
   Cable,
   Trash2,
   AlertCircle,
+  Share2,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -51,6 +52,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
+import { ShareServerDialog } from "./ShareServerDialog";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -74,6 +76,7 @@ interface ServerConnectionCardProps {
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
+  hostedServerId?: string;
 }
 
 export function ServerConnectionCard({
@@ -83,6 +86,7 @@ export function ServerConnectionCard({
   onEdit,
   onRemove,
   serverTunnelUrl,
+  hostedServerId,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
@@ -100,6 +104,7 @@ export function ServerConnectionCard({
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   const { label: connectionStatusLabel, indicatorColor } =
     getConnectionStatusMeta(server.connectionStatus);
@@ -143,6 +148,9 @@ export function ServerConnectionCard({
     isReconnecting ||
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
+  const isStdioServer = "command" in server.config;
+  const canShareServer =
+    HOSTED_MODE && !!hostedServerId && isAuthenticated && !isStdioServer;
 
   // Load tools when server is connected
   useEffect(() => {
@@ -463,6 +471,15 @@ export function ServerConnectionCard({
                       )}
                       {isExporting ? "Exporting..." : "Export server info"}
                     </DropdownMenuItem>
+                    {canShareServer && (
+                      <DropdownMenuItem
+                        onClick={() => setIsShareDialogOpen(true)}
+                        className="text-xs cursor-pointer"
+                      >
+                        <Share2 className="h-3 w-3 mr-2" />
+                        Share
+                      </DropdownMenuItem>
+                    )}
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
@@ -627,6 +644,14 @@ export function ServerConnectionCard({
         onConfirm={handleConfirmCreateTunnel}
         isCreating={isCreatingTunnel}
       />
+      {canShareServer && hostedServerId && (
+        <ShareServerDialog
+          isOpen={isShareDialogOpen}
+          onClose={() => setIsShareDialogOpen(false)}
+          serverId={hostedServerId}
+          serverName={server.name}
+        />
+      )}
     </>
   );
 }

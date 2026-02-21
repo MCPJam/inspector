@@ -574,4 +574,67 @@ describe("MCPAppsRenderer tool input streaming", () => {
       error: "Invalid fileId",
     });
   });
+
+  it("hides MCP app resource URI metadata row in minimal mode", async () => {
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        minimalMode={true}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    expect(screen.queryByText("MCP App:")).toBeNull();
+    expect(screen.queryByText(baseProps.resourceUri)).toBeNull();
+  });
+
+  it("suppresses bridge diagnostic logs in minimal mode", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        minimalMode={true}
+        cachedWidgetHtmlUrl="blob:cached"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+    act(() => {
+      mockBridge.onloggingmessage?.({
+        level: "info",
+        data: { message: "hello" },
+        logger: "widget",
+      });
+      mockBridge.onloggingmessage?.({
+        level: "warning",
+        data: { message: "warn" },
+        logger: "widget",
+      });
+      mockBridge.onloggingmessage?.({
+        level: "error",
+        data: { message: "err" },
+        logger: "widget",
+      });
+    });
+
+    const hasMcpAppsLog = (calls: unknown[][]) =>
+      calls.some((call) => String(call[0] ?? "").includes("[MCP Apps]"));
+
+    expect(hasMcpAppsLog(infoSpy.mock.calls)).toBe(false);
+    expect(hasMcpAppsLog(warnSpy.mock.calls)).toBe(false);
+    expect(hasMcpAppsLog(errorSpy.mock.calls)).toBe(false);
+
+    infoSpy.mockRestore();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
 });

@@ -29,7 +29,7 @@ export function HostedShellGate({
   onSignIn,
   children,
 }: HostedShellGateProps) {
-  const isBlocked = state !== "ready";
+  const isBlocked = state !== "ready" && state !== "auth-loading";
 
   return (
     <div className="relative h-full min-h-0">
