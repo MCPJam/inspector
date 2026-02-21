@@ -936,13 +936,13 @@ export function ChatGPTAppRenderer({
     }
   }, [widgetUrl, maxHeight]);
 
-  // When returning to inline, ask the widget to re-measure so backend-driven
-  // resize logic publishes the fresh height.
+  // When returning to inline or when the device type changes, ask the widget
+  // to re-measure so backend-driven resize logic publishes fresh dimensions.
   useEffect(() => {
     if (!widgetUrl || effectiveDisplayMode !== "inline" || !isReady) return;
     setContentWidth(undefined);
     sandboxRef.current?.postMessage({ type: "openai:requestResize" });
-  }, [widgetUrl, effectiveDisplayMode, isReady]);
+  }, [widgetUrl, effectiveDisplayMode, isReady, deviceType]);
 
   // When returning from pip/fullscreen to inline, push the latest measured
   // height back into the iframe so it reflects current content.
