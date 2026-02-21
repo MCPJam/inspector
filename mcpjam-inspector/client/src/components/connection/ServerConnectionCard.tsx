@@ -527,7 +527,14 @@ export function ServerConnectionCard({
             {canShareServer && (
               <div onClick={(e) => e.stopPropagation()}>
                 <button
-                  onClick={() => setIsShareDialogOpen(true)}
+                  onClick={() => {
+                    posthog.capture("share_server_clicked", {
+                      location: "server_connection_card",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                    });
+                    setIsShareDialogOpen(true);
+                  }}
                   className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
                 >
                   <Share2 className="h-3 w-3" />
