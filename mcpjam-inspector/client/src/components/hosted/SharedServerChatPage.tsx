@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { Loader2, Link2Off, Lock } from "lucide-react";
+import { Loader2, Link2Off, Lock, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
@@ -19,6 +19,13 @@ import {
   writePendingServerAdd,
 } from "@/lib/shared-server-session";
 import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
+
+function extractConvexErrorMessage(raw: string): string {
+  // Convex wraps errors as: "[CONVEX ...] Server Error Uncaught Error: <msg> at handler (...)"
+  const uncaughtMatch = raw.match(/Uncaught Error:\s*(.*?)\s*(?:\bat handler\b|$)/s);
+  if (uncaughtMatch) return uncaughtMatch[1].trim();
+  return raw;
+}
 
 interface SharedServerChatPageProps {
   pathToken?: string | null;
@@ -130,7 +137,7 @@ export function SharedServerChatPage({ pathToken, onExitSharedChat }: SharedServ
           clearSharedServerSession();
           setErrorMessage(
             error instanceof Error
-              ? error.message
+              ? extractConvexErrorMessage(error.message)
               : "Invalid or expired share link",
           );
         } finally {
@@ -546,14 +553,19 @@ export function SharedServerChatPage({ pathToken, onExitSharedChat }: SharedServ
     }
 
     if (!session || !selectedServerName) {
+      const isAccessDenied = errorMessage?.includes("don't have access");
       return (
         <div className="flex flex-1 items-center justify-center px-4">
           <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
             <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-              <Link2Off className="h-5 w-5 text-muted-foreground" />
+              {isAccessDenied ? (
+                <ShieldX className="h-5 w-5 text-muted-foreground" />
+              ) : (
+                <Link2Off className="h-5 w-5 text-muted-foreground" />
+              )}
             </div>
             <h2 className="text-base font-semibold text-foreground">
-              Shared Link Unavailable
+              {isAccessDenied ? "Access Denied" : "Shared Link Unavailable"}
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
               {errorMessage || "This shared link is invalid or expired."}
