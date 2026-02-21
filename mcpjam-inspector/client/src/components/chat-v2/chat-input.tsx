@@ -89,6 +89,8 @@ interface ChatInputProps {
   /** Tool approval toggle */
   requireToolApproval?: boolean;
   onRequireToolApprovalChange?: (enabled: boolean) => void;
+  /** Shared chat-only mode */
+  minimalMode?: boolean;
 }
 
 export function ChatInput({
@@ -127,6 +129,7 @@ export function ChatInput({
   onXrayModeChange,
   requireToolApproval = false,
   onRequireToolApprovalChange,
+  minimalMode = false,
 }: ChatInputProps) {
   const posthog = usePostHog();
   const formRef = useRef<HTMLFormElement>(null);
@@ -339,6 +342,7 @@ export function ChatInput({
           setActionTrigger={setMcpPromptPopoverKeyTrigger}
           value={value}
           caretIndex={caretIndex}
+          minimalMode={minimalMode}
         />
 
         {/* Hidden file input */}
@@ -391,7 +395,7 @@ export function ChatInput({
 
         <div className="@container/toolbar flex items-center justify-between gap-2 px-2 min-w-0">
           <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
-            {onChangeFileAttachments && (
+            {!minimalMode && onChangeFileAttachments && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -408,27 +412,31 @@ export function ChatInput({
                 <TooltipContent>Attach files</TooltipContent>
               </Tooltip>
             )}
-            <ModelSelector
-              currentModel={currentModel}
-              availableModels={availableModels}
-              onModelChange={onModelChange}
-              isLoading={isLoading}
-              hasMessages={hasMessages}
-            />
-            <SystemPromptSelector
-              systemPrompt={
-                systemPrompt ||
-                "You are a helpful assistant with access to MCP tools."
-              }
-              onSystemPromptChange={onSystemPromptChange}
-              temperature={temperature}
-              onTemperatureChange={onTemperatureChange}
-              isLoading={isLoading}
-              hasMessages={hasMessages}
-              onResetChat={onResetChat}
-              currentModel={currentModel}
-            />
-            {onRequireToolApprovalChange && (
+            {!minimalMode && (
+              <>
+                <ModelSelector
+                  currentModel={currentModel}
+                  availableModels={availableModels}
+                  onModelChange={onModelChange}
+                  isLoading={isLoading}
+                  hasMessages={hasMessages}
+                />
+                <SystemPromptSelector
+                  systemPrompt={
+                    systemPrompt ||
+                    "You are a helpful assistant with access to MCP tools."
+                  }
+                  onSystemPromptChange={onSystemPromptChange}
+                  temperature={temperature}
+                  onTemperatureChange={onTemperatureChange}
+                  isLoading={isLoading}
+                  hasMessages={hasMessages}
+                  onResetChat={onResetChat}
+                  currentModel={currentModel}
+                />
+              </>
+            )}
+            {!minimalMode && onRequireToolApprovalChange && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -463,7 +471,7 @@ export function ChatInput({
                 </TooltipContent>
               </Tooltip>
             )}
-            {onXrayModeChange && (
+            {!minimalMode && onXrayModeChange && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -497,64 +505,66 @@ export function ChatInput({
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            <Context
-              usedTokens={tokenUsage?.totalTokens ?? 0}
-              usage={
-                tokenUsage && tokenUsage.totalTokens > 0
-                  ? {
-                      inputTokens: tokenUsage.inputTokens,
-                      outputTokens: tokenUsage.outputTokens,
-                      totalTokens: tokenUsage.totalTokens,
-                      inputTokenDetails: {
-                        noCacheTokens: undefined,
-                        cacheReadTokens: undefined,
-                        cacheWriteTokens: undefined,
-                      },
-                      outputTokenDetails: {
-                        textTokens: undefined,
-                        reasoningTokens: undefined,
-                      },
-                    }
-                  : undefined
-              }
-              modelId={`${currentModel.id}`}
-              selectedServers={selectedServers}
-              mcpToolsTokenCount={mcpToolsTokenCount}
-              mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
-              connectedOrConnectingServerConfigs={
-                connectedOrConnectingServerConfigs
-              }
-              systemPromptTokenCount={systemPromptTokenCount}
-              systemPromptTokenCountLoading={systemPromptTokenCountLoading}
-              hasMessages={hasMessages}
-            >
-              <ContextTrigger />
-              {/* Only render popover content when there's something to show */}
-              {(hasMessages && tokenUsage && tokenUsage.totalTokens > 0) ||
-              (systemPromptTokenCount && systemPromptTokenCount > 0) ||
-              systemPromptTokenCountLoading ||
-              (mcpToolsTokenCount &&
-                Object.keys(mcpToolsTokenCount).length > 0) ||
-              mcpToolsTokenCountLoading ? (
-                <ContextContent>
-                  {hasMessages && tokenUsage && tokenUsage.totalTokens > 0 && (
-                    <ContextContentHeader />
-                  )}
-                  <ContextContentBody>
+            {!minimalMode && (
+              <Context
+                usedTokens={tokenUsage?.totalTokens ?? 0}
+                usage={
+                  tokenUsage && tokenUsage.totalTokens > 0
+                    ? {
+                        inputTokens: tokenUsage.inputTokens,
+                        outputTokens: tokenUsage.outputTokens,
+                        totalTokens: tokenUsage.totalTokens,
+                        inputTokenDetails: {
+                          noCacheTokens: undefined,
+                          cacheReadTokens: undefined,
+                          cacheWriteTokens: undefined,
+                        },
+                        outputTokenDetails: {
+                          textTokens: undefined,
+                          reasoningTokens: undefined,
+                        },
+                      }
+                    : undefined
+                }
+                modelId={`${currentModel.id}`}
+                selectedServers={selectedServers}
+                mcpToolsTokenCount={mcpToolsTokenCount}
+                mcpToolsTokenCountLoading={mcpToolsTokenCountLoading}
+                connectedOrConnectingServerConfigs={
+                  connectedOrConnectingServerConfigs
+                }
+                systemPromptTokenCount={systemPromptTokenCount}
+                systemPromptTokenCountLoading={systemPromptTokenCountLoading}
+                hasMessages={hasMessages}
+              >
+                <ContextTrigger />
+                {/* Only render popover content when there's something to show */}
+                {(hasMessages && tokenUsage && tokenUsage.totalTokens > 0) ||
+                (systemPromptTokenCount && systemPromptTokenCount > 0) ||
+                systemPromptTokenCountLoading ||
+                (mcpToolsTokenCount &&
+                  Object.keys(mcpToolsTokenCount).length > 0) ||
+                mcpToolsTokenCountLoading ? (
+                  <ContextContent>
                     {hasMessages &&
                       tokenUsage &&
-                      tokenUsage.totalTokens > 0 && (
-                        <>
-                          <ContextInputUsage />
-                          <ContextOutputUsage />
-                        </>
-                      )}
-                    <ContextSystemPromptUsage />
-                    <ContextMCPServerUsage />
-                  </ContextContentBody>
-                </ContextContent>
-              ) : null}
-            </Context>
+                      tokenUsage.totalTokens > 0 && <ContextContentHeader />}
+                    <ContextContentBody>
+                      {hasMessages &&
+                        tokenUsage &&
+                        tokenUsage.totalTokens > 0 && (
+                          <>
+                            <ContextInputUsage />
+                            <ContextOutputUsage />
+                          </>
+                        )}
+                      <ContextSystemPromptUsage />
+                      <ContextMCPServerUsage />
+                    </ContextContentBody>
+                  </ContextContent>
+                ) : null}
+              </Context>
+            )}
             {isLoading ? (
               <Tooltip>
                 <TooltipTrigger asChild>

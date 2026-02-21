@@ -59,6 +59,10 @@ export interface UseChatSessionOptions {
   hostedSelectedServerIds?: string[];
   /** OAuth tokens for hosted servers keyed by server ID */
   hostedOAuthTokens?: Record<string, string>;
+  /** Optional server-share token for hosted shared chat sessions */
+  hostedShareToken?: string;
+  /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
+  minimalMode?: boolean;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
   initialSystemPrompt?: string;
   /** Initial temperature (defaults to 0.7) */
@@ -139,11 +143,20 @@ export interface UseChatSessionReturn {
   inputDisabled: boolean;
 }
 
+function isAuthDeniedError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const withStatus = error as { status?: unknown; message?: unknown };
+  if (withStatus.status === 401 || withStatus.status === 403) return true;
+  if (typeof withStatus.message !== "string") return false;
+  return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
+}
+
 export function useChatSession({
   selectedServers,
   hostedWorkspaceId,
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
+  hostedShareToken,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
   onReset,
@@ -273,6 +286,8 @@ export function useChatSession({
           ? {
               workspaceId: hostedWorkspaceId,
               selectedServerIds: hostedSelectedServerIds,
+              accessScope: "chat_v2" as const,
+              ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
               ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
                 ? { oauthTokens: hostedOAuthTokens }
                 : {}),
@@ -298,6 +313,7 @@ export function useChatSession({
     hostedWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
+    hostedShareToken,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -379,6 +395,12 @@ export function useChatSession({
 
   // Ollama model detection
   useEffect(() => {
+    if (HOSTED_MODE) {
+      setIsOllamaRunning(false);
+      setOllamaModels([]);
+      return;
+    }
+
     const checkOllama = async () => {
       const { isRunning, availableModels } =
         await detectOllamaModels(getOllamaBaseUrl());
@@ -439,7 +461,12 @@ export function useChatSession({
             : null,
         );
       } catch (error) {
-        console.warn("[useChatSession] Failed to fetch tools metadata:", error);
+        if (!(hostedShareToken && isAuthDeniedError(error))) {
+          console.warn(
+            "[useChatSession] Failed to fetch tools metadata:",
+            error,
+          );
+        }
         setToolsMetadata({});
         setToolServerMap({});
         setMcpToolsTokenCount(null);
@@ -449,7 +476,7 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel]);
+  }, [selectedServers, selectedModel, hostedShareToken]);
 
   // System prompt token count
   useEffect(() => {
@@ -468,10 +495,12 @@ export function useChatSession({
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        console.warn(
-          "[useChatSession] Failed to count system prompt tokens:",
-          error,
-        );
+        if (!(hostedShareToken && isAuthDeniedError(error))) {
+          console.warn(
+            "[useChatSession] Failed to count system prompt tokens:",
+            error,
+          );
+        }
         setSystemPromptTokenCount(null);
       } finally {
         setSystemPromptTokenCountLoading(false);
@@ -479,7 +508,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel]);
+  }, [systemPrompt, selectedModel, hostedShareToken]);
 
   // Reset chat when selected servers change
   const previousSelectedServersRef = useRef<string[]>(selectedServers);

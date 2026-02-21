@@ -94,6 +94,7 @@ describe("ToolPart display mode controls", () => {
 
   const renderWithDisplayModes = (
     appSupportedDisplayModes?: ("inline" | "pip" | "fullscreen")[],
+    options?: { minimalMode?: boolean; onSaveView?: () => void },
   ) =>
     render(
       <ToolPart
@@ -102,6 +103,8 @@ describe("ToolPart display mode controls", () => {
         displayMode="inline"
         onDisplayModeChange={onDisplayModeChange}
         appSupportedDisplayModes={appSupportedDisplayModes}
+        minimalMode={options?.minimalMode}
+        onSaveView={options?.onSaveView}
       />,
     );
 
@@ -180,5 +183,27 @@ describe("ToolPart display mode controls", () => {
     const labels = disabledButtons.map((b) => b.getAttribute("aria-label"));
     expect(labels).toContain("PiP");
     expect(labels).toContain("Fullscreen");
+  });
+
+  it("renders display mode controls in minimal mode", () => {
+    renderWithDisplayModes(["inline", "pip", "fullscreen"], {
+      minimalMode: true,
+    });
+
+    expect(screen.getByLabelText("Inline")).toBeInTheDocument();
+    expect(screen.getByLabelText("PiP")).toBeInTheDocument();
+    expect(screen.getByLabelText("Fullscreen")).toBeInTheDocument();
+  });
+
+  it("hides debug tabs and save view in minimal mode", () => {
+    renderWithDisplayModes(["inline", "pip", "fullscreen"], {
+      minimalMode: true,
+      onSaveView: vi.fn(),
+    });
+
+    expect(screen.queryByLabelText("Data")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Widget State")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("CSP")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Save as View")).not.toBeInTheDocument();
   });
 });
