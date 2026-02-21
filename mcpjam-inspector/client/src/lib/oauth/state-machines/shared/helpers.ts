@@ -11,6 +11,7 @@ import type {
   OAuthFlowStep,
 } from "../types";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
@@ -64,7 +65,11 @@ export async function proxyFetch(
     headers: mergedHeaders,
   };
 
-  const response = await authFetch("/api/mcp/oauth/debug/proxy", {
+  const debugProxyPath = HOSTED_MODE
+    ? "/api/web/oauth/debug/proxy"
+    : "/api/mcp/oauth/debug/proxy";
+
+  const response = await authFetch(debugProxyPath, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

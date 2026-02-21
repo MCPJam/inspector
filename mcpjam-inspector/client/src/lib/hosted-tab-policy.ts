@@ -13,6 +13,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "prompts",
   "support",
   "settings",
+  "oauth-flow",
 ] as const;
 
 export const HOSTED_HASH_ALLOWED_TABS = [
@@ -24,7 +25,6 @@ export const HOSTED_HASH_ALLOWED_TABS = [
 export const HOSTED_HASH_BLOCKED_TABS = [
   "evals",
   "skills",
-  "oauth-flow",
   "tasks",
   "tracing",
   "auth",
