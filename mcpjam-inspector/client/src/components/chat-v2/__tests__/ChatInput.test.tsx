@@ -399,13 +399,14 @@ describe("ChatInput", () => {
   });
 
   describe("minimal mode", () => {
-    it("keeps prompts, files, system prompt, and tool approval controls available", () => {
+    it("hides file attachments, system prompt, model selector, and tool approval in minimal mode", () => {
       render(<ChatInput {...defaultProps} minimalMode={true} />);
 
       expect(screen.getByTestId("prompts-popover")).toBeInTheDocument();
-      expect(screen.getByTestId("system-prompt-selector")).toBeInTheDocument();
-      expect(screen.getByText("Tool Approval")).toBeInTheDocument();
-      expect(document.querySelector('input[type="file"]')).not.toBeNull();
+      expect(
+        screen.queryByTestId("system-prompt-selector"),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("Tool Approval")).not.toBeInTheDocument();
     });
 
     it("hides context usage UI in minimal mode", () => {
