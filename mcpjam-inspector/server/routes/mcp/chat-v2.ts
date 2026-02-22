@@ -13,7 +13,6 @@ import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
-import { APICallError } from "@ai-sdk/provider";
 
 const PROVIDER_DISPLAY_NAMES: Record<ModelProvider, string> = {
   anthropic: "Anthropic",
@@ -37,29 +36,34 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
     return String(error);
   }
 
+  // Duck-type statusCode/responseBody — APICallError.isInstance() can fail
+  // when multiple copies of @ai-sdk/provider are bundled (symbol mismatch).
+  const statusCode = (error as any).statusCode as number | undefined;
+  const responseBody = (error as any).responseBody as string | undefined;
+
   // Detect auth/permission errors from AI provider APIs
-  if (APICallError.isInstance(error)) {
-    const status = error.statusCode;
+  if (
+    typeof statusCode === "number" &&
+    (statusCode === 401 || statusCode === 403)
+  ) {
     const providerName =
       (provider && PROVIDER_DISPLAY_NAMES[provider]) || "your AI provider";
 
-    if (status === 401 || status === 403) {
-      return JSON.stringify({
-        code: "auth_error",
-        message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
-        statusCode: status,
-      });
-    }
+    return JSON.stringify({
+      code: "auth_error",
+      message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
+      statusCode,
+    });
   }
 
-  // For non-auth errors, keep existing behavior
-  const responseBody = (error as any).responseBody;
+  // For non-auth API errors, include the response body as details
   if (responseBody && typeof responseBody === "string") {
     return JSON.stringify({
       message: error.message,
       details: responseBody,
     });
   }
+
   return error.message;
 }
 
