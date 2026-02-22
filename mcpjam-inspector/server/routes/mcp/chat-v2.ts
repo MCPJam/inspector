@@ -32,10 +32,7 @@ const PROVIDER_DISPLAY_NAMES: Record<ModelProvider, string> = {
   custom: "your custom provider",
 };
 
-function formatStreamError(
-  error: unknown,
-  provider?: ModelProvider,
-): string {
+function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
     return String(error);
   }

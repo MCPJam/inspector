@@ -408,7 +408,9 @@ describe("POST /api/mcp/chat-v2", () => {
       })) as any);
     });
 
-    async function getOnError(provider: string): Promise<(error: unknown) => string> {
+    async function getOnError(
+      provider: string,
+    ): Promise<(error: unknown) => string> {
       await postJson(app, "/api/mcp/chat-v2", {
         messages: [{ role: "user", content: "Hello" }],
         model: { id: "test-model", name: "Test", provider },
@@ -425,12 +427,15 @@ describe("POST /api/mcp/chat-v2", () => {
         url: "https://api.openai.com/v1/chat/completions",
         requestBodyValues: {},
         statusCode: 401,
-        responseBody: '{"error":{"message":"Incorrect API key provided: sk-proj-abc123..."}}',
+        responseBody:
+          '{"error":{"message":"Incorrect API key provided: sk-proj-abc123..."}}',
       });
 
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
-      expect(result.message).toBe("Invalid API key for OpenAI. Please check your key under LLM Providers in Settings.");
+      expect(result.message).toBe(
+        "Invalid API key for OpenAI. Please check your key under LLM Providers in Settings.",
+      );
       expect(result.statusCode).toBe(401);
     });
 
@@ -445,7 +450,9 @@ describe("POST /api/mcp/chat-v2", () => {
 
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
-      expect(result.message).toBe("Invalid API key for Anthropic. Please check your key under LLM Providers in Settings.");
+      expect(result.message).toBe(
+        "Invalid API key for Anthropic. Please check your key under LLM Providers in Settings.",
+      );
     });
 
     it("returns normalized message for 403 errors", async () => {
@@ -459,7 +466,9 @@ describe("POST /api/mcp/chat-v2", () => {
 
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
-      expect(result.message).toBe("Invalid API key for DeepSeek. Please check your key under LLM Providers in Settings.");
+      expect(result.message).toBe(
+        "Invalid API key for DeepSeek. Please check your key under LLM Providers in Settings.",
+      );
       expect(result.statusCode).toBe(403);
     });
 
@@ -470,7 +479,8 @@ describe("POST /api/mcp/chat-v2", () => {
         url: "https://api.openai.com/v1/chat/completions",
         requestBodyValues: {},
         statusCode: 401,
-        responseBody: '{"error":{"message":"Incorrect API key provided: sk-proj-SENSITIVE_KEY_DATA"}}',
+        responseBody:
+          '{"error":{"message":"Incorrect API key provided: sk-proj-SENSITIVE_KEY_DATA"}}',
       });
 
       const resultStr = onError(error);
@@ -491,7 +501,9 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBeUndefined();
       expect(result.message).toBe("Rate limit exceeded");
-      expect(result.details).toBe('{"error":{"message":"Rate limit exceeded"}}');
+      expect(result.details).toBe(
+        '{"error":{"message":"Rate limit exceeded"}}',
+      );
     });
 
     it("passes through regular Error messages", async () => {
