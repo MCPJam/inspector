@@ -8,10 +8,63 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import type { ModelProvider } from "@/shared/types";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
+import { APICallError } from "@ai-sdk/provider";
+
+const PROVIDER_DISPLAY_NAMES: Record<ModelProvider, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  azure: "Azure OpenAI",
+  deepseek: "DeepSeek",
+  google: "Google",
+  meta: "Meta",
+  mistral: "Mistral",
+  minimax: "MiniMax",
+  moonshotai: "Moonshot AI",
+  xai: "xAI",
+  openrouter: "OpenRouter",
+  ollama: "Ollama",
+  "z-ai": "Zhipu AI",
+  custom: "your custom provider",
+};
+
+function formatStreamError(
+  error: unknown,
+  provider?: ModelProvider,
+): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  // Detect auth/permission errors from AI provider APIs
+  if (APICallError.isInstance(error)) {
+    const status = error.statusCode;
+    const providerName =
+      (provider && PROVIDER_DISPLAY_NAMES[provider]) || "your AI provider";
+
+    if (status === 401 || status === 403) {
+      return JSON.stringify({
+        code: "auth_error",
+        message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
+        statusCode: status,
+      });
+    }
+  }
+
+  // For non-auth errors, keep existing behavior
+  const responseBody = (error as any).responseBody;
+  if (responseBody && typeof responseBody === "string") {
+    return JSON.stringify({
+      message: error.message,
+      details: responseBody,
+    });
+  }
+  return error.message;
+}
 
 const chatV2 = new Hono();
 
@@ -128,17 +181,7 @@ chatV2.post("/", async (c) => {
       },
       onError: (error) => {
         logger.error("[mcp/chat-v2] stream error", error);
-        if (error instanceof Error) {
-          const responseBody = (error as any).responseBody;
-          if (responseBody && typeof responseBody === "string") {
-            return JSON.stringify({
-              message: error.message,
-              details: responseBody,
-            });
-          }
-          return error.message;
-        }
-        return String(error);
+        return formatStreamError(error, modelDefinition.provider);
       },
     });
   } catch (error) {

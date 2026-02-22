@@ -7,6 +7,7 @@ import {
   type MockMCPClientManager,
 } from "./helpers/index.js";
 import type { Hono } from "hono";
+import { APICallError } from "@ai-sdk/provider";
 
 // Track stream events for testing
 let capturedStreamEvents: any[] = [];
@@ -388,6 +389,123 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe("auth error normalization", () => {
+    let capturedOnError: ((error: unknown) => string) | undefined;
+
+    beforeEach(async () => {
+      // Override streamText mock to capture the onError callback
+      const { streamText } = await import("ai");
+      vi.mocked(streamText).mockImplementation((() => ({
+        toUIMessageStreamResponse: (opts: any) => {
+          capturedOnError = opts?.onError;
+          return new Response("{}", {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        },
+      })) as any);
+    });
+
+    async function getOnError(provider: string): Promise<(error: unknown) => string> {
+      await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "test-model", name: "Test", provider },
+        apiKey: "bad-key",
+      });
+      expect(capturedOnError).toBeDefined();
+      return capturedOnError!;
+    }
+
+    it("returns normalized message for 401 APICallError from OpenAI", async () => {
+      const onError = await getOnError("openai");
+      const error = new APICallError({
+        message: "Incorrect API key provided: sk-proj-...",
+        url: "https://api.openai.com/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 401,
+        responseBody: '{"error":{"message":"Incorrect API key provided: sk-proj-abc123..."}}',
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result.code).toBe("auth_error");
+      expect(result.message).toBe("Invalid API key for OpenAI. Please check your key under LLM Providers in Settings.");
+      expect(result.statusCode).toBe(401);
+    });
+
+    it("returns normalized message for 401 APICallError from Anthropic", async () => {
+      const onError = await getOnError("anthropic");
+      const error = new APICallError({
+        message: "invalid x-api-key",
+        url: "https://api.anthropic.com/v1/messages",
+        requestBodyValues: {},
+        statusCode: 401,
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result.code).toBe("auth_error");
+      expect(result.message).toBe("Invalid API key for Anthropic. Please check your key under LLM Providers in Settings.");
+    });
+
+    it("returns normalized message for 403 errors", async () => {
+      const onError = await getOnError("deepseek");
+      const error = new APICallError({
+        message: "Forbidden",
+        url: "https://api.deepseek.com/v1/chat",
+        requestBodyValues: {},
+        statusCode: 403,
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result.code).toBe("auth_error");
+      expect(result.message).toBe("Invalid API key for DeepSeek. Please check your key under LLM Providers in Settings.");
+      expect(result.statusCode).toBe(403);
+    });
+
+    it("does not leak raw response body for auth errors", async () => {
+      const onError = await getOnError("openai");
+      const error = new APICallError({
+        message: "Incorrect API key provided",
+        url: "https://api.openai.com/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 401,
+        responseBody: '{"error":{"message":"Incorrect API key provided: sk-proj-SENSITIVE_KEY_DATA"}}',
+      });
+
+      const resultStr = onError(error);
+      expect(resultStr).not.toContain("sk-proj-");
+      expect(resultStr).not.toContain("SENSITIVE_KEY_DATA");
+    });
+
+    it("passes through non-auth APICallErrors with details", async () => {
+      const onError = await getOnError("openai");
+      const error = new APICallError({
+        message: "Rate limit exceeded",
+        url: "https://api.openai.com/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 429,
+        responseBody: '{"error":{"message":"Rate limit exceeded"}}',
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result.code).toBeUndefined();
+      expect(result.message).toBe("Rate limit exceeded");
+      expect(result.details).toBe('{"error":{"message":"Rate limit exceeded"}}');
+    });
+
+    it("passes through regular Error messages", async () => {
+      const onError = await getOnError("openai");
+      const error = new Error("Network connection failed");
+
+      const result = onError(error);
+      expect(result).toBe("Network connection failed");
+    });
+
+    it("converts non-Error values to string", async () => {
+      const onError = await getOnError("openai");
+      const result = onError("something broke");
+      expect(result).toBe("something broke");
     });
   });
 
