@@ -519,6 +519,19 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = onError("something broke");
       expect(result).toBe("something broke");
     });
+
+    it("catches auth errors via duck-typing, not just APICallError instances", async () => {
+      const onError = await getOnError("openai");
+      const error = Object.assign(new Error("Unauthorized"), {
+        statusCode: 401,
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result.code).toBe("auth_error");
+      expect(result.message).toBe(
+        "Invalid API key for OpenAI. Please check your key under LLM Providers in Settings.",
+      );
+    });
   });
 
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
