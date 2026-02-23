@@ -471,15 +471,6 @@ export function ServerConnectionCard({
                       )}
                       {isExporting ? "Exporting..." : "Export server info"}
                     </DropdownMenuItem>
-                    {canShareServer && (
-                      <DropdownMenuItem
-                        onClick={() => setIsShareDialogOpen(true)}
-                        className="text-xs cursor-pointer"
-                      >
-                        <Share2 className="h-3 w-3 mr-2" />
-                        Share
-                      </DropdownMenuItem>
-                    )}
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
@@ -533,6 +524,24 @@ export function ServerConnectionCard({
                 </button>
               )}
             </div>
+            {canShareServer && (
+              <div onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => {
+                    posthog.capture("share_server_clicked", {
+                      location: "server_connection_card",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                    });
+                    setIsShareDialogOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
+                >
+                  <Share2 className="h-3 w-3" />
+                  <span>Share</span>
+                </button>
+              </div>
+            )}
             {showTunnelActions && (
               <div onClick={(e) => e.stopPropagation()}>
                 {hasTunnel ? (
