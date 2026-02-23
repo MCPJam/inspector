@@ -47,6 +47,13 @@ export interface MCPInspectorPluginOptions {
    * When false (default), the inspector runs silently.
    */
   verbose?: boolean;
+
+  /**
+   * Content Security Policy mode for the App Builder sandbox.
+   * - "widget-declared": enforces CSP directives declared by the widget (default)
+   * - "permissive": disables CSP enforcement for easier development
+   */
+  cspMode?: "permissive" | "widget-declared";
 }
 
 /**
@@ -88,6 +95,7 @@ export function mcpInspector(options: MCPInspectorPluginOptions = {}): Plugin {
             server: options.server,
             defaultTab: options.defaultTab ?? "app-builder",
             verbose: options.verbose,
+            cspMode: options.cspMode,
           });
           console.log(`\n  MCP Inspector running at ${inspector.url}\n`);
         } catch (error) {

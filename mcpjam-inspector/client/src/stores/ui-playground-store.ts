@@ -449,6 +449,9 @@ export const useUIPlaygroundStore = create<UIPlaygroundState>((set) => ({
         selectedProtocol: getStoredSelectedProtocol(),
         // Preserve host style from localStorage
         hostStyle: getStoredHostStyle(),
+        // Preserve CSP modes (may be set via CLI config before reset fires)
+        cspMode: state.cspMode,
+        mcpAppsCspMode: state.mcpAppsCspMode,
       };
     }),
 }));
