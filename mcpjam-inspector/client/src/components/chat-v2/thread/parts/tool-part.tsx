@@ -368,8 +368,8 @@ export function ToolPart({
         !isSaving &&
         !hasUsedSaveViewButton &&
         displayMode !== "fullscreen" && (
-          <span className="absolute right-0 top-full z-50 mt-2 whitespace-nowrap rounded-xl border border-primary/70 bg-primary px-2.5 py-1 text-[10px] font-semibold normal-case text-primary-foreground shadow-md shadow-primary/30 ring-1 ring-primary/40">
-            <span className="absolute -top-1 right-2 z-50 h-2.5 w-2.5 rotate-45 border-l border-t border-primary/70 bg-primary" />
+          <span className="absolute right-0 bottom-full z-50 mb-2 whitespace-nowrap rounded-xl border border-primary/70 bg-primary px-2.5 py-1 text-[10px] font-semibold normal-case text-primary-foreground shadow-md shadow-primary/30 ring-1 ring-primary/40">
+            <span className="absolute -bottom-1 right-2 z-50 h-2.5 w-2.5 rotate-45 border-b border-r border-primary/70 bg-primary" />
             <span className="relative z-10">Like how it looks? Save it.</span>
           </span>
         )}
