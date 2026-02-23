@@ -3,10 +3,6 @@
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import {
-  getDefaultEnvironment,
-  StdioClientTransport,
-} from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
@@ -430,7 +426,10 @@ export class MCPClientManager {
    */
   async getToolsForAiSdk(
     serverIds?: string[] | string,
-    options: { schemas?: ToolSchemaOverrides | "automatic"; needsApproval?: boolean } = {}
+    options: {
+      schemas?: ToolSchemaOverrides | "automatic";
+      needsApproval?: boolean;
+    } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
       ? serverIds
@@ -1019,6 +1018,19 @@ export class MCPClientManager {
     config: StdioServerConfig,
     timeout: number
   ): Promise<Transport> {
+    const isBrowser =
+      typeof window !== "undefined" && typeof document !== "undefined";
+    if (isBrowser) {
+      throw new Error(
+        `STDIO transport is not supported in browser environments for server "${serverId}".`
+      );
+    }
+
+    const stdioImportPath = "@modelcontextprotocol/sdk/client/" + "stdio.js";
+    const { StdioClientTransport, getDefaultEnvironment } = await import(
+      /* @vite-ignore */ stdioImportPath
+    );
+
     const underlying = new StdioClientTransport({
       command: config.command,
       args: config.args,

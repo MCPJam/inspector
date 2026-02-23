@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.mjs",
+      "require": "./dist/browser.js"
     }
   },
   "files": [
