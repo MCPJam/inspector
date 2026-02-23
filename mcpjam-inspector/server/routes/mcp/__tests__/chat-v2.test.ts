@@ -419,7 +419,7 @@ describe("POST /api/mcp/chat-v2", () => {
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
           // Simulate adding tool result to messages
-          messages.push({
+          const toolResultMsg = {
             role: "tool",
             content: [
               {
@@ -428,7 +428,9 @@ describe("POST /api/mcp/chat-v2", () => {
                 output: { type: "json", value: { result: "executed" } },
               },
             ],
-          });
+          };
+          messages.push(toolResultMsg);
+          return [toolResultMsg];
         },
       );
 
@@ -696,7 +698,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
-          messages.push({
+          const msg1 = {
             role: "tool",
             content: [
               {
@@ -705,8 +707,8 @@ describe("POST /api/mcp/chat-v2", () => {
                 output: { type: "json", value: { stops: ["Berryessa"] } },
               },
             ],
-          });
-          messages.push({
+          };
+          const msg2 = {
             role: "tool",
             content: [
               {
@@ -715,7 +717,9 @@ describe("POST /api/mcp/chat-v2", () => {
                 output: { type: "json", value: { stops: ["Montgomery"] } },
               },
             ],
-          });
+          };
+          messages.push(msg1, msg2);
+          return [msg1, msg2];
         },
       );
 
@@ -823,7 +827,7 @@ describe("POST /api/mcp/chat-v2", () => {
       vi.mocked(executeToolCallsFromMessages).mockImplementation(
         async (messages: any[]) => {
           // Simulate adding tool result for the new tool call
-          messages.push({
+          const toolResultMsg = {
             role: "tool",
             content: [
               {
@@ -832,7 +836,9 @@ describe("POST /api/mcp/chat-v2", () => {
                 output: { type: "json", value: { result: "done" } },
               },
             ],
-          });
+          };
+          messages.push(toolResultMsg);
+          return [toolResultMsg];
         },
       );
 
@@ -917,9 +923,9 @@ describe("POST /api/mcp/chat-v2", () => {
             (part: any) => part?.type === "tool-call",
           );
 
-          if (!latestToolCall?.toolCallId) return;
+          if (!latestToolCall?.toolCallId) return [];
 
-          messages.push({
+          const toolResultMsg = {
             role: "tool",
             content: [
               {
@@ -928,7 +934,9 @@ describe("POST /api/mcp/chat-v2", () => {
                 output: { type: "json", value: { ok: true } },
               },
             ],
-          });
+          };
+          messages.push(toolResultMsg);
+          return [toolResultMsg];
         },
       );
 
