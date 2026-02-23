@@ -157,6 +157,7 @@ export class EvalTest {
     options: EvalTestRunOptions
   ): Promise<EvalRunResult> {
     posthog.capture({
+      distinctId: "anonymous",
       event: "eval_test_run_triggered",
       properties: {
         iterations: options.iterations,
