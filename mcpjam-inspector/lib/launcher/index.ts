@@ -42,6 +42,13 @@ export interface LaunchOptions {
    * When false (default), the inspector runs silently.
    */
   verbose?: boolean;
+
+  /**
+   * Content Security Policy mode for the App Builder sandbox.
+   * - "widget-declared": enforces CSP directives declared by the widget (default)
+   * - "permissive": disables CSP enforcement for easier development
+   */
+  cspMode?: "permissive" | "widget-declared";
 }
 
 /**
@@ -141,6 +148,10 @@ export async function launchInspector(
 
   if (options.verbose) {
     env.VERBOSE_LOGS = "true";
+  }
+
+  if (options.cspMode) {
+    env.MCP_CSP_MODE = options.cspMode;
   }
 
   // Spawn the process

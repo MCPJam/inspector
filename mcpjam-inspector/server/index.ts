@@ -100,6 +100,7 @@ import "./types/hono"; // Type extensions
 function getMCPConfigFromEnv() {
   // Global options that apply to all modes
   const initialTab = process.env.MCP_INITIAL_TAB || null;
+  const cspMode = process.env.MCP_CSP_MODE || null;
 
   // First check if we have a full config file
   const configData = process.env.MCP_CONFIG_DATA;
@@ -134,6 +135,7 @@ function getMCPConfigFromEnv() {
           servers,
           autoConnectServer: autoConnectServer || null,
           initialTab,
+          cspMode,
         };
       }
     } catch (error) {
@@ -145,10 +147,11 @@ function getMCPConfigFromEnv() {
   const command = process.env.MCP_SERVER_COMMAND;
   if (!command) {
     // No server config, but still return global options if set
-    if (initialTab) {
+    if (initialTab || cspMode) {
       return {
         servers: [],
         initialTab,
+        cspMode,
       };
     }
     return null;
@@ -167,6 +170,7 @@ function getMCPConfigFromEnv() {
       },
     ],
     initialTab,
+    cspMode,
   };
 }
 

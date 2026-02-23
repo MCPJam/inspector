@@ -31,6 +31,7 @@ import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { SHARED_OAUTH_PENDING_KEY } from "@/lib/shared-server-session";
 import { authFetch } from "@/lib/session-token";
+import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
 
 /**
@@ -1000,6 +1001,15 @@ export function useServerState({
           if (cliConfig) {
             if (cliConfig.initialTab && !window.location.hash) {
               window.location.hash = cliConfig.initialTab;
+            }
+
+            if (
+              cliConfig.cspMode === "permissive" ||
+              cliConfig.cspMode === "widget-declared"
+            ) {
+              const store = useUIPlaygroundStore.getState();
+              store.setCspMode(cliConfig.cspMode);
+              store.setMcpAppsCspMode(cliConfig.cspMode);
             }
 
             if (cliConfig.servers && Array.isArray(cliConfig.servers)) {
