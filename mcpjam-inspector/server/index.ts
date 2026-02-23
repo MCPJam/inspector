@@ -25,6 +25,7 @@ import {
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
+import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
@@ -373,6 +374,9 @@ if (process.env.NODE_ENV === "production") {
   // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
   app.use("/*", serveStatic({ root: clientRoot }));
 
+  // In-app browser redirect (before SPA fallback)
+  app.use("/*", inAppBrowserMiddleware);
+
   // SPA fallback - serve index.html with token injection for non-API routes
   app.get("*", async (c) => {
     const reqPath = c.req.path;
@@ -417,7 +421,8 @@ if (process.env.NODE_ENV === "production") {
     }
   });
 } else {
-  // Development mode - just API
+  // Development mode - in-app browser redirect + API
+  app.use("/*", inAppBrowserMiddleware);
   app.get("/", (c) => {
     return c.json({
       message: "MCPJam API Server",

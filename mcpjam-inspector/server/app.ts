@@ -19,6 +19,7 @@ import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
+import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
 import path from "path";
 
 // Security imports
@@ -250,6 +251,11 @@ export function createHonoApp() {
     // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
     app.use("/*", serveStatic({ root }));
 
+    // In-app browser redirect: detect embedded WebViews (LinkedIn, Facebook, etc.)
+    // and serve a redirect page before the SPA loads, since Google OAuth blocks
+    // sign-in from in-app browsers with `disallowed_useragent`.
+    app.use("/*", inAppBrowserMiddleware);
+
     // For HTML pages, inject the session token (only for localhost requests)
     app.get("/*", (c) => {
       const reqPath = c.req.path;
@@ -294,7 +300,8 @@ export function createHonoApp() {
       return c.redirect(target, 307);
     });
   } else {
-    // Development mode - just API
+    // Development mode - in-app browser redirect + API
+    app.use("/*", inAppBrowserMiddleware);
     app.get("/", (c) => {
       return c.json({
         message: "MCPJam API Server",
