@@ -212,8 +212,18 @@ export async function inAppBrowserMiddleware(
     return next();
   }
 
-  // Reconstruct the full original URL
-  const url = c.req.url;
+  // Reconstruct the full original URL, respecting reverse proxy headers
+  // Behind a TLS-terminating proxy, c.req.url uses http:// internally.
+  // Use X-Forwarded-Proto/Host to reconstruct the public-facing URL.
+  let url = c.req.url;
+  const proto = c.req.header("x-forwarded-proto");
+  const host = c.req.header("x-forwarded-host");
+  if (proto || host) {
+    const parsed = new URL(url);
+    if (proto) parsed.protocol = proto;
+    if (host) parsed.host = host;
+    url = parsed.toString();
+  }
   const html = generateRedirectPage(url, appName);
 
   // Prevent intermediary caches from serving this page to normal browsers

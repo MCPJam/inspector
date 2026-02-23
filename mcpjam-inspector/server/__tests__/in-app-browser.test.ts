@@ -253,6 +253,21 @@ describe("inAppBrowserMiddleware", () => {
     expect(body).toContain("MCPJam");
   });
 
+  it("uses X-Forwarded-Proto to produce https:// URL behind proxy", async () => {
+    const app = createTestApp();
+    const res = await app.request("http://localhost/shared/chat/abc123", {
+      headers: {
+        "User-Agent": LINKEDIN_UA,
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-Host": "app.mcpjam.com",
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("https://app.mcpjam.com/shared/chat/abc123");
+    expect(body).not.toContain("http://localhost");
+  });
+
   it("works with Facebook UA", async () => {
     const app = createTestApp();
     const fbUA =
