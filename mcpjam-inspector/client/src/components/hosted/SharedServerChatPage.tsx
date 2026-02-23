@@ -66,10 +66,9 @@ export function SharedServerChatPage({
   );
   const [isCheckingOAuth, setIsCheckingOAuth] = useState(() => {
     if (!session) return false;
-    if (session.payload.useOAuth) {
-      const tokens = getStoredTokens(session.payload.serverName);
-      if (tokens?.access_token) return false;
-    }
+    // Always start as true for OAuth servers — even if tokens exist locally,
+    // we need to validate them before rendering the chat UI.
+    if (session.payload.useOAuth) return true;
     return true;
   });
   const [oauthPreflightError, setOauthPreflightError] = useState<string | null>(
@@ -204,25 +203,7 @@ export function SharedServerChatPage({
     };
   }, [session]);
 
-  // Check if OAuth is required after session is resolved
-  useEffect(() => {
-    if (!session) return;
-    const { useOAuth, serverName } = session.payload;
-    const tokens = getStoredTokens(serverName);
-
-    if (!useOAuth) {
-      setNeedsOAuth(false);
-      return;
-    }
-
-    if (tokens?.access_token) {
-      setNeedsOAuth(false);
-    } else {
-      setNeedsOAuth(true);
-    }
-  }, [session]);
-
-  // Preflight OAuth check: if Convex didn't set useOAuth, ask the server endpoint
+  // Preflight OAuth check: validate stored tokens before rendering the chat UI.
   useEffect(() => {
     if (!session || isAuthLoading || !isAuthenticated) return;
 
@@ -240,11 +221,10 @@ export function SharedServerChatPage({
             return;
           }
 
-          // Tokens exist locally — trust them immediately (no spinner/modal).
-          setNeedsOAuth(false);
-
-          // Background validation: only show modal if validation actually fails.
-          void (async () => {
+          // Tokens exist locally — validate them before rendering the chat UI.
+          // Keep isCheckingOAuth=true (the spinner) until validation resolves
+          // so ChatTabV2 doesn't mount and fire requests with an expired token.
+          {
             let bearerToken: string | null | undefined = null;
             for (
               let attempt = 1;
@@ -265,8 +245,8 @@ export function SharedServerChatPage({
             }
 
             if (!bearerToken) {
-              // Can't validate without a bearer token — silently trust local tokens.
-              // Runtime onOAuthRequired callback is the fallback.
+              // Can't validate without a bearer token — trust local tokens.
+              setNeedsOAuth(false);
               return;
             }
 
@@ -297,7 +277,10 @@ export function SharedServerChatPage({
 
               if (cancelled) return;
 
-              if (!validateRes.ok) {
+              if (validateRes.ok) {
+                // Token is valid — allow the chat UI to render.
+                setNeedsOAuth(false);
+              } else {
                 let body: unknown = null;
                 try {
                   const textBody = await validateRes.text();
@@ -320,26 +303,24 @@ export function SharedServerChatPage({
                     body,
                   },
                 );
-                // Only show the modal for client errors (4xx) — the token is
-                // actually rejected.  Server errors (5xx) are transient; trust
-                // local tokens and let the runtime onOAuthRequired fallback
-                // handle it if the token really is bad.
-                if (
-                  !cancelled &&
-                  validateRes.status >= 400 &&
-                  validateRes.status < 500
-                ) {
+                if (!cancelled) {
+                  // Clear the expired/invalid tokens so the auto-close
+                  // polling effect (which watches localStorage) doesn't
+                  // immediately find the stale tokens and flip needsOAuth
+                  // back to false.
+                  localStorage.removeItem(
+                    `mcp-tokens-${session.payload.serverName}`,
+                  );
                   setNeedsOAuth(true);
                 }
               }
-            } catch (error) {
+            } catch {
               // Network/unexpected error — trust local tokens, don't show modal.
-              console.warn(
-                "[SharedServerChatPage] Background validation error, trusting local tokens",
-                error,
-              );
+              if (!cancelled) {
+                setNeedsOAuth(false);
+              }
             }
-          })();
+          }
 
           return;
         }
