@@ -64,7 +64,14 @@ export function SharedServerChatPage({
   const [discoveredServerUrl, setDiscoveredServerUrl] = useState<string | null>(
     null,
   );
-  const [isCheckingOAuth, setIsCheckingOAuth] = useState(session !== null);
+  const [isCheckingOAuth, setIsCheckingOAuth] = useState(() => {
+    if (!session) return false;
+    if (session.payload.useOAuth) {
+      const tokens = getStoredTokens(session.payload.serverName);
+      if (tokens?.access_token) return false;
+    }
+    return true;
+  });
   const [oauthPreflightError, setOauthPreflightError] = useState<string | null>(
     null,
   );
@@ -233,79 +240,103 @@ export function SharedServerChatPage({
             return;
           }
 
-          let bearerToken: string | null | undefined = null;
-          for (
-            let attempt = 1;
-            attempt <= OAUTH_PREFLIGHT_VALIDATE_TOKEN_ATTEMPTS;
-            attempt++
-          ) {
-            try {
-              bearerToken = await getAccessToken();
-            } catch {}
+          // Tokens exist locally — trust them immediately (no spinner/modal).
+          setNeedsOAuth(false);
+
+          // Background validation: only show modal if validation actually fails.
+          void (async () => {
+            let bearerToken: string | null | undefined = null;
+            for (
+              let attempt = 1;
+              attempt <= OAUTH_PREFLIGHT_VALIDATE_TOKEN_ATTEMPTS;
+              attempt++
+            ) {
+              try {
+                bearerToken = await getAccessToken();
+              } catch {}
+
+              if (cancelled) return;
+              if (bearerToken) break;
+              if (attempt < OAUTH_PREFLIGHT_VALIDATE_TOKEN_ATTEMPTS) {
+                await new Promise((resolve) =>
+                  window.setTimeout(resolve, OAUTH_PREFLIGHT_TOKEN_RETRY_MS),
+                );
+              }
+            }
+
+            if (!bearerToken) {
+              // Can't validate without a bearer token — silently trust local tokens.
+              // Runtime onOAuthRequired callback is the fallback.
+              return;
+            }
 
             if (cancelled) return;
-            if (bearerToken) break;
-            if (attempt < OAUTH_PREFLIGHT_VALIDATE_TOKEN_ATTEMPTS) {
-              await new Promise((resolve) =>
-                window.setTimeout(resolve, OAUTH_PREFLIGHT_TOKEN_RETRY_MS),
-              );
+
+            // Re-read tokens in case they were cleared while waiting for bearer.
+            const freshTokens = getStoredTokens(session.payload.serverName);
+            if (!freshTokens?.access_token) {
+              if (!cancelled) setNeedsOAuth(true);
+              return;
             }
-          }
 
-          if (!bearerToken) {
-            const message =
-              "Could not validate stored OAuth token because WorkOS bearer token is unavailable. Trusting local OAuth token.";
-            setOauthPreflightError(message);
-            setNeedsOAuth(false);
-            return;
-          }
-
-          const validateRes = await fetch("/api/web/servers/validate", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${bearerToken}`,
-            },
-            body: JSON.stringify({
-              workspaceId: session.payload.workspaceId,
-              serverId: session.payload.serverId,
-              oauthAccessToken: tokens.access_token,
-              accessScope: "chat_v2",
-              shareToken: session.token,
-            }),
-          });
-
-          if (cancelled) return;
-
-          if (!validateRes.ok) {
-            let body: unknown = null;
             try {
-              const textBody = await validateRes.text();
-              if (textBody) {
+              const validateRes = await fetch("/api/web/servers/validate", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${bearerToken}`,
+                },
+                body: JSON.stringify({
+                  workspaceId: session.payload.workspaceId,
+                  serverId: session.payload.serverId,
+                  oauthAccessToken: freshTokens.access_token,
+                  accessScope: "chat_v2",
+                  shareToken: session.token,
+                }),
+              });
+
+              if (cancelled) return;
+
+              if (!validateRes.ok) {
+                let body: unknown = null;
                 try {
-                  body = JSON.parse(textBody);
+                  const textBody = await validateRes.text();
+                  if (textBody) {
+                    try {
+                      body = JSON.parse(textBody);
+                    } catch {
+                      body = textBody;
+                    }
+                  }
                 } catch {
-                  body = textBody;
+                  body = "Unable to read validation error response body";
+                }
+
+                console.error(
+                  "[SharedServerChatPage] Stored OAuth token validation failed",
+                  {
+                    status: validateRes.status,
+                    statusText: validateRes.statusText,
+                    body,
+                  },
+                );
+                // Only show the modal for client errors (4xx) — the token is
+                // actually rejected.  Server errors (5xx) are transient; trust
+                // local tokens and let the runtime onOAuthRequired fallback
+                // handle it if the token really is bad.
+                if (!cancelled && validateRes.status >= 400 && validateRes.status < 500) {
+                  setNeedsOAuth(true);
                 }
               }
-            } catch {
-              body = "Unable to read validation error response body";
+            } catch (error) {
+              // Network/unexpected error — trust local tokens, don't show modal.
+              console.warn(
+                "[SharedServerChatPage] Background validation error, trusting local tokens",
+                error,
+              );
             }
+          })();
 
-            console.error(
-              "[SharedServerChatPage] Stored OAuth token validation failed",
-              {
-                status: validateRes.status,
-                statusText: validateRes.statusText,
-                body,
-              },
-            );
-            setNeedsOAuth(true);
-            return;
-          }
-
-          setOauthPreflightError(null);
-          setNeedsOAuth(false);
           return;
         }
 
