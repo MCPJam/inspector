@@ -821,9 +821,12 @@ export function ChatTabV2({
             <ResizableHandle withHandle />
             <ResizablePanel
               defaultSize={30}
-              minSize={20}
+              minSize={4}
               maxSize={50}
-              className="min-w-[260px] min-h-0 overflow-hidden"
+              collapsible={true}
+              collapsedSize={0}
+              onCollapse={toggleJsonRpcPanel}
+              className="min-h-0 overflow-hidden"
             >
               <div className="h-full min-h-0 overflow-hidden">
                 <LoggerView onClose={toggleJsonRpcPanel} />
