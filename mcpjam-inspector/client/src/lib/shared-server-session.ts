@@ -25,13 +25,14 @@ export const SHARED_SIGN_IN_RETURN_PATH_STORAGE_KEY =
   "mcpjam_shared_signin_return_path_v1";
 
 export function slugify(name: string): string {
-  return name
+  const slug = name
     .toLowerCase()
     .trim()
     .replace(/[^\w\s-]/g, "")
     .replace(/[\s_]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+  return slug || "server";
 }
 
 export function extractSharedTokenFromPath(pathname: string): string | null {
