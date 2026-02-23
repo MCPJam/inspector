@@ -429,7 +429,14 @@ export function ServersTab({
       {isJsonRpcPanelVisible ? (
         <>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={35} minSize={20} maxSize={50}>
+          <ResizablePanel
+            defaultSize={35}
+            minSize={4}
+            maxSize={50}
+            collapsible={true}
+            collapsedSize={0}
+            onCollapse={toggleJsonRpcPanel}
+          >
             <div className="h-full flex flex-col bg-background border-l border-border">
               <LoggerView key={connectedCount} onClose={toggleJsonRpcPanel} />
             </div>
