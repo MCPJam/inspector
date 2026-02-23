@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation } from "convex/react";
-import { useConvexAuth } from "convex/react";
+import { useMutation, useConvexAuth } from "convex/react";
+import { ConvexError } from "convex/values";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Loader2, Link2Off, Lock, ShieldX } from "lucide-react";
 import { toast } from "sonner";
@@ -20,13 +20,20 @@ import {
 } from "@/lib/shared-server-session";
 import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
 
-function extractConvexErrorMessage(raw: string): string {
-  // Convex wraps errors as: "[CONVEX ...] Server Error Uncaught Error: <msg> at handler (...)"
-  const uncaughtMatch = raw.match(
-    /Uncaught Error:\s*(.*?)\s*(?:\bat handler\b|$)/s,
-  );
-  if (uncaughtMatch) return uncaughtMatch[1].trim();
-  return raw;
+function extractShareErrorMessage(error: unknown): string {
+  if (error instanceof ConvexError) {
+    return typeof error.data === "string"
+      ? error.data
+      : "This shared link is invalid or expired.";
+  }
+  if (error instanceof Error) {
+    // Legacy fallback: Convex wraps errors as "[CONVEX ...] Uncaught Error: <msg> ..."
+    const uncaughtMatch = error.message.match(
+      /Uncaught Error:\s*(.*?)\s*(?:\bat handler\b|$)/s,
+    );
+    if (uncaughtMatch) return uncaughtMatch[1].trim();
+  }
+  return "This shared link is invalid or expired.";
 }
 
 interface SharedServerChatPageProps {
@@ -142,11 +149,7 @@ export function SharedServerChatPage({
           if (cancelled) return;
           setSession(null);
           clearSharedServerSession();
-          setErrorMessage(
-            error instanceof Error
-              ? extractConvexErrorMessage(error.message)
-              : "Invalid or expired share link",
-          );
+          setErrorMessage(extractShareErrorMessage(error));
         } finally {
           if (!cancelled) {
             setIsResolving(false);
