@@ -581,7 +581,7 @@ export function SharedServerChatPage({
               {errorMessage || "This shared link is invalid or expired."}
             </p>
             <Button className="mt-4" onClick={handleOpenMcpJam}>
-              Open in MCPJam
+              Open in App
             </Button>
           </div>
         </div>
@@ -668,7 +668,7 @@ export function SharedServerChatPage({
               className="text-muted-foreground"
               onClick={handleOpenMcpJam}
             >
-              Open in MCPJam
+              Open in App
             </Button>
           </div>
         </div>
