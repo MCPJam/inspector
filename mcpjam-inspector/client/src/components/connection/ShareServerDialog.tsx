@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
+import { useProfilePicture } from "@/hooks/useProfilePicture";
 import {
   Dialog,
   DialogContent,
@@ -58,6 +60,11 @@ export function ShareServerDialog({
   serverName,
 }: ShareServerDialogProps) {
   const { isAuthenticated } = useConvexAuth();
+  const { user } = useAuth();
+  const { profilePictureUrl } = useProfilePicture();
+  const displayName =
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "You";
+  const displayInitials = getInitials(displayName);
   const { settings: queriedSettings } = useServerShareSettings({
     isAuthenticated,
     serverId: isOpen ? serverId : null,
@@ -263,6 +270,30 @@ export function ShareServerDialog({
             <div className="space-y-1">
               <p className="text-sm font-medium">People with access</p>
               <div className="max-h-[220px] overflow-y-auto -mx-1">
+                {/* Current user (owner) */}
+                <div className="flex items-center gap-3 px-1 py-1.5 rounded-md">
+                  <Avatar className="size-8 shrink-0">
+                    <AvatarImage src={profilePictureUrl} alt={displayName} />
+                    <AvatarFallback className="text-xs">
+                      {displayInitials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm truncate">{displayName}</p>
+                      <span className="text-xs text-muted-foreground">
+                        (you)
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {user?.email}
+                    </p>
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    Owner
+                  </span>
+                </div>
+
                 {activeMembers.length === 0 ? (
                   <p className="text-sm text-muted-foreground px-1 py-3">
                     No one has been invited yet.
