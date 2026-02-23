@@ -165,7 +165,9 @@ export function MCPAppsRenderer({
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
-    : minimalMode ? "permissive" : "widget-declared";
+    : minimalMode
+      ? "permissive"
+      : "widget-declared";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);

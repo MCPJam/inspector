@@ -339,7 +339,7 @@ export function ServersTab({
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
           <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-6">
                 <WorkspaceSelector
                   activeWorkspaceId={activeWorkspaceId}
