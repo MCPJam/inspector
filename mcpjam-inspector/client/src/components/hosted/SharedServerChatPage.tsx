@@ -324,7 +324,11 @@ export function SharedServerChatPage({
                 // actually rejected.  Server errors (5xx) are transient; trust
                 // local tokens and let the runtime onOAuthRequired fallback
                 // handle it if the token really is bad.
-                if (!cancelled && validateRes.status >= 400 && validateRes.status < 500) {
+                if (
+                  !cancelled &&
+                  validateRes.status >= 400 &&
+                  validateRes.status < 500
+                ) {
                   setNeedsOAuth(true);
                 }
               }

@@ -198,7 +198,9 @@ describe("executeToolCallsFromMessages", () => {
         },
       ] as unknown as ModelMessage[];
 
-      const newMessages = await executeToolCallsFromMessages(messages, { tools });
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+      });
 
       expect(mockExecute).toHaveBeenCalledWith({ param: "value" });
       expect(messages).toHaveLength(2);
@@ -650,7 +652,9 @@ describe("executeToolCallsFromMessages", () => {
         },
       ] as unknown as ModelMessage[];
 
-      const newMessages = await executeToolCallsFromMessages(messages, { tools });
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+      });
 
       expect(newMessages).toHaveLength(2);
       expect((newMessages[0] as any).content[0].toolCallId).toBe("call-a");

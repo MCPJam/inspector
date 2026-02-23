@@ -50,8 +50,7 @@ if (isInIframe) {
     // Match SDK default: enable devMode on localhost so refresh tokens
     // persist in localStorage across hard refreshes for local prod builds.
     return (
-      location.hostname === "localhost" ||
-      location.hostname === "127.0.0.1"
+      location.hostname === "localhost" || location.hostname === "127.0.0.1"
     );
   })();
 

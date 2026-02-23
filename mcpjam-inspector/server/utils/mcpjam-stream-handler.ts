@@ -552,9 +552,7 @@ async function handlePendingApprovals(
 
     if (deniedByAssistantIdx.size > 0) {
       // Insert right after corresponding assistant messages (reverse order to preserve indices)
-      const sortedKeys = [...deniedByAssistantIdx.keys()].sort(
-        (a, b) => b - a,
-      );
+      const sortedKeys = [...deniedByAssistantIdx.keys()].sort((a, b) => b - a);
       for (const idx of sortedKeys) {
         messageHistory.splice(idx + 1, 0, {
           role: "tool",

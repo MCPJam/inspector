@@ -136,7 +136,9 @@ export function ShareServerDialog({
     if (!settings?.link?.token) return;
     try {
       const slug = slugify(serverName);
-      const origin = HOSTED_MODE ? window.location.origin : "https://app.mcpjam.com";
+      const origin = HOSTED_MODE
+        ? window.location.origin
+        : "https://app.mcpjam.com";
       const shareUrl = `${origin}/shared/${slug}/${encodeURIComponent(settings.link.token)}`;
       await navigator.clipboard.writeText(shareUrl);
       toast.success("Share link copied");

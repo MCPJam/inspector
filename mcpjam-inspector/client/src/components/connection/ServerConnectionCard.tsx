@@ -537,7 +537,10 @@ export function ServerConnectionCard({
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <div
+              className="flex items-center gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
               {canShareServer && (
                 <button
                   onClick={() => {
