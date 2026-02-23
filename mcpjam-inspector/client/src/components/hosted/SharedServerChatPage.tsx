@@ -615,7 +615,7 @@ export function SharedServerChatPage({
               {errorMessage || "This shared link is invalid or expired."}
             </p>
             <Button className="mt-4" onClick={handleOpenMcpJam}>
-              Open in MCPJam
+              Open in App
             </Button>
           </div>
         </div>
@@ -672,10 +672,20 @@ export function SharedServerChatPage({
     <div className="flex h-svh min-h-0 flex-col">
       <header className="border-b border-border/50 bg-background/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-          <h1 className="truncate text-sm font-semibold text-foreground">
+          <h1 className="truncate text-sm font-semibold text-foreground min-w-0 flex-1">
             {displayServerName}
           </h1>
-          <div className="flex items-center gap-1.5">
+          <img
+            src="/mcp_jam_dark.png"
+            alt="MCPJam"
+            className="hidden dark:block h-4 w-auto flex-shrink-0"
+          />
+          <img
+            src="/mcp_jam_light.png"
+            alt="MCPJam"
+            className="block dark:hidden h-4 w-auto flex-shrink-0"
+          />
+          <div className="flex items-center gap-1.5 flex-1 justify-end">
             {session && (
               <Button
                 variant="ghost"
@@ -692,7 +702,7 @@ export function SharedServerChatPage({
               className="text-muted-foreground"
               onClick={handleOpenMcpJam}
             >
-              Open in MCPJam
+              Open in App
             </Button>
           </div>
         </div>
