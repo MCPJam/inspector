@@ -3,6 +3,9 @@ import { useState, useEffect, useCallback } from "react";
 const STORAGE_KEY = "mcpjam-inspector-jsonrpc-panel-visible";
 
 export function useJsonRpcPanelVisibility() {
+  const isMobile =
+    typeof window !== "undefined" && window.innerWidth < 768;
+
   const [isVisible, setIsVisible] = useState(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -25,5 +28,5 @@ export function useJsonRpcPanelVisibility() {
     setIsVisible(false);
   }, []);
 
-  return { isVisible, toggle, show, hide };
+  return { isVisible: isMobile ? false : isVisible, toggle, show, hide };
 }
