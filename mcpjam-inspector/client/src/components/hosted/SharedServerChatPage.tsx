@@ -675,16 +675,21 @@ export function SharedServerChatPage({
           <h1 className="truncate text-sm font-semibold text-foreground min-w-0 flex-1">
             {displayServerName}
           </h1>
-          <img
-            src="/mcp_jam_dark.png"
-            alt="MCPJam"
-            className="hidden dark:block h-4 w-auto flex-shrink-0"
-          />
-          <img
-            src="/mcp_jam_light.png"
-            alt="MCPJam"
-            className="block dark:hidden h-4 w-auto flex-shrink-0"
-          />
+          <button
+            onClick={handleOpenMcpJam}
+            className="cursor-pointer flex-shrink-0 bg-transparent border-none p-0"
+          >
+            <img
+              src="/mcp_jam_dark.png"
+              alt="MCPJam"
+              className="hidden dark:block h-4 w-auto"
+            />
+            <img
+              src="/mcp_jam_light.png"
+              alt="MCPJam"
+              className="block dark:hidden h-4 w-auto"
+            />
+          </button>
           <div className="flex items-center gap-1.5 flex-1 justify-end">
             {session && (
               <Button
@@ -696,14 +701,6 @@ export function SharedServerChatPage({
                 Copy link
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={handleOpenMcpJam}
-            >
-              Open in App
-            </Button>
           </div>
         </div>
       </header>
