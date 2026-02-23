@@ -149,8 +149,21 @@ export function ServerConnectionCard({
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
   const isStdioServer = "command" in server.config;
+  const isInsecureHttpServer =
+    "url" in server.config &&
+    !!server.config.url &&
+    (() => {
+      try {
+        return new URL(server.config.url.toString()).protocol === "http:";
+      } catch {
+        return false;
+      }
+    })();
   const canShareServer =
-    HOSTED_MODE && !!hostedServerId && isAuthenticated && !isStdioServer;
+    !!hostedServerId &&
+    isAuthenticated &&
+    !isStdioServer &&
+    !isInsecureHttpServer;
 
   // Load tools when server is connected
   useEffect(() => {
@@ -524,8 +537,8 @@ export function ServerConnectionCard({
                 </button>
               )}
             </div>
-            {canShareServer && (
-              <div onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              {canShareServer && (
                 <button
                   onClick={() => {
                     posthog.capture("share_server_clicked", {
@@ -540,63 +553,63 @@ export function ServerConnectionCard({
                   <Share2 className="h-3 w-3" />
                   <span>Share</span>
                 </button>
-              </div>
-            )}
-            {showTunnelActions && (
-              <div onClick={(e) => e.stopPropagation()}>
-                {hasTunnel ? (
-                  <div className="inline-flex items-center overflow-hidden rounded-full border border-border/70 bg-muted/30 text-foreground">
+              )}
+              {showTunnelActions && (
+                <>
+                  {hasTunnel ? (
+                    <div className="inline-flex items-center overflow-hidden rounded-full border border-border/70 bg-muted/30 text-foreground">
+                      <button
+                        onClick={() => copyToClipboard(tunnelUrl!, "tunnel")}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 cursor-pointer"
+                      >
+                        {copiedField === "tunnel" ? (
+                          <>
+                            <Check className="h-3 w-3" />
+                            <span>Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Cable className="h-3 w-3" />
+                            <span>Copy ngrok URL</span>
+                          </>
+                        )}
+                      </button>
+                      <span className="h-4 w-px bg-border/80" />
+                      <button
+                        onClick={handleCloseTunnel}
+                        disabled={isClosingTunnel}
+                        className="inline-flex items-center justify-center px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                        aria-label="Close tunnel"
+                        title="Close tunnel"
+                      >
+                        {isClosingTunnel ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3" />
+                        )}
+                      </button>
+                    </div>
+                  ) : (
                     <button
-                      onClick={() => copyToClipboard(tunnelUrl!, "tunnel")}
-                      className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 cursor-pointer"
+                      onClick={handleCreateTunnel}
+                      disabled={isCreatingTunnel || !canManageTunnels}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                     >
-                      {copiedField === "tunnel" ? (
-                        <>
-                          <Check className="h-3 w-3" />
-                          <span>Copied</span>
-                        </>
-                      ) : (
-                        <>
-                          <Cable className="h-3 w-3" />
-                          <span>Copy ngrok URL</span>
-                        </>
-                      )}
-                    </button>
-                    <span className="h-4 w-px bg-border/80" />
-                    <button
-                      onClick={handleCloseTunnel}
-                      disabled={isClosingTunnel}
-                      className="inline-flex items-center justify-center px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-                      aria-label="Close tunnel"
-                      title="Close tunnel"
-                    >
-                      {isClosingTunnel ? (
+                      {isCreatingTunnel ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        <Trash2 className="h-3 w-3" />
+                        <Cable className="h-3 w-3" />
                       )}
+                      <span>
+                        {canManageTunnels
+                          ? "Create ngrok tunnel"
+                          : "Sign in for tunnel"}
+                      </span>
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleCreateTunnel}
-                    disabled={isCreatingTunnel || !canManageTunnels}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-                  >
-                    {isCreatingTunnel ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Cable className="h-3 w-3" />
-                    )}
-                    <span>
-                      {canManageTunnels
-                        ? "Create ngrok tunnel"
-                        : "Sign in for tunnel"}
-                    </span>
-                  </button>
-                )}
-              </div>
-            )}
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           {hasError && (
