@@ -46,7 +46,13 @@ if (isInIframe) {
     const explicit = import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined;
     if (explicit === "true") return true;
     if (explicit === "false") return false;
-    return import.meta.env.DEV;
+    if (import.meta.env.DEV) return true;
+    // Match SDK default: enable devMode on localhost so refresh tokens
+    // persist in localStorage across hard refreshes for local prod builds.
+    return (
+      location.hostname === "localhost" ||
+      location.hostname === "127.0.0.1"
+    );
   })();
 
   // Compute redirect URI safely across environments
