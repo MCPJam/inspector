@@ -249,10 +249,16 @@ export function MCPSidebar({
     }
   };
 
+  const dismissAppBuilderBubble = () => {
+    localStorage.setItem(APP_BUILDER_VISITED_KEY, "true");
+    setHasVisitedAppBuilder(true);
+  };
+
   const appBuilderBubble = showAppBuilderBubble
     ? {
         message: "Build your UI app with App Builder.",
         subMessage: "Get started",
+        onDismiss: dismissAppBuilderBubble,
       }
     : null;
   const visibleNavigationSections = HOSTED_MODE
