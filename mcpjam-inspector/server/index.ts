@@ -370,12 +370,12 @@ if (process.env.NODE_ENV === "production") {
   // Serve static assets (JS, CSS, images) - no token injection needed
   app.use("/assets/*", serveStatic({ root: clientRoot }));
 
+  // In-app browser redirect (before SPA fallback)
+  app.use("/*", inAppBrowserMiddleware);
+
   // Serve all static files from client root (images, svgs, etc.)
   // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
   app.use("/*", serveStatic({ root: clientRoot }));
-
-  // In-app browser redirect (before SPA fallback)
-  app.use("/*", inAppBrowserMiddleware);
 
   // SPA fallback - serve index.html with token injection for non-API routes
   app.get("*", async (c) => {

@@ -247,14 +247,14 @@ export function createHonoApp() {
     // Serve static assets (JS, CSS, images) - no token injection needed
     app.use("/assets/*", serveStatic({ root }));
 
-    // Serve all static files from client root (images, svgs, etc.)
-    // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
-    app.use("/*", serveStatic({ root }));
-
     // In-app browser redirect: detect embedded WebViews (LinkedIn, Facebook, etc.)
     // and serve a redirect page before the SPA loads, since Google OAuth blocks
     // sign-in from in-app browsers with `disallowed_useragent`.
     app.use("/*", inAppBrowserMiddleware);
+
+    // Serve all static files from client root (images, svgs, etc.)
+    // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
+    app.use("/*", serveStatic({ root }));
 
     // For HTML pages, inject the session token (only for localhost requests)
     app.get("/*", (c) => {
