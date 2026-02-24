@@ -246,6 +246,7 @@ export function MCPAppsRenderer({
   );
 
   const [isReady, setIsReady] = useState(false);
+  const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
@@ -320,6 +321,7 @@ export function MCPAppsRenderer({
     toolOutput,
     toolErrorText,
     toolCallId,
+    reinitCount,
   });
 
   // Fetch widget HTML when tool is active (streaming, input ready, or output available) or CSP mode changes
@@ -631,12 +633,19 @@ export function MCPAppsRenderer({
   const registerBridgeHandlers = useCallback(
     (bridge: AppBridge) => {
       bridge.oninitialized = () => {
+        const wasReady = isReadyRef.current;
         setIsReady(true);
         isReadyRef.current = true;
         const appCaps = bridge.getAppCapabilities();
         onAppSupportedDisplayModesChangeRef.current?.(
           appCaps?.availableDisplayModes as DisplayMode[] | undefined,
         );
+        // If the guest re-initialized (e.g. an SDK-based app completing its
+        // own handshake after the openai-compat shim already initialized),
+        // bump reinitCount so the delivery effects re-send tool data.
+        if (wasReady) {
+          setReinitCount((c) => c + 1);
+        }
       };
 
       bridge.onmessage = async ({ content }) => {

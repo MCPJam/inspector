@@ -139,6 +139,8 @@ export interface UseToolInputStreamingParams {
   toolOutput: unknown;
   toolErrorText: string | undefined;
   toolCallId: string;
+  /** Incremented when the guest re-initializes (e.g. SDK app after openai-compat shim) */
+  reinitCount: number;
 }
 
 export interface UseToolInputStreamingReturn {
@@ -160,6 +162,7 @@ export function useToolInputStreaming({
   toolOutput,
   toolErrorText,
   toolCallId,
+  reinitCount,
 }: UseToolInputStreamingParams): UseToolInputStreamingReturn {
   // ── Internal refs ────────────────────────────────────────────────────────
 
@@ -221,6 +224,18 @@ export function useToolInputStreaming({
   }, []);
 
   // ── Effects ──────────────────────────────────────────────────────────────
+
+  // 0. Reset dedup refs on guest re-initialization (e.g. SDK app init after
+  //    openai-compat shim already completed the handshake). This must run
+  //    before the delivery effects so they see the cleared refs and re-send.
+  useEffect(() => {
+    if (reinitCount === 0) return; // skip initial mount
+    lastToolInputRef.current = null;
+    lastToolInputPartialRef.current = null;
+    lastToolOutputRef.current = null;
+    lastToolErrorRef.current = null;
+    toolInputSentRef.current = false;
+  }, [reinitCount]);
 
   // 1. Clear reveal timer when signaled
   useEffect(() => {
@@ -341,7 +356,7 @@ export function useToolInputStreaming({
       toolInputSentRef.current = false;
       lastToolInputRef.current = null;
     });
-  }, [isReady, toolInput, toolState, bridgeRef]);
+  }, [isReady, toolInput, toolState, bridgeRef, reinitCount]);
 
   // 6. Tool result delivery
   useEffect(() => {
@@ -353,7 +368,7 @@ export function useToolInputStreaming({
     if (lastToolOutputRef.current === serialized) return;
     lastToolOutputRef.current = serialized;
     bridge.sendToolResult(toolOutput as CallToolResult);
-  }, [isReady, toolOutput, toolState, bridgeRef]);
+  }, [isReady, toolOutput, toolState, bridgeRef, reinitCount]);
 
   // 7. Tool error/cancellation delivery
   useEffect(() => {
@@ -374,7 +389,7 @@ export function useToolInputStreaming({
 
     // SEP-1865: Send tool-cancelled for errors instead of tool-result with isError
     bridge.sendToolCancelled({ reason: errorMessage });
-  }, [isReady, toolErrorText, toolOutput, toolState, bridgeRef]);
+  }, [isReady, toolErrorText, toolOutput, toolState, bridgeRef, reinitCount]);
 
   // 8. Reset on toolCallId change
   useEffect(() => {
