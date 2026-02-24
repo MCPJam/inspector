@@ -6,6 +6,8 @@ import { JsonTreeNode } from "./json-tree-node";
 interface JsonTreeViewProps {
   value: unknown;
   className?: string;
+  height?: string | number;
+  maxHeight?: string | number;
   defaultExpandDepth?: number;
   collapsedPaths?: Set<string>;
   onCollapseChange?: (paths: Set<string>) => void;
@@ -16,6 +18,8 @@ interface JsonTreeViewProps {
 export function JsonTreeView({
   value,
   className,
+  height,
+  maxHeight,
   defaultExpandDepth,
   collapsedPaths: controlledCollapsedPaths,
   onCollapseChange,
@@ -38,12 +42,16 @@ export function JsonTreeView({
   return (
     <div
       className={cn(
-        "p-3 text-xs overflow-auto select-text cursor-text",
+        "p-3 text-xs overflow-auto select-text cursor-text min-h-0",
         className,
         // pl-7 must come after className to ensure space for collapse toggles
         "pl-7",
       )}
-      style={{ fontFamily: "var(--font-code)" }}
+      style={{
+        fontFamily: "var(--font-code)",
+        height,
+        maxHeight,
+      }}
     >
       <JsonTreeNode
         value={value}

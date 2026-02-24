@@ -96,6 +96,8 @@ export function ResultsPanel({
               value={rawResult}
               readOnly
               showToolbar={false}
+              className="break-normal"
+              collapsible={true}
               height="100%"
             />
           </div>
