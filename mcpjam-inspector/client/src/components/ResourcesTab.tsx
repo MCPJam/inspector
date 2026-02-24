@@ -369,7 +369,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           </div>
 
           {/* Action buttons */}
-          <div className="flex items-center gap-0.5 text-muted-foreground/80">
+          <div className="ml-auto flex items-center gap-0.5 text-muted-foreground/80">
             <Button
               onClick={() => {
                 if (activeTab === "resources") {
@@ -408,7 +408,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
               onClick={readTemplateResource}
               disabled={templateLoading || !selectedTemplate}
               size="sm"
-              className="h-8 px-3 text-xs ml-auto"
+              className="h-8 px-3 text-xs"
             >
               {templateLoading ? (
                 <RefreshCw className="h-3 w-3 animate-spin" />
