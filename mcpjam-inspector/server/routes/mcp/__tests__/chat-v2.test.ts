@@ -455,13 +455,15 @@ describe("POST /api/mcp/chat-v2", () => {
       );
     });
 
-    it("returns normalized message for 403 errors", async () => {
+    it("returns normalized message for 401 APICallError from DeepSeek", async () => {
       const onError = await getOnError("deepseek");
       const error = new APICallError({
-        message: "Forbidden",
+        message: "Authentication Fails, Your api key: ****dfaf is invalid",
         url: "https://api.deepseek.com/v1/chat",
         requestBodyValues: {},
-        statusCode: 403,
+        statusCode: 401,
+        responseBody:
+          '{"error":{"message":"Authentication Fails, Your api key: ****dfaf is invalid","type":"authentication_error"}}',
       });
 
       const result = JSON.parse(onError(error));
@@ -469,7 +471,58 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result.message).toBe(
         "Invalid API key for deepseek. Please check your key under LLM Providers in Settings.",
       );
-      expect(result.statusCode).toBe(403);
+      expect(result.statusCode).toBe(401);
+    });
+
+    it("detects auth error from xAI 400 via response body keywords", async () => {
+      const onError = await getOnError("xai");
+      const error = new APICallError({
+        message: "Bad Request",
+        url: "https://api.x.ai/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody:
+          '{"code":"Client specified an invalid argument","error":"Incorrect API key provided: as***sf."}',
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result.code).toBe("auth_error");
+      expect(result.message).toBe(
+        "Invalid API key for xai. Please check your key under LLM Providers in Settings.",
+      );
+    });
+
+    it("detects auth error from Google 400 via response body keywords", async () => {
+      const onError = await getOnError("google");
+      const error = new APICallError({
+        message: "API key not valid. Please pass a valid API key.",
+        url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody:
+          '{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}',
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result.code).toBe("auth_error");
+      expect(result.message).toBe(
+        "Invalid API key for google. Please check your key under LLM Providers in Settings.",
+      );
+    });
+
+    it("does not treat non-auth 400 errors as auth errors", async () => {
+      const onError = await getOnError("openai");
+      const error = new APICallError({
+        message: "Bad Request: invalid model",
+        url: "https://api.openai.com/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: '{"error":{"message":"The model does not exist"}}',
+      });
+
+      const result = JSON.parse(onError(error));
+      expect(result.code).toBeUndefined();
+      expect(result.message).toBe("Bad Request: invalid model");
     });
 
     it("does not leak raw response body for auth errors", async () => {

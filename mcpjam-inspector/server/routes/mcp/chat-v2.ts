@@ -24,11 +24,21 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
   const statusCode = (error as any).statusCode as number | undefined;
   const responseBody = (error as any).responseBody as string | undefined;
 
-  // Detect auth/permission errors from AI provider APIs
-  if (
-    typeof statusCode === "number" &&
-    (statusCode === 401 || statusCode === 403)
-  ) {
+  // 401 is the standard "unauthorized" HTTP status — always means bad/missing key.
+  const isAuthStatus = statusCode === 401;
+
+  // Some providers (Google, xAI) return 400 instead of 401 for invalid keys.
+  // We check the response body for phrases that unambiguously indicate an auth error.
+  const lowerBody = responseBody?.toLowerCase() ?? "";
+  const isAuthBody =
+    lowerBody.includes("incorrect api key") ||
+    lowerBody.includes("invalid api key") ||
+    lowerBody.includes("api key not valid") ||
+    lowerBody.includes("api_key_invalid") ||
+    lowerBody.includes("authentication_error") ||
+    lowerBody.includes("invalid x-api-key");
+
+  if (isAuthStatus || isAuthBody) {
     const providerName = provider || "your AI provider";
 
     return JSON.stringify({
