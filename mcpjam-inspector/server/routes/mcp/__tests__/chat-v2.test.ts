@@ -434,7 +434,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for OpenAI. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
       );
       expect(result.statusCode).toBe(401);
     });
@@ -451,7 +451,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for Anthropic. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for anthropic. Please check your key under LLM Providers in Settings.",
       );
     });
 
@@ -467,7 +467,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for DeepSeek. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for deepseek. Please check your key under LLM Providers in Settings.",
       );
       expect(result.statusCode).toBe(403);
     });
@@ -529,7 +529,7 @@ describe("POST /api/mcp/chat-v2", () => {
       const result = JSON.parse(onError(error));
       expect(result.code).toBe("auth_error");
       expect(result.message).toBe(
-        "Invalid API key for OpenAI. Please check your key under LLM Providers in Settings.",
+        "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
       );
     });
   });

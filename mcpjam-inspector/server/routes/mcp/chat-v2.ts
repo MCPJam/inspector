@@ -14,23 +14,6 @@ import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 
-const PROVIDER_DISPLAY_NAMES: Record<ModelProvider, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  azure: "Azure OpenAI",
-  deepseek: "DeepSeek",
-  google: "Google",
-  meta: "Meta",
-  mistral: "Mistral",
-  minimax: "MiniMax",
-  moonshotai: "Moonshot AI",
-  xai: "xAI",
-  openrouter: "OpenRouter",
-  ollama: "Ollama",
-  "z-ai": "Zhipu AI",
-  custom: "your custom provider",
-};
-
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
     return String(error);
@@ -46,8 +29,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
     typeof statusCode === "number" &&
     (statusCode === 401 || statusCode === 403)
   ) {
-    const providerName =
-      (provider && PROVIDER_DISPLAY_NAMES[provider]) || "your AI provider";
+    const providerName = provider || "your AI provider";
 
     return JSON.stringify({
       code: "auth_error",
