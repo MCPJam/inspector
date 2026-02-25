@@ -36,6 +36,7 @@ function formatStreamError(error: unknown, provider?: ModelProvider): string {
     lowerBody.includes("api key not valid") ||
     lowerBody.includes("api_key_invalid") ||
     lowerBody.includes("authentication_error") ||
+    lowerBody.includes("authentication fails") ||
     lowerBody.includes("invalid x-api-key");
 
   if (isAuthStatus || isAuthBody) {
