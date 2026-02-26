@@ -35,7 +35,8 @@ export type LLMProvider =
   | "ollama"
   | "mistral"
   | "openrouter"
-  | "xai";
+  | "xai"
+  | "bedrock";
 
 /**
  * Compatible API protocols for custom providers
