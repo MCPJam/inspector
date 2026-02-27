@@ -703,6 +703,7 @@ export function ChatGPTAppRenderer({
   const previousWidgetStateRef = useRef<string | null>(null);
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
   const lastAppliedHeightRef = useRef<number>(0);
+  const lastInlineHeightRef = useRef<string>("320px");
   const effectiveDisplayModeRef = useRef(effectiveDisplayMode);
 
   useEffect(() => {
@@ -826,6 +827,7 @@ export function ChatGPTAppRenderer({
         : roundedHeight;
       if (bufferedHeight === lastAppliedHeightRef.current) return;
       lastAppliedHeightRef.current = bufferedHeight;
+      lastInlineHeightRef.current = `${bufferedHeight}px`;
 
       setContentHeight((prev) =>
         prev !== bufferedHeight ? bufferedHeight : prev,
@@ -851,21 +853,13 @@ export function ChatGPTAppRenderer({
       : baseHeight;
   }, [contentHeight, maxHeight]);
 
-  const iframeHeight = useMemo(() => {
-    if (isFullscreen) return "100%";
-    if (effectiveDisplayMode === "pip") {
-      // In mobile playground mode, PiP should be fullscreen (100% height)
-      if (isMobilePlaygroundMode && isPip) return "100%";
-      return isPip ? "400px" : `${appliedHeight}px`;
-    }
-    return `${appliedHeight}px`;
-  }, [
-    appliedHeight,
-    effectiveDisplayMode,
-    isFullscreen,
-    isPip,
-    isMobilePlaygroundMode,
-  ]);
+  const iframeHeight = isFullscreen
+    ? "100%"
+    : isPip
+      ? isMobilePlaygroundMode
+        ? "100%"
+        : "400px"
+      : lastInlineHeightRef.current;
 
   const modalWidgetUrl = useMemo(() => {
     if (!widgetUrl || !modalOpen) return null;
@@ -946,13 +940,13 @@ export function ChatGPTAppRenderer({
     }
   }, [widgetUrl, maxHeight]);
 
-  // When returning to inline, ask the widget to re-measure so backend-driven
-  // resize logic publishes the fresh height.
+  // When returning to inline or when the device type changes, ask the widget
+  // to re-measure so backend-driven resize logic publishes fresh dimensions.
   useEffect(() => {
     if (!widgetUrl || effectiveDisplayMode !== "inline" || !isReady) return;
     setContentWidth(undefined);
     sandboxRef.current?.postMessage({ type: "openai:requestResize" });
-  }, [widgetUrl, effectiveDisplayMode, isReady]);
+  }, [widgetUrl, effectiveDisplayMode, isReady, deviceType]);
 
   // When returning from pip/fullscreen to inline, push the latest measured
   // height back into the iframe so it reflects current content.
@@ -1690,6 +1684,11 @@ export function ChatGPTAppRenderer({
             effectiveDisplayMode === "pip" && !isMobilePlaygroundMode
               ? "90vh"
               : undefined,
+          transition:
+            isFullscreen ||
+            effectiveDisplayModeRef.current !== effectiveDisplayMode
+              ? undefined
+              : "height 300ms ease-out",
         }}
       />
       {outputTemplate && (
