@@ -257,10 +257,23 @@ export function createModelFromString(
 
     case "bedrock": {
       const bedrockProfile = process.env.BEDROCK_PROFILE;
+      const bedrockRoleArn = process.env.BEDROCK_ROLE_ARN;
+      const bedrockSourceProfile = process.env.BEDROCK_SOURCE_PROFILE;
       const bedrockRegion = process.env.AWS_REGION;
+
+      let credentialProvider;
+      if (bedrockRoleArn) {
+        credentialProvider = fromIni({
+          roleArn: bedrockRoleArn,
+          ...(bedrockSourceProfile && { sourceProfile: bedrockSourceProfile }),
+        });
+      } else if (bedrockProfile) {
+        credentialProvider = fromIni({ profile: bedrockProfile });
+      }
+
       const bedrock = createAmazonBedrock({
         ...(bedrockRegion && { region: bedrockRegion }),
-        ...(bedrockProfile && { credentialProvider: fromIni({ profile: bedrockProfile }) }),
+        ...(credentialProvider && { credentialProvider }),
       });
       return bedrock(model) as ProviderLanguageModel;
     }
