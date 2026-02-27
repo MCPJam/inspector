@@ -1,43 +1,34 @@
 import Ajv from "ajv";
-import type { ErrorObject } from "ajv";
 
 const ajv = new Ajv({ strict: false });
 
-export interface ValidationReport {
-  structuredErrors: ErrorObject[] | null | undefined;
-}
-
+/**
+ * Checks whether a tool result's `structuredContent` is valid against the
+ * declared `outputSchema`.
+ *
+ * Returns:
+ *  - `undefined` — no outputSchema or no structuredContent (nothing to check)
+ *  - `true`      — structuredContent validates against the schema
+ *  - `false`     — structuredContent does NOT validate (in practice the MCP
+ *                  client SDK catches this before we ever see it, so this
+ *                  path is defensive only)
+ */
 export function validateToolOutput(
   result: any,
   outputSchema?: Record<string, unknown>,
-): ValidationReport {
-  const report: ValidationReport = {
-    structuredErrors: undefined, // undefined means not checked
-  };
-
+): boolean | undefined {
   if (!outputSchema) {
-    return report;
+    return undefined;
   }
 
   if (result.structuredContent) {
     try {
       const validate = ajv.compile(outputSchema);
-      const isValid = validate(result.structuredContent);
-      report.structuredErrors = isValid ? null : validate.errors || []; // null means valid
-    } catch (e) {
-      // When the output schema is itself invalid
-      report.structuredErrors = [
-        {
-          keyword: "schema-compilation",
-          instancePath: "",
-          schemaPath: "",
-          params: {},
-          message:
-            "The provided outputSchema is invalid and could not be compiled.",
-        } as any,
-      ];
+      return validate(result.structuredContent);
+    } catch {
+      return false;
     }
   }
 
-  return report;
+  return undefined;
 }

@@ -3,11 +3,9 @@ import { validateToolOutput } from "../schema-utils.js";
 
 describe("validateToolOutput", () => {
   describe("when no outputSchema is provided", () => {
-    it("returns undefined structuredErrors", () => {
+    it("returns undefined", () => {
       const result = { content: [{ type: "text", text: "Hello" }] };
-      const report = validateToolOutput(result);
-
-      expect(report.structuredErrors).toBeUndefined();
+      expect(validateToolOutput(result)).toBeUndefined();
     });
   });
 
@@ -20,29 +18,25 @@ describe("validateToolOutput", () => {
       required: ["data"],
     };
 
-    it("returns null structuredErrors when structuredContent is valid", () => {
+    it("returns true when structuredContent is valid", () => {
       const result = {
         content: [{ type: "text", text: "raw content" }],
         structuredContent: { data: "valid" },
       };
 
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeNull(); // null means valid
+      expect(validateToolOutput(result, schema)).toBe(true);
     });
 
-    it("returns validation errors when structuredContent is invalid", () => {
+    it("returns false when structuredContent is invalid", () => {
       const result = {
         content: [{ type: "text", text: "raw content" }],
         structuredContent: { wrong: "field" },
       };
 
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeDefined();
-      expect(report.structuredErrors).not.toBeNull();
-      expect(report.structuredErrors!.length).toBeGreaterThan(0);
+      expect(validateToolOutput(result, schema)).toBe(false);
     });
 
-    it("returns schema-compilation error when outputSchema is invalid", () => {
+    it("returns false when outputSchema is itself invalid", () => {
       const invalidSchema = {
         type: "invalid-type-that-doesnt-exist",
         properties: { $ref: "circular-reference" },
@@ -53,10 +47,9 @@ describe("validateToolOutput", () => {
         structuredContent: { any: "thing" },
       };
 
-      const report = validateToolOutput(result, invalidSchema);
-      // Note: AJV may or may not throw for all invalid schemas
-      // This tests the error handling path
-      expect(report.structuredErrors !== undefined).toBe(true);
+      // AJV may or may not throw for all invalid schemas —
+      // either false or true is acceptable, but it must not throw
+      expect(() => validateToolOutput(result, invalidSchema)).not.toThrow();
     });
   });
 
@@ -75,8 +68,7 @@ describe("validateToolOutput", () => {
         structuredContent: { value: 42 },
       };
 
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeNull();
+      expect(validateToolOutput(result, schema)).toBe(true);
     });
 
     it("ignores content[0].text shape when structuredContent is invalid", () => {
@@ -85,8 +77,7 @@ describe("validateToolOutput", () => {
         structuredContent: { value: "wrong type" },
       };
 
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).not.toBeNull();
+      expect(validateToolOutput(result, schema)).toBe(false);
     });
   });
 
@@ -106,8 +97,7 @@ describe("validateToolOutput", () => {
         structuredContent: { result: 6 },
       };
 
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeNull();
+      expect(validateToolOutput(result, schema)).toBe(true);
     });
 
     it("ignores OpenAPI 'example' keyword", () => {
@@ -137,8 +127,7 @@ describe("validateToolOutput", () => {
         },
       };
 
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeNull();
+      expect(validateToolOutput(result, schema)).toBe(true);
     });
 
     it("ignores nested non-JSON-Schema keywords in complex schemas", () => {
@@ -168,19 +157,16 @@ describe("validateToolOutput", () => {
         structuredContent: { data: "test", items: [{ id: "1" }] },
       };
 
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeNull();
+      expect(validateToolOutput(result, schema)).toBe(true);
     });
   });
 
   describe("edge cases", () => {
-    it("handles empty content array without throwing", () => {
+    it("returns undefined when no structuredContent is present", () => {
       const result = { content: [] };
       const schema = { type: "object" };
 
-      // No structuredContent, so structuredErrors stays undefined
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeUndefined();
+      expect(validateToolOutput(result, schema)).toBeUndefined();
     });
 
     it("handles result with structuredContent and empty content", () => {
@@ -193,8 +179,7 @@ describe("validateToolOutput", () => {
         structuredContent: { key: null },
       };
 
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeNull();
+      expect(validateToolOutput(result, schema)).toBe(true);
     });
   });
 });
