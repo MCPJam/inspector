@@ -4,7 +4,7 @@
  */
 
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
-import { fromIni } from "@aws-sdk/credential-providers";
+import { fromIni, fromTemporaryCredentials } from "@aws-sdk/credential-providers";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
@@ -263,9 +263,15 @@ export function createModelFromString(
 
       let credentialProvider;
       if (bedrockRoleArn) {
-        credentialProvider = fromIni({
-          roleArn: bedrockRoleArn,
-          ...(bedrockSourceProfile && { sourceProfile: bedrockSourceProfile }),
+        const sourceCredentials = fromIni({
+          profile: bedrockSourceProfile ?? bedrockProfile,
+        });
+        credentialProvider = fromTemporaryCredentials({
+          masterCredentials: sourceCredentials,
+          params: {
+            RoleArn: bedrockRoleArn,
+            RoleSessionName: "bedrock-session",
+          },
         });
       } else if (bedrockProfile) {
         credentialProvider = fromIni({ profile: bedrockProfile });
