@@ -21,7 +21,7 @@ import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
 import { LoggerView } from "../logger-view";
-import { JsonEditor } from "@/components/ui/json-editor";
+import { JsonHighlighter } from "@/components/ui/json-editor/json-highlighter";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -347,19 +347,48 @@ function ToolParametersView({
               </AccordionContent>
             </AccordionItem>
           )}
+          {selectedTool?.inputSchema && (
+            <AccordionItem value="input-schema">
+              <AccordionTrigger className="text-xs">
+                Input Schema
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="w-0 min-w-full overflow-x-auto rounded-md bg-muted/30">
+                  <pre
+                    className="p-3 text-xs leading-5 whitespace-pre m-0 w-fit"
+                    style={{ fontFamily: "var(--font-code)" }}
+                  >
+                    <JsonHighlighter
+                      content={JSON.stringify(
+                        selectedTool.inputSchema,
+                        null,
+                        2,
+                      )}
+                    />
+                  </pre>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          )}
           {selectedTool?.outputSchema && (
             <AccordionItem value="output-schema">
               <AccordionTrigger className="text-xs">
                 Output Schema
               </AccordionTrigger>
               <AccordionContent>
-                <div className="overflow-hidden rounded-md [&_.h-full]:h-auto">
-                  <JsonEditor
-                    value={selectedTool.outputSchema}
-                    readOnly
-                    showToolbar={false}
-                    height="auto"
-                  />
+                <div className="w-0 min-w-full overflow-x-auto rounded-md bg-muted/30">
+                  <pre
+                    className="p-3 text-xs leading-5 whitespace-pre m-0 w-fit"
+                    style={{ fontFamily: "var(--font-code)" }}
+                  >
+                    <JsonHighlighter
+                      content={JSON.stringify(
+                        selectedTool.outputSchema,
+                        null,
+                        2,
+                      )}
+                    />
+                  </pre>
                 </div>
               </AccordionContent>
             </AccordionItem>
