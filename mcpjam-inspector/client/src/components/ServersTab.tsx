@@ -27,6 +27,7 @@ import { Skeleton } from "./ui/skeleton";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Workspace } from "@/state/app-types";
+import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWorkspaces";
 import {
   DndContext,
   closestCenter,
@@ -76,6 +77,7 @@ function SortableServerCard({
   onReconnect,
   onEdit,
   onRemove,
+  hostedServerId,
 }: {
   id: string;
   server: ServerWithName;
@@ -86,6 +88,7 @@ function SortableServerCard({
   ) => Promise<void>;
   onEdit: (server: ServerWithName) => void;
   onRemove: (name: string) => void;
+  hostedServerId?: string;
 }) {
   const {
     attributes,
@@ -110,6 +113,7 @@ function SortableServerCard({
         onReconnect={onReconnect}
         onEdit={onEdit}
         onRemove={onRemove}
+        hostedServerId={hostedServerId}
       />
     </div>
   );
@@ -241,6 +245,11 @@ export function ServersTab({
   const activeWorkspace = workspaces[activeWorkspaceId];
   const workspaceName = activeWorkspace?.name || "Workspace";
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
+  const { serversRecord: sharedWorkspaceServersRecord } =
+    useRemoteWorkspaceServers({
+      workspaceId: sharedWorkspaceId ?? null,
+      isAuthenticated,
+    });
 
   const handleEditServer = (server: ServerWithName) => {
     setServerToEdit(server);
@@ -330,7 +339,7 @@ export function ServersTab({
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
           <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-6">
                 <WorkspaceSelector
                   activeWorkspaceId={activeWorkspaceId}
@@ -390,6 +399,7 @@ export function ServersTab({
                       onReconnect={onReconnect}
                       onEdit={handleEditServer}
                       onRemove={onRemove}
+                      hostedServerId={sharedWorkspaceServersRecord[name]?._id}
                     />
                   );
                 })}
@@ -404,6 +414,9 @@ export function ServersTab({
                     onReconnect={onReconnect}
                     onEdit={handleEditServer}
                     onRemove={onRemove}
+                    hostedServerId={
+                      sharedWorkspaceServersRecord[activeId!]?._id
+                    }
                   />
                 </div>
               ) : null}
@@ -416,7 +429,14 @@ export function ServersTab({
       {isJsonRpcPanelVisible ? (
         <>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={35} minSize={20} maxSize={50}>
+          <ResizablePanel
+            defaultSize={35}
+            minSize={4}
+            maxSize={50}
+            collapsible={true}
+            collapsedSize={0}
+            onCollapse={toggleJsonRpcPanel}
+          >
             <div className="h-full flex flex-col bg-background border-l border-border">
               <LoggerView key={connectedCount} onClose={toggleJsonRpcPanel} />
             </div>

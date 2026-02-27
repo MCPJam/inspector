@@ -430,7 +430,10 @@ export class MCPClientManager {
    */
   async getToolsForAiSdk(
     serverIds?: string[] | string,
-    options: { schemas?: ToolSchemaOverrides | "automatic"; needsApproval?: boolean } = {}
+    options: {
+      schemas?: ToolSchemaOverrides | "automatic";
+      needsApproval?: boolean;
+    } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
       ? serverIds

@@ -23,6 +23,7 @@ import {
   Cable,
   Trash2,
   AlertCircle,
+  Share2,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -51,6 +52,7 @@ import {
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
+import { ShareServerDialog } from "./ShareServerDialog";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -74,6 +76,7 @@ interface ServerConnectionCardProps {
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
+  hostedServerId?: string;
 }
 
 export function ServerConnectionCard({
@@ -83,6 +86,7 @@ export function ServerConnectionCard({
   onEdit,
   onRemove,
   serverTunnelUrl,
+  hostedServerId,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
@@ -100,6 +104,7 @@ export function ServerConnectionCard({
   const [isCreatingTunnel, setIsCreatingTunnel] = useState(false);
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   const { label: connectionStatusLabel, indicatorColor } =
     getConnectionStatusMeta(server.connectionStatus);
@@ -143,6 +148,23 @@ export function ServerConnectionCard({
     isReconnecting ||
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
+  const isStdioServer = "command" in server.config;
+  const isInsecureHttpServer =
+    "url" in server.config &&
+    !!server.config.url &&
+    (() => {
+      try {
+        return new URL(server.config.url.toString()).protocol === "http:";
+      } catch {
+        return false;
+      }
+    })();
+  const canShareServer =
+    HOSTED_MODE &&
+    !!hostedServerId &&
+    isAuthenticated &&
+    !isStdioServer &&
+    !isInsecureHttpServer;
 
   // Load tools when server is connected
   useEffect(() => {
@@ -516,61 +538,82 @@ export function ServerConnectionCard({
                 </button>
               )}
             </div>
-            {showTunnelActions && (
-              <div onClick={(e) => e.stopPropagation()}>
-                {hasTunnel ? (
-                  <div className="inline-flex items-center overflow-hidden rounded-full border border-border/70 bg-muted/30 text-foreground">
+            <div
+              className="flex items-center gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {canShareServer && (
+                <button
+                  onClick={() => {
+                    posthog.capture("share_server_clicked", {
+                      location: "server_connection_card",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                    });
+                    setIsShareDialogOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
+                >
+                  <Share2 className="h-3 w-3" />
+                  <span>Share</span>
+                </button>
+              )}
+              {showTunnelActions && (
+                <>
+                  {hasTunnel ? (
+                    <div className="inline-flex items-center overflow-hidden rounded-full border border-border/70 bg-muted/30 text-foreground">
+                      <button
+                        onClick={() => copyToClipboard(tunnelUrl!, "tunnel")}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 cursor-pointer"
+                      >
+                        {copiedField === "tunnel" ? (
+                          <>
+                            <Check className="h-3 w-3" />
+                            <span>Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Cable className="h-3 w-3" />
+                            <span>Copy ngrok URL</span>
+                          </>
+                        )}
+                      </button>
+                      <span className="h-4 w-px bg-border/80" />
+                      <button
+                        onClick={handleCloseTunnel}
+                        disabled={isClosingTunnel}
+                        className="inline-flex items-center justify-center px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                        aria-label="Close tunnel"
+                        title="Close tunnel"
+                      >
+                        {isClosingTunnel ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3 w-3" />
+                        )}
+                      </button>
+                    </div>
+                  ) : (
                     <button
-                      onClick={() => copyToClipboard(tunnelUrl!, "tunnel")}
-                      className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] transition-colors hover:bg-accent/60 cursor-pointer"
+                      onClick={handleCreateTunnel}
+                      disabled={isCreatingTunnel || !canManageTunnels}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                     >
-                      {copiedField === "tunnel" ? (
-                        <>
-                          <Check className="h-3 w-3" />
-                          <span>Copied</span>
-                        </>
-                      ) : (
-                        <>
-                          <Cable className="h-3 w-3" />
-                          <span>Copy ngrok URL</span>
-                        </>
-                      )}
-                    </button>
-                    <span className="h-4 w-px bg-border/80" />
-                    <button
-                      onClick={handleCloseTunnel}
-                      disabled={isClosingTunnel}
-                      className="inline-flex items-center justify-center px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-                      aria-label="Close tunnel"
-                      title="Close tunnel"
-                    >
-                      {isClosingTunnel ? (
+                      {isCreatingTunnel ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
-                        <Trash2 className="h-3 w-3" />
+                        <Cable className="h-3 w-3" />
                       )}
+                      <span>
+                        {canManageTunnels
+                          ? "Create ngrok tunnel"
+                          : "Sign in for tunnel"}
+                      </span>
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleCreateTunnel}
-                    disabled={isCreatingTunnel || !canManageTunnels}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-                  >
-                    {isCreatingTunnel ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Cable className="h-3 w-3" />
-                    )}
-                    <span>
-                      {canManageTunnels
-                        ? "Create ngrok tunnel"
-                        : "Sign in for tunnel"}
-                    </span>
-                  </button>
-                )}
-              </div>
-            )}
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
           {hasError && (
@@ -627,6 +670,14 @@ export function ServerConnectionCard({
         onConfirm={handleConfirmCreateTunnel}
         isCreating={isCreatingTunnel}
       />
+      {canShareServer && hostedServerId && (
+        <ShareServerDialog
+          isOpen={isShareDialogOpen}
+          onClose={() => setIsShareDialogOpen(false)}
+          serverId={hostedServerId}
+          serverName={server.name}
+        />
+      )}
     </>
   );
 }

@@ -861,12 +861,14 @@ export const runEvalSuiteWithAiSdk = async ({
       }),
     );
 
-    // Create a cancellation checker that polls every 500ms
+    // Create a cancellation checker that polls every 2s
+    let stopPolling = false;
     const createCancellationChecker = async () => {
       if (runId === null) return; // Quick runs can't be cancelled
 
-      while (true) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+      while (!stopPolling) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (stopPolling) return;
         try {
           const currentRun = await convexClient.query(
             "testSuites:getTestSuiteRun" as any,
@@ -923,6 +925,8 @@ export const runEvalSuiteWithAiSdk = async ({
         return;
       }
       throw error;
+    } finally {
+      stopPolling = true;
     }
 
     // Aggregate results from all tests

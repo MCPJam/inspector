@@ -17,20 +17,17 @@ describe("HostedShellGate", () => {
     );
   });
 
-  it("disables content while auth is loading", () => {
+  it("passes through children unblocked during auth-loading", () => {
     render(
       <HostedShellGate state="auth-loading">
         <div>App Content</div>
       </HostedShellGate>,
     );
 
-    expect(screen.getByText("Checking authentication...")).toBeInTheDocument();
-    expect(screen.getByTestId("hosted-shell-gate-content")).toHaveAttribute(
+    expect(screen.getByText("App Content")).toBeInTheDocument();
+    expect(screen.queryByTestId("hosted-shell-gate-overlay")).toBeNull();
+    expect(screen.getByTestId("hosted-shell-gate-content")).not.toHaveAttribute(
       "inert",
-    );
-    expect(screen.getByTestId("hosted-shell-gate-content")).toHaveAttribute(
-      "aria-hidden",
-      "true",
     );
   });
 

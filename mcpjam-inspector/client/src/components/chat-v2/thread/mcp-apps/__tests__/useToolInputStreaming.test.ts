@@ -130,6 +130,7 @@ interface HookProps {
   toolOutput: unknown;
   toolErrorText: string | undefined;
   toolCallId: string;
+  reinitCount: number;
 }
 
 function createDefaultProps(
@@ -146,6 +147,7 @@ function createDefaultProps(
     toolOutput: undefined,
     toolErrorText: undefined,
     toolCallId: "call-1",
+    reinitCount: 0,
   };
 }
 
@@ -443,5 +445,40 @@ describe("useToolInputStreaming", () => {
     rerender();
 
     expect(bridge.sendToolCancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-sends tool input and result when reinitCount increments", () => {
+    const props = createDefaultProps(bridge);
+    props.toolState = "output-available";
+    props.toolInput = { code: "final" };
+    props.toolOutput = { content: [{ type: "text", text: "result" }] };
+
+    const { rerender } = renderHook(() => useToolInputStreaming(props));
+
+    expect(bridge.sendToolInput).toHaveBeenCalledTimes(1);
+    expect(bridge.sendToolResult).toHaveBeenCalledTimes(1);
+
+    // Simulate guest re-initialization (e.g. SDK app after openai-compat shim)
+    props.reinitCount = 1;
+    rerender();
+
+    expect(bridge.sendToolInput).toHaveBeenCalledTimes(2);
+    expect(bridge.sendToolResult).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-sends tool error when reinitCount increments", () => {
+    const props = createDefaultProps(bridge);
+    props.toolState = "output-error";
+    props.toolErrorText = "Something failed";
+
+    const { rerender } = renderHook(() => useToolInputStreaming(props));
+
+    expect(bridge.sendToolCancelled).toHaveBeenCalledTimes(1);
+
+    // Simulate guest re-initialization
+    props.reinitCount = 1;
+    rerender();
+
+    expect(bridge.sendToolCancelled).toHaveBeenCalledTimes(2);
   });
 });

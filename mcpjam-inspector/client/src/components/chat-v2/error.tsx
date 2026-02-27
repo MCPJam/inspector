@@ -70,6 +70,8 @@ export function ErrorBox({
     ? "text-warning-foreground"
     : "text-destructive-foreground";
 
+  const isAuthError = code === "auth_error";
+
   const errorLabel = isPlatformError
     ? "MCPJam platform issue"
     : "An error occurred";
@@ -82,7 +84,7 @@ export function ErrorBox({
         <CircleAlert className={cn("h-6 w-6 flex-shrink-0", iconClasses)} />
         <div className="flex-1">
           <p className="text-sm leading-6">
-            {errorLabel}: {message}
+            {isAuthError ? message : `${errorLabel}: ${message}`}
           </p>
           {isPlatformError && (
             <p className="text-xs opacity-75 mt-0.5">

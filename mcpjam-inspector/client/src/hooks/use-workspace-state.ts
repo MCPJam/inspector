@@ -265,9 +265,7 @@ export function useWorkspaceState({
       }
     };
 
-    Promise.all(localWorkspaces.map(migrateWorkspace)).then(() => {
-      toast.success("Your workspaces have been synced to the cloud");
-    });
+    Promise.all(localWorkspaces.map(migrateWorkspace));
   }, [
     isAuthenticated,
     useLocalFallback,

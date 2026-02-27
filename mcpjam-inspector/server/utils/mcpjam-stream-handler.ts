@@ -337,6 +337,7 @@ async function processStream(
  */
 function emitToolResults(
   writer: StepContext["writer"],
+  mcpClientManager: MCPClientManager,
   newMessages: ModelMessage[],
 ) {
   for (const msg of newMessages) {
@@ -344,11 +345,48 @@ function emitToolResults(
       const toolMsg = msg as ToolModelMessage;
       for (const part of toolMsg.content) {
         if (part.type === "tool-result") {
+          const toolName =
+            typeof (part as any).toolName === "string"
+              ? ((part as any).toolName as string)
+              : undefined;
+          const serverId =
+            typeof (part as any).serverId === "string"
+              ? ((part as any).serverId as string)
+              : undefined;
+          const rawOutput = (part as any).result ?? part.output;
+
+          let outputForUi = rawOutput;
+          if (rawOutput && typeof rawOutput === "object") {
+            const rawOutputObj = rawOutput as Record<string, unknown>;
+            const existingMeta =
+              rawOutputObj._meta &&
+              typeof rawOutputObj._meta === "object" &&
+              rawOutputObj._meta !== null
+                ? (rawOutputObj._meta as Record<string, unknown>)
+                : {};
+            const toolMeta =
+              serverId && toolName
+                ? (mcpClientManager.getAllToolsMetadata(serverId)[toolName] ??
+                  {})
+                : {};
+
+            // Include descriptor metadata in streamed output so shared/minimal chat
+            // can render app widgets without a tools/list prefetch.
+            outputForUi = {
+              ...rawOutputObj,
+              _meta: {
+                ...toolMeta,
+                ...existingMeta,
+                ...(serverId ? { _serverId: serverId } : {}),
+              },
+            };
+          }
+
           writer.write({
             type: "tool-output-available",
             toolCallId: part.toolCallId,
             // Prefer full result (with _meta/structuredContent) for UI
-            output: (part as any).result ?? part.output,
+            output: outputForUi,
           });
         }
       }
@@ -412,11 +450,15 @@ async function handlePendingApprovals(
   writer: StepContext["writer"],
   messageHistory: ModelMessage[],
   tools: ToolSet,
+  mcpClientManager: MCPClientManager,
 ): Promise<boolean> {
-  // Build approvalId → toolCallId map and toolCallId → toolName map from assistant messages
+  // Build approvalId → toolCallId map, toolCallId → toolName map,
+  // and toolCallId → assistant message index map from assistant messages
   const approvalIdToToolCallId = new Map<string, string>();
   const toolCallIdToToolName = new Map<string, string>();
-  for (const msg of messageHistory) {
+  const toolCallIdToAssistantIdx = new Map<string, number>();
+  for (let i = 0; i < messageHistory.length; i++) {
+    const msg = messageHistory[i];
     if (msg?.role === "assistant") {
       const assistantMsg = msg as AssistantModelMessage;
       if (!Array.isArray(assistantMsg.content)) continue;
@@ -426,6 +468,7 @@ async function handlePendingApprovals(
         }
         if (part.type === "tool-call" && part.toolCallId) {
           toolCallIdToToolName.set(part.toolCallId, part.toolName);
+          toolCallIdToAssistantIdx.set(part.toolCallId, i);
         }
       }
     }
@@ -479,7 +522,8 @@ async function handlePendingApprovals(
   // NOTE: convertToModelMessages does NOT produce tool-results for denied tools
   // because the client-side state is 'approval-responded', not 'output-denied'.
   if (deniedToolCallIds.size > 0) {
-    const deniedResultParts: ToolResultPart[] = [];
+    // Group denied results by assistant message index
+    const deniedByAssistantIdx = new Map<number, ToolResultPart[]>();
 
     for (const toolCallId of deniedToolCallIds) {
       if (existingResultIds.has(toolCallId)) continue;
@@ -488,7 +532,7 @@ async function handlePendingApprovals(
         toolCallId,
       });
 
-      deniedResultParts.push({
+      const part: ToolResultPart = {
         type: "tool-result",
         toolCallId,
         toolName: toolCallIdToToolName.get(toolCallId) ?? "unknown",
@@ -496,31 +540,43 @@ async function handlePendingApprovals(
           type: "error-text",
           value: "Tool execution denied by user.",
         },
-      });
+      };
+
+      const assistantIdx = toolCallIdToAssistantIdx.get(toolCallId);
+      if (assistantIdx !== undefined) {
+        if (!deniedByAssistantIdx.has(assistantIdx))
+          deniedByAssistantIdx.set(assistantIdx, []);
+        deniedByAssistantIdx.get(assistantIdx)!.push(part);
+      }
     }
 
-    if (deniedResultParts.length > 0) {
-      messageHistory.push({
-        role: "tool",
-        content: deniedResultParts,
-      } as ModelMessage);
+    if (deniedByAssistantIdx.size > 0) {
+      // Insert right after corresponding assistant messages (reverse order to preserve indices)
+      const sortedKeys = [...deniedByAssistantIdx.keys()].sort((a, b) => b - a);
+      for (const idx of sortedKeys) {
+        messageHistory.splice(idx + 1, 0, {
+          role: "tool",
+          content: deniedByAssistantIdx.get(idx)!,
+        } as ModelMessage);
+      }
       didHandle = true;
     }
   }
 
-  // Execute approved tools: collect tool calls that were approved but don't have results yet
+  // Execute approved tools: collect tool calls that were approved but don't have results yet.
+  // NOTE: This must run AFTER denied results are spliced in above.
+  // executeToolCallsFromMessages skips tool-call IDs that already have results
+  // (via existingToolResultIds), so the denied results prevent double-execution.
   const needsExecution = [...approvedToolCallIds].some(
     (id) => !existingResultIds.has(id),
   );
 
   if (needsExecution) {
-    const beforeExecLength = messageHistory.length;
-    await executeToolCallsFromMessages(messageHistory, {
+    const newMessages = await executeToolCallsFromMessages(messageHistory, {
       tools: tools as Record<string, any>,
     });
 
-    const newMessages = messageHistory.slice(beforeExecLength);
-    emitToolResults(writer, newMessages);
+    emitToolResults(writer, mcpClientManager, newMessages);
     didHandle = true;
   }
 
@@ -618,14 +674,12 @@ async function processOneStep(
     emitInheritedToolCalls(writer, messageHistory, beforeStepLength);
 
     // Execute tools locally
-    const beforeExecLength = messageHistory.length;
-    await executeToolCallsFromMessages(messageHistory, {
+    const newMessages = await executeToolCallsFromMessages(messageHistory, {
       tools: tools as Record<string, any>,
     });
 
     // Emit results for newly executed tools
-    const newMessages = messageHistory.slice(beforeExecLength);
-    emitToolResults(writer, newMessages);
+    emitToolResults(writer, mcpClientManager, newMessages);
 
     return { shouldContinue: true, didEmitFinish: false };
   }
@@ -676,6 +730,7 @@ export async function handleMCPJamFreeChatModel(
             writer,
             messageHistory,
             tools,
+            mcpClientManager,
           );
           if (handled) {
             // Approvals were processed — if there are still unresolved tool

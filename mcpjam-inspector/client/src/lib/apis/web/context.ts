@@ -7,7 +7,10 @@ export interface HostedApiContext {
   serverIdsByName: Record<string, string>;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
+  shareToken?: string;
 }
+
+type HostedAccessScope = "workspace_member" | "chat_v2";
 
 const EMPTY_CONTEXT: HostedApiContext = {
   workspaceId: null,
@@ -101,17 +104,31 @@ export function getHostedOAuthToken(serverId: string): string | undefined {
   return hostedApiContext.oauthTokensByServerId?.[serverId];
 }
 
+export function getHostedShareToken(): string | undefined {
+  return hostedApiContext.shareToken;
+}
+
+function getHostedAccessScope(): HostedAccessScope | undefined {
+  return getHostedShareToken() ? "chat_v2" : undefined;
+}
+
 export function buildHostedServerRequest(serverNameOrId: string): {
   workspaceId: string;
   serverId: string;
   oauthAccessToken?: string;
+  accessScope?: HostedAccessScope;
+  shareToken?: string;
 } {
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
+  const shareToken = getHostedShareToken();
+  const accessScope = getHostedAccessScope();
   return {
     workspaceId: getHostedWorkspaceId(),
     serverId,
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
+    ...(accessScope ? { accessScope } : {}),
+    ...(shareToken ? { shareToken } : {}),
   };
 }
 
@@ -119,13 +136,19 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   workspaceId: string;
   serverIds: string[];
   oauthTokens?: Record<string, string>;
+  accessScope?: HostedAccessScope;
+  shareToken?: string;
 } {
   const serverIds = resolveHostedServerIds(serverNamesOrIds);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
+  const shareToken = getHostedShareToken();
+  const accessScope = getHostedAccessScope();
   return {
     workspaceId: getHostedWorkspaceId(),
     serverIds,
     ...(oauthTokens ? { oauthTokens } : {}),
+    ...(accessScope ? { accessScope } : {}),
+    ...(shareToken ? { shareToken } : {}),
   };
 }
 

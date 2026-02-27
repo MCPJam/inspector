@@ -8,10 +8,57 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import type { ModelProvider } from "@/shared/types";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
+
+function formatStreamError(error: unknown, provider?: ModelProvider): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  // Duck-type statusCode/responseBody — APICallError.isInstance() can fail
+  // when multiple copies of @ai-sdk/provider are bundled (symbol mismatch).
+  const statusCode = (error as any).statusCode as number | undefined;
+  const responseBody = (error as any).responseBody as string | undefined;
+
+  // 401 is the standard "unauthorized" HTTP status — always means bad/missing key.
+  const isAuthStatus = statusCode === 401;
+
+  // Some providers (Google, xAI) return 400 instead of 401 for invalid keys.
+  // We check the response body for phrases that unambiguously indicate an auth error.
+  const lowerBody = responseBody?.toLowerCase() ?? "";
+  const isAuthBody =
+    lowerBody.includes("incorrect api key") ||
+    lowerBody.includes("invalid api key") ||
+    lowerBody.includes("api key not valid") ||
+    lowerBody.includes("api_key_invalid") ||
+    lowerBody.includes("authentication_error") ||
+    lowerBody.includes("authentication fails") ||
+    lowerBody.includes("invalid x-api-key");
+
+  if (isAuthStatus || isAuthBody) {
+    const providerName = provider || "your AI provider";
+
+    return JSON.stringify({
+      code: "auth_error",
+      message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
+      statusCode,
+    });
+  }
+
+  // For non-auth API errors, include the response body as details
+  if (responseBody && typeof responseBody === "string") {
+    return JSON.stringify({
+      message: error.message,
+      details: responseBody,
+    });
+  }
+
+  return error.message;
+}
 
 const chatV2 = new Hono();
 
@@ -128,17 +175,7 @@ chatV2.post("/", async (c) => {
       },
       onError: (error) => {
         logger.error("[mcp/chat-v2] stream error", error);
-        if (error instanceof Error) {
-          const responseBody = (error as any).responseBody;
-          if (responseBody && typeof responseBody === "string") {
-            return JSON.stringify({
-              message: error.message,
-              details: responseBody,
-            });
-          }
-          return error.message;
-        }
-        return String(error);
+        return formatStreamError(error, modelDefinition.provider);
       },
     });
   } catch (error) {

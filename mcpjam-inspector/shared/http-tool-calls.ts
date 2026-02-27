@@ -72,7 +72,7 @@ type ExecuteToolCallOptions =
 export async function executeToolCallsFromMessages(
   messages: ModelMessage[],
   options: ExecuteToolCallOptions,
-): Promise<void> {
+): Promise<ModelMessage[]> {
   // Build tools with serverId metadata
   let tools: ToolsMap = {};
 
@@ -105,8 +105,11 @@ export async function executeToolCallsFromMessages(
     }
   }
 
-  const toolResultsToAdd: ModelMessage[] = [];
-  for (const msg of messages) {
+  const resultsByAssistantIdx = new Map<number, ModelMessage[]>();
+  const allNewResults: ModelMessage[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
     if (
       !msg ||
       msg.role !== "assistant" ||
@@ -189,7 +192,9 @@ export async function executeToolCallsFromMessages(
               },
             ],
           } as any;
-          toolResultsToAdd.push(toolResultMessage);
+          if (!resultsByAssistantIdx.has(i)) resultsByAssistantIdx.set(i, []);
+          resultsByAssistantIdx.get(i)!.push(toolResultMessage);
+          allNewResults.push(toolResultMessage);
         } catch (error: any) {
           const errorOutput: ToolResultPart = {
             type: "error-text",
@@ -206,13 +211,21 @@ export async function executeToolCallsFromMessages(
               },
             ],
           } as any;
-          toolResultsToAdd.push(errorToolResultMessage);
+          if (!resultsByAssistantIdx.has(i)) resultsByAssistantIdx.set(i, []);
+          resultsByAssistantIdx.get(i)!.push(errorToolResultMessage);
+          allNewResults.push(errorToolResultMessage);
         }
       }
     }
   }
 
-  messages.push(...toolResultsToAdd);
+  // Insert right after corresponding assistant messages (reverse order to preserve indices)
+  const sortedKeys = [...resultsByAssistantIdx.keys()].sort((a, b) => b - a);
+  for (const idx of sortedKeys) {
+    messages.splice(idx + 1, 0, ...resultsByAssistantIdx.get(idx)!);
+  }
+
+  return allNewResults;
 }
 
 function serializeToolResult(

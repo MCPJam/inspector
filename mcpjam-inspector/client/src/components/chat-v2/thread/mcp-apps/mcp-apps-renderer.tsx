@@ -125,6 +125,8 @@ interface MCPAppsRendererProps {
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
   cachedWidgetHtmlUrl?: string;
+  /** Minimal mode hides diagnostics and metadata surfaces */
+  minimalMode?: boolean;
 }
 
 export function MCPAppsRenderer({
@@ -152,6 +154,7 @@ export function MCPAppsRenderer({
   onAppSupportedDisplayModesChange,
   isOffline,
   cachedWidgetHtmlUrl,
+  minimalMode = false,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -162,7 +165,9 @@ export function MCPAppsRenderer({
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
-    : "widget-declared";
+    : minimalMode
+      ? "permissive"
+      : "widget-declared";
 
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
@@ -241,6 +246,7 @@ export function MCPAppsRenderer({
   );
 
   const [isReady, setIsReady] = useState(false);
+  const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
@@ -315,6 +321,7 @@ export function MCPAppsRenderer({
     toolOutput,
     toolErrorText,
     toolCallId,
+    reinitCount,
   });
 
   // Fetch widget HTML when tool is active (streaming, input ready, or output available) or CSP mode changes
@@ -435,6 +442,13 @@ export function MCPAppsRenderer({
 
   // UI logging
   const addUiLog = useTrafficLogStore((s) => s.addLog);
+  const logUiEvent = useCallback(
+    (payload: Parameters<typeof addUiLog>[0]) => {
+      if (minimalMode) return;
+      addUiLog(payload);
+    },
+    [addUiLog, minimalMode],
+  );
 
   // Widget debug store
   const setWidgetDebugInfo = useWidgetDebugStore((s) => s.setWidgetDebugInfo);
@@ -619,12 +633,19 @@ export function MCPAppsRenderer({
   const registerBridgeHandlers = useCallback(
     (bridge: AppBridge) => {
       bridge.oninitialized = () => {
+        const wasReady = isReadyRef.current;
         setIsReady(true);
         isReadyRef.current = true;
         const appCaps = bridge.getAppCapabilities();
         onAppSupportedDisplayModesChangeRef.current?.(
           appCaps?.availableDisplayModes as DisplayMode[] | undefined,
         );
+        // If the guest re-initialized (e.g. an SDK-based app completing its
+        // own handshake after the openai-compat shim already initialized),
+        // bump reinitCount so the delivery effects re-send tool data.
+        if (wasReady) {
+          setReinitCount((c) => c + 1);
+        }
       };
 
       bridge.onmessage = async ({ content }) => {
@@ -715,6 +736,7 @@ export function MCPAppsRenderer({
       };
 
       bridge.onloggingmessage = ({ level, data, logger }) => {
+        if (minimalMode) return;
         const prefix = logger ? `[${logger}]` : "[MCP Apps]";
         const message = `${prefix} ${level.toUpperCase()}:`;
         if (level === "error" || level === "critical" || level === "alert") {
@@ -842,7 +864,7 @@ export function MCPAppsRenderer({
         onSend: (message) => {
           const method = extractMethod(message, "mcp-apps");
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
-          addUiLog({
+          logUiEvent({
             widgetId: toolCallId,
             serverId,
             direction: "host-to-ui",
@@ -857,7 +879,7 @@ export function MCPAppsRenderer({
             signalStreamingRender();
           }
           if (SUPPRESSED_UI_LOG_METHODS.has(method)) return;
-          addUiLog({
+          logUiEvent({
             widgetId: toolCallId,
             serverId,
             direction: "ui-to-host",
@@ -888,7 +910,8 @@ export function MCPAppsRenderer({
       setWidgetModelContext(toolCallId, null);
     };
   }, [
-    addUiLog,
+    logUiEvent,
+    minimalMode,
     serverId,
     toolCallId,
     widgetHtml,
@@ -917,7 +940,7 @@ export function MCPAppsRenderer({
         timestamp,
       } = data;
 
-      addUiLog({
+      logUiEvent({
         widgetId: toolCallId,
         serverId,
         direction: "ui-to-host",
@@ -936,12 +959,14 @@ export function MCPAppsRenderer({
         timestamp: timestamp || Date.now(),
       });
 
-      console.warn(
-        `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
-        sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
-      );
+      if (!minimalMode) {
+        console.warn(
+          `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
+          sourceFile ? `at ${sourceFile}:${lineNumber}:${columnNumber}` : "",
+        );
+      }
     },
-    [addUiLog, toolCallId, serverId, addCspViolation],
+    [addCspViolation, logUiEvent, minimalMode, serverId, toolCallId],
   );
 
   const handleSandboxMessage = (event: MessageEvent) => {
@@ -975,7 +1000,7 @@ export function MCPAppsRenderer({
       typeof data.method === "string" &&
       data.method.startsWith("openai/")
     ) {
-      addUiLog({
+      logUiEvent({
         widgetId: toolCallId,
         serverId,
         direction: "ui-to-host",
@@ -1180,9 +1205,11 @@ export function MCPAppsRenderer({
         style={iframeStyle}
       />
 
-      <div className="text-[11px] text-muted-foreground/70">
-        MCP App: <code>{resourceUri}</code>
-      </div>
+      {!minimalMode && (
+        <div className="text-[11px] text-muted-foreground/70">
+          MCP App: <code>{resourceUri}</code>
+        </div>
+      )}
 
       <McpAppsModal
         open={modalOpen}
@@ -1204,7 +1231,7 @@ export function MCPAppsRenderer({
         toolOutputRef={toolOutputRef}
         themeModeRef={themeModeRef}
         addUiLog={(log) =>
-          addUiLog({
+          logUiEvent({
             ...log,
             protocol: "mcp-apps" as UiProtocol,
           })

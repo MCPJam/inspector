@@ -25,6 +25,7 @@ import {
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
+import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
@@ -99,6 +100,7 @@ import "./types/hono"; // Type extensions
 function getMCPConfigFromEnv() {
   // Global options that apply to all modes
   const initialTab = process.env.MCP_INITIAL_TAB || null;
+  const cspMode = process.env.MCP_CSP_MODE || null;
 
   // First check if we have a full config file
   const configData = process.env.MCP_CONFIG_DATA;
@@ -133,6 +135,7 @@ function getMCPConfigFromEnv() {
           servers,
           autoConnectServer: autoConnectServer || null,
           initialTab,
+          cspMode,
         };
       }
     } catch (error) {
@@ -144,10 +147,11 @@ function getMCPConfigFromEnv() {
   const command = process.env.MCP_SERVER_COMMAND;
   if (!command) {
     // No server config, but still return global options if set
-    if (initialTab) {
+    if (initialTab || cspMode) {
       return {
         servers: [],
         initialTab,
+        cspMode,
       };
     }
     return null;
@@ -166,6 +170,7 @@ function getMCPConfigFromEnv() {
       },
     ],
     initialTab,
+    cspMode,
   };
 }
 
@@ -369,6 +374,9 @@ if (process.env.NODE_ENV === "production") {
   // Serve static assets (JS, CSS, images) - no token injection needed
   app.use("/assets/*", serveStatic({ root: clientRoot }));
 
+  // In-app browser redirect (before SPA fallback)
+  app.use("/*", inAppBrowserMiddleware);
+
   // Serve all static files from client root (images, svgs, etc.)
   // This handles files like /mcp_jam_light.png, /favicon.ico, etc.
   app.use("/*", serveStatic({ root: clientRoot }));
@@ -417,7 +425,8 @@ if (process.env.NODE_ENV === "production") {
     }
   });
 } else {
-  // Development mode - just API
+  // Development mode - in-app browser redirect + API
+  app.use("/*", inAppBrowserMiddleware);
   app.get("/", (c) => {
     return c.json({
       message: "MCPJam API Server",

@@ -49,6 +49,8 @@ interface PromptsPopoverProps {
   setActionTrigger: (trigger: string | null) => void;
   value: string;
   caretIndex: number;
+  /** Shared chat-only mode – skips prompts/skills fetch to avoid auth-denied noise */
+  minimalMode?: boolean;
 }
 
 // Utility function to check if MCP prompts are requested
@@ -72,6 +74,7 @@ export function PromptsPopover({
   setActionTrigger,
   value,
   caretIndex,
+  minimalMode = false,
 }: PromptsPopoverProps) {
   const [open, setOpen] = useState(false);
   const [promptListItems, setPromptListItems] = useState<PromptListItem[]>([]);
@@ -86,6 +89,9 @@ export function PromptsPopover({
   const skillsEnabled = Boolean(onSkillSelected);
 
   useEffect(() => {
+    // In shared/minimal mode, skip prompts fetch (workspace-member-only endpoint)
+    if (minimalMode) return;
+
     // Fetch prompts for selected servers
     let active = true;
     (async () => {
@@ -116,7 +122,7 @@ export function PromptsPopover({
     return () => {
       active = false;
     };
-  }, [selectedServers]);
+  }, [selectedServers, minimalMode]);
 
   // Fetch skills count for navigation (only when skills UI is enabled)
   useEffect(() => {

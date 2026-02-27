@@ -369,7 +369,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           </div>
 
           {/* Action buttons */}
-          <div className="ml-auto flex items-center gap-0.5">
+          <div className="ml-auto flex items-center gap-0.5 text-muted-foreground/80">
             <Button
               onClick={() => {
                 if (activeTab === "resources") {
@@ -402,6 +402,24 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
               <PanelLeftClose className="h-3.5 w-3.5" />
             </Button>
           </div>
+
+          {activeTab === "templates" && (
+            <Button
+              onClick={readTemplateResource}
+              disabled={templateLoading || !selectedTemplate}
+              size="sm"
+              className="h-8 px-3 text-xs"
+            >
+              {templateLoading ? (
+                <RefreshCw className="h-3 w-3 animate-spin" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              <span className="ml-1">
+                {templateLoading ? "Reading" : "Read Resource"}
+              </span>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -486,28 +504,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
               )}
             </div>
           </ScrollArea>
-
-          {/* Read button */}
-          <div className="p-3 border-t border-border">
-            <Button
-              onClick={readTemplateResource}
-              disabled={templateLoading || !selectedTemplate}
-              className="w-full"
-              size="sm"
-            >
-              {templateLoading ? (
-                <>
-                  <RefreshCw className="h-3 w-3 animate-spin mr-2" />
-                  Loading
-                </>
-              ) : (
-                <>
-                  <Play className="h-3 w-3 mr-2" />
-                  Read Resource
-                </>
-              )}
-            </Button>
-          </div>
         </div>
       ) : (
         /* Resources or Templates List */

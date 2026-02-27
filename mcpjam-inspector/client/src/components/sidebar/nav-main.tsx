@@ -11,6 +11,7 @@ import {
 interface GuideBubble {
   message: string;
   subMessage?: string;
+  onDismiss?: () => void;
 }
 
 interface NavMainItem {
@@ -131,11 +132,12 @@ function GuideBubbleWrapper({
       {position &&
         createPortal(
           <div
-            className="fixed z-50 pointer-events-none animate-in fade-in-0 slide-in-from-left-2 duration-300"
+            className="fixed z-50 animate-in fade-in-0 slide-in-from-left-2 duration-300"
             style={{
               top: position.top,
               left: position.left,
               transform: "translateY(-50%)",
+              pointerEvents: "none",
             }}
           >
             <div className="relative bg-primary text-primary-foreground px-3 py-2 rounded-xl shadow-lg whitespace-nowrap">
@@ -143,6 +145,16 @@ function GuideBubbleWrapper({
               <div className="absolute left-0 top-1/2 -translate-x-[6px] -translate-y-1/2">
                 <div className="w-3 h-3 bg-primary rotate-45 rounded-sm" />
               </div>
+              {guideBubble.onDismiss && (
+                <button
+                  onClick={guideBubble.onDismiss}
+                  className="absolute -top-2 -right-2 w-5 h-5 flex items-center justify-center rounded-full bg-primary-foreground text-primary text-xs leading-none shadow-md hover:opacity-80 transition-opacity"
+                  style={{ pointerEvents: "auto" }}
+                  aria-label="Dismiss"
+                >
+                  ✕
+                </button>
+              )}
               <div className="relative z-10">
                 <p className="text-sm font-medium leading-snug">
                   {guideBubble.message}

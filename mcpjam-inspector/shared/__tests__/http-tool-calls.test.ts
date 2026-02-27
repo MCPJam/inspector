@@ -175,7 +175,7 @@ describe("hasUnresolvedToolCalls", () => {
 
 describe("executeToolCallsFromMessages", () => {
   describe("with tools option", () => {
-    it("executes tool calls and appends results to messages", async () => {
+    it("executes tool calls and inserts results after assistant message", async () => {
       const mockExecute = vi.fn().mockResolvedValue({ result: "success" });
       const tools = {
         my_tool: {
@@ -198,13 +198,19 @@ describe("executeToolCallsFromMessages", () => {
         },
       ] as unknown as ModelMessage[];
 
-      await executeToolCallsFromMessages(messages, { tools });
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+      });
 
       expect(mockExecute).toHaveBeenCalledWith({ param: "value" });
       expect(messages).toHaveLength(2);
       expect(messages[1].role).toBe("tool");
       expect((messages[1] as any).content[0].type).toBe("tool-result");
       expect((messages[1] as any).content[0].toolCallId).toBe("call-123");
+      // Return value contains the newly created messages
+      expect(newMessages).toHaveLength(1);
+      expect(newMessages[0].role).toBe("tool");
+      expect((newMessages[0] as any).content[0].toolCallId).toBe("call-123");
     });
 
     it("handles tool execution errors", async () => {
@@ -520,6 +526,174 @@ describe("executeToolCallsFromMessages", () => {
 
       expect(executionOrder).toEqual(["a", "b"]);
       expect(messages).toHaveLength(3);
+    });
+  });
+
+  describe("tool result ordering", () => {
+    it("inserts results after correct assistant message when user message is in between", async () => {
+      const tools = {
+        my_tool: {
+          execute: vi.fn().mockResolvedValue({ done: true }),
+        },
+      };
+
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "I approve" }],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, { tools });
+
+      // Result should be at index 1 (right after assistant), NOT at the end
+      expect(messages).toHaveLength(3);
+      expect(messages[0].role).toBe("assistant");
+      expect(messages[1].role).toBe("tool");
+      expect((messages[1] as any).content[0].toolCallId).toBe("call-1");
+      expect(messages[2].role).toBe("user");
+    });
+
+    it("inserts results after each corresponding assistant message with multiple assistants", async () => {
+      const tools = {
+        tool_a: {
+          execute: vi.fn().mockResolvedValue("result_a"),
+        },
+        tool_b: {
+          execute: vi.fn().mockResolvedValue("result_b"),
+        },
+      };
+
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-a",
+              toolName: "tool_a",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "message between" }],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-b",
+              toolName: "tool_b",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, { tools });
+
+      // Expected order: assistant(a), tool(a), user, assistant(b), tool(b)
+      expect(messages).toHaveLength(5);
+      expect(messages[0].role).toBe("assistant");
+      expect(messages[1].role).toBe("tool");
+      expect((messages[1] as any).content[0].toolCallId).toBe("call-a");
+      expect(messages[2].role).toBe("user");
+      expect(messages[3].role).toBe("assistant");
+      expect(messages[4].role).toBe("tool");
+      expect((messages[4] as any).content[0].toolCallId).toBe("call-b");
+    });
+
+    it("returns newly created tool result messages", async () => {
+      const tools = {
+        tool_a: {
+          execute: vi.fn().mockResolvedValue("a"),
+        },
+        tool_b: {
+          execute: vi.fn().mockResolvedValue("b"),
+        },
+      };
+
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-a",
+              toolName: "tool_a",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-b",
+              toolName: "tool_b",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+      });
+
+      expect(newMessages).toHaveLength(2);
+      expect((newMessages[0] as any).content[0].toolCallId).toBe("call-a");
+      expect((newMessages[1] as any).content[0].toolCallId).toBe("call-b");
+    });
+
+    it("preserves behavior for single assistant message case", async () => {
+      const tools = {
+        my_tool: {
+          execute: vi.fn().mockResolvedValue("ok"),
+        },
+      };
+
+      const messages = [
+        {
+          role: "user",
+          content: [{ type: "text", text: "hi" }],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "my_tool",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, { tools });
+
+      // user, assistant, tool-result
+      expect(messages).toHaveLength(3);
+      expect(messages[0].role).toBe("user");
+      expect(messages[1].role).toBe("assistant");
+      expect(messages[2].role).toBe("tool");
+      expect((messages[2] as any).content[0].toolCallId).toBe("call-1");
     });
   });
 });

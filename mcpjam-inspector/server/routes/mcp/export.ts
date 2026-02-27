@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import "../../types/hono"; // Type extensions
+import { exportServer } from "../../utils/export-helpers.js";
 
 const exporter = new Hono();
 
@@ -13,16 +14,9 @@ exporter.post("/server", async (c) => {
 
     const mcp = c.mcpClientManager;
 
-    let toolsResult: Awaited<ReturnType<typeof mcp.listTools>>;
-    let resourcesResult: Awaited<ReturnType<typeof mcp.listResources>>;
-    let promptsResult: Awaited<ReturnType<typeof mcp.listPrompts>>;
-
     try {
-      [toolsResult, resourcesResult, promptsResult] = await Promise.all([
-        mcp.listTools(serverId),
-        mcp.listResources(serverId),
-        mcp.listPrompts(serverId),
-      ]);
+      const result = await exportServer(mcp, serverId);
+      return c.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (
@@ -33,34 +27,6 @@ exporter.post("/server", async (c) => {
       }
       throw error;
     }
-
-    const tools = toolsResult.tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      outputSchema: tool.outputSchema,
-    }));
-
-    const resources = resourcesResult.resources.map((resource) => ({
-      uri: resource.uri,
-      name: resource.name,
-      description: resource.description,
-      mimeType: resource.mimeType,
-    }));
-
-    const prompts = promptsResult.prompts.map((prompt) => ({
-      name: prompt.name,
-      description: prompt.description,
-      arguments: prompt.arguments,
-    }));
-
-    return c.json({
-      serverId,
-      exportedAt: new Date().toISOString(),
-      tools,
-      resources,
-      prompts,
-    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ error: msg }, 500);

@@ -27,6 +27,7 @@ import {
 } from "./chat-helpers.js";
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
+import { HOSTED_MODE } from "../config.js";
 
 const DEFAULT_TEMPERATURE = 0.7;
 
@@ -71,7 +72,9 @@ export async function prepareChatV2(
     requireToolApproval ? { needsApproval: requireToolApproval } : undefined,
   );
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-    await getSkillToolsAndPrompt();
+    HOSTED_MODE
+      ? { tools: {}, systemPromptSection: "" }
+      : await getSkillToolsAndPrompt();
 
   const finalSkillTools = requireToolApproval
     ? Object.fromEntries(

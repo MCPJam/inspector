@@ -146,6 +146,8 @@ interface ChatGPTAppRendererProps {
   cachedWidgetHtmlUrl?: string;
   /** Optional initial widget state (used by view previews/editor) */
   initialWidgetState?: unknown;
+  /** Shared chat-only mode – suppresses auth-denied widget errors silently */
+  minimalMode?: boolean;
 }
 
 // ============================================================================
@@ -246,6 +248,7 @@ function useWidgetFetch(
   isOffline?: boolean,
   cachedWidgetHtmlUrl?: string,
   onWidgetHtmlCaptured?: (toolCallId: string, html: string) => void,
+  minimalMode?: boolean,
 ) {
   const [widgetUrl, setWidgetUrl] = useState<string | null>(null);
   const [widgetClosed, setWidgetClosed] = useState(false);
@@ -531,10 +534,13 @@ function useWidgetFetch(
         // This prevents live previews from reverting to stale cached HTML during view editing.
       } catch (err) {
         if (isCancelled) return;
-        console.error("Error storing widget data:", err);
-        setStoreError(
-          err instanceof Error ? err.message : "Failed to prepare widget",
-        );
+        const errMsg =
+          err instanceof Error ? err.message : "Failed to prepare widget";
+        // In shared/minimal mode, silently degrade on auth-denied widget errors
+        if (!(minimalMode && /oauth|unauthorized|401/i.test(errMsg))) {
+          console.error("Error storing widget data:", err);
+        }
+        setStoreError(errMsg);
       } finally {
         if (!isCancelled) setIsStoringWidget(false);
       }
@@ -605,6 +611,7 @@ export function ChatGPTAppRenderer({
   isOffline,
   cachedWidgetHtmlUrl,
   initialWidgetState,
+  minimalMode = false,
 }: ChatGPTAppRendererProps) {
   const sandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
   const modalSandboxRef = useRef<ChatGPTSandboxedIframeHandle>(null);
@@ -696,6 +703,7 @@ export function ChatGPTAppRenderer({
   const previousWidgetStateRef = useRef<string | null>(null);
   const [modalSandboxReady, setModalSandboxReady] = useState(false);
   const lastAppliedHeightRef = useRef<number>(0);
+  const lastInlineHeightRef = useRef<string>("320px");
   const effectiveDisplayModeRef = useRef(effectiveDisplayMode);
 
   useEffect(() => {
@@ -716,7 +724,11 @@ export function ChatGPTAppRenderer({
   const playgroundSafeAreaInsets = useUIPlaygroundStore(
     (s) => s.safeAreaInsets,
   );
-  const cspMode = isPlaygroundActive ? playgroundCspMode : "widget-declared";
+  const cspMode = isPlaygroundActive
+    ? playgroundCspMode
+    : minimalMode
+      ? "permissive"
+      : "widget-declared";
   // Use playground settings when active, otherwise compute from window
   const deviceType = isPlaygroundActive
     ? playgroundDeviceType
@@ -801,6 +813,7 @@ export function ChatGPTAppRenderer({
     isOffline,
     cachedWidgetHtmlUrl,
     handleWidgetHtmlCaptured,
+    minimalMode,
   );
 
   const applyMeasuredHeight = useCallback(
@@ -814,6 +827,7 @@ export function ChatGPTAppRenderer({
         : roundedHeight;
       if (bufferedHeight === lastAppliedHeightRef.current) return;
       lastAppliedHeightRef.current = bufferedHeight;
+      lastInlineHeightRef.current = `${bufferedHeight}px`;
 
       setContentHeight((prev) =>
         prev !== bufferedHeight ? bufferedHeight : prev,
@@ -839,21 +853,13 @@ export function ChatGPTAppRenderer({
       : baseHeight;
   }, [contentHeight, maxHeight]);
 
-  const iframeHeight = useMemo(() => {
-    if (isFullscreen) return "100%";
-    if (effectiveDisplayMode === "pip") {
-      // In mobile playground mode, PiP should be fullscreen (100% height)
-      if (isMobilePlaygroundMode && isPip) return "100%";
-      return isPip ? "400px" : `${appliedHeight}px`;
-    }
-    return `${appliedHeight}px`;
-  }, [
-    appliedHeight,
-    effectiveDisplayMode,
-    isFullscreen,
-    isPip,
-    isMobilePlaygroundMode,
-  ]);
+  const iframeHeight = isFullscreen
+    ? "100%"
+    : isPip
+      ? isMobilePlaygroundMode
+        ? "100%"
+        : "400px"
+      : lastInlineHeightRef.current;
 
   const modalWidgetUrl = useMemo(() => {
     if (!widgetUrl || !modalOpen) return null;
@@ -934,13 +940,13 @@ export function ChatGPTAppRenderer({
     }
   }, [widgetUrl, maxHeight]);
 
-  // When returning to inline, ask the widget to re-measure so backend-driven
-  // resize logic publishes the fresh height.
+  // When returning to inline or when the device type changes, ask the widget
+  // to re-measure so backend-driven resize logic publishes fresh dimensions.
   useEffect(() => {
     if (!widgetUrl || effectiveDisplayMode !== "inline" || !isReady) return;
     setContentWidth(undefined);
     sandboxRef.current?.postMessage({ type: "openai:requestResize" });
-  }, [widgetUrl, effectiveDisplayMode, isReady]);
+  }, [widgetUrl, effectiveDisplayMode, isReady, deviceType]);
 
   // When returning from pip/fullscreen to inline, push the latest measured
   // height back into the iframe so it reflects current content.
@@ -1493,7 +1499,11 @@ export function ChatGPTAppRenderer({
         Loading ChatGPT App widget...
       </div>
     );
-  if (storeError)
+  if (storeError) {
+    // In shared/minimal mode, silently hide auth-denied widget errors (workspace-member-only endpoint)
+    if (minimalMode && /oauth|unauthorized|401/i.test(storeError)) {
+      return null;
+    }
     return (
       <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
         Failed to load widget: {storeError}
@@ -1505,6 +1515,7 @@ export function ChatGPTAppRenderer({
         )}
       </div>
     );
+  }
   if (widgetClosed)
     return (
       <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
@@ -1673,6 +1684,11 @@ export function ChatGPTAppRenderer({
             effectiveDisplayMode === "pip" && !isMobilePlaygroundMode
               ? "90vh"
               : undefined,
+          transition:
+            isFullscreen ||
+            effectiveDisplayModeRef.current !== effectiveDisplayMode
+              ? undefined
+              : "height 300ms ease-out",
         }}
       />
       {outputTemplate && (
