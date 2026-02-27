@@ -21,7 +21,7 @@ import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
 import { LoggerView } from "../logger-view";
-import { JsonHighlighter } from "@/components/ui/json-editor/json-highlighter";
+import { SchemaViewer } from "@/components/ui/schema-viewer";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -353,20 +353,7 @@ function ToolParametersView({
                 Input Schema
               </AccordionTrigger>
               <AccordionContent>
-                <div className="w-0 min-w-full overflow-x-auto rounded-md bg-muted/30">
-                  <pre
-                    className="p-3 text-xs leading-5 whitespace-pre m-0 w-fit"
-                    style={{ fontFamily: "var(--font-code)" }}
-                  >
-                    <JsonHighlighter
-                      content={JSON.stringify(
-                        selectedTool.inputSchema,
-                        null,
-                        2,
-                      )}
-                    />
-                  </pre>
-                </div>
+                <SchemaViewer schema={selectedTool.inputSchema} />
               </AccordionContent>
             </AccordionItem>
           )}
@@ -376,20 +363,7 @@ function ToolParametersView({
                 Output Schema
               </AccordionTrigger>
               <AccordionContent>
-                <div className="w-0 min-w-full overflow-x-auto rounded-md bg-muted/30">
-                  <pre
-                    className="p-3 text-xs leading-5 whitespace-pre m-0 w-fit"
-                    style={{ fontFamily: "var(--font-code)" }}
-                  >
-                    <JsonHighlighter
-                      content={JSON.stringify(
-                        selectedTool.outputSchema,
-                        null,
-                        2,
-                      )}
-                    />
-                  </pre>
-                </div>
+                <SchemaViewer schema={selectedTool.outputSchema} />
               </AccordionContent>
             </AccordionItem>
           )}
