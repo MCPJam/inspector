@@ -10,8 +10,8 @@ const ajv = new Ajv({ strict: false });
  *  - `undefined` — no outputSchema or no structuredContent (nothing to check)
  *  - `true`      — structuredContent validates against the schema
  *  - `false`     — structuredContent does NOT validate (in practice the MCP
- *                  client SDK catches this before we ever see it, so this
- *                  path is defensive only)
+ *                  SDK catches this before we ever see it, so this path is
+ *                  defensive only)
  */
 export function validateToolOutput(
   result: any,
