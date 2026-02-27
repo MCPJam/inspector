@@ -42,8 +42,13 @@ describe("hosted-tab-policy", () => {
 
   it("hides blocked tabs from hosted sidebar", () => {
     expect(isHostedSidebarTabAllowed("skills")).toBe(false);
-    expect(isHostedSidebarTabAllowed("oauth-flow")).toBe(false);
     expect(isHostedSidebarTabAllowed("tasks")).toBe(false);
     expect(isHostedSidebarTabAllowed("evals")).toBe(false);
+  });
+
+  it("allows oauth-flow in hosted sidebar", () => {
+    expect(isHostedSidebarTabAllowed("oauth-flow")).toBe(true);
+    expect(isHostedHashTabAllowed("oauth-flow")).toBe(true);
+    expect(isHostedHashTabBlocked("oauth-flow")).toBe(false);
   });
 });

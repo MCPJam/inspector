@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   executeOAuthProxy,
+  executeDebugOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
@@ -108,6 +109,31 @@ oauthWeb.get("/metadata", async (c) => {
     }
 
     return c.json(result.metadata);
+  } catch (error) {
+    return webErrorCompat(c, toRouteError(error));
+  }
+});
+
+/**
+ * Debug proxy for OAuth flow visualization (hosted mode).
+ * POST /api/web/oauth/debug/proxy
+ *
+ * Mirrors /api/mcp/oauth/debug/proxy but requires bearer JWT and HTTPS only.
+ * Body: { url: string, method?: string, body?: object, headers?: object }
+ */
+oauthWeb.post("/debug/proxy", async (c) => {
+  try {
+    assertBearerToken(c);
+
+    const { url, method, body, headers } = await c.req.json();
+    const result = await executeDebugOAuthProxy({
+      url,
+      method,
+      body,
+      headers,
+      httpsOnly: true,
+    });
+    return c.json(result);
   } catch (error) {
     return webErrorCompat(c, toRouteError(error));
   }

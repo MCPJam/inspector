@@ -3,6 +3,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { logger } from "../../utils/logger";
 import {
   executeOAuthProxy,
+  executeDebugOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
@@ -20,190 +21,16 @@ const oauth = new Hono();
  */
 oauth.post("/debug/proxy", async (c) => {
   try {
-    const {
-      url,
-      method = "GET",
-      body,
-      headers: customHeaders,
-    } = await c.req.json();
-
-    if (!url) {
-      return c.json({ error: "Missing url parameter" }, 400);
-    }
-
-    // Validate URL format
-    let targetUrl: URL;
-    try {
-      targetUrl = new URL(url);
-      if (targetUrl.protocol !== "https:" && targetUrl.protocol !== "http:") {
-        return c.json({ error: "Invalid protocol" }, 400);
-      }
-    } catch (error) {
-      return c.json({ error: "Invalid URL format" }, 400);
-    }
-
-    // Build request headers
-    const requestHeaders: Record<string, string> = {
-      "User-Agent": "MCP-Inspector/1.0",
-      ...customHeaders,
-    };
-
-    // Determine content type from custom headers or default to JSON
-    const contentType =
-      customHeaders?.["Content-Type"] || customHeaders?.["content-type"];
-    const isFormUrlEncoded = contentType?.includes(
-      "application/x-www-form-urlencoded",
-    );
-
-    if (method === "POST" && body && !contentType) {
-      requestHeaders["Content-Type"] = "application/json";
-    }
-
-    // Make request to target server
-    const fetchOptions: RequestInit = {
-      method,
-      headers: requestHeaders,
-    };
-
-    if (method === "POST" && body) {
-      if (isFormUrlEncoded && typeof body === "object") {
-        // Convert object to URL-encoded string
-        const params = new URLSearchParams();
-        for (const [key, value] of Object.entries(body)) {
-          params.append(key, String(value));
-        }
-        fetchOptions.body = params.toString();
-      } else {
-        // Default to JSON
-        fetchOptions.body = JSON.stringify(body);
-      }
-    }
-
-    const response = await fetch(targetUrl.toString(), fetchOptions);
-
-    // Capture ALL response headers (no CORS restrictions on backend)
-    const headers: Record<string, string> = {};
-    response.headers.forEach((value, key) => {
-      headers[key] = value;
-    });
-
-    let responseBody: any = null;
-    const contentTypeHeader = headers["content-type"] || "";
-
-    // Handle SSE (Server-Sent Events) response
-    if (contentTypeHeader.includes("text/event-stream")) {
-      try {
-        // For backwards compatibility detection with old HTTP+SSE transport (2024-11-05):
-        // - Read from SSE stream until we get the first complete event
-        // - If it's an "endpoint" event, this is the old transport
-        // - Extract the endpoint URL and return it
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        const events: any[] = [];
-        let currentEvent: any = {};
-        const maxReadTime = 5000; // 5 second timeout (generous for network latency)
-        const startTime = Date.now();
-
-        if (reader) {
-          try {
-            while (Date.now() - startTime < maxReadTime) {
-              const { done, value } = await Promise.race([
-                reader.read(),
-                new Promise<{ done: boolean; value: undefined }>((_, reject) =>
-                  setTimeout(() => reject(new Error("Read timeout")), 1000),
-                ),
-              ]);
-
-              if (done) break;
-
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n");
-              // Keep the last incomplete line in the buffer
-              buffer = lines.pop() || "";
-
-              for (const line of lines) {
-                if (line.startsWith("event:")) {
-                  currentEvent.event = line.substring(6).trim();
-                } else if (line.startsWith("data:")) {
-                  const data = line.substring(5).trim();
-                  try {
-                    currentEvent.data = JSON.parse(data);
-                  } catch {
-                    currentEvent.data = data;
-                  }
-                } else if (line.startsWith("id:")) {
-                  currentEvent.id = line.substring(3).trim();
-                } else if (line === "") {
-                  // Empty line indicates end of event
-                  if (Object.keys(currentEvent).length > 0) {
-                    events.push({ ...currentEvent });
-                    currentEvent = {};
-
-                    // For backwards compatibility detection: check if first event is "endpoint"
-                    if (events.length >= 1) {
-                      // Got at least one event, that's enough for detection
-                      break;
-                    }
-                  }
-                }
-              }
-
-              // Exit if we have at least one complete event
-              if (events.length >= 1) break;
-            }
-          } finally {
-            // Always cancel the reader to free resources
-            try {
-              await reader.cancel();
-            } catch (e) {
-              logger.error("Error canceling SSE reader", e);
-            }
-          }
-        }
-
-        // Return structured response for client
-        // Client can check if events[0].event === "endpoint" to detect old transport
-        responseBody = {
-          transport: "sse",
-          events,
-          // For old HTTP+SSE transport, first event should be "endpoint"
-          isOldTransport: events[0]?.event === "endpoint",
-          endpoint: events[0]?.event === "endpoint" ? events[0].data : null,
-          // Include any MCP response if found
-          mcpResponse:
-            events.find((e) => e.event === "message" || !e.event)?.data || null,
-          rawBuffer: buffer,
-        };
-      } catch (error) {
-        logger.error("Failed to parse SSE response", error);
-        responseBody = {
-          error: "Failed to parse SSE stream",
-          details: error instanceof Error ? error.message : String(error),
-        };
-      }
-    } else {
-      // Handle JSON or text response
-      try {
-        responseBody = await response.json();
-      } catch {
-        // Response might not be JSON
-        try {
-          responseBody = await response.text();
-        } catch {
-          responseBody = null;
-        }
-      }
-    }
-
-    // Return full response with headers
-    return c.json({
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-      body: responseBody,
-    });
+    const { url, method, body, headers } = await c.req.json();
+    const result = await executeDebugOAuthProxy({ url, method, body, headers });
+    return c.json(result);
   } catch (error) {
+    if (error instanceof OAuthProxyError) {
+      return c.json(
+        { error: error.message },
+        error.status as ContentfulStatusCode,
+      );
+    }
     logger.error("[OAuth Debug Proxy] Error", error);
     return c.json(
       {
