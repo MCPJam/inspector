@@ -264,16 +264,14 @@ export function ToolsSidebar({
                     </AccordionContent>
                   </AccordionItem>
                 )}
-                {selectedTool?.inputSchema && (
-                  <AccordionItem value="input-schema">
-                    <AccordionTrigger className="text-xs">
-                      Input Schema
-                    </AccordionTrigger>
-                    <AccordionContent>
-                      <SchemaViewer schema={selectedTool.inputSchema} />
-                    </AccordionContent>
-                  </AccordionItem>
-                )}
+                <AccordionItem value="input-schema">
+                  <AccordionTrigger className="text-xs">
+                    Input Schema
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <SchemaViewer schema={selectedTool.inputSchema} />
+                  </AccordionContent>
+                </AccordionItem>
                 {selectedTool?.outputSchema && (
                   <AccordionItem value="output-schema">
                     <AccordionTrigger className="text-xs">
