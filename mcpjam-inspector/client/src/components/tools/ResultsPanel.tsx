@@ -1,24 +1,14 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import {
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
-  Info,
-  ExternalLink,
-  Clock3,
-} from "lucide-react";
+import { CheckCircle, XCircle, Info, ExternalLink, Clock3 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 
-type UnstructuredStatus = "not_applicable" | "schema_mismatch";
-
 interface ResultsPanelProps {
   error: string;
   result: CallToolResult | null;
   validationErrors: any[] | null | undefined;
-  unstructuredValidationResult: UnstructuredStatus;
   toolMeta?: Record<string, any>;
   responseDurationMs?: number | null;
 }
@@ -27,7 +17,6 @@ export function ResultsPanel({
   error,
   result,
   validationErrors,
-  unstructuredValidationResult,
   toolMeta,
   responseDurationMs,
 }: ResultsPanelProps) {
@@ -56,12 +45,12 @@ export function ResultsPanel({
                 className="bg-green-600 hover:bg-green-700"
               >
                 <CheckCircle className="h-3 w-3 mr-1.5" />
-                Valid
+                Structured content matches output schema
               </Badge>
             ) : (
               <Badge variant="destructive">
                 <XCircle className="h-3 w-3 mr-1.5" />
-                Invalid
+                Structured content does not match output schema
               </Badge>
             ))}
           {formattedResponseTime && (
@@ -123,16 +112,6 @@ export function ResultsPanel({
                 App Builder
               </Button>
             </div>
-          )}
-          {unstructuredValidationResult === "schema_mismatch" && (
-            <Badge
-              variant="destructive"
-              className="flex-shrink-0 w-fit bg-amber-600 hover:bg-amber-700"
-            >
-              <AlertTriangle className="h-3 w-3 mr-1.5" />
-              Warning: Tool declares an output schema but returned no
-              structuredContent.
-            </Badge>
           )}
           {/* JSON Editor - fills ALL remaining space */}
           <div className="flex-1 min-h-0 overflow-hidden">

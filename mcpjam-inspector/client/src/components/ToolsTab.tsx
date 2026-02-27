@@ -100,8 +100,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [validationErrors, setValidationErrors] = useState<
     any[] | null | undefined
   >(undefined);
-  const [unstructuredValidationResult, setUnstructuredValidationResult] =
-    useState<"not_applicable" | "schema_mismatch">("not_applicable");
   const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
@@ -191,7 +189,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setFormFields([]);
       setResult(null);
       setValidationErrors(undefined);
-      setUnstructuredValidationResult("not_applicable");
       setError("");
       setResponseDurationMs(null);
       setActiveElicitation(null);
@@ -288,7 +285,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setFormFields([]);
       setResult(null);
       setValidationErrors(undefined);
-      setUnstructuredValidationResult("not_applicable");
       setResponseDurationMs(null);
       setTools({});
       setCursor(undefined);
@@ -373,7 +369,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
           currentTool.outputSchema,
         );
         setValidationErrors(validationReport.structuredErrors);
-        setUnstructuredValidationResult(validationReport.unstructuredStatus);
         if (validationReport.structuredErrors) {
           logger.warn("Schema validation failed", {
             errors: validationReport.structuredErrors,
@@ -381,7 +376,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
         }
       } else {
         setValidationErrors(undefined);
-        setUnstructuredValidationResult("not_applicable");
       }
 
       logger.info("Tool execution completed", {
@@ -454,7 +448,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setError("");
     setResult(null);
     setValidationErrors(undefined);
-    setUnstructuredValidationResult("not_applicable");
     setResponseDurationMs(null);
 
     try {
@@ -675,7 +668,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       error={error}
       result={result}
       validationErrors={validationErrors}
-      unstructuredValidationResult={unstructuredValidationResult}
       toolMeta={getToolMeta(lastToolName)}
       responseDurationMs={responseDurationMs}
     />

@@ -3,11 +3,8 @@ import type { ErrorObject } from "ajv";
 
 const ajv = new Ajv({ strict: false });
 
-export type UnstructuredValidationStatus = "not_applicable" | "schema_mismatch";
-
 export interface ValidationReport {
   structuredErrors: ErrorObject[] | null | undefined;
-  unstructuredStatus: UnstructuredValidationStatus;
 }
 
 export function validateToolOutput(
@@ -16,7 +13,6 @@ export function validateToolOutput(
 ): ValidationReport {
   const report: ValidationReport = {
     structuredErrors: undefined, // undefined means not checked
-    unstructuredStatus: "not_applicable",
   };
 
   if (!outputSchema) {
@@ -30,7 +26,7 @@ export function validateToolOutput(
       report.structuredErrors = isValid ? null : validate.errors || []; // null means valid
     } catch (e) {
       // When the output schema is itself invalid
-      report.structuredErrors = report.structuredErrors = [
+      report.structuredErrors = [
         {
           keyword: "schema-compilation",
           instancePath: "",
@@ -41,12 +37,6 @@ export function validateToolOutput(
         } as any,
       ];
     }
-  }
-
-  // The outputSchema applies to structuredContent only, not content.
-  // The official SDK enforces this (error -32600), but third-party servers may not.
-  if (!result.structuredContent && !result.isError) {
-    report.unstructuredStatus = "schema_mismatch";
   }
 
   return report;

@@ -3,12 +3,11 @@ import { validateToolOutput } from "../schema-utils.js";
 
 describe("validateToolOutput", () => {
   describe("when no outputSchema is provided", () => {
-    it("returns not_applicable status and undefined structuredErrors", () => {
+    it("returns undefined structuredErrors", () => {
       const result = { content: [{ type: "text", text: "Hello" }] };
       const report = validateToolOutput(result);
 
       expect(report.structuredErrors).toBeUndefined();
-      expect(report.unstructuredStatus).toBe("not_applicable");
     });
   });
 
@@ -29,7 +28,6 @@ describe("validateToolOutput", () => {
 
       const report = validateToolOutput(result, schema);
       expect(report.structuredErrors).toBeNull(); // null means valid
-      expect(report.unstructuredStatus).toBe("not_applicable");
     });
 
     it("returns validation errors when structuredContent is invalid", () => {
@@ -42,8 +40,6 @@ describe("validateToolOutput", () => {
       expect(report.structuredErrors).toBeDefined();
       expect(report.structuredErrors).not.toBeNull();
       expect(report.structuredErrors!.length).toBeGreaterThan(0);
-      // unstructured is still not_applicable because structuredContent exists
-      expect(report.unstructuredStatus).toBe("not_applicable");
     });
 
     it("returns schema-compilation error when outputSchema is invalid", () => {
@@ -64,48 +60,6 @@ describe("validateToolOutput", () => {
     });
   });
 
-  describe("missing structuredContent", () => {
-    const schema = {
-      type: "object",
-      properties: {
-        message: { type: "string" },
-      },
-      required: ["message"],
-    };
-
-    it("flags as schema_mismatch when outputSchema exists but no structuredContent", () => {
-      const result = {
-        content: [{ type: "text", text: JSON.stringify({ message: "hello" }) }],
-      };
-
-      const report = validateToolOutput(result, schema);
-      expect(report.structuredErrors).toBeUndefined();
-      expect(report.unstructuredStatus).toBe("schema_mismatch");
-    });
-
-    it("does not flag error responses as schema_mismatch", () => {
-      const result = {
-        content: [{ type: "text", text: "Something went wrong" }],
-        isError: true,
-      };
-
-      const report = validateToolOutput(result, schema);
-      expect(report.unstructuredStatus).toBe("not_applicable");
-    });
-
-    it("does not validate content[0].text against the schema", () => {
-      // Even though the text content matches the schema shape,
-      // we only care about structuredContent
-      const result = {
-        content: [{ type: "text", text: JSON.stringify({ message: "valid" }) }],
-      };
-
-      const report = validateToolOutput(result, schema);
-      // Still flagged because structuredContent is missing
-      expect(report.unstructuredStatus).toBe("schema_mismatch");
-    });
-  });
-
   describe("content is never validated against outputSchema", () => {
     const schema = {
       type: "object",
@@ -123,7 +77,6 @@ describe("validateToolOutput", () => {
 
       const report = validateToolOutput(result, schema);
       expect(report.structuredErrors).toBeNull();
-      expect(report.unstructuredStatus).toBe("not_applicable");
     });
 
     it("ignores content[0].text shape when structuredContent is invalid", () => {
@@ -134,7 +87,6 @@ describe("validateToolOutput", () => {
 
       const report = validateToolOutput(result, schema);
       expect(report.structuredErrors).not.toBeNull();
-      expect(report.unstructuredStatus).toBe("not_applicable");
     });
   });
 
@@ -156,24 +108,6 @@ describe("validateToolOutput", () => {
 
       const report = validateToolOutput(result, schema);
       expect(report.structuredErrors).toBeNull();
-    });
-
-    it("flags missing structuredContent even with x- keys in schema", () => {
-      const schema = {
-        type: "object",
-        properties: {
-          result: { type: "number" },
-        },
-        required: ["result"],
-        "x-fastmcp-wrap-result": true,
-      };
-
-      const result = {
-        content: [{ type: "text", text: '{"result": 6}' }],
-      };
-
-      const report = validateToolOutput(result, schema);
-      expect(report.unstructuredStatus).toBe("schema_mismatch");
     });
 
     it("ignores OpenAPI 'example' keyword", () => {
@@ -205,7 +139,6 @@ describe("validateToolOutput", () => {
 
       const report = validateToolOutput(result, schema);
       expect(report.structuredErrors).toBeNull();
-      expect(report.unstructuredStatus).toBe("not_applicable");
     });
 
     it("ignores nested non-JSON-Schema keywords in complex schemas", () => {
@@ -237,7 +170,6 @@ describe("validateToolOutput", () => {
 
       const report = validateToolOutput(result, schema);
       expect(report.structuredErrors).toBeNull();
-      expect(report.unstructuredStatus).toBe("not_applicable");
     });
   });
 
@@ -246,9 +178,9 @@ describe("validateToolOutput", () => {
       const result = { content: [] };
       const schema = { type: "object" };
 
-      // No longer accesses content[0], so shouldn't throw
+      // No structuredContent, so structuredErrors stays undefined
       const report = validateToolOutput(result, schema);
-      expect(report.unstructuredStatus).toBe("schema_mismatch");
+      expect(report.structuredErrors).toBeUndefined();
     });
 
     it("handles result with structuredContent and empty content", () => {
@@ -263,7 +195,6 @@ describe("validateToolOutput", () => {
 
       const report = validateToolOutput(result, schema);
       expect(report.structuredErrors).toBeNull();
-      expect(report.unstructuredStatus).toBe("not_applicable");
     });
   });
 });
