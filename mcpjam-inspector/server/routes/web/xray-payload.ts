@@ -52,7 +52,7 @@ xrayPayload.post("/", async (c) => {
         return buildXRayPayload(
           manager,
           selectedServerIds,
-          messages ?? [],
+          messages,
           systemPrompt,
         );
       },
