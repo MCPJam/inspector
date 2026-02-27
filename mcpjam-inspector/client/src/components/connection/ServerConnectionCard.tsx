@@ -160,6 +160,7 @@ export function ServerConnectionCard({
       }
     })();
   const canShareServer =
+    HOSTED_MODE &&
     !!hostedServerId &&
     isAuthenticated &&
     !isStdioServer &&
