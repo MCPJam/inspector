@@ -6,6 +6,7 @@ import {
   Trash2,
   PanelRightClose,
   Copy,
+  Download,
 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Input } from "@/components/ui/input";
@@ -45,6 +46,7 @@ import { cn } from "@/lib/utils";
 
 type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps";
+type LogEntrySnapshot = Omit<RenderableRpcItem, 'id'>;
 
 interface RpcEventMessage {
   serverId: string;
@@ -206,16 +208,43 @@ export function LoggerView({
     setExpanded(new Set());
   };
 
-  const copyLogs = async () => {
-    const logs = filteredItems.map((item) => ({
+  const extractLogs = (): Array<LogEntrySnapshot> => {
+    return filteredItems.map((item) => ({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
       direction: item.direction,
       method: item.method,
       payload: item.payload,
+      ...(item.protocol && { protocol: item.protocol }),
+      ...(item.widgetId && { widgetId: item.widgetId }),
     }));
+  };
+
+  const exportLogs = () => {
     try {
+      const logs = extractLogs();
+
+      const blob = new Blob([JSON.stringify(logs, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `mcp-logs-${new Date().toISOString()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Logs exported");
+    } catch {
+      toast.error("Failed to export logs");
+    }
+  };
+
+  const copyLogs = async () => {
+    try {
+      const logs = extractLogs();
       await navigator.clipboard.writeText(JSON.stringify(logs, null, 2));
       toast.success("Logs copied to clipboard");
     } catch {
@@ -415,6 +444,16 @@ export function LoggerView({
         {/* Push action buttons to the right when search is hidden */}
         {!isSearchVisible && <div className="flex-1" />}
 
+         <Button
+          variant="ghost"
+          size="icon"
+          onClick={exportLogs}
+          disabled={filteredItemCount === 0}
+          className="h-7 w-7"
+          title="Export logs"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
