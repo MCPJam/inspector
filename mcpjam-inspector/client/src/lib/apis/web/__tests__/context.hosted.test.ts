@@ -130,4 +130,21 @@ describe("injectHostedServerMapping", () => {
     // Pending injection still survives.
     expect(resolveHostedServerId("new-server")).toBe("id-new");
   });
+
+  it("multiple rapid injections all survive stale subscription data", () => {
+    injectHostedServerMapping("server-a", "id-a");
+    injectHostedServerMapping("server-b", "id-b");
+
+    // Stale subscription fires without either new server.
+    setHostedApiContext({
+      workspaceId: "workspace-1",
+      serverIdsByName: {
+        "existing-server": "id-existing",
+      },
+    });
+
+    expect(resolveHostedServerId("server-a")).toBe("id-a");
+    expect(resolveHostedServerId("server-b")).toBe("id-b");
+    expect(resolveHostedServerId("existing-server")).toBe("id-existing");
+  });
 });

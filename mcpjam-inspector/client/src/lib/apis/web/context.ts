@@ -45,6 +45,7 @@ export function setHostedApiContext(next: HostedApiContext | null): void {
   const base = next ?? EMPTY_CONTEXT;
 
   // Self-clean: remove pending injections that the subscription now confirms.
+  // Safe: Map spec allows delete of the current entry during for..of iteration.
   for (const [name, id] of pendingInjections) {
     if (base.serverIdsByName[name] === id) {
       pendingInjections.delete(name);
