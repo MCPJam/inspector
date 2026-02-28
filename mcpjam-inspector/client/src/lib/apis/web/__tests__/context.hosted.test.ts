@@ -9,10 +9,12 @@ import {
   setHostedApiContext,
   injectHostedServerMapping,
   resolveHostedServerId,
+  _clearPendingInjections,
 } from "../context";
 
 describe("injectHostedServerMapping", () => {
   beforeEach(() => {
+    _clearPendingInjections();
     setHostedApiContext({
       workspaceId: "workspace-1",
       serverIdsByName: {
@@ -61,11 +63,10 @@ describe("injectHostedServerMapping", () => {
     expect(resolveHostedServerId("existing-server")).toBe("id-existing");
   });
 
-  it("injected mapping is lost if setHostedApiContext fires before subscription catches up", () => {
+  it("injected mapping survives setHostedApiContext with stale subscription data", () => {
     injectHostedServerMapping("new-server", "id-new");
 
-    // If setHostedApiContext fires with stale data (without the new server),
-    // the injected mapping is lost — this is the edge case the await prevents
+    // Subscription fires with stale data that doesn't include the new server.
     setHostedApiContext({
       workspaceId: "workspace-1",
       serverIdsByName: {
@@ -73,8 +74,60 @@ describe("injectHostedServerMapping", () => {
       },
     });
 
+    // The pending injection keeps the mapping alive.
+    expect(resolveHostedServerId("new-server")).toBe("id-new");
+    expect(resolveHostedServerId("existing-server")).toBe("id-existing");
+  });
+
+  it("pending injection is cleaned up once subscription confirms the mapping", () => {
+    injectHostedServerMapping("new-server", "id-new");
+
+    // First update: stale, injection survives.
+    setHostedApiContext({
+      workspaceId: "workspace-1",
+      serverIdsByName: {
+        "existing-server": "id-existing",
+      },
+    });
+    expect(resolveHostedServerId("new-server")).toBe("id-new");
+
+    // Second update: subscription caught up with the new server.
+    setHostedApiContext({
+      workspaceId: "workspace-1",
+      serverIdsByName: {
+        "existing-server": "id-existing",
+        "new-server": "id-new",
+      },
+    });
+    expect(resolveHostedServerId("new-server")).toBe("id-new");
+
+    // Third update: server deleted from Convex — should NOT be resurrected.
+    setHostedApiContext({
+      workspaceId: "workspace-1",
+      serverIdsByName: {
+        "existing-server": "id-existing",
+      },
+    });
     expect(() => resolveHostedServerId("new-server")).toThrow(
       'Hosted server not found for "new-server"',
     );
+  });
+
+  it("setHostedApiContext(null) preserves pending injections", () => {
+    injectHostedServerMapping("new-server", "id-new");
+
+    // Cleanup effect fires (e.g., component unmount).
+    setHostedApiContext(null);
+
+    // Re-mount with stale data.
+    setHostedApiContext({
+      workspaceId: "workspace-1",
+      serverIdsByName: {
+        "existing-server": "id-existing",
+      },
+    });
+
+    // Pending injection still survives.
+    expect(resolveHostedServerId("new-server")).toBe("id-new");
   });
 });
