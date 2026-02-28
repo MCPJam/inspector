@@ -184,7 +184,7 @@
     "concurrently": "^9.1.0",
     "cross-env": "^10.1.0",
     "electron": "^37.2.5",
-    "eslint": "^9",
+    "eslint": "^10.0.0",
     "jsdom": "^27.4.0",
     "png-to-ico": "^2.1.8",
     "run-script-os": "^1.1.6",
