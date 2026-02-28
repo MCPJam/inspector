@@ -806,7 +806,10 @@ export function useServerState({
 
       if (isAuthenticated && effectiveActiveWorkspaceId) {
         try {
-          await syncServerToConvex(serverName, serverEntry);
+          const serverId = await syncServerToConvex(serverName, serverEntry);
+          if (HOSTED_MODE && serverId) {
+            injectHostedServerMapping(serverName, serverId);
+          }
         } catch (error) {
           logger.error("Failed to sync server to Convex", {
             error: error instanceof Error ? error.message : "Unknown error",
