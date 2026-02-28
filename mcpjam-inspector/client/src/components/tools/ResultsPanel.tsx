@@ -1,24 +1,14 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import {
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
-  Info,
-  ExternalLink,
-  Clock3,
-} from "lucide-react";
+import { CheckCircle, Info, ExternalLink, Clock3 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
 
-type UnstructuredStatus = "not_applicable" | "schema_mismatch";
-
 interface ResultsPanelProps {
   error: string;
   result: CallToolResult | null;
-  validationErrors: any[] | null | undefined;
-  unstructuredValidationResult: UnstructuredStatus;
+  structuredContentValid: boolean | undefined;
   toolMeta?: Record<string, any>;
   responseDurationMs?: number | null;
 }
@@ -26,8 +16,7 @@ interface ResultsPanelProps {
 export function ResultsPanel({
   error,
   result,
-  validationErrors,
-  unstructuredValidationResult,
+  structuredContentValid,
   toolMeta,
   responseDurationMs,
 }: ResultsPanelProps) {
@@ -49,21 +38,15 @@ export function ResultsPanel({
       <div className="flex-shrink-0 flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-4">
           <h2 className="text-xs font-semibold text-foreground">Response</h2>
-          {validationErrors !== undefined &&
-            (validationErrors === null ? (
-              <Badge
-                variant="default"
-                className="bg-green-600 hover:bg-green-700"
-              >
-                <CheckCircle className="h-3 w-3 mr-1.5" />
-                Valid
-              </Badge>
-            ) : (
-              <Badge variant="destructive">
-                <XCircle className="h-3 w-3 mr-1.5" />
-                Invalid
-              </Badge>
-            ))}
+          {structuredContentValid && (
+            <Badge
+              variant="default"
+              className="bg-green-600 hover:bg-green-700"
+            >
+              <CheckCircle className="h-3 w-3 mr-1.5" />
+              Structured content matches output schema
+            </Badge>
+          )}
           {formattedResponseTime && (
             <span className="inline-flex items-center text-xs font-medium text-muted-foreground">
               <Clock3 className="h-3 w-3 mr-1" />
@@ -78,23 +61,6 @@ export function ResultsPanel({
         <div className="flex-1 p-4">
           <div className="p-3 bg-destructive/10 border border-destructive/20 rounded text-destructive text-xs font-medium">
             {error}
-          </div>
-        </div>
-      ) : validationErrors ? (
-        <div className="flex-1 p-4">
-          <h3 className="text-sm font-semibold text-destructive mb-2">
-            Validation Errors
-          </h3>
-          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-            <JsonEditor
-              height="100%"
-              value={validationErrors}
-              readOnly
-              showToolbar={false}
-            />
-            {Array.isArray(validationErrors) && validationErrors.length > 0 && (
-              <span className="text-sm font-semibold text-destructive mb-2">{`${validationErrors[0].instancePath?.slice(1) ?? ""} ${validationErrors[0].message ?? ""}`}</span>
-            )}
           </div>
         </div>
       ) : rawResult ? (
@@ -123,16 +89,6 @@ export function ResultsPanel({
                 App Builder
               </Button>
             </div>
-          )}
-          {unstructuredValidationResult === "schema_mismatch" && (
-            <Badge
-              variant="destructive"
-              className="flex-shrink-0 w-fit bg-amber-600 hover:bg-amber-700"
-            >
-              <AlertTriangle className="h-3 w-3 mr-1.5" />
-              Warning: Tool declares an output schema but returned no
-              structuredContent.
-            </Badge>
           )}
           {/* JSON Editor - fills ALL remaining space */}
           <div className="flex-1 min-h-0 overflow-hidden">

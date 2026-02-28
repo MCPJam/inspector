@@ -97,11 +97,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [result, setResult] = useState<CallToolResult | null>(null);
-  const [validationErrors, setValidationErrors] = useState<
-    any[] | null | undefined
+  const [structuredContentValid, setStructuredContentValid] = useState<
+    boolean | undefined
   >(undefined);
-  const [unstructuredValidationResult, setUnstructuredValidationResult] =
-    useState<"not_applicable" | "schema_mismatch">("not_applicable");
   const [loadingExecuteTool, setLoadingExecuteTool] = useState(false);
   const [fetchingTools, setFetchingTools] = useState(false);
   const [error, setError] = useState<string>("");
@@ -190,8 +188,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setSelectedTool("");
       setFormFields([]);
       setResult(null);
-      setValidationErrors(undefined);
-      setUnstructuredValidationResult("not_applicable");
+      setStructuredContentValid(undefined);
       setError("");
       setResponseDurationMs(null);
       setActiveElicitation(null);
@@ -287,8 +284,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setSelectedTool("");
       setFormFields([]);
       setResult(null);
-      setValidationErrors(undefined);
-      setUnstructuredValidationResult("not_applicable");
+      setStructuredContentValid(undefined);
       setResponseDurationMs(null);
       setTools({});
       setCursor(undefined);
@@ -367,22 +363,9 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
 
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
-      if (currentTool?.outputSchema) {
-        const validationReport = validateToolOutput(
-          rawResult,
-          currentTool.outputSchema,
-        );
-        setValidationErrors(validationReport.structuredErrors);
-        setUnstructuredValidationResult(validationReport.unstructuredStatus);
-        if (validationReport.structuredErrors) {
-          logger.warn("Schema validation failed", {
-            errors: validationReport.structuredErrors,
-          });
-        }
-      } else {
-        setValidationErrors(undefined);
-        setUnstructuredValidationResult("not_applicable");
-      }
+      setStructuredContentValid(
+        validateToolOutput(rawResult, currentTool?.outputSchema),
+      );
 
       logger.info("Tool execution completed", {
         toolName,
@@ -453,8 +436,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     setLoadingExecuteTool(true);
     setError("");
     setResult(null);
-    setValidationErrors(undefined);
-    setUnstructuredValidationResult("not_applicable");
+    setStructuredContentValid(undefined);
     setResponseDurationMs(null);
 
     try {
@@ -674,8 +656,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     <ResultsPanel
       error={error}
       result={result}
-      validationErrors={validationErrors}
-      unstructuredValidationResult={unstructuredValidationResult}
+      structuredContentValid={structuredContentValid}
       toolMeta={getToolMeta(lastToolName)}
       responseDurationMs={responseDurationMs}
     />
