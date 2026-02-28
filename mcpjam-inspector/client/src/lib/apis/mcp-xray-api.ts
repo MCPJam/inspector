@@ -1,5 +1,7 @@
 import type { UIMessage } from "ai";
 import { authFetch } from "@/lib/session-token";
+import { runByMode } from "@/lib/apis/mode-client";
+import { getHostedXRayPayload } from "@/lib/apis/web/xray-api";
 
 interface SerializedTool {
   name: string;
@@ -19,7 +21,7 @@ export interface XRayPayloadRequest {
   selectedServers?: string[];
 }
 
-export async function getXRayPayload(
+async function getLocalXRayPayload(
   request: XRayPayloadRequest,
 ): Promise<XRayPayloadResponse> {
   const res = await authFetch("/api/mcp/xray-payload", {
@@ -50,4 +52,13 @@ export async function getXRayPayload(
   }
 
   return body as XRayPayloadResponse;
+}
+
+export async function getXRayPayload(
+  request: XRayPayloadRequest,
+): Promise<XRayPayloadResponse> {
+  return runByMode({
+    hosted: async () => getHostedXRayPayload(request),
+    local: async () => getLocalXRayPayload(request),
+  });
 }
