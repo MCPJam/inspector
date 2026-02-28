@@ -18,7 +18,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
 import { ParametersForm } from "../ui-playground/ParametersForm";
-import { JsonEditor } from "@/components/ui/json-editor";
+import { SchemaViewer } from "@/components/ui/schema-viewer";
 import type { FormField } from "@/lib/tool-form";
 
 interface ToolsSidebarProps {
@@ -264,20 +264,21 @@ export function ToolsSidebar({
                     </AccordionContent>
                   </AccordionItem>
                 )}
+                <AccordionItem value="input-schema">
+                  <AccordionTrigger className="text-xs">
+                    Input Schema
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <SchemaViewer schema={selectedTool.inputSchema} />
+                  </AccordionContent>
+                </AccordionItem>
                 {selectedTool?.outputSchema && (
                   <AccordionItem value="output-schema">
                     <AccordionTrigger className="text-xs">
                       Output Schema
                     </AccordionTrigger>
                     <AccordionContent>
-                      <div className="overflow-hidden rounded-md [&_.h-full]:h-auto">
-                        <JsonEditor
-                          value={selectedTool.outputSchema}
-                          readOnly
-                          showToolbar={false}
-                          height="auto"
-                        />
-                      </div>
+                      <SchemaViewer schema={selectedTool.outputSchema} />
                     </AccordionContent>
                   </AccordionItem>
                 )}
