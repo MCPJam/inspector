@@ -18,7 +18,8 @@ servers.post("/validate", async (c) =>
     workspaceServerSchema,
     async (manager, body) => {
       await manager.getToolsForAiSdk([body.serverId]);
-      return { success: true, status: "connected" };
+      const initInfo = manager.getInitializationInfo(body.serverId);
+      return { success: true, status: "connected", initInfo: initInfo ?? null };
     },
     { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
   ),
@@ -44,15 +45,6 @@ servers.post("/check-oauth", async (c) =>
       useOAuth: auth.serverConfig.useOAuth ?? false,
       serverUrl: auth.serverConfig.url ?? null,
     };
-  }),
-);
-
-servers.post("/init-info", async (c) =>
-  withEphemeralConnection(c, workspaceServerSchema, async (manager, body) => {
-    // Force connection so init info is populated from the MCP handshake
-    await manager.getToolsForAiSdk([body.serverId]);
-    const initInfo = manager.getInitializationInfo(body.serverId);
-    return { success: true, initInfo: initInfo ?? null };
   }),
 );
 

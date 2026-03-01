@@ -4,21 +4,7 @@ import { buildHostedServerRequest } from "./context";
 export interface HostedServerValidateResponse {
   success: boolean;
   status?: string;
-}
-
-export interface HostedInitInfoResponse {
-  success: boolean;
-  initInfo: Record<string, unknown> | null;
-}
-
-export async function getHostedInitializationInfo(
-  serverNameOrId: string,
-): Promise<HostedInitInfoResponse> {
-  const request = buildHostedServerRequest(serverNameOrId);
-  return webPost<typeof request, HostedInitInfoResponse>(
-    "/api/web/servers/init-info",
-    request,
-  );
+  initInfo?: Record<string, unknown> | null;
 }
 
 export async function validateHostedServer(
