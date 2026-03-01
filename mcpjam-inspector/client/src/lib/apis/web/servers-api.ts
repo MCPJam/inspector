@@ -6,6 +6,21 @@ export interface HostedServerValidateResponse {
   status?: string;
 }
 
+export interface HostedInitInfoResponse {
+  success: boolean;
+  initInfo: Record<string, unknown> | null;
+}
+
+export async function getHostedInitializationInfo(
+  serverNameOrId: string,
+): Promise<HostedInitInfoResponse> {
+  const request = buildHostedServerRequest(serverNameOrId);
+  return webPost<typeof request, HostedInitInfoResponse>(
+    "/api/web/servers/init-info",
+    request,
+  );
+}
+
 export async function validateHostedServer(
   serverNameOrId: string,
   oauthAccessToken?: string,

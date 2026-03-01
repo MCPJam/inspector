@@ -5,6 +5,7 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   validateHostedServer,
+  getHostedInitializationInfo,
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
 
@@ -155,8 +156,7 @@ export async function reconnectServer(
 
 export async function getInitializationInfo(serverId: string) {
   if (HOSTED_MODE) {
-    void serverId;
-    return { success: true, initInfo: null };
+    return getHostedInitializationInfo(serverId);
   }
 
   const res = await authFetch(
