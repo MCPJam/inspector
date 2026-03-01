@@ -4,7 +4,7 @@ description: "Use MCPJam Inspector in the browser — no installation required"
 icon: "Cloud"
 ---
 
-MCPJam Inspector is available as a hosted web app at [app.mcpjam.com](https://app.mcpjam.com). Connect to your remote MCP servers, test tools, and use the LLM playground — all from your browser without installing anything.
+MCPJam Inspector is available as a hosted web app at [app.mcpjam.com](https://app.mcpjam.com). Connect to your remote MCP servers, test tools, build apps, and use the LLM playground — all from your browser without installing anything.
 
 <Card
   title="Open MCPJam Inspector"
@@ -17,10 +17,26 @@ MCPJam Inspector is available as a hosted web app at [app.mcpjam.com](https://ap
 
 ## Why use the hosted app?
 
-- **No installation** — No Node.js, Docker, or desktop app required. Open a browser and start testing.
-- **Free LLM playground** — Chat with your MCP server using GPT-5, Claude Sonnet, and other frontier models at no cost.
+- **No installation** — Open a browser and start testing.
+- **Free LLM playground** — Chat with your MCP server using our free models at no cost.
 - **Always up to date** — You're always on the latest version without running `npx @mcpjam/inspector@latest`.
 - **Shareable** — Share server URLs with your team. Everyone can inspect the same server without local setup.
+
+## Share your MCP server
+
+Send a link to your MCP server or app the same way you'd share a Google Doc. Anyone with a MCPJam account who opens it can immediately start chatting with the server in the playground — right in their browser.
+
+Try it yourself with the [Excalidraw MCP server](https://app.mcpjam.com/shared/excalidraw/mN4lJGfKanjpnBdZvE-lL):
+
+<iframe
+  width="100%"
+  height="400"
+  src="https://www.youtube.com/embed/a1yNishkCcA"
+  title="MCPJam Server Sharing"
+  frameBorder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+/>
 
 ## Quick start
 
@@ -29,63 +45,26 @@ MCPJam Inspector is available as a hosted web app at [app.mcpjam.com](https://ap
 3. Choose your authentication method (None, Bearer Token, or OAuth 2.0)
 4. Start inspecting tools, resources, and prompts
 
-<Warning>
-  The hosted app only supports **HTTPS** server URLs. If your server runs on HTTP, use the [local inspector](/installation) instead, or deploy your server behind HTTPS.
-</Warning>
-
-## Available features
-
-These features work the same way in the hosted app as they do locally:
-
-| Feature | Description |
-|---|---|
-| **MCP Servers** | Connect to remote MCP servers over SSE or Streamable HTTP |
-| **Tools** | Browse and execute MCP tools with custom parameters |
-| **Resources** | List and read MCP resources and resource templates |
-| **Prompts** | View and test MCP prompts |
-| **LLM Playground** | Chat with your MCP server using free frontier models (GPT-5, Claude Sonnet, Gemini) |
-| **App Builder** | Build and test ChatGPT apps and MCP apps with the widget emulator |
-| **Views** | Render MCP app views inline |
-| **OAuth Debugger** | Debug your server's OAuth implementation step by step |
-| **Settings** | Configure LLM providers, themes, and preferences |
-
 ## What's different
+
+The following features are not available in the hosted app. They are available when running MCPJam locally via [npx, Docker, or the desktop app](/installation).
 
 ### HTTPS only
 
-The hosted app requires all MCP server connections to use **HTTPS**. HTTP URLs are rejected to prevent man-in-the-middle attacks when connecting over the public internet.
-
-If your server only supports HTTP, you have two options:
-- Use the [local inspector](/installation) instead
-- Deploy your server behind an HTTPS reverse proxy or a platform that provides TLS (e.g., Railway, Vercel, Cloudflare)
+The hosted app requires all MCP server connections to use **HTTPS**. If your server only supports HTTP, use the [local inspector](/installation) instead.
 
 ### No STDIO connections
 
-STDIO transport requires launching a local process on your machine. Since the hosted app runs in the cloud, it cannot start local processes. Use SSE or Streamable HTTP transport instead.
-
-<Info>
-  STDIO is available in the [local inspector](/installation) and [desktop app](https://github.com/MCPJam/inspector/releases).
-</Info>
-
-### No file upload or download
-
-The hosted app cannot access your local filesystem. Features that involve reading or writing local files (such as uploading server configurations or downloading exports) are not available.
+STDIO servers are not available in the hosted version of MCPJam. Use SSE or Streamable HTTP transport instead.
 
 ### No tunneling
 
 Tunneling exposes a local MCP server over HTTPS for remote access. Since the hosted app connects to already-remote servers, tunneling is not applicable.
 
-### LLM models
+### No skills
 
-In the hosted app, the LLM playground uses MCPJam-provided models (GPT-5, Claude Sonnet, Gemini) for free. Custom API keys for third-party providers are not supported in hosted mode.
+Skills are not yet available in the hosted app.
 
-## Features not available
+### No tasks
 
-These features are only available in the local inspector:
-
-| Feature | Reason |
-|---|---|
-| **Evals** | Requires local test execution and file system access |
-| **Skills** | Local-only automation feature |
-| **Tasks** | Task-augmented tool execution requires local process management |
-| **Tracing** | Local debugging and trace collection |
+Tasks are not yet available in the hosted app.

@@ -17,8 +17,8 @@
           "index",
           "getting-started",
           "installation",
-          "hosted/overview",
-          "inspector/launch-from-code"
+          "inspector/launch-from-code",
+          "hosted/overview"
         ]
       },
       {
