@@ -4,6 +4,7 @@ import { buildHostedServerRequest } from "./context";
 export interface HostedServerValidateResponse {
   success: boolean;
   status?: string;
+  initInfo?: Record<string, unknown> | null;
 }
 
 export async function validateHostedServer(

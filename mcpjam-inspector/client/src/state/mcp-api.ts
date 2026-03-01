@@ -155,7 +155,8 @@ export async function reconnectServer(
 
 export async function getInitializationInfo(serverId: string) {
   if (HOSTED_MODE) {
-    void serverId;
+    // In hosted mode, init info is returned inline from /validate.
+    // This fallback only runs if the validate response lacked initInfo.
     return { success: true, initInfo: null };
   }
 

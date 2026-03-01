@@ -396,9 +396,17 @@ export function useServerState({
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
-              fetchAndStoreInitInfo(serverName).catch((err) =>
-                logger.warn("Failed to fetch init info", { serverName, err }),
-              );
+              if (connectionResult.initInfo) {
+                dispatch({
+                  type: "SET_INITIALIZATION_INFO",
+                  name: serverName,
+                  initInfo: connectionResult.initInfo,
+                });
+              } else {
+                fetchAndStoreInitInfo(serverName).catch((err) =>
+                  logger.warn("Failed to fetch init info", { serverName, err }),
+                );
+              }
             } else {
               dispatch({
                 type: "CONNECT_FAILURE",
@@ -598,12 +606,20 @@ export function useServerState({
               toast.success(
                 "Connected successfully with existing OAuth tokens!",
               );
-              fetchAndStoreInitInfo(formData.name).catch((err) =>
-                logger.warn("Failed to fetch init info", {
-                  serverName: formData.name,
-                  err,
-                }),
-              );
+              if (connectionResult.initInfo) {
+                dispatch({
+                  type: "SET_INITIALIZATION_INFO",
+                  name: formData.name,
+                  initInfo: connectionResult.initInfo,
+                });
+              } else {
+                fetchAndStoreInitInfo(formData.name).catch((err) =>
+                  logger.warn("Failed to fetch init info", {
+                    serverName: formData.name,
+                    err,
+                  }),
+                );
+              }
               return;
             }
             logger.warn("Existing tokens failed, will trigger OAuth flow", {
@@ -651,12 +667,20 @@ export function useServerState({
                   tokens: getStoredTokens(formData.name),
                 });
                 toast.success("Connected successfully with OAuth!");
-                fetchAndStoreInitInfo(formData.name).catch((err) =>
-                  logger.warn("Failed to fetch init info", {
-                    serverName: formData.name,
-                    err,
-                  }),
-                );
+                if (connectionResult.initInfo) {
+                  dispatch({
+                    type: "SET_INITIALIZATION_INFO",
+                    name: formData.name,
+                    initInfo: connectionResult.initInfo,
+                  });
+                } else {
+                  fetchAndStoreInitInfo(formData.name).catch((err) =>
+                    logger.warn("Failed to fetch init info", {
+                      serverName: formData.name,
+                      err,
+                    }),
+                  );
+                }
               } else {
                 dispatch({
                   type: "CONNECT_FAILURE",
@@ -709,12 +733,20 @@ export function useServerState({
           }
           logger.info("Connection successful", { serverName: formData.name });
           toast.success("Connected successfully!");
-          fetchAndStoreInitInfo(formData.name).catch((err) =>
-            logger.warn("Failed to fetch init info", {
-              serverName: formData.name,
-              err,
-            }),
-          );
+          if (result.initInfo) {
+            dispatch({
+              type: "SET_INITIALIZATION_INFO",
+              name: formData.name,
+              initInfo: result.initInfo,
+            });
+          } else {
+            fetchAndStoreInitInfo(formData.name).catch((err) =>
+              logger.warn("Failed to fetch init info", {
+                serverName: formData.name,
+                err,
+              }),
+            );
+          }
         } else {
           dispatch({
             type: "CONNECT_FAILURE",
@@ -909,7 +941,15 @@ export function useServerState({
             config: serverConfig,
             tokens: getStoredTokens(serverName),
           });
-          await fetchAndStoreInitInfo(serverName);
+          if (result.initInfo) {
+            dispatch({
+              type: "SET_INITIALIZATION_INFO",
+              name: serverName,
+              initInfo: result.initInfo,
+            });
+          } else {
+            await fetchAndStoreInitInfo(serverName);
+          }
           return { success: true };
         }
         dispatch({
@@ -1227,9 +1267,17 @@ export function useServerState({
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
           });
-          fetchAndStoreInitInfo(serverName).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
-          );
+          if (result.initInfo) {
+            dispatch({
+              type: "SET_INITIALIZATION_INFO",
+              name: serverName,
+              initInfo: result.initInfo,
+            });
+          } else {
+            fetchAndStoreInitInfo(serverName).catch((err) =>
+              logger.warn("Failed to fetch init info", { serverName, err }),
+            );
+          }
           return;
         }
         dispatch({
@@ -1267,9 +1315,17 @@ export function useServerState({
             tokens: authResult.tokens,
           });
           logger.info("Reconnection successful", { serverName, result });
-          fetchAndStoreInitInfo(serverName).catch((err) =>
-            logger.warn("Failed to fetch init info", { serverName, err }),
-          );
+          if (result.initInfo) {
+            dispatch({
+              type: "SET_INITIALIZATION_INFO",
+              name: serverName,
+              initInfo: result.initInfo,
+            });
+          } else {
+            fetchAndStoreInitInfo(serverName).catch((err) =>
+              logger.warn("Failed to fetch init info", { serverName, err }),
+            );
+          }
           return;
         }
         dispatch({
@@ -1455,7 +1511,15 @@ export function useServerState({
               name: originalServerName,
               config: mcpConfig,
             });
-            await fetchAndStoreInitInfo(originalServerName);
+            if (result.initInfo) {
+              dispatch({
+                type: "SET_INITIALIZATION_INFO",
+                name: originalServerName,
+                initInfo: result.initInfo,
+              });
+            } else {
+              await fetchAndStoreInitInfo(originalServerName);
+            }
             toast.success("Server configuration updated successfully!");
             return;
           }
