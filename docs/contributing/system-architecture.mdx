@@ -1,7 +1,7 @@
 ---
 title: "System Architecture"
 description: "Deep dive into MCPJam Inspector's multi-mode architecture"
-icon: "sitemap"
+icon: "network"
 ---
 
 ## Overview
@@ -12,10 +12,10 @@ MCPJam Inspector is a sophisticated multi-platform application that runs in thre
   <Card title="Web App" icon="globe">
     Standalone web application with separate client and server
   </Card>
-  <Card title="Desktop App" icon="desktop">
+  <Card title="Desktop App" icon="monitor">
     Electron application with embedded Hono server
   </Card>
-  <Card title="Container" icon="docker">
+  <Card title="Container" icon="container">
     Dockerized deployment for cloud hosting
   </Card>
 </CardGroup>
@@ -149,7 +149,7 @@ flowchart TD
 
   </Accordion>
 
-  <Accordion title="Electron Development Mode" icon="bolt">
+  <Accordion title="Electron Development Mode" icon="zap">
     **When:** `ELECTRON_APP=true` and `IS_PACKAGED=false`
 
     **Characteristics:**
@@ -376,7 +376,7 @@ sequenceDiagram
 ```
 
 <Steps>
-  <Step title="Environment Setup" icon="gear">
+  <Step title="Environment Setup" icon="settings">
     `src/main.ts:66-73` sets critical environment variables that tell the server it's running in Electron
   </Step>
 
@@ -384,11 +384,11 @@ sequenceDiagram
   `src/main.ts:62-92` starts the embedded Hono server on port 6274
 </Step>
 
-<Step title="Window Creation" icon="window">
+<Step title="Window Creation" icon="app-window">
   `src/main.ts:94-133` creates the main BrowserWindow with security settings
 </Step>
 
-  <Step title="IPC Setup" icon="bolt">
+  <Step title="IPC Setup" icon="zap">
     `src/ipc/listeners-register.ts` registers all IPC event handlers
   </Step>
 </Steps>
@@ -585,7 +585,7 @@ graph TB
 
   </Accordion>
 
-  <Accordion title="Context API (Scoped State)" icon="circle-nodes">
+  <Accordion title="Context API (Scoped State)" icon="share-2">
     **Purpose:** Provide scoped state to component trees
 
     **Used for:**
@@ -977,7 +977,7 @@ flowchart LR
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="MCP Client Manager" icon="network-wired" href="/contributing/mcp-client-manager">
+  <Card title="MCP Client Manager" icon="network" href="/contributing/mcp-client-manager">
     Deep dive into MCP protocol implementation
   </Card>
 
@@ -991,7 +991,7 @@ flowchart LR
 
 <Card
   title="Playground Architecture"
-  icon="messages"
+  icon="message-circle"
   href="/contributing/playground-architecture"
 >
   Understand the LLM playground system
