@@ -1,6 +1,9 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
+  "icons": {
+    "library": "lucide"
+  },
   "name": "MCPJam Inspector",
   "colors": {
     "primary": "#EF5B25",
