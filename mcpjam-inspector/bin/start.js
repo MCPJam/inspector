@@ -120,21 +120,95 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms, true));
 }
 
-function isPortAvailable(port) {
+function isPortAvailable(port, host = "127.0.0.1") {
   return new Promise((resolve) => {
     const server = createServer();
+    let settled = false;
+    const onCloseError = () => {};
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      server.once("error", onCloseError);
+      try {
+        server.close(() => {
+          server.removeListener("error", onCloseError);
+          resolve(false);
+        });
+      } catch {
+        server.removeListener("error", onCloseError);
+        resolve(false);
+      }
+    }, 1000);
 
-    server.listen(port, "127.0.0.1", () => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      server.removeListener("error", onError);
+      server.removeListener("listening", onListening);
+    };
+
+    const onListening = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       server.close(() => {
         resolve(true);
       });
-    });
+    };
 
-    server.on("error", () => {
-      // Port is not available
+    const onError = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       resolve(false);
-    });
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
   });
+}
+
+function parsePort(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) {
+    throw new Error(`Invalid port value: ${value}`);
+  }
+  return parsed;
+}
+
+async function findAvailablePort(
+  startPort,
+  host,
+  maxPortOffset = 100,
+  verbose = false,
+) {
+  const maxPort = Math.min(startPort + maxPortOffset, 65535);
+
+  if (maxPort < startPort) {
+    throw new Error(
+      `No available port found in range ${startPort}-${maxPort}`,
+    );
+  }
+
+  for (let port = startPort; port <= maxPort; port++) {
+    const isAvailable = await isPortAvailable(port, host);
+    if (isAvailable) {
+      return port;
+    }
+
+    if (verbose) {
+      logWarning(`Port ${port} unavailable; checking next port`);
+    }
+  }
+
+  throw new Error(`No available port found in range ${startPort}-${maxPort}`);
 }
 
 function spawnPromise(command, args, options) {
@@ -357,11 +431,6 @@ async function main() {
     if (parsingFlags && arg === "--port" && i + 1 < args.length) {
       const port = args[++i];
       envVars.PORT = port;
-      // Default: localhost in development, 127.0.0.1 in production
-      const defaultHost =
-        process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
-      const baseHost = process.env.HOST || defaultHost;
-      envVars.BASE_URL = `http://${baseHost}:${port}`;
       continue;
     }
 
@@ -623,17 +692,26 @@ async function main() {
   // Apply parsed environment variables to process.env first
   Object.assign(process.env, envVars);
 
-  // Port configuration (fixed default to 6274)
-  const requestedPort = 6274;
+  const requestedPortCandidate =
+    process.env.SERVER_PORT !== undefined
+      ? process.env.SERVER_PORT
+      : envVars.PORT;
+  const requestedPort = requestedPortCandidate
+    ? parsePort(requestedPortCandidate)
+    : 6274;
   let PORT;
+  const defaultHost =
+    process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
+  const baseHost = process.env.HOST || defaultHost;
+  const host = baseHost;
 
   try {
     // Check if user explicitly set a port via --port flag
-    const hasExplicitPort = envVars.PORT !== undefined;
+    const hasExplicitPort = requestedPortCandidate !== undefined;
 
     if (hasExplicitPort) {
-      if (await isPortAvailable(requestedPort)) {
-        PORT = requestedPort.toString();
+      if (await isPortAvailable(requestedPort, host)) {
+        PORT = String(requestedPort);
       } else {
         logError(`Explicitly requested port ${requestedPort} is not available`);
         logInfo(
@@ -642,23 +720,17 @@ async function main() {
         throw new Error(`Port ${requestedPort} is already in use`);
       }
     } else {
-      // Fixed port policy: use default port 6274 and fail fast if unavailable
-      if (await isPortAvailable(requestedPort)) {
-        PORT = requestedPort.toString();
-      } else {
-        logError(
-          `Default port ${requestedPort} is already in use. Please free the port`,
+      const resolvedPort = await findAvailablePort(requestedPort, host, 100, verboseLogs);
+      if (resolvedPort !== requestedPort) {
+        logInfo(
+          `Default port ${requestedPort} is busy. Using next available port ${resolvedPort}.`,
         );
-        throw new Error(`Port ${requestedPort} is already in use`);
       }
+      PORT = String(resolvedPort);
     }
 
     // Update environment variables with the final port
     envVars.PORT = PORT;
-    // Default: localhost in development, 127.0.0.1 in production
-    const defaultHost =
-      process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
-    const baseHost = process.env.HOST || defaultHost;
     envVars.BASE_URL = `http://${baseHost}:${PORT}`;
     Object.assign(process.env, envVars);
   } catch (error) {
@@ -744,9 +816,6 @@ async function main() {
       // Open the browser automatically
       // Use BASE_URL if set, otherwise construct from HOST and PORT
       // Default: localhost in development, 127.0.0.1 in production
-      const defaultHost =
-        process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
-      const host = process.env.HOST || defaultHost;
       let url = process.env.BASE_URL || `http://${host}:${PORT}`;
 
       // Append initial tab hash if specified
