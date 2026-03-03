@@ -24,6 +24,7 @@ import {
   Trash2,
   AlertCircle,
   Share2,
+  Info,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -527,21 +528,28 @@ export function ServerConnectionCard({
             </button>
           </div>
 
-          <div className="mt-3 flex items-center justify-between">
-            <div>
-              {hasInitInfo && (
-                <button
-                  onClick={() => setIsInfoModalOpen(true)}
-                  className="text-xs text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
-                >
-                  View server info
-                </button>
-              )}
-            </div>
+          <div className="mt-3 flex items-center justify-end">
             <div
               className="flex items-center gap-2"
               onClick={(e) => e.stopPropagation()}
             >
+              {hasInitInfo && (
+                <button
+                  onClick={() => {
+                    posthog.capture("view_server_info_clicked", {
+                      location: "server_connection_card",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                      server_id: server.name,
+                    });
+                    setIsInfoModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
+                >
+                  <Info className="h-3 w-3" strokeWidth={2.5} />
+                  <span>View server info</span>
+                </button>
+              )}
               {canShareServer && (
                 <button
                   onClick={() => {

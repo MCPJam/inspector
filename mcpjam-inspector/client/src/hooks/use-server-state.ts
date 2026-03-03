@@ -363,6 +363,29 @@ export function useServerState({
     [dispatch],
   );
 
+  /**
+   * Stores init info from an inline connection result, or falls back to
+   * fetching it via a separate request. Callers can fire-and-forget (no await)
+   * or await depending on whether they need it resolved before continuing.
+   */
+  const storeInitInfo = useCallback(
+    async (
+      serverName: string,
+      initInfo: Record<string, unknown> | null | undefined,
+    ) => {
+      if (initInfo) {
+        dispatch({
+          type: "SET_INITIALIZATION_INFO",
+          name: serverName,
+          initInfo,
+        });
+      } else {
+        await fetchAndStoreInitInfo(serverName);
+      }
+    },
+    [dispatch, fetchAndStoreInitInfo],
+  );
+
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
       try {
@@ -396,8 +419,12 @@ export function useServerState({
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
-              fetchAndStoreInitInfo(serverName).catch((err) =>
-                logger.warn("Failed to fetch init info", { serverName, err }),
+              storeInitInfo(serverName, connectionResult.initInfo).catch(
+                (err) =>
+                  logger.warn("Failed to fetch init info", {
+                    serverName,
+                    err,
+                  }),
               );
             } else {
               dispatch({
@@ -446,7 +473,7 @@ export function useServerState({
         localStorage.removeItem("mcp-oauth-pending");
       }
     },
-    [dispatch, logger, fetchAndStoreInitInfo],
+    [dispatch, logger, storeInitInfo],
   );
 
   useEffect(() => {
@@ -598,11 +625,12 @@ export function useServerState({
               toast.success(
                 "Connected successfully with existing OAuth tokens!",
               );
-              fetchAndStoreInitInfo(formData.name).catch((err) =>
-                logger.warn("Failed to fetch init info", {
-                  serverName: formData.name,
-                  err,
-                }),
+              storeInitInfo(formData.name, connectionResult.initInfo).catch(
+                (err) =>
+                  logger.warn("Failed to fetch init info", {
+                    serverName: formData.name,
+                    err,
+                  }),
               );
               return;
             }
@@ -651,11 +679,12 @@ export function useServerState({
                   tokens: getStoredTokens(formData.name),
                 });
                 toast.success("Connected successfully with OAuth!");
-                fetchAndStoreInitInfo(formData.name).catch((err) =>
-                  logger.warn("Failed to fetch init info", {
-                    serverName: formData.name,
-                    err,
-                  }),
+                storeInitInfo(formData.name, connectionResult.initInfo).catch(
+                  (err) =>
+                    logger.warn("Failed to fetch init info", {
+                      serverName: formData.name,
+                      err,
+                    }),
                 );
               } else {
                 dispatch({
@@ -709,7 +738,7 @@ export function useServerState({
           }
           logger.info("Connection successful", { serverName: formData.name });
           toast.success("Connected successfully!");
-          fetchAndStoreInitInfo(formData.name).catch((err) =>
+          storeInitInfo(formData.name, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,
               err,
@@ -750,7 +779,7 @@ export function useServerState({
       appState.activeWorkspaceId,
       syncServerToConvex,
       logger,
-      fetchAndStoreInitInfo,
+      storeInitInfo,
     ],
   );
 
@@ -909,7 +938,7 @@ export function useServerState({
             config: serverConfig,
             tokens: getStoredTokens(serverName),
           });
-          await fetchAndStoreInitInfo(serverName);
+          await storeInitInfo(serverName, result.initInfo);
           return { success: true };
         }
         dispatch({
@@ -932,7 +961,7 @@ export function useServerState({
         return { success: false, error: errorMessage };
       }
     },
-    [dispatch, fetchAndStoreInitInfo],
+    [dispatch, storeInitInfo],
   );
 
   const handleConnectWithTokensFromOAuthFlow = useCallback(
@@ -1227,7 +1256,7 @@ export function useServerState({
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
           });
-          fetchAndStoreInitInfo(serverName).catch((err) =>
+          storeInitInfo(serverName, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
           return;
@@ -1267,7 +1296,7 @@ export function useServerState({
             tokens: authResult.tokens,
           });
           logger.info("Reconnection successful", { serverName, result });
-          fetchAndStoreInitInfo(serverName).catch((err) =>
+          storeInitInfo(serverName, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
           return;
@@ -1296,7 +1325,7 @@ export function useServerState({
         });
       }
     },
-    [effectiveServers, fetchAndStoreInitInfo, logger, dispatch],
+    [effectiveServers, storeInitInfo, logger, dispatch],
   );
 
   useEffect(() => {
@@ -1455,7 +1484,7 @@ export function useServerState({
               name: originalServerName,
               config: mcpConfig,
             });
-            await fetchAndStoreInitInfo(originalServerName);
+            await storeInitInfo(originalServerName, result.initInfo);
             toast.success("Server configuration updated successfully!");
             return;
           }
@@ -1499,7 +1528,7 @@ export function useServerState({
       effectiveWorkspaces,
       effectiveActiveWorkspaceId,
       effectiveServers,
-      fetchAndStoreInitInfo,
+      storeInitInfo,
       handleDisconnect,
       handleConnect,
       isAuthenticated,

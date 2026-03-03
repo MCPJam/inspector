@@ -18,7 +18,8 @@ servers.post("/validate", async (c) =>
     workspaceServerSchema,
     async (manager, body) => {
       await manager.getToolsForAiSdk([body.serverId]);
-      return { success: true, status: "connected" };
+      const initInfo = manager.getInitializationInfo(body.serverId);
+      return { success: true, status: "connected", initInfo: initInfo ?? null };
     },
     { timeoutMs: WEB_CONNECT_TIMEOUT_MS },
   ),
