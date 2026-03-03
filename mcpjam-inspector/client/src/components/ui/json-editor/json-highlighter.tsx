@@ -105,6 +105,7 @@ export function JsonHighlighter({
     let lastIndex = 0;
     // Track when a key's value is an object/array
     let pendingObjectCopy: { start: number } | null = null;
+    let isFirstStructural = true;
 
     // Helper to find the next value token (skip colon punctuation)
     const findNextValueToken = (startIndex: number) => {
@@ -147,6 +148,27 @@ export function JsonHighlighter({
           <span key={`token-${i}`} className={className}>
             {token.value}
           </span>,
+        );
+        lastIndex = token.end;
+        continue;
+      }
+
+      // Handle root-level opening brace/bracket (no preceding key)
+      if (
+        isFirstStructural &&
+        token.type === "punctuation" &&
+        (token.value === "{" || token.value === "[")
+      ) {
+        isFirstStructural = false;
+        const objectContent = extractObjectOrArray(content, token.start);
+        result.push(
+          <CopyableValue
+            key={`token-${i}`}
+            value={objectContent}
+            onCopy={onCopy}
+          >
+            <span className={className}>{token.value}</span>
+          </CopyableValue>,
         );
         lastIndex = token.end;
         continue;
