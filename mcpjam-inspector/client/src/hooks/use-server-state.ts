@@ -679,14 +679,12 @@ export function useServerState({
                   tokens: getStoredTokens(formData.name),
                 });
                 toast.success("Connected successfully with OAuth!");
-                storeInitInfo(
-                  formData.name,
-                  connectionResult.initInfo,
-                ).catch((err) =>
-                  logger.warn("Failed to fetch init info", {
-                    serverName: formData.name,
-                    err,
-                  }),
+                storeInitInfo(formData.name, connectionResult.initInfo).catch(
+                  (err) =>
+                    logger.warn("Failed to fetch init info", {
+                      serverName: formData.name,
+                      err,
+                    }),
                 );
               } else {
                 dispatch({
