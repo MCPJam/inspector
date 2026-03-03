@@ -340,7 +340,7 @@ export function ServerInfoModal({
                 </div>
               )}
 
-              {websiteUrl && (
+              {websiteUrl && websiteUrl.startsWith("https://") && (
                 <div>
                   <a
                     href={websiteUrl}
@@ -546,7 +546,7 @@ export function ServerInfoModal({
               </div>
             )}
 
-            {websiteUrl && (
+            {websiteUrl && websiteUrl.startsWith("https://") && (
               <div>
                 <a
                   href={websiteUrl}
