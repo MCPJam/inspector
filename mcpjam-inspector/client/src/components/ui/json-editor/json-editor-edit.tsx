@@ -552,7 +552,7 @@ export function JsonEditorEdit({
           <pre
             ref={highlightRef}
             className={cn(
-              "h-full p-3 text-xs leading-5 whitespace-pre overflow-auto m-0",
+              "h-full p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto m-0",
               "select-text cursor-text",
             )}
             style={fontStyle}
