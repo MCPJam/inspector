@@ -4,7 +4,7 @@
  */
 
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
-import { fromIni, fromTemporaryCredentials } from "@aws-sdk/credential-providers";
+import { fromIni, fromTemporaryCredentials, fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
@@ -34,8 +34,8 @@ export interface CreateModelOptions {
   baseUrls?: BaseUrls;
   /** Custom providers registry (name -> config) */
   customProviders?:
-    | Map<string, CustomProvider>
-    | Record<string, CustomProvider>;
+  | Map<string, CustomProvider>
+  | Record<string, CustomProvider>;
 }
 
 /** Built-in providers list */
@@ -273,13 +273,15 @@ export function createModelFromString(
             RoleSessionName: "bedrock-session",
           },
         });
-      } else if (bedrockProfile) {
-        credentialProvider = fromIni({ profile: bedrockProfile });
+      } else if (bedrockProfile || process.env.AWS_PROFILE) {
+        credentialProvider = fromIni({ profile: bedrockProfile || process.env.AWS_PROFILE });
+      } else {
+        credentialProvider = fromNodeProviderChain();
       }
 
       const bedrock = createAmazonBedrock({
         ...(bedrockRegion && { region: bedrockRegion }),
-        ...(credentialProvider && { credentialProvider }),
+        credentialProvider,
       });
       return bedrock(model) as ProviderLanguageModel;
     }
