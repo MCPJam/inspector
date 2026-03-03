@@ -125,8 +125,14 @@ export function ActiveServerSelector({
     const serverNames = servers.map(([name]) => name);
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
 
-    if (!isCurrentSelectionValid && serverNames.length > 0) {
-      onServerChange(serverNames[0]);
+    if (!isCurrentSelectionValid && servers.length > 0) {
+      // Pick the most recently connected server instead of the first by insertion order
+      const sorted = [...servers].sort(
+        ([, a], [, b]) =>
+          new Date(b.lastConnectionTime).getTime() -
+          new Date(a.lastConnectionTime).getTime(),
+      );
+      onServerChange(sorted[0][0]);
     }
   }, [servers.length, selectedServer, isMultiSelectEnabled, onServerChange]);
 
