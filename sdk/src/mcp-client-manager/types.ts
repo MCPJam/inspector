@@ -68,6 +68,9 @@ export type StdioServerConfig = BaseServerConfig & {
   reconnectionOptions?: never;
   sessionId?: never;
   preferSSE?: never;
+  refreshToken?: never;
+  clientId?: never;
+  clientSecret?: never;
 };
 
 /**
@@ -87,6 +90,12 @@ export type HttpServerConfig = BaseServerConfig & {
   eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
   /** OAuth auth provider */
   authProvider?: StreamableHTTPClientTransportOptions["authProvider"];
+  /** Refresh token for OAuth token exchange. Mutually exclusive with accessToken and authProvider. */
+  refreshToken?: string;
+  /** OAuth client ID. Required when refreshToken is set. */
+  clientId?: string;
+  /** OAuth client secret. Optional, used with refreshToken. */
+  clientSecret?: string;
   /** Reconnection options for Streamable HTTP */
   reconnectionOptions?: StreamableHTTPClientTransportOptions["reconnectionOptions"];
   /** Session ID for Streamable HTTP */
