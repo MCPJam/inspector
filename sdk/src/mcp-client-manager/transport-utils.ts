@@ -18,7 +18,7 @@ import type { RpcLogger } from "./types.js";
  * @param headers - Headers in any supported format
  * @returns Plain object with header key-value pairs
  */
-function normalizeHeaders(
+export function normalizeHeaders(
   headers: HeadersInit | undefined
 ): Record<string, string> {
   if (!headers) {
@@ -49,7 +49,7 @@ function normalizeHeaders(
  * @param headers - Normalized headers object
  * @returns The Authorization value if present, undefined otherwise
  */
-function getExistingAuthorization(
+export function getExistingAuthorization(
   headers: Record<string, string>
 ): string | undefined {
   return headers["Authorization"] ?? headers["authorization"];
