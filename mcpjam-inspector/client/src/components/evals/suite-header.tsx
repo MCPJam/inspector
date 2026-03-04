@@ -36,6 +36,7 @@ import { computeIterationResult } from "./pass-criteria";
 import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
+import { CiMetadataDisplay } from "./ci-metadata-display";
 
 interface ModelInfo {
   model: string;
@@ -67,6 +68,7 @@ interface SuiteHeaderProps {
   testCases?: EvalCase[];
   availableModels?: ModelDefinition[];
   onUpdateModels?: (models: ModelInfo[]) => Promise<void>;
+  readOnlyConfig?: boolean;
 }
 
 export function SuiteHeader({
@@ -93,6 +95,7 @@ export function SuiteHeader({
   testCases = [],
   availableModels = [],
   onUpdateModels,
+  readOnlyConfig = false,
 }: SuiteHeaderProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
@@ -244,6 +247,15 @@ export function SuiteHeader({
     };
   }, [runs, allIterations]);
 
+  const latestRunForMetadata = useMemo(() => {
+    if (!runs || runs.length === 0) return null;
+    return [...runs].sort((a, b) => {
+      const aTime = a.completedAt ?? a.createdAt ?? 0;
+      const bTime = b.completedAt ?? b.createdAt ?? 0;
+      return bTime - aTime;
+    })[0];
+  }, [runs]);
+
   useEffect(() => {
     setEditedName(suite.name);
   }, [suite.name]);
@@ -289,14 +301,15 @@ export function SuiteHeader({
   const missingServers = suiteServers.filter(
     (server) => !connectedServerNames.has(server),
   );
-  const canRerun = missingServers.length === 0;
+  const hasServersConfigured = suiteServers.length > 0;
+  const canRerun = hasServersConfigured && missingServers.length === 0;
   const isRerunning = rerunningSuiteId === suite._id;
   const isDeleting = deletingSuiteId === suite._id;
 
   if (isEditMode) {
     return (
       <div className="flex items-center justify-between gap-4 mb-2 px-6 pt-6 max-w-5xl mx-auto w-full">
-        {isEditingName ? (
+        {isEditingName && !readOnlyConfig ? (
           <input
             type="text"
             value={editedName}
@@ -385,7 +398,9 @@ export function SuiteHeader({
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                {!canRerun
+                {!hasServersConfigured
+                  ? "No connected MCP servers are configured for this suite"
+                  : !canRerun
                   ? `Connect the following servers: ${missingServers.join(", ")}`
                   : "Run all tests"}
               </TooltipContent>
@@ -433,6 +448,8 @@ export function SuiteHeader({
             autoFocus
             className="px-3 py-2 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
           />
+        ) : readOnlyConfig ? (
+          <h2 className="px-3 py-2 text-lg font-semibold">{suite.name}</h2>
         ) : (
           <Button
             variant="ghost"
@@ -441,6 +458,14 @@ export function SuiteHeader({
           >
             {suite.name}
           </Button>
+        )}
+        {suite.source === "sdk" && latestRunForMetadata && (
+          <CiMetadataDisplay
+            ciMetadata={latestRunForMetadata.ciMetadata}
+            framework={latestRunForMetadata.framework}
+            source={suite.source}
+            compact={true}
+          />
         )}
         {/* Accuracy Chart */}
         {accuracyChartData && accuracyChartData.donutData.length > 0 && (
@@ -500,7 +525,7 @@ export function SuiteHeader({
       </div>
       <div className="flex items-center gap-2 shrink-0">
         {/* Models picker - compact dropdown */}
-        {onUpdateModels && (
+        {onUpdateModels && !readOnlyConfig && (
           <DropdownMenu
             open={isModelDropdownOpen}
             onOpenChange={setIsModelDropdownOpen}
@@ -688,7 +713,9 @@ export function SuiteHeader({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            {!canRerun
+            {!hasServersConfigured
+              ? "No connected MCP servers are configured for this suite"
+              : !canRerun
               ? `Connect the following servers: ${missingServers.join(", ")}`
               : "Run all tests"}
           </TooltipContent>

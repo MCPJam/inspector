@@ -26,6 +26,7 @@ import { AccuracyChart } from "./accuracy-chart";
 import { formatRunId, getIterationBorderColor } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
+import { CiMetadataDisplay } from "./ci-metadata-display";
 import { toast } from "sonner";
 
 interface RunOverviewProps {
@@ -365,9 +366,16 @@ export function RunOverview({
               const runBorderColor = getIterationBorderColor(runResult);
 
               const isSelected = selectedRunIds.has(run._id);
+              const showCiMetadata =
+                run.source === "sdk" &&
+                (!!run.framework ||
+                  !!run.ciMetadata?.branch ||
+                  !!run.ciMetadata?.commitSha ||
+                  !!run.ciMetadata?.provider ||
+                  !!run.ciMetadata?.runUrl);
 
               const runButton = (
-                <div className="flex items-center gap-6 w-full">
+                <div className="flex items-stretch gap-6 w-full">
                   <div className="pl-3">
                     <Checkbox
                       checked={isSelected}
@@ -378,29 +386,41 @@ export function RunOverview({
                   </div>
                   <button
                     onClick={() => onRunClick(run._id)}
-                    className="flex flex-1 items-center gap-6 py-2.5 pr-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    className="flex flex-1 flex-col py-2.5 pr-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                   >
-                    <span className="text-xs font-medium min-w-[120px]">
-                      Run {formatRunId(run._id)}
-                    </span>
-                    <span className="text-xs text-muted-foreground min-w-[140px]">
-                      {timestamp}
-                    </span>
-                    <span className="text-xs text-muted-foreground font-mono min-w-[60px]">
-                      {duration}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground min-w-[60px] text-right">
-                      {passed}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground min-w-[60px] text-right">
-                      {failed}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
-                      {passRate !== null ? `${passRate}%` : "—"}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
-                      {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
-                    </span>
+                    <div className="flex w-full items-center gap-6">
+                      <span className="text-xs font-medium min-w-[120px]">
+                        Run {formatRunId(run._id)}
+                      </span>
+                      <span className="text-xs text-muted-foreground min-w-[140px]">
+                        {timestamp}
+                      </span>
+                      <span className="text-xs text-muted-foreground font-mono min-w-[60px]">
+                        {duration}
+                      </span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[60px] text-right">
+                        {passed}
+                      </span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[60px] text-right">
+                        {failed}
+                      </span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
+                        {passRate !== null ? `${passRate}%` : "—"}
+                      </span>
+                      <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
+                        {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
+                      </span>
+                    </div>
+                    {showCiMetadata && (
+                      <div className="mt-1">
+                        <CiMetadataDisplay
+                          ciMetadata={run.ciMetadata}
+                          framework={run.framework}
+                          source={run.source}
+                          compact={true}
+                        />
+                      </div>
+                    )}
                   </button>
                 </div>
               );

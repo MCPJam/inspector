@@ -24,6 +24,7 @@ import {
   computeIterationPassed,
 } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
+import { CiMetadataDisplay } from "./ci-metadata-display";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -91,6 +92,16 @@ export function RunDetailView({
 
   return (
     <div className="relative">
+      {selectedRunDetails.source === "sdk" && (
+        <div className="mb-4">
+          <CiMetadataDisplay
+            ciMetadata={selectedRunDetails.ciMetadata}
+            framework={selectedRunDetails.framework}
+            source={selectedRunDetails.source}
+          />
+        </div>
+      )}
+
       {/* Run Metrics and Chart */}
       <div className="rounded-lg border bg-background/80 px-3 py-2">
         <div className="flex items-center gap-6">
