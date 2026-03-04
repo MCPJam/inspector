@@ -1,4 +1,4 @@
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
@@ -46,8 +46,6 @@ import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
-import { useOrganizationQueries } from "./hooks/useOrganizations";
-import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
@@ -87,12 +85,6 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const convexUser = useQuery(
-    "users:getCurrentUser" as any,
-    isAuthenticated ? ({} as any) : "skip",
-  );
-  const { sortedOrganizations, isLoading: isOrganizationsLoading } =
-    useOrganizationQueries({ isAuthenticated });
   const [sharedOAuthHandling, setSharedOAuthHandling] = useState(false);
   const [exitedSharedChat, setExitedSharedChat] = useState(false);
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
@@ -131,15 +123,6 @@ export default function App() {
       cancelled = true;
     };
   }, []);
-
-  const shouldRequireOrganization =
-    !isSharedChatRoute &&
-    isAuthenticated &&
-    !isAuthLoading &&
-    convexUser !== undefined &&
-    convexUser !== null &&
-    !isOrganizationsLoading &&
-    sortedOrganizations.length === 0;
 
   usePostHogIdentify();
 
@@ -619,13 +602,6 @@ export default function App() {
     >
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
-        <CreateOrganizationDialog
-          open={!isSharedChatRoute && shouldRequireOrganization}
-          onOpenChange={(open) => {
-            void open;
-          }}
-          required
-        />
         <HostedShellGate
           state={
             isSharedChatRoute
