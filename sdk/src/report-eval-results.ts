@@ -1,0 +1,375 @@
+import type {
+  EvalResultInput,
+  ReportEvalResultsInput,
+  ReportEvalResultsOutput,
+} from "./eval-reporting-types.js";
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
+const CHUNK_SIZE_LIMIT = 200;
+const ONE_SHOT_RESULT_LIMIT = 200;
+const CHUNK_TARGET_BYTES = 1024 * 1024;
+
+export const DEFAULT_MCPJAM_BASE_URL =
+  process.env.MCPJAM_BASE_URL ?? "https://api.mcpjam.com";
+
+type RuntimeConfig = {
+  apiKey: string;
+  baseUrl: string;
+  timeoutMs: number;
+  retryDelaysMs: number[];
+};
+
+type StartRunResponse = {
+  suiteId: string;
+  runId: string;
+  reused?: boolean;
+  status?: string;
+  result?: string;
+  summary?: ReportEvalResultsOutput["summary"];
+};
+
+type AppendIterationsResponse = {
+  inserted: number;
+  skipped: number;
+  total: number;
+};
+
+type BackendEnvelope<T> = {
+  ok?: boolean;
+  error?: string;
+} & T;
+
+function getByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function jitter(base: number): number {
+  const variance = Math.floor(base * 0.2);
+  return base + Math.floor((Math.random() * 2 - 1) * variance);
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function generateExternalRunId(): string {
+  return `sdk-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function withExternalIterationIds(
+  results: EvalResultInput[],
+  externalRunId: string
+): EvalResultInput[] {
+  return results.map((result, index) => {
+    if (result.externalIterationId) {
+      return result;
+    }
+    return {
+      ...result,
+      externalIterationId: `${externalRunId}-${index + 1}`,
+    };
+  });
+}
+
+function chunkResultsForUpload(
+  results: EvalResultInput[],
+  maxCount: number = CHUNK_SIZE_LIMIT,
+  maxBytes: number = CHUNK_TARGET_BYTES
+): EvalResultInput[][] {
+  const chunks: EvalResultInput[][] = [];
+  let currentChunk: EvalResultInput[] = [];
+
+  for (const result of results) {
+    const candidate = [...currentChunk, result];
+    const candidateBytes = getByteLength(JSON.stringify({ results: candidate }));
+    const shouldSplit =
+      currentChunk.length >= maxCount ||
+      (candidateBytes > maxBytes && currentChunk.length > 0);
+
+    if (shouldSplit) {
+      chunks.push(currentChunk);
+      currentChunk = [result];
+      continue;
+    }
+
+    currentChunk = candidate;
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+function createRuntimeConfig(input: ReportEvalResultsInput): RuntimeConfig {
+  const apiKey = input.apiKey ?? process.env.MCPJAM_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing MCPJAM API key");
+  }
+
+  return {
+    apiKey,
+    baseUrl: trimTrailingSlash(input.baseUrl ?? DEFAULT_MCPJAM_BASE_URL),
+    timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+    retryDelaysMs: DEFAULT_RETRY_DELAYS_MS,
+  };
+}
+
+async function requestWithRetry<T>(
+  config: RuntimeConfig,
+  path: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  const url = `${config.baseUrl}${path}`;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= config.retryDelaysMs.length; attempt++) {
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => {
+      controller.abort();
+    }, config.timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutHandle);
+
+      let responseBody: BackendEnvelope<T> | undefined;
+      try {
+        responseBody = (await response.json()) as BackendEnvelope<T>;
+      } catch {
+        responseBody = undefined;
+      }
+
+      if (response.ok) {
+        if (responseBody && responseBody.ok === false) {
+          const message = responseBody.error ?? "Unknown SDK evals error";
+          throw new Error(message);
+        }
+        return (responseBody ?? {}) as T;
+      }
+
+      const message =
+        responseBody?.error ??
+        `Request failed with status ${response.status}: ${response.statusText}`;
+      if (
+        isRetryableStatus(response.status) &&
+        attempt < config.retryDelaysMs.length
+      ) {
+        await sleep(jitter(config.retryDelaysMs[attempt]));
+        continue;
+      }
+
+      throw new Error(message);
+    } catch (error) {
+      clearTimeout(timeoutHandle);
+      lastError = error;
+
+      const isAbortError =
+        error instanceof Error && error.name === "AbortError";
+      const shouldRetry =
+        isAbortError ||
+        error instanceof TypeError ||
+        (error instanceof Error &&
+          /network|fetch|timeout|429|5\d\d/i.test(error.message));
+
+      if (shouldRetry && attempt < config.retryDelaysMs.length) {
+        await sleep(jitter(config.retryDelaysMs[attempt]));
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Failed to send eval report");
+}
+
+async function startEvalRun(
+  config: RuntimeConfig,
+  payload: Omit<ReportEvalResultsInput, "results" | "strict"> & {
+    externalRunId: string;
+    synthesizedTests?: unknown[];
+  }
+): Promise<StartRunResponse> {
+  return await requestWithRetry<StartRunResponse>(
+    config,
+    "/sdk/v1/evals/runs/start",
+    payload
+  );
+}
+
+async function appendEvalRunIterations(
+  config: RuntimeConfig,
+  payload: {
+    runId: string;
+    results: EvalResultInput[];
+  }
+): Promise<AppendIterationsResponse> {
+  return await requestWithRetry<AppendIterationsResponse>(
+    config,
+    "/sdk/v1/evals/runs/iterations",
+    payload
+  );
+}
+
+async function finalizeEvalRun(
+  config: RuntimeConfig,
+  payload: {
+    runId: string;
+    externalRunId: string;
+  }
+): Promise<ReportEvalResultsOutput> {
+  return await requestWithRetry<ReportEvalResultsOutput>(
+    config,
+    "/sdk/v1/evals/runs/finalize",
+    payload
+  );
+}
+
+function shouldUseOneShotUpload(
+  input: ReportEvalResultsInput,
+  config: RuntimeConfig
+): boolean {
+  if (input.results.length > ONE_SHOT_RESULT_LIMIT) {
+    return false;
+  }
+  const body = {
+    suiteName: input.suiteName,
+    suiteDescription: input.suiteDescription,
+    serverNames: input.serverNames,
+    notes: input.notes,
+    passCriteria: input.passCriteria,
+    externalRunId: input.externalRunId,
+    framework: input.framework,
+    ci: input.ci,
+    results: input.results,
+  };
+  const bytes = getByteLength(JSON.stringify(body));
+  return bytes <= CHUNK_TARGET_BYTES && config.baseUrl.length >= 0;
+}
+
+export async function reportEvalResults(
+  input: ReportEvalResultsInput
+): Promise<ReportEvalResultsOutput> {
+  if (!input.suiteName || input.suiteName.trim().length === 0) {
+    throw new Error("suiteName is required");
+  }
+  if (!Array.isArray(input.results) || input.results.length === 0) {
+    throw new Error("results must include at least one eval result");
+  }
+
+  const config = createRuntimeConfig(input);
+  if (shouldUseOneShotUpload(input, config)) {
+    return await requestWithRetry<ReportEvalResultsOutput>(
+      config,
+      "/sdk/v1/evals/report",
+      {
+        suiteName: input.suiteName,
+        suiteDescription: input.suiteDescription,
+        serverNames: input.serverNames,
+        notes: input.notes,
+        passCriteria: input.passCriteria,
+        externalRunId: input.externalRunId,
+        framework: input.framework,
+        ci: input.ci,
+        results: input.results,
+      }
+    );
+  }
+
+  const externalRunId = input.externalRunId ?? generateExternalRunId();
+  const resultsWithIterationIds = withExternalIterationIds(
+    input.results,
+    externalRunId
+  );
+
+  const start = await startEvalRun(config, {
+    suiteName: input.suiteName,
+    suiteDescription: input.suiteDescription,
+    serverNames: input.serverNames,
+    notes: input.notes,
+    passCriteria: input.passCriteria,
+    externalRunId,
+    framework: input.framework,
+    ci: input.ci,
+  });
+
+  if (
+    start.reused &&
+    start.status === "completed" &&
+    start.result &&
+    start.summary
+  ) {
+    return {
+      suiteId: start.suiteId,
+      runId: start.runId,
+      status: start.status as "completed" | "failed",
+      result: start.result as "passed" | "failed",
+      summary: start.summary,
+    };
+  }
+
+  const chunks = chunkResultsForUpload(resultsWithIterationIds);
+  for (const chunk of chunks) {
+    await appendEvalRunIterations(config, {
+      runId: start.runId,
+      results: chunk,
+    });
+  }
+
+  return await finalizeEvalRun(config, {
+    runId: start.runId,
+    externalRunId,
+  });
+}
+
+export async function reportEvalResultsSafely(
+  input: ReportEvalResultsInput
+): Promise<ReportEvalResultsOutput | null> {
+  try {
+    return await reportEvalResults(input);
+  } catch (error) {
+    if (input.strict) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[mcpjam/sdk] eval reporting failed: ${message}`);
+    return null;
+  }
+}
+
+export type {
+  RuntimeConfig as EvalReportingRuntimeConfig,
+  AppendIterationsResponse,
+  StartRunResponse,
+};
+
+export {
+  appendEvalRunIterations,
+  chunkResultsForUpload,
+  createRuntimeConfig,
+  finalizeEvalRun,
+  generateExternalRunId,
+  startEvalRun,
+  withExternalIterationIds,
+};

@@ -116,6 +116,28 @@ export type {
   TestResult,
 } from "./EvalSuite.js";
 
+// Eval reporting APIs (DX-first ingestion)
+export { reportEvalResults, reportEvalResultsSafely } from "./report-eval-results.js";
+export { createEvalRunReporter } from "./eval-run-reporter.js";
+export type {
+  CreateEvalRunReporterInput,
+  EvalRunReporter,
+} from "./eval-run-reporter.js";
+export { uploadEvalArtifact } from "./upload-eval-artifact.js";
+export type {
+  UploadEvalArtifactInput,
+  EvalArtifactFormat,
+} from "./upload-eval-artifact.js";
+export type {
+  EvalExpectedToolCall,
+  EvalCiMetadata,
+  EvalTraceInput,
+  EvalResultInput,
+  MCPJamReportingConfig,
+  ReportEvalResultsInput,
+  ReportEvalResultsOutput,
+} from "./eval-reporting-types.js";
+
 // Core SDK types
 export type {
   LLMProvider,

@@ -73,6 +73,11 @@ await test.run(agent, {
   concurrency: 5,      // Parallel runs (careful with rate limits)
   retries: 2,          // Retry failures
   timeoutMs: 30000,    // Per-test timeout
+  mcpjam: {
+    // Auto-save is enabled when MCPJAM_API_KEY is available
+    suiteName: "SDK eval smoke",
+    strict: false, // warn by default; true to fail CI on upload errors
+  },
   onProgress: (done, total) => {
     console.log(`${done}/${total}`);
   },
@@ -125,6 +130,42 @@ suite.add(new EvalTest({
 
 await suite.run(agent, { iterations: 30 });
 ```
+
+## Reporting APIs
+
+The SDK provides three equal first-class reporting APIs for CI and local flows:
+
+```typescript
+import {
+  reportEvalResults,
+  createEvalRunReporter,
+  uploadEvalArtifact,
+} from "@mcpjam/sdk";
+
+// 1) One-shot report (framework agnostic)
+await reportEvalResults({
+  suiteName: "Nightly",
+  results: [{ caseTitle: "healthcheck", passed: true }],
+});
+
+// 2) Incremental reporter (long-running processes)
+const reporter = createEvalRunReporter({ suiteName: "Incremental" });
+await reporter.record({ caseTitle: "step-1", passed: true });
+await reporter.record({ caseTitle: "step-2", passed: false, error: "timeout" });
+await reporter.finalize();
+
+// 3) Artifact upload (post-step in CI)
+await uploadEvalArtifact({
+  suiteName: "JUnit import",
+  format: "junit-xml",
+  artifact: junitXmlString,
+});
+```
+
+### CI Hardening Pattern
+
+For enterprise CI pipelines, prefer artifact upload in a final post-step (`if: always()`)
+so results are preserved even when the main test job exits early.
 
 ### Suite Results
 

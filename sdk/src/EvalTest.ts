@@ -1,8 +1,13 @@
 import type { TestAgent } from "./TestAgent.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
+import type {
+  EvalResultInput,
+  MCPJamReportingConfig,
+} from "./eval-reporting-types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
+import { reportEvalResultsSafely } from "./report-eval-results.js";
 
 /**
  * Configuration for an EvalTest
@@ -25,6 +30,9 @@ export interface EvalTestRunOptions {
   onProgress?: (completed: number, total: number) => void;
   /** Called with a failure report if any iterations fail */
   onFailure?: (report: string) => void;
+  mcpjam?: MCPJamReportingConfig;
+  /** @internal used by EvalSuite to prevent duplicate per-test uploads */
+  __suppressMcpjamAutoSave?: boolean;
 }
 
 /**
@@ -252,7 +260,93 @@ export class EvalTest {
       options.onFailure(this.getFailureReport());
     }
 
+    await this.autoSaveRunIfConfigured(runResult, options);
+
     return runResult;
+  }
+
+  private async autoSaveRunIfConfigured(
+    runResult: EvalRunResult,
+    options: EvalTestRunOptions
+  ): Promise<void> {
+    if (options.__suppressMcpjamAutoSave) {
+      return;
+    }
+
+    const config = options.mcpjam;
+    if (config?.enabled === false) {
+      return;
+    }
+
+    const apiKey = config?.apiKey ?? process.env.MCPJAM_API_KEY;
+    if (!apiKey) {
+      return;
+    }
+
+    const results = this.buildEvalResultInputs(runResult.iterationDetails);
+    if (results.length === 0) {
+      return;
+    }
+
+    await reportEvalResultsSafely({
+      suiteName: config?.suiteName ?? `EvalTest: ${this.getName()}`,
+      suiteDescription: config?.suiteDescription,
+      serverNames: config?.serverNames,
+      notes: config?.notes,
+      passCriteria: config?.passCriteria,
+      externalRunId: config?.externalRunId,
+      framework: config?.framework,
+      ci: config?.ci,
+      apiKey,
+      baseUrl: config?.baseUrl,
+      strict: config?.strict,
+      results,
+    });
+  }
+
+  private buildEvalResultInputs(iterations: IterationResult[]): EvalResultInput[] {
+    return iterations.map((iteration, index) => {
+      const prompts = iteration.prompts ?? [];
+      const durationMs = iteration.latencies.reduce((sum, latency) => {
+        return sum + latency.e2eMs;
+      }, 0);
+      const actualToolCalls = prompts.flatMap((prompt) =>
+        prompt.getToolCalls().map((toolCall) => ({
+          toolName: toolCall.toolName,
+          arguments: toolCall.arguments,
+        }))
+      );
+      const traceMessages = prompts.flatMap((prompt) =>
+        prompt.getMessages().map((message) => ({
+          role: message.role,
+          content: (message as any).content,
+        }))
+      );
+
+      return {
+        caseTitle: this.getName(),
+        query: prompts[0]?.getPrompt() ?? this.getName(),
+        passed: iteration.passed,
+        durationMs: durationMs > 0 ? durationMs : undefined,
+        actualToolCalls,
+        tokens: {
+          input: iteration.tokens.input,
+          output: iteration.tokens.output,
+          total: iteration.tokens.total,
+        },
+        error: iteration.error,
+        trace:
+          traceMessages.length > 0
+            ? {
+                messages: traceMessages,
+              }
+            : undefined,
+        metadata: {
+          retryCount: iteration.retryCount ?? 0,
+          iterationNumber: index + 1,
+        },
+      };
+    });
   }
 
   private aggregateResults(iterations: IterationResult[]): EvalRunResult {

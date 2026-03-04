@@ -12,6 +12,7 @@ import type {
   CoreAssistantMessage,
   CoreToolMessage,
 } from "./types.js";
+import type { EvalResultInput } from "./eval-reporting-types.js";
 
 /**
  * Represents the result of a TestAgent prompt.
@@ -289,5 +290,48 @@ export class PromptResult {
    */
   formatTrace(): string {
     return JSON.stringify(this._messages, null, 2);
+  }
+
+  /**
+   * Convert this prompt result into an EvalResultInput for report ingestion.
+   */
+  toEvalResult(
+    options?: Partial<
+      Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
+    >
+  ): EvalResultInput {
+    const caseTitle =
+      options?.caseTitle ??
+      (this.prompt.trim().length > 0 ? this.prompt : "PromptResult");
+    const passed =
+      typeof options?.passed === "boolean" ? options.passed : !this.hasError();
+    const usage = this.getUsage();
+
+    return {
+      caseTitle,
+      query: options?.query ?? this.prompt,
+      passed,
+      durationMs: options?.durationMs ?? this.e2eLatencyMs(),
+      provider: options?.provider,
+      model: options?.model,
+      expectedToolCalls: options?.expectedToolCalls,
+      actualToolCalls: this.getToolCalls().map((toolCall) => ({
+        toolName: toolCall.toolName,
+        arguments: toolCall.arguments,
+      })),
+      tokens: {
+        input: usage.inputTokens,
+        output: usage.outputTokens,
+        total: usage.totalTokens,
+      },
+      error: options?.error ?? this.getError(),
+      errorDetails: options?.errorDetails,
+      trace: { messages: this.getMessages() as any[] },
+      externalIterationId: options?.externalIterationId,
+      externalCaseId: options?.externalCaseId,
+      metadata: options?.metadata,
+      isNegativeTest: options?.isNegativeTest,
+      advancedConfig: options?.advancedConfig,
+    };
   }
 }

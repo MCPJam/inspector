@@ -2,17 +2,23 @@ import type { TestAgent } from "./TestAgent.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import type {
+  EvalResultInput,
+  MCPJamReportingConfig,
+} from "./eval-reporting-types.js";
+import type {
   EvalTest,
   EvalTestRunOptions,
   EvalRunResult,
   IterationResult,
 } from "./EvalTest.js";
+import { reportEvalResultsSafely } from "./report-eval-results.js";
 
 /**
  * Configuration for an EvalSuite
  */
 export interface EvalSuiteConfig {
   name?: string;
+  mcpjam?: MCPJamReportingConfig;
 }
 
 /**
@@ -73,11 +79,13 @@ export interface EvalSuiteResult {
  */
 export class EvalSuite {
   private name: string;
+  private mcpjamConfig?: MCPJamReportingConfig;
   private tests: Map<string, EvalTest> = new Map();
   private lastRunResult: EvalSuiteResult | null = null;
 
   constructor(config?: EvalSuiteConfig) {
     this.name = config?.name ?? "EvalSuite";
+    this.mcpjamConfig = config?.mcpjam;
   }
 
   /**
@@ -113,6 +121,7 @@ export class EvalSuite {
     options: EvalTestRunOptions
   ): Promise<EvalSuiteResult> {
     const testResults = new Map<string, EvalRunResult>();
+    const suiteReportingConfig = options.mcpjam ?? this.mcpjamConfig;
 
     // Track total progress across all tests
     const totalIterations = this.tests.size * options.iterations;
@@ -122,6 +131,13 @@ export class EvalSuite {
     for (const [name, test] of this.tests) {
       const testOptions: EvalTestRunOptions = {
         ...options,
+        mcpjam: suiteReportingConfig
+          ? {
+              ...suiteReportingConfig,
+              enabled: false,
+            }
+          : undefined,
+        __suppressMcpjamAutoSave: true,
         onProgress: options.onProgress
           ? (completed, _total) => {
               // Calculate overall progress
@@ -138,7 +154,94 @@ export class EvalSuite {
 
     // Aggregate results
     this.lastRunResult = this.aggregateResults(testResults);
+    await this.autoSaveSuiteRunIfConfigured(testResults, suiteReportingConfig);
     return this.lastRunResult;
+  }
+
+  private async autoSaveSuiteRunIfConfigured(
+    testResults: Map<string, EvalRunResult>,
+    config?: MCPJamReportingConfig
+  ): Promise<void> {
+    if (config?.enabled === false) {
+      return;
+    }
+    const apiKey = config?.apiKey ?? process.env.MCPJAM_API_KEY;
+    if (!apiKey) {
+      return;
+    }
+
+    const results = this.buildEvalResultInputs(testResults);
+    if (results.length === 0) {
+      return;
+    }
+
+    await reportEvalResultsSafely({
+      suiteName: config?.suiteName ?? this.name,
+      suiteDescription: config?.suiteDescription,
+      serverNames: config?.serverNames,
+      notes: config?.notes,
+      passCriteria: config?.passCriteria,
+      externalRunId: config?.externalRunId,
+      framework: config?.framework,
+      ci: config?.ci,
+      apiKey,
+      baseUrl: config?.baseUrl,
+      strict: config?.strict,
+      results,
+    });
+  }
+
+  private buildEvalResultInputs(
+    testResults: Map<string, EvalRunResult>
+  ): EvalResultInput[] {
+    const inputs: EvalResultInput[] = [];
+    for (const [testName, testResult] of testResults) {
+      for (let index = 0; index < testResult.iterationDetails.length; index++) {
+        const iteration = testResult.iterationDetails[index];
+        const prompts = iteration.prompts ?? [];
+        const durationMs = iteration.latencies.reduce((sum, latency) => {
+          return sum + latency.e2eMs;
+        }, 0);
+        const actualToolCalls = prompts.flatMap((prompt) =>
+          prompt.getToolCalls().map((toolCall) => ({
+            toolName: toolCall.toolName,
+            arguments: toolCall.arguments,
+          }))
+        );
+        const traceMessages = prompts.flatMap((prompt) =>
+          prompt.getMessages().map((message) => ({
+            role: message.role,
+            content: (message as any).content,
+          }))
+        );
+
+        inputs.push({
+          caseTitle: testName,
+          query: prompts[0]?.getPrompt() ?? testName,
+          passed: iteration.passed,
+          durationMs: durationMs > 0 ? durationMs : undefined,
+          actualToolCalls,
+          tokens: {
+            input: iteration.tokens.input,
+            output: iteration.tokens.output,
+            total: iteration.tokens.total,
+          },
+          error: iteration.error,
+          trace:
+            traceMessages.length > 0
+              ? {
+                  messages: traceMessages,
+                }
+              : undefined,
+          metadata: {
+            testName,
+            iterationNumber: index + 1,
+            retryCount: iteration.retryCount ?? 0,
+          },
+        });
+      }
+    }
+    return inputs;
   }
 
   private aggregateResults(

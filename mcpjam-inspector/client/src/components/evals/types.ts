@@ -27,6 +27,8 @@ export type EvalSuite = {
   createdAt: number;
   updatedAt: number;
   latestRunId?: string;
+  source?: "ui" | "sdk";
+  runCounter?: number;
   defaultPassCriteria?: {
     minimumPassRate: number;
   };
@@ -91,6 +93,9 @@ export type EvalIteration = {
   tokensUsed: number;
   error?: string;
   errorDetails?: string;
+  resultSource?: "reported" | "derived";
+  externalIterationId?: string;
+  metadata?: Record<string, string | number | boolean>;
   _creationTime?: number; // Convex auto field
 };
 
@@ -117,6 +122,17 @@ export type EvalSuiteRun = {
     minimumPassRate: number;
   };
   result?: "pending" | "passed" | "failed" | "cancelled";
+  source?: "ui" | "sdk";
+  externalRunId?: string;
+  framework?: string;
+  ciMetadata?: {
+    provider?: string;
+    pipelineId?: string;
+    jobId?: string;
+    runUrl?: string;
+    branch?: string;
+    commitSha?: string;
+  };
   notes?: string;
   createdAt: number;
   completedAt?: number;
