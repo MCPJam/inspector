@@ -15,6 +15,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
+import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 import type { CustomProvider } from "@mcpjam/sdk";
 
 interface ProviderConfig {
@@ -283,6 +284,11 @@ export function SettingsTab() {
               </div>
             }
           />
+        </SettingsSection>
+
+        {/* Account */}
+        <SettingsSection title="Account">
+          <AccountApiKeySection />
         </SettingsSection>
 
         {!HOSTED_MODE && (
