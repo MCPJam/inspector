@@ -27,14 +27,18 @@ import {
   resolveFilePart,
 } from "../openai-widget-state-messages";
 
+function applyDefaultRuntimePresets() {
+  vi.clearAllMocks();
+  applyClientRuntimePresets({
+    hostedMode: false,
+    mcpApi: mcpApiPresets.allSuccess(),
+    appState: storePresets.empty(),
+  });
+}
+
 describe("buildWidgetStateParts", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    applyClientRuntimePresets({
-      hostedMode: false,
-      mcpApi: mcpApiPresets.allSuccess(),
-      appState: storePresets.empty(),
-    });
+    applyDefaultRuntimePresets();
   });
 
   it("returns text-only parts when there are no uploaded file ids", async () => {
@@ -189,6 +193,12 @@ describe("buildWidgetStateParts", () => {
         text: "User uploaded an image from the file upload widget.",
       },
     ]);
+  });
+});
+
+describe("resolveFilePart", () => {
+  beforeEach(() => {
+    applyDefaultRuntimePresets();
   });
 
   it("returns null when all endpoint requests throw", async () => {

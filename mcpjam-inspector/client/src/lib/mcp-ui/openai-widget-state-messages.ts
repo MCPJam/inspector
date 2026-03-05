@@ -196,9 +196,7 @@ export async function buildWidgetStateParts(
   ];
 
   const fileParts = await Promise.all(
-    extractUploadedFileIds(state).map((fileId) =>
-      resolveFilePart(fileId).catch(() => null),
-    ),
+    extractUploadedFileIds(state).map((fileId) => resolveFilePart(fileId)),
   );
 
   for (const filePart of fileParts) {

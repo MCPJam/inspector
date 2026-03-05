@@ -33,6 +33,9 @@ export function applyClientRuntimePresets(
     buildWidgetStateParts,
   } = options;
 
+  for (const key of Object.keys(clientRuntimeMocks.mcpApiMock)) {
+    delete clientRuntimeMocks.mcpApiMock[key];
+  }
   Object.assign(clientRuntimeMocks.mcpApiMock, mcpApi);
   clientRuntimeMocks.useAppStateMock.mockReturnValue(appState);
   clientRuntimeMocks.hostedMode = hostedMode;
