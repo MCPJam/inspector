@@ -592,17 +592,19 @@ export function useRunDetailData(
       };
     });
 
-    const tokensData = Array.from(testMap.values()).map((test) => {
-      const avgTokens =
-        test.tokens.length > 0
-          ? test.tokens.reduce((sum, t) => sum + t, 0) / test.tokens.length
-          : 0;
+    const tokensData = Array.from(testMap.values())
+      .map((test) => {
+        const avgTokens =
+          test.tokens.length > 0
+            ? test.tokens.reduce((sum, t) => sum + t, 0) / test.tokens.length
+            : 0;
 
-      return {
-        name: test.title,
-        tokens: avgTokens,
-      };
-    });
+        return {
+          name: test.title,
+          tokens: avgTokens,
+        };
+      })
+      .filter((entry) => entry.tokens > 0);
 
     const donutData = [];
     if (totalPassed > 0) {

@@ -354,7 +354,7 @@ export function SuiteHeader({
             <BarChart3 className="h-4 w-4" />
             View run summary
           </Button>
-          {isRunInProgress ? (
+          {!readOnlyConfig && (isRunInProgress ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -405,7 +405,7 @@ export function SuiteHeader({
                   : "Run all tests"}
               </TooltipContent>
             </Tooltip>
-          )}
+          ))}
           <Button
             variant="outline"
             size="sm"
@@ -695,31 +695,33 @@ export function SuiteHeader({
         )}
 
         {/* Action buttons */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onRerun(suite)}
-                disabled={!canRerun || isRerunning}
-                className="gap-2"
-              >
-                <RotateCw
-                  className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
-                />
-                Run
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {!hasServersConfigured
-              ? "No connected MCP servers are configured for this suite"
-              : !canRerun
-              ? `Connect the following servers: ${missingServers.join(", ")}`
-              : "Run all tests"}
-          </TooltipContent>
-        </Tooltip>
+        {!readOnlyConfig && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onRerun(suite)}
+                  disabled={!canRerun || isRerunning}
+                  className="gap-2"
+                >
+                  <RotateCw
+                    className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                  />
+                  Run
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {!hasServersConfigured
+                ? "No connected MCP servers are configured for this suite"
+                : !canRerun
+                ? `Connect the following servers: ${missingServers.join(", ")}`
+                : "Run all tests"}
+            </TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

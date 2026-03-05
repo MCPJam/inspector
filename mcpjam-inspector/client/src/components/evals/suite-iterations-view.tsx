@@ -346,6 +346,7 @@ export function SuiteIterationsView({
             <RunDetailView
               selectedRunDetails={selectedRunDetails}
               caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+              source={suite.source}
               selectedRunChartData={selectedRunChartData}
               runDetailSortBy={runDetailSortBy}
               onSortChange={setRunDetailSortBy}

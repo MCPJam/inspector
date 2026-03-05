@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,7 @@ import { CiMetadataDisplay } from "./ci-metadata-display";
 import { toast } from "sonner";
 
 interface RunOverviewProps {
-  suite: { _id: string; name: string };
+  suite: { _id: string; name: string; source?: "ui" | "sdk" };
   runs: EvalSuiteRun[];
   runsLoading: boolean;
   allIterations: EvalIteration[];
@@ -65,6 +65,11 @@ export function RunOverview({
   runsViewMode,
   onViewModeChange,
 }: RunOverviewProps) {
+  const hasTokenData = useMemo(
+    () => allIterations.some((i) => (i.tokensUsed || 0) > 0),
+    [allIterations],
+  );
+
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
@@ -127,7 +132,7 @@ export function RunOverview({
         <div className="rounded-xl border bg-card text-card-foreground">
           <div className="px-4 pt-3 pb-2">
             <div className="text-xs font-medium text-muted-foreground">
-              Accuracy
+              {suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
             </div>
           </div>
           <div className="px-4 pb-4">
@@ -136,6 +141,7 @@ export function RunOverview({
               isLoading={runsLoading}
               height="h-32"
               onClick={onRunClick}
+              metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
             />
           </div>
         </div>
@@ -148,7 +154,7 @@ export function RunOverview({
             </div>
           </div>
           <div className="px-4 pb-4">
-            {modelStats.length > 0 ? (
+            {modelStats.length > 1 ? (
               <ChartContainer
                 config={modelChartConfig}
                 className="aspect-auto h-32 w-full"
@@ -299,8 +305,8 @@ export function RunOverview({
             <div className="min-w-[60px]">Duration</div>
             <div className="min-w-[60px] text-right">Passed</div>
             <div className="min-w-[60px] text-right">Failed</div>
-            <div className="min-w-[70px] text-right">Accuracy</div>
-            <div className="min-w-[70px] text-right">Tokens</div>
+            <div className="min-w-[70px] text-right">{suite.source === "sdk" ? "Pass Rate" : "Accuracy"}</div>
+            {hasTokenData && <div className="min-w-[70px] text-right">Tokens</div>}
           </div>
         )}
 
@@ -407,9 +413,11 @@ export function RunOverview({
                       <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
                         {passRate !== null ? `${passRate}%` : "—"}
                       </span>
-                      <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
-                        {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
-                      </span>
+                      {hasTokenData && (
+                        <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
+                          {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
+                        </span>
+                      )}
                     </div>
                     {showCiMetadata && (
                       <div className="mt-1">

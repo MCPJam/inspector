@@ -29,6 +29,7 @@ import { CiMetadataDisplay } from "./ci-metadata-display";
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
   caseGroupsForSelectedRun: EvalIteration[];
+  source?: "ui" | "sdk";
   selectedRunChartData: {
     donutData: Array<{ name: string; value: number; fill: string }>;
     durationData: Array<{
@@ -58,6 +59,7 @@ interface RunDetailViewProps {
 export function RunDetailView({
   selectedRunDetails,
   caseGroupsForSelectedRun,
+  source,
   selectedRunChartData,
   runDetailSortBy,
   onSortChange,
@@ -90,6 +92,13 @@ export function RunDetailView({
     return { passed, failed, total, passRate };
   }, [caseGroupsForSelectedRun, selectedRunDetails.summary]);
 
+  const hasTokenData = useMemo(
+    () => caseGroupsForSelectedRun.some((i) => (i.tokensUsed || 0) > 0),
+    [caseGroupsForSelectedRun],
+  );
+
+  const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
+
   return (
     <div className="relative">
       {selectedRunDetails.source === "sdk" && (
@@ -108,7 +117,7 @@ export function RunDetailView({
           {/* Metrics */}
           <div className="flex gap-6 flex-1">
             <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Accuracy</div>
+              <div className="text-xs text-muted-foreground">{metricLabel}</div>
               <div className="text-sm font-semibold">
                 {computedStats.total > 0
                   ? `${Math.round(computedStats.passRate * 100)}%`
@@ -216,7 +225,7 @@ export function RunDetailView({
           </span>
 
           {/* Pass/Fail Badge */}
-          <PassCriteriaBadge run={selectedRunDetails} variant="compact" />
+          <PassCriteriaBadge run={selectedRunDetails} variant="compact" metricLabel={metricLabel} />
         </div>
       </div>
 
@@ -249,7 +258,7 @@ export function RunDetailView({
             <div className="flex items-center gap-4 shrink-0">
               <div className="min-w-[120px]">Model</div>
               <div className="min-w-[50px]">Tools</div>
-              <div className="min-w-[60px]">Tokens</div>
+              {hasTokenData && <div className="min-w-[60px]">Tokens</div>}
               <div className="min-w-[40px] text-right">Duration</div>
             </div>
           </div>
@@ -272,6 +281,7 @@ export function RunDetailView({
                   )
                 }
                 showModelInfo={true}
+                showTokens={hasTokenData}
                 serverNames={serverNames}
               />
             ))
@@ -467,7 +477,7 @@ export function RunDetailView({
                   )}
 
                   {/* Per-Model Performance for this run */}
-                  {selectedRunChartData.modelData.length > 0 && (
+                  {selectedRunChartData.modelData.length > 1 && (
                     <div className="rounded-lg border bg-background/50 p-4">
                       <div className="text-xs font-medium text-muted-foreground mb-3">
                         Performance by model
@@ -475,7 +485,7 @@ export function RunDetailView({
                       <ChartContainer
                         config={{
                           passRate: {
-                            label: "Accuracy",
+                            label: metricLabel,
                             color: "var(--chart-1)",
                           },
                         }}
@@ -576,12 +586,14 @@ function IterationRow({
   isOpen,
   onToggle,
   showModelInfo = false,
+  showTokens = true,
   serverNames = [],
 }: {
   iteration: EvalIteration;
   isOpen: boolean;
   onToggle: () => void;
   showModelInfo?: boolean;
+  showTokens?: boolean;
   serverNames?: string[];
 }) {
   const startedAt = iteration.startedAt ?? iteration.createdAt;
@@ -642,13 +654,15 @@ function IterationRow({
               {isPending ? "—" : actualToolCalls.length}
             </span>
           </div>
-          <div className="min-w-[60px] text-center">
-            <span className="font-mono">
-              {isPending
-                ? "—"
-                : Number(iteration.tokensUsed || 0).toLocaleString()}
-            </span>
-          </div>
+          {showTokens && (
+            <div className="min-w-[60px] text-center">
+              <span className="font-mono">
+                {isPending
+                  ? "—"
+                  : Number(iteration.tokensUsed || 0).toLocaleString()}
+              </span>
+            </div>
+          )}
           <div className="font-mono min-w-[40px] text-right">
             {isPending
               ? "—"

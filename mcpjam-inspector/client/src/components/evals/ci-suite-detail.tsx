@@ -72,7 +72,7 @@ export function CiSuiteDetail({
   const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
-  >("model");
+  >("test");
 
   const { runTrendData, modelStats } = useSuiteData(
     suite,
@@ -231,6 +231,7 @@ export function CiSuiteDetail({
           <RunDetailView
             selectedRunDetails={selectedRunDetails}
             caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+            source={suite.source}
             selectedRunChartData={selectedRunChartData}
             runDetailSortBy={runDetailSortBy}
             onSortChange={setRunDetailSortBy}
