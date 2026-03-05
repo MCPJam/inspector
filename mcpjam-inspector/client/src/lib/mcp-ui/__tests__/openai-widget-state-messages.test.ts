@@ -1,16 +1,26 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-
-const { authFetchMock } = vi.hoisted(() => ({
-  authFetchMock: vi.fn(),
-}));
+import { mcpApiPresets } from "@/test/mocks/mcp-api";
+import { storePresets } from "@/test/mocks/stores";
+import {
+  applyClientRuntimePresets,
+  clientRuntimeMocks,
+} from "@/test/mocks/client-runtime";
 
 vi.mock("@/lib/session-token", () => ({
-  authFetch: authFetchMock,
+  authFetch: clientRuntimeMocks.authFetchMock,
 }));
 
 vi.mock("@/lib/config", () => ({
-  HOSTED_MODE: false,
+  get HOSTED_MODE() {
+    return clientRuntimeMocks.hostedMode;
+  },
 }));
+
+vi.mock("@/hooks/use-app-state", () => ({
+  useAppState: clientRuntimeMocks.useAppStateMock,
+}));
+
+vi.mock("@/state/mcp-api", () => clientRuntimeMocks.mcpApiMock);
 
 import {
   buildWidgetStateParts,
@@ -19,7 +29,12 @@ import {
 
 describe("buildWidgetStateParts", () => {
   beforeEach(() => {
-    authFetchMock.mockReset();
+    vi.clearAllMocks();
+    applyClientRuntimePresets({
+      hostedMode: false,
+      mcpApi: mcpApiPresets.allSuccess(),
+      appState: storePresets.empty(),
+    });
   });
 
   it("returns text-only parts when there are no uploaded file ids", async () => {
@@ -32,11 +47,11 @@ describe("buildWidgetStateParts", () => {
         text: 'The state of widget tool-1 is: {"foo":"bar"}',
       },
     ]);
-    expect(authFetchMock).not.toHaveBeenCalled();
+    expect(clientRuntimeMocks.authFetchMock).not.toHaveBeenCalled();
   });
 
   it("resolves file ids from imageIds into file parts", async () => {
-    authFetchMock.mockResolvedValue({
+    clientRuntimeMocks.authFetchMock.mockResolvedValue({
       ok: true,
       blob: async () => new Blob(["hello"], { type: "image/jpeg" }),
     });
@@ -49,7 +64,7 @@ describe("buildWidgetStateParts", () => {
 
     const parts = await buildWidgetStateParts("tool-2", state);
 
-    expect(authFetchMock).toHaveBeenCalledTimes(1);
+    expect(clientRuntimeMocks.authFetchMock).toHaveBeenCalledTimes(1);
     expect(parts[0]).toEqual({
       type: "text",
       text: 'The state of widget tool-2 is: {"imageIds":["file_550e8400-e29b-41d4-a716-446655440000"]}',
@@ -74,7 +89,7 @@ describe("buildWidgetStateParts", () => {
 
     const parts = await buildWidgetStateParts("tool-2b", state);
 
-    expect(authFetchMock).not.toHaveBeenCalled();
+    expect(clientRuntimeMocks.authFetchMock).not.toHaveBeenCalled();
     expect(parts).toEqual([
       {
         type: "text",
@@ -98,7 +113,7 @@ describe("buildWidgetStateParts", () => {
 
     const parts = await buildWidgetStateParts("tool-3", state);
 
-    expect(authFetchMock).not.toHaveBeenCalled();
+    expect(clientRuntimeMocks.authFetchMock).not.toHaveBeenCalled();
     expect(parts).toEqual([
       {
         type: "text",
@@ -118,17 +133,17 @@ describe("buildWidgetStateParts", () => {
 
     const parts = await buildWidgetStateParts("tool-3b", state);
 
-    expect(authFetchMock).not.toHaveBeenCalled();
+    expect(clientRuntimeMocks.authFetchMock).not.toHaveBeenCalled();
     expect(parts).toEqual([
       {
         type: "text",
-        text: "undefined",
+        text: 'The state of widget tool-3b is: {"imageIds":[]}',
       },
     ]);
   });
 
   it("resolves imageIds into file parts alongside modelContent text", async () => {
-    authFetchMock.mockResolvedValue({
+    clientRuntimeMocks.authFetchMock.mockResolvedValue({
       ok: true,
       blob: async () => new Blob(["img"], { type: "image/jpeg" }),
     });
@@ -143,7 +158,7 @@ describe("buildWidgetStateParts", () => {
 
     const parts = await buildWidgetStateParts("tool-4", state);
 
-    expect(authFetchMock).toHaveBeenCalledTimes(1);
+    expect(clientRuntimeMocks.authFetchMock).toHaveBeenCalledTimes(1);
     expect(parts[0]).toEqual({
       type: "text",
       text: "User uploaded an image from the file upload widget.",
@@ -155,7 +170,7 @@ describe("buildWidgetStateParts", () => {
   });
 
   it("omits file parts when imageId resolution fails", async () => {
-    authFetchMock.mockResolvedValue({ ok: false });
+    clientRuntimeMocks.authFetchMock.mockResolvedValue({ ok: false });
 
     const state = {
       modelContent: "User uploaded an image from the file upload widget.",
@@ -167,7 +182,7 @@ describe("buildWidgetStateParts", () => {
 
     const parts = await buildWidgetStateParts("tool-5", state);
 
-    expect(authFetchMock).toHaveBeenCalledTimes(1);
+    expect(clientRuntimeMocks.authFetchMock).toHaveBeenCalledTimes(1);
     expect(parts).toEqual([
       {
         type: "text",
@@ -177,11 +192,13 @@ describe("buildWidgetStateParts", () => {
   });
 
   it("returns null when all endpoint requests throw", async () => {
-    authFetchMock.mockRejectedValue(new Error("network failure"));
+    clientRuntimeMocks.authFetchMock.mockRejectedValue(
+      new Error("network failure"),
+    );
 
     await expect(
       resolveFilePart("file_550e8400-e29b-41d4-a716-446655440000"),
     ).resolves.toBeNull();
-    expect(authFetchMock).toHaveBeenCalledTimes(1);
+    expect(clientRuntimeMocks.authFetchMock).toHaveBeenCalledTimes(1);
   });
 });

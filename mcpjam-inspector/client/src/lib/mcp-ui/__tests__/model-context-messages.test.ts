@@ -1,11 +1,29 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { mcpApiPresets } from "@/test/mocks/mcp-api";
+import { storePresets } from "@/test/mocks/stores";
+import {
+  applyClientRuntimePresets,
+  clientRuntimeMocks,
+} from "@/test/mocks/client-runtime";
+
+vi.mock("@/hooks/use-app-state", () => ({
+  useAppState: clientRuntimeMocks.useAppStateMock,
+}));
+
+vi.mock("@/state/mcp-api", () => clientRuntimeMocks.mcpApiMock);
+
 import { buildWidgetModelContextMessages } from "../model-context-messages";
 import * as widgetStateMessages from "../openai-widget-state-messages";
 
-// resolveFilePart makes network calls; mock it to always return null in tests
+const resolveFilePartSpy = vi.spyOn(widgetStateMessages, "resolveFilePart");
+
 beforeEach(() => {
-  vi.restoreAllMocks();
-  vi.spyOn(widgetStateMessages, "resolveFilePart").mockResolvedValue(null);
+  vi.clearAllMocks();
+  applyClientRuntimePresets({
+    mcpApi: mcpApiPresets.allSuccess(),
+    appState: storePresets.empty(),
+  });
+  resolveFilePartSpy.mockResolvedValue(null);
 });
 
 describe("buildWidgetModelContextMessages", () => {

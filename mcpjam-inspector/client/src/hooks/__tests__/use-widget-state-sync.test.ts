@@ -1,14 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-
-// Mock buildWidgetStateParts to avoid network calls & heavy imports
-const { buildWidgetStatePartsMock } = vi.hoisted(() => ({
-  buildWidgetStatePartsMock: vi.fn(),
-}));
-
-vi.mock("@/lib/mcp-ui/openai-widget-state-messages", () => ({
-  buildWidgetStateParts: buildWidgetStatePartsMock,
-}));
+import { mcpApiPresets } from "@/test/mocks/mcp-api";
+import { storePresets } from "@/test/mocks/stores";
+import {
+  applyClientRuntimePresets,
+  clientRuntimeMocks,
+} from "@/test/mocks/widget-state-sync";
 
 import { useWidgetStateSync } from "../use-widget-state-sync";
 import type { UIMessage } from "ai";
@@ -24,15 +21,16 @@ describe("useWidgetStateSync", () => {
       messages = updater(messages);
     });
 
-    // Default mock: returns text-only parts
-    buildWidgetStatePartsMock.mockImplementation(
-      async (toolCallId: string, state: unknown) => [
+    applyClientRuntimePresets({
+      mcpApi: mcpApiPresets.allSuccess(),
+      appState: storePresets.empty(),
+      buildWidgetStateParts: async (toolCallId: string, state: unknown) => [
         {
           type: "text",
           text: `widget ${toolCallId}: ${JSON.stringify(state)}`,
         },
       ],
-    );
+    });
   });
 
   describe("enqueueWidgetStateSync", () => {
@@ -241,7 +239,9 @@ describe("useWidgetStateSync", () => {
       const slowPromise = new Promise<UIMessage["parts"]>((resolve) => {
         resolveSlowParts = resolve;
       });
-      buildWidgetStatePartsMock.mockReturnValueOnce(slowPromise);
+      clientRuntimeMocks.buildWidgetStatePartsMock.mockReturnValueOnce(
+        slowPromise,
+      );
 
       const { result } = renderHook(() =>
         useWidgetStateSync({ status: "ready", setMessages }),

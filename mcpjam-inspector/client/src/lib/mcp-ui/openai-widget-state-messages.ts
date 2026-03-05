@@ -167,8 +167,13 @@ export function buildWidgetStateText(
   // See: https://developers.openai.com/apps-sdk/build/state-management#image-ids-in-widget-state-model-visible-images-chatgpt-extension
   if (isRecord(state) && "modelContent" in state) {
     const { modelContent } = state;
-    if (typeof modelContent === "string") return modelContent;
-    return safeStringify(modelContent);
+    if (
+      typeof modelContent === "string" &&
+      modelContent !== "undefined" &&
+      modelContent !== "null"
+    ) {
+      return modelContent;
+    }
   }
 
   if (isRecord(state)) {
@@ -190,8 +195,13 @@ export async function buildWidgetStateParts(
     { type: "text", text: buildWidgetStateText(toolCallId, state) },
   ];
 
-  for (const fileId of extractUploadedFileIds(state)) {
-    const filePart = await resolveFilePart(fileId).catch(() => null);
+  const fileParts = await Promise.all(
+    extractUploadedFileIds(state).map((fileId) =>
+      resolveFilePart(fileId).catch(() => null),
+    ),
+  );
+
+  for (const filePart of fileParts) {
     if (filePart) parts.push(filePart);
   }
 

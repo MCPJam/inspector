@@ -160,9 +160,24 @@ export function useWidgetStateSync({
   useEffect(() => {
     if (status !== "ready" || widgetStateQueue.length === 0) return;
 
-    void enqueueWidgetStateSync(widgetStateQueue);
-    setWidgetStateQueue([]);
-  }, [status, widgetStateQueue, enqueueWidgetStateSync]);
+    const queueToFlush = widgetStateQueue;
+    void enqueueWidgetStateSync(queueToFlush)
+      .then(() => {
+        setWidgetStateQueue((currentQueue) => {
+          if (currentQueue.length < queueToFlush.length) return currentQueue;
+
+          const startsWithFlushedItems = queueToFlush.every(
+            (queuedItem, index) => currentQueue[index] === queuedItem,
+          );
+          if (!startsWithFlushedItems) return currentQueue;
+
+          return currentQueue.slice(queueToFlush.length);
+        });
+      })
+      .catch((error) => {
+        console.error("Failed to flush widget state queue", error);
+      });
+  }, [status, widgetStateQueue, enqueueWidgetStateSync, setWidgetStateQueue]);
 
   /** Setter that keeps modelContextQueueRef in sync automatically. */
   const setModelContextQueue = useCallback(
