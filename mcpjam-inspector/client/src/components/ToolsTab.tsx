@@ -280,6 +280,7 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
     }
 
     setError("");
+    setFetchingTools(true);
     if (reset) {
       setSelectedTool("");
       setFormFields([]);
@@ -288,8 +289,6 @@ export function ToolsTab({ serverConfig, serverName }: ToolsTabProps) {
       setResponseDurationMs(null);
       setTools({});
       setCursor(undefined);
-    } else {
-      setFetchingTools(true);
     }
 
     try {

@@ -107,6 +107,9 @@ export function AppBuilderTab({
     });
   }, []);
 
+  // Loading state for tool fetching
+  const [fetchingTools, setFetchingTools] = useState(false);
+
   // Tools metadata used for deterministic injection and invocation messaging
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
@@ -141,6 +144,7 @@ export function AppBuilderTab({
 
     reset();
     setToolsMetadata({});
+    setFetchingTools(true);
     try {
       const data = await listTools({ serverId: serverName });
       const toolArray = data.tools ?? [];
@@ -154,6 +158,8 @@ export function AppBuilderTab({
       setExecutionError(
         err instanceof Error ? err.message : "Failed to fetch tools",
       );
+    } finally {
+      setFetchingTools(false);
     }
   }, [serverName, reset, setTools, setExecutionError]);
 
@@ -237,7 +243,7 @@ export function AppBuilderTab({
               <PlaygroundLeft
                 tools={tools}
                 selectedToolName={selectedTool}
-                fetchingTools={false}
+                fetchingTools={fetchingTools}
                 onRefresh={fetchTools}
                 onSelectTool={setSelectedTool}
                 formFields={formFields}
