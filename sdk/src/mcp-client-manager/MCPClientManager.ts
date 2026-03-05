@@ -1245,7 +1245,12 @@ export class MCPClientManager {
     if (!capabilities.elicitation) {
       capabilities.elicitation = {};
     }
-    // Add extensions here
+    // Advertise MCP Apps UI support (ext-apps spec)
+    (capabilities as Record<string, unknown>).extensions = {
+      "io.modelcontextprotocol/ui": {
+        mimeTypes: ["text/html;profile=mcp-app"],
+      },
+    };
     return capabilities;
   }
 
