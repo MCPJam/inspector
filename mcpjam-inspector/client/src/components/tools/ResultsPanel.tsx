@@ -1,9 +1,32 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { useMemo, useState } from "react";
 import { CheckCircle, Info, ExternalLink, Clock3 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
+
+const OUTPUT_MODE_STORAGE_KEY = "mcpjam.tools.results.outputMode";
+
+function getStoredOutputMode(): "structured" | "raw" | null {
+  try {
+    const stored = sessionStorage.getItem(OUTPUT_MODE_STORAGE_KEY);
+    if (stored === "structured" || stored === "raw") {
+      return stored;
+    }
+  } catch {
+    // Ignore storage access failures (private mode, security settings)
+  }
+  return null;
+}
+
+function setStoredOutputMode(mode: "structured" | "raw") {
+  try {
+    sessionStorage.setItem(OUTPUT_MODE_STORAGE_KEY, mode);
+  } catch {
+    // Ignore storage access failures
+  }
+}
 
 interface ResultsPanelProps {
   error: string;
@@ -21,6 +44,26 @@ export function ResultsPanel({
   responseDurationMs,
 }: ResultsPanelProps) {
   const rawResult = result as unknown as Record<string, unknown> | null;
+  const hasStructuredContent =
+    !!rawResult &&
+    typeof rawResult === "object" &&
+    rawResult !== null &&
+    "structuredContent" in rawResult;
+  const [preferredOutputMode, setPreferredOutputMode] = useState<
+    "structured" | "raw"
+  >(getStoredOutputMode() ?? "structured");
+  const outputMode: "structured" | "raw" = hasStructuredContent
+    ? preferredOutputMode
+    : "raw";
+
+  const displayedResult = useMemo(() => {
+    if (!rawResult) return null;
+    if (outputMode === "structured" && hasStructuredContent) {
+      return (rawResult as Record<string, unknown>).structuredContent;
+    }
+    return rawResult;
+  }, [rawResult, outputMode, hasStructuredContent]);
+
   const uiType = detectUIType(toolMeta, rawResult);
   const hasOpenAIComponent = uiType === UIType.OPENAI_SDK;
   const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
@@ -38,6 +81,42 @@ export function ResultsPanel({
       <div className="flex-shrink-0 flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-4">
           <h2 className="text-xs font-semibold text-foreground">Response</h2>
+          {hasStructuredContent && (
+            <div
+              className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5"
+              role="group"
+              aria-label="Output mode"
+            >
+              <button
+                type="button"
+                className={`px-2 py-1 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
+                  outputMode === "structured"
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => {
+                  setPreferredOutputMode("structured");
+                  setStoredOutputMode("structured");
+                }}
+              >
+                Structured
+              </button>
+              <button
+                type="button"
+                className={`px-2 py-1 text-[11px] font-medium rounded-sm transition-colors cursor-pointer ${
+                  outputMode === "raw"
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => {
+                  setPreferredOutputMode("raw");
+                  setStoredOutputMode("raw");
+                }}
+              >
+                Raw
+              </button>
+            </div>
+          )}
           {structuredContentValid && (
             <Badge
               variant="default"
@@ -63,7 +142,7 @@ export function ResultsPanel({
             {error}
           </div>
         </div>
-      ) : rawResult ? (
+      ) : displayedResult !== null ? (
         <div className="flex-1 min-h-0 p-4 flex flex-col gap-4">
           {hasUIComponent && (
             <div className="flex-shrink-0 p-2 bg-muted/50 border border-border rounded flex items-center justify-between gap-2">
@@ -93,7 +172,7 @@ export function ResultsPanel({
           {/* JSON Editor - fills ALL remaining space */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <JsonEditor
-              value={rawResult}
+              value={displayedResult}
               readOnly
               showToolbar={false}
               height="100%"
