@@ -15,7 +15,7 @@ export function safeStringify(value: unknown): string {
 }
 
 function isValidUploadedFileId(value: unknown): value is string {
-  return typeof value === "string" && /^file_[0-9a-f-]+$/.test(value);
+  return typeof value === "string" && value.length > 0;
 }
 
 function toStringArray(value: unknown): string[] {
@@ -195,9 +195,13 @@ export async function buildWidgetStateParts(
     { type: "text", text: buildWidgetStateText(toolCallId, state) },
   ];
 
-  const fileParts = await Promise.all(
-    extractUploadedFileIds(state).map((fileId) => resolveFilePart(fileId)),
-  );
+  const fileParts: Array<Extract<
+    UIMessage["parts"][number],
+    { type: "file" }
+  > | null> = [];
+  for (const fileId of extractUploadedFileIds(state)) {
+    fileParts.push(await resolveFilePart(fileId));
+  }
 
   for (const filePart of fileParts) {
     if (filePart) parts.push(filePart);
