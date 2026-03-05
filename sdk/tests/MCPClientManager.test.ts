@@ -292,6 +292,8 @@ describe("MCPClientManager", () => {
       expect(extensions["io.modelcontextprotocol/ui"]).toEqual({
         mimeTypes: ["text/html;profile=mcp-app"],
       });
+
+      await manager.disconnectServer("extensions-test");
     }, 30000);
 
     it("should remove server", async () => {
