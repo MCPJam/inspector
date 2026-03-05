@@ -76,6 +76,7 @@ interface ServerConnectionCardProps {
   ) => Promise<void>;
   onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
+  onServerInfoModalOpenChange?: (isOpen: boolean) => void;
   serverTunnelUrl?: string | null;
   hostedServerId?: string;
 }
@@ -86,6 +87,7 @@ export function ServerConnectionCard({
   onReconnect,
   onEdit,
   onRemove,
+  onServerInfoModalOpenChange,
   serverTunnelUrl,
   hostedServerId,
 }: ServerConnectionCardProps) {
@@ -543,6 +545,7 @@ export function ServerConnectionCard({
                       server_id: server.name,
                     });
                     setIsInfoModalOpen(true);
+                    onServerInfoModalOpenChange?.(true);
                   }}
                   className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
                 >
@@ -668,7 +671,10 @@ export function ServerConnectionCard({
       </Card>
       <ServerInfoModal
         isOpen={isInfoModalOpen}
-        onClose={() => setIsInfoModalOpen(false)}
+        onClose={() => {
+          setIsInfoModalOpen(false);
+          onServerInfoModalOpenChange?.(false);
+        }}
         server={server}
         toolsData={toolsData}
       />
