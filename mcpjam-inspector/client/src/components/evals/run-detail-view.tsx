@@ -101,12 +101,11 @@ export function RunDetailView({
 
   return (
     <div className="relative">
-      {selectedRunDetails.source === "sdk" && (
+      {(selectedRunDetails.framework || selectedRunDetails.ciMetadata) && (
         <div className="mb-4">
           <CiMetadataDisplay
             ciMetadata={selectedRunDetails.ciMetadata}
             framework={selectedRunDetails.framework}
-            source={selectedRunDetails.source}
           />
         </div>
       )}

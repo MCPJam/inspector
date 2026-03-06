@@ -373,12 +373,11 @@ export function RunOverview({
 
               const isSelected = selectedRunIds.has(run._id);
               const showCiMetadata =
-                run.source === "sdk" &&
-                (!!run.framework ||
-                  !!run.ciMetadata?.branch ||
-                  !!run.ciMetadata?.commitSha ||
-                  !!run.ciMetadata?.provider ||
-                  !!run.ciMetadata?.runUrl);
+                !!run.framework ||
+                !!run.ciMetadata?.branch ||
+                !!run.ciMetadata?.commitSha ||
+                !!run.ciMetadata?.provider ||
+                !!run.ciMetadata?.runUrl;
 
               const runButton = (
                 <div className="flex items-stretch gap-6 w-full">
@@ -424,7 +423,6 @@ export function RunOverview({
                         <CiMetadataDisplay
                           ciMetadata={run.ciMetadata}
                           framework={run.framework}
-                          source={run.source}
                           compact={true}
                         />
                       </div>

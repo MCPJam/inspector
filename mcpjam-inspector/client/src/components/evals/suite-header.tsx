@@ -459,11 +459,10 @@ export function SuiteHeader({
             {suite.name}
           </Button>
         )}
-        {suite.source === "sdk" && latestRunForMetadata && (
+        {latestRunForMetadata && (
           <CiMetadataDisplay
             ciMetadata={latestRunForMetadata.ciMetadata}
             framework={latestRunForMetadata.framework}
-            source={suite.source}
             compact={true}
           />
         )}

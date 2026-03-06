@@ -149,7 +149,6 @@ export function CiSuiteListSidebar({
                       <CiMetadataDisplay
                         ciMetadata={latestRun.ciMetadata}
                         framework={latestRun.framework}
-                        source={entry.suite.source}
                         compact={true}
                       />
                     </div>
