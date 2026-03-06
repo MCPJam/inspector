@@ -68,9 +68,9 @@ export function CiSuiteListSidebar({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">CI Runs</h2>
+        <h2 className="text-sm font-semibold">Evals</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          SDK-ingested eval suites
+          Eval suites you've run
         </p>
       </div>
 
