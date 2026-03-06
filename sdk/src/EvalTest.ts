@@ -319,7 +319,7 @@ export class EvalTest {
       const traceMessages = prompts.flatMap((prompt) =>
         prompt.getMessages().map((message) => ({
           role: message.role,
-          content: (message as any).content,
+          content: message.content,
         }))
       );
 

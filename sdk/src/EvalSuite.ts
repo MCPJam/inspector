@@ -211,7 +211,7 @@ export class EvalSuite {
         const traceMessages = prompts.flatMap((prompt) =>
           prompt.getMessages().map((message) => ({
             role: message.role,
-            content: (message as any).content,
+            content: message.content,
           }))
         );
 
