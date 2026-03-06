@@ -279,7 +279,18 @@ export async function reportEvalResults(
   }
 
   const config = createRuntimeConfig(input);
-  if (shouldUseOneShotUpload(input, config)) {
+  const externalRunId = input.externalRunId ?? generateExternalRunId();
+  const resultsWithIterationIds = withExternalIterationIds(
+    input.results,
+    externalRunId
+  );
+
+  if (
+    shouldUseOneShotUpload(
+      { ...input, externalRunId, results: resultsWithIterationIds },
+      config
+    )
+  ) {
     return await requestWithRetry<ReportEvalResultsOutput>(
       config,
       "/sdk/v1/evals/report",
@@ -289,19 +300,13 @@ export async function reportEvalResults(
         serverNames: input.serverNames,
         notes: input.notes,
         passCriteria: input.passCriteria,
-        externalRunId: input.externalRunId,
+        externalRunId,
         framework: input.framework,
         ci: input.ci,
-        results: input.results,
+        results: resultsWithIterationIds,
       }
     );
   }
-
-  const externalRunId = input.externalRunId ?? generateExternalRunId();
-  const resultsWithIterationIds = withExternalIterationIds(
-    input.results,
-    externalRunId
-  );
 
   const start = await startEvalRun(config, {
     suiteName: input.suiteName,

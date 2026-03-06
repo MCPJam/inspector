@@ -13,7 +13,6 @@ import {
   reportEvalResults,
   reportEvalResultsSafely,
   startEvalRun,
-  withExternalIterationIds,
 } from "./report-eval-results.js";
 
 export type CreateEvalRunReporterInput = Omit<
@@ -39,6 +38,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
   private finalized = false;
   private completedResult: ReportEvalResultsOutput | null = null;
   private buffered: EvalResultInput[] = [];
+  private generatedIterationCount = 0;
 
   constructor(input: CreateEvalRunReporterInput) {
     this.input = input;
@@ -105,8 +105,8 @@ class EvalRunReporterImpl implements EvalRunReporter {
       return;
     }
 
-    const withIds = withExternalIterationIds(this.buffered, this.externalRunId);
-    const chunks = chunkResultsForUpload(withIds);
+    const uploadReady = this.withUniqueExternalIterationIds(this.buffered);
+    const chunks = chunkResultsForUpload(uploadReady);
     for (const chunk of chunks) {
       await appendEvalRunIterations(this.runtimeConfig, {
         runId: this.runId,
@@ -174,6 +174,21 @@ class EvalRunReporterImpl implements EvalRunReporter {
     if (this.finalized) {
       throw new Error("Eval run reporter has already been finalized");
     }
+  }
+
+  private withUniqueExternalIterationIds(
+    results: EvalResultInput[]
+  ): EvalResultInput[] {
+    return results.map((result) => {
+      if (result.externalIterationId) {
+        return result;
+      }
+      this.generatedIterationCount += 1;
+      return {
+        ...result,
+        externalIterationId: `${this.externalRunId}-${this.generatedIterationCount}`,
+      };
+    });
   }
 
   private buildLocalFallbackResult(): ReportEvalResultsOutput {

@@ -8,6 +8,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "chat-v2",
   "app-builder",
   "views",
+  "ci-evals",
   "tools",
   "resources",
   "prompts",

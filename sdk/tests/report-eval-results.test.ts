@@ -60,6 +60,44 @@ describe("reportEvalResults", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("https://example.com/sdk/v1/evals/report");
   });
 
+  it("adds external run and iteration ids for one-shot idempotency", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: {
+          total: 2,
+          passed: 2,
+          failed: 0,
+          passRate: 1,
+        },
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "one-shot-idempotent",
+      results: [
+        { caseTitle: "case-1", passed: true },
+        { caseTitle: "case-2", passed: true },
+      ],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.externalRunId).toEqual(expect.any(String));
+    expect(requestBody.results[0].externalIterationId).toBe(
+      `${requestBody.externalRunId}-1`
+    );
+    expect(requestBody.results[1].externalIterationId).toBe(
+      `${requestBody.externalRunId}-2`
+    );
+  });
+
   it("uses chunked flow when payload exceeds one-shot thresholds", async () => {
     const fetchMock = jest
       .fn()
