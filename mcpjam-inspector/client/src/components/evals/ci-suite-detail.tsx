@@ -34,6 +34,7 @@ interface CiSuiteDetailProps {
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   route: CiEvalsRoute;
+  userMap?: Map<string, { name: string; imageUrl?: string }>;
 }
 
 export function CiSuiteDetail({
@@ -55,6 +56,7 @@ export function CiSuiteDetail({
   deletingSuiteId,
   deletingRunId,
   route,
+  userMap,
 }: CiSuiteDetailProps) {
   const selectedTestId = route.type === "test-detail" ? route.testId : null;
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
@@ -198,6 +200,7 @@ export function CiSuiteDetail({
                     view: value,
                   });
                 }}
+                userMap={userMap}
               />
             ) : (
               <TestCasesOverview

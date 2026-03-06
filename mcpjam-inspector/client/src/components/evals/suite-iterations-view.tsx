@@ -40,6 +40,7 @@ export function SuiteIterationsView({
   deletingRunId,
   availableModels,
   route,
+  userMap,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -60,6 +61,7 @@ export function SuiteIterationsView({
   deletingRunId: string | null;
   availableModels: any[];
   route: EvalsRoute;
+  userMap?: Map<string, { name: string; imageUrl?: string }>;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -313,6 +315,7 @@ export function SuiteIterationsView({
                       view: value,
                     });
                   }}
+                  userMap={userMap}
                 />
               ) : (
                 <TestCasesOverview

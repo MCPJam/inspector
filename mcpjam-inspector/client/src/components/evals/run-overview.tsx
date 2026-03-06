@@ -1,7 +1,8 @@
 import { useState, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn } from "@/lib/utils";
+import { cn, getInitials } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -51,6 +52,7 @@ interface RunOverviewProps {
   onDirectDeleteRun: (runId: string) => Promise<void>;
   runsViewMode: "runs" | "test-cases";
   onViewModeChange: (value: "runs" | "test-cases") => void;
+  userMap?: Map<string, { name: string; imageUrl?: string }>;
 }
 
 export function RunOverview({
@@ -64,10 +66,50 @@ export function RunOverview({
   onDirectDeleteRun,
   runsViewMode,
   onViewModeChange,
+  userMap,
 }: RunOverviewProps) {
   const hasTokenData = useMemo(
     () => allIterations.some((i) => (i.tokensUsed || 0) > 0),
     [allIterations],
+  );
+
+  const hasCiMetadata = useMemo(
+    () =>
+      runs.some(
+        (r) =>
+          !!r.ciMetadata?.branch ||
+          !!r.ciMetadata?.commitSha ||
+          !!r.ciMetadata?.runUrl,
+      ),
+    [runs],
+  );
+
+  const rowGridTemplateColumns = useMemo(() => {
+    const columns = [
+      "minmax(120px, 1.2fr)", // Run ID
+      "minmax(220px, 2fr)", // Start time (absorbs extra width)
+      "minmax(80px, 0.8fr)", // Duration
+      "minmax(60px, 0.6fr)", // Passed
+      "minmax(60px, 0.6fr)", // Failed
+      "minmax(80px, 0.7fr)", // Pass rate / Accuracy
+    ];
+
+    if (hasTokenData) {
+      columns.push("minmax(90px, 0.8fr)"); // Tokens
+    }
+
+    columns.push("minmax(60px, 0.5fr)"); // Run by
+
+    if (hasCiMetadata) {
+      columns.push("minmax(180px, 1.6fr)"); // Metadata badges
+    }
+
+    return columns.join(" ");
+  }, [hasTokenData, hasCiMetadata]);
+
+  const fullGridTemplateColumns = useMemo(
+    () => `28px ${rowGridTemplateColumns}`,
+    [rowGridTemplateColumns],
   );
 
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
@@ -298,15 +340,24 @@ export function RunOverview({
 
         {/* Column Headers */}
         {runs.length > 0 && (
-          <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-            <div className="w-4"></div>
-            <div className="min-w-[120px]">Run ID</div>
-            <div className="min-w-[140px]">Start time</div>
-            <div className="min-w-[60px]">Duration</div>
-            <div className="min-w-[60px] text-right">Passed</div>
-            <div className="min-w-[60px] text-right">Failed</div>
-            <div className="min-w-[70px] text-right">{suite.source === "sdk" ? "Pass Rate" : "Accuracy"}</div>
-            {hasTokenData && <div className="min-w-[70px] text-right">Tokens</div>}
+          <div className="px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
+            <div
+              className="grid items-center gap-x-4"
+              style={{ gridTemplateColumns: fullGridTemplateColumns }}
+            >
+              <div className="h-4 w-4" />
+              <div>Run ID</div>
+              <div>Start time</div>
+              <div>Duration</div>
+              <div className="text-right">Passed</div>
+              <div className="text-right">Failed</div>
+              <div className="text-right">
+                {suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+              </div>
+              {hasTokenData && <div className="text-right">Tokens</div>}
+              <div>Run by</div>
+              {hasCiMetadata && <div>Metadata</div>}
+            </div>
           </div>
         )}
 
@@ -378,8 +429,11 @@ export function RunOverview({
                 !!run.ciMetadata?.runUrl;
 
               const runButton = (
-                <div className="flex items-stretch gap-6 w-full">
-                  <div className="pl-3">
+                <div
+                  className="grid items-center gap-x-4 px-4 py-2.5"
+                  style={{ gridTemplateColumns: fullGridTemplateColumns }}
+                >
+                  <div className="flex justify-center">
                     <Checkbox
                       checked={isSelected}
                       onCheckedChange={() => toggleRunSelection(run._id)}
@@ -389,40 +443,78 @@ export function RunOverview({
                   </div>
                   <button
                     onClick={() => onRunClick(run._id)}
-                    className="flex flex-1 flex-col py-2.5 pr-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    className="col-[2/-1] grid w-full items-center gap-x-4 rounded-sm text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    style={{ gridTemplateColumns: rowGridTemplateColumns }}
                   >
-                    <div className="flex w-full items-center gap-6">
-                      <span className="text-xs font-medium min-w-[120px]">
-                        Run {formatRunId(run._id)}
+                    <span className="truncate py-0.5 text-xs font-medium">
+                      Run {formatRunId(run._id)}
+                    </span>
+                    <span className="truncate py-0.5 text-xs text-muted-foreground">
+                      {timestamp}
+                    </span>
+                    <span className="py-0.5 text-xs font-mono text-muted-foreground">
+                      {duration}
+                    </span>
+                    <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                      {passed}
+                    </span>
+                    <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                      {failed}
+                    </span>
+                    <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                      {passRate !== null ? `${passRate}%` : "—"}
+                    </span>
+                    {hasTokenData && (
+                      <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                        {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
                       </span>
-                      <span className="text-xs text-muted-foreground min-w-[140px]">
-                        {timestamp}
+                    )}
+                    <span className="py-0.5">
+                      {(() => {
+                        const creator =
+                          run.createdBy && userMap?.get(run.createdBy);
+                        if (creator) {
+                          return (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Avatar className="size-6">
+                                  <AvatarImage
+                                    src={creator.imageUrl}
+                                    alt={creator.name}
+                                  />
+                                  <AvatarFallback className="text-[10px]">
+                                    {getInitials(creator.name)}
+                                  </AvatarFallback>
+                                </Avatar>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p className="text-xs">{creator.name}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          );
+                        }
+                        return (
+                          <Avatar className="size-6">
+                            <AvatarFallback className="text-[10px]">
+                              ?
+                            </AvatarFallback>
+                          </Avatar>
+                        );
+                      })()}
+                    </span>
+                    {hasCiMetadata && (
+                      <span className="min-w-0 py-0.5">
+                        {showCiMetadata ? (
+                          <CiMetadataDisplay
+                            ciMetadata={run.ciMetadata}
+                            compact={true}
+                          />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            —
+                          </span>
+                        )}
                       </span>
-                      <span className="text-xs text-muted-foreground font-mono min-w-[60px]">
-                        {duration}
-                      </span>
-                      <span className="text-xs font-mono text-muted-foreground min-w-[60px] text-right">
-                        {passed}
-                      </span>
-                      <span className="text-xs font-mono text-muted-foreground min-w-[60px] text-right">
-                        {failed}
-                      </span>
-                      <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
-                        {passRate !== null ? `${passRate}%` : "—"}
-                      </span>
-                      {hasTokenData && (
-                        <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
-                          {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
-                        </span>
-                      )}
-                    </div>
-                    {showCiMetadata && (
-                      <div className="mt-1">
-                        <CiMetadataDisplay
-                          ciMetadata={run.ciMetadata}
-                          compact={true}
-                        />
-                      </div>
                     )}
                   </button>
                 </div>

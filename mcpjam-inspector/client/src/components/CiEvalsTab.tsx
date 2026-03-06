@@ -17,6 +17,7 @@ import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { CiSuiteListSidebar } from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
+import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 
 interface CiEvalsTabProps {
@@ -50,6 +51,25 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
       ),
     [appState.servers],
   );
+
+  const { members } = useWorkspaceMembers({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+
+  const userMap = useMemo(() => {
+    if (!members) return undefined;
+    const map = new Map<string, { name: string; imageUrl?: string }>();
+    for (const m of members) {
+      if (m.userId && m.user) {
+        map.set(m.userId, {
+          name: m.user.name,
+          imageUrl: m.user.imageUrl,
+        });
+      }
+    }
+    return map;
+  }, [members]);
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(convexWorkspaceId),
@@ -287,6 +307,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 deletingSuiteId={deletingSuiteId}
                 deletingRunId={deletingRunId}
                 route={route}
+                userMap={userMap}
               />
             </div>
           )}
