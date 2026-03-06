@@ -17,7 +17,7 @@ function getStatusDot(entry: EvalSuiteOverviewEntry): {
     return { label: "No runs", dotClass: "bg-muted-foreground/40" };
   }
   if (latestRun.status === "running" || latestRun.status === "pending") {
-    return { label: "Running", dotClass: "bg-blue-500 animate-pulse" };
+    return { label: "Running", dotClass: "bg-warning animate-pulse" };
   }
   if (latestRun.result === "passed") {
     return { label: "Passed", dotClass: "bg-emerald-500" };
