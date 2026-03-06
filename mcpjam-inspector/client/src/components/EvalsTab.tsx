@@ -73,6 +73,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     user,
     selectedSuiteId: null,
     deletingSuiteId: null,
+    workspaceId: null,
   });
 
   // Check if selected server is valid and connected
@@ -106,6 +107,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     user,
     selectedSuiteId: serverSuiteId,
     deletingSuiteId: handlers.deletingSuiteId,
+    workspaceId: null,
   });
 
   // Use queries for rendering

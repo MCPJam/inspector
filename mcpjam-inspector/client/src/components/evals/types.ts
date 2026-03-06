@@ -18,6 +18,7 @@ export type EvalSuiteConfigTest = {
 export type EvalSuite = {
   _id: string;
   createdBy: string;
+  workspaceId?: string;
   name: string;
   description: string;
   configRevision: string;
@@ -39,6 +40,7 @@ export type EvalCase = {
   _id: string;
   testSuiteId: string;
   createdBy: string;
+  workspaceId?: string;
   title: string;
   query: string;
   models: Array<{
@@ -61,6 +63,7 @@ export type EvalCase = {
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
+  workspaceId?: string;
   testCaseSnapshot?: {
     title: string;
     query: string;
@@ -110,6 +113,7 @@ export type EvalSuiteRun = {
   _id: string;
   suiteId: string;
   createdBy: string;
+  workspaceId?: string;
   runNumber: number;
   configRevision: string;
   configSnapshot: {

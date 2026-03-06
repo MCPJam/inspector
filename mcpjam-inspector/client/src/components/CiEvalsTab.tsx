@@ -19,7 +19,11 @@ import { CiSuiteListSidebar } from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import type { EvalSuite } from "./evals/types";
 
-export function CiEvalsTab() {
+interface CiEvalsTabProps {
+  convexWorkspaceId: string | null;
+}
+
+export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
   const appState = useSharedAppState();
@@ -48,10 +52,11 @@ export function CiEvalsTab() {
   );
 
   const queries = useEvalQueries({
-    isAuthenticated,
-    user,
+    isAuthenticated: isAuthenticated && Boolean(convexWorkspaceId),
+    user: convexWorkspaceId ? user : null,
     selectedSuiteId,
     deletingSuiteId,
+    workspaceId: convexWorkspaceId,
   });
 
   const sdkSuites = useMemo(
@@ -182,6 +187,19 @@ export function CiEvalsTab() {
           icon={GitBranch}
           title="Sign in to view CI runs"
           description="Create an account or sign in to view SDK-ingested evaluation runs."
+          className="h-[calc(100vh-200px)]"
+        />
+      </div>
+    );
+  }
+
+  if (!convexWorkspaceId) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          icon={GitBranch}
+          title="Select a workspace"
+          description="Choose a workspace to view shared CI evaluation runs."
           className="h-[calc(100vh-200px)]"
         />
       </div>

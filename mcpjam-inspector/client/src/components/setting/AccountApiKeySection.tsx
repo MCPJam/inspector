@@ -77,7 +77,15 @@ function ApiKeyCopyField({
   );
 }
 
-export function AccountApiKeySection() {
+type AccountApiKeySectionProps = {
+  workspaceId: string | null;
+  workspaceName: string | null;
+};
+
+export function AccountApiKeySection({
+  workspaceId,
+  workspaceName,
+}: AccountApiKeySectionProps) {
   const [apiKeyPlaintext, setApiKeyPlaintext] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -88,9 +96,13 @@ export function AccountApiKeySection() {
   const { signIn } = useAuth();
   const posthog = usePostHog();
 
-  const maybeApiKey = useQuery("apiKeys:list" as any) as
+  const maybeApiKey = useQuery(
+    "apiKeys:list" as any,
+    workspaceId ? ({ workspaceId } as any) : "skip",
+  ) as
     | {
         _id: string;
+        workspaceId?: string;
         name: string;
         prefix: string;
         createdAt: number;
@@ -101,10 +113,11 @@ export function AccountApiKeySection() {
 
   const regenerateAndGet = useMutation(
     "apiKeys:regenerateAndGet" as any,
-  ) as unknown as () => Promise<{
+  ) as unknown as (args: { workspaceId?: string }) => Promise<{
     apiKey: string;
     key: {
       _id: string;
+      workspaceId?: string;
       prefix: string;
       name: string;
       createdAt: number;
@@ -127,11 +140,11 @@ export function AccountApiKeySection() {
   };
 
   const handleGenerate = async () => {
-    if (!isAuthenticated) return false;
+    if (!isAuthenticated || !workspaceId) return false;
     try {
       setIsGenerating(true);
       setIsCopied(false);
-      const result = await regenerateAndGet();
+      const result = await regenerateAndGet({ workspaceId });
       setApiKeyPlaintext(result.apiKey);
       setIsApiKeyModalOpen(true);
       return true;
@@ -146,7 +159,7 @@ export function AccountApiKeySection() {
   if (isAuthLoading) {
     return (
       <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
-        <span className="text-sm text-muted-foreground">MCPJam API Key</span>
+        <span className="text-sm text-muted-foreground">Workspace API Key</span>
         <span className="text-sm text-muted-foreground">Checking…</span>
       </div>
     );
@@ -155,7 +168,7 @@ export function AccountApiKeySection() {
   if (!isAuthenticated) {
     return (
       <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
-        <span className="text-sm text-muted-foreground">MCPJam API Key</span>
+        <span className="text-sm text-muted-foreground">Workspace API Key</span>
         <Button
           type="button"
           onClick={() => {
@@ -170,6 +183,16 @@ export function AccountApiKeySection() {
         >
           Sign in
         </Button>
+      </div>
+    );
+  }
+
+  if (!workspaceId) {
+    return (
+      <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
+        <span className="text-sm text-muted-foreground">
+          Select a workspace to manage API keys.
+        </span>
       </div>
     );
   }
@@ -221,7 +244,7 @@ export function AccountApiKeySection() {
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle className="text-lg font-semibold">
-                Regenerate API Key?
+                Regenerate Workspace API Key?
               </AlertDialogTitle>
               <AlertDialogDescription className="text-sm text-muted-foreground leading-relaxed">
                 This will immediately invalidate your current API key. Any
@@ -259,7 +282,15 @@ export function AccountApiKeySection() {
   return (
     <>
       <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
-        <span className="text-sm text-muted-foreground">MCPJam API Key</span>
+        <div className="flex flex-col">
+          <span className="text-sm text-muted-foreground">
+            Workspace API Key
+            {workspaceName ? ` · ${workspaceName}` : ""}
+          </span>
+          <span className="text-muted-foreground text-xs">
+            Shared with all workspace members.
+          </span>
+        </div>
         <span className="text-sm">{rightSide}</span>
       </div>
       <Dialog
@@ -276,8 +307,9 @@ export function AccountApiKeySection() {
           <DialogHeader>
             <DialogTitle>API Key</DialogTitle>
             <DialogDescription>
-              Copy and store this key securely. You will not be able to view it
-              again.
+              {workspaceName
+                ? `This key belongs to ${workspaceName}. Copy and store it securely. You will not be able to view it again.`
+                : "Copy and store this key securely. You will not be able to view it again."}
             </DialogDescription>
           </DialogHeader>
           <ApiKeyCopyField

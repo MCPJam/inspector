@@ -529,7 +529,9 @@ export default function App() {
           {activeTab === "evals" && (
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
-          {activeTab === "ci-evals" && <CiEvalsTab />}
+          {activeTab === "ci-evals" && (
+            <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+          )}
           {activeTab === "views" && (
             <ViewsTab
               selectedServer={appState.selectedServer}
@@ -603,7 +605,12 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
-          {activeTab === "settings" && <SettingsTab />}
+          {activeTab === "settings" && (
+            <SettingsTab
+              convexWorkspaceId={convexWorkspaceId}
+              workspaceName={activeWorkspace?.name ?? null}
+            />
+          )}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
