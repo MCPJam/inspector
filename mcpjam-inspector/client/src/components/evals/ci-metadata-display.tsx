@@ -4,13 +4,7 @@ import { GitBranch, GitCommit, Link as LinkIcon } from "lucide-react";
 
 interface CiMetadataDisplayProps {
   ciMetadata?: EvalSuiteRun["ciMetadata"];
-  framework?: string;
   compact?: boolean;
-}
-
-function normalizeFramework(framework?: string): string {
-  if (!framework) return "unknown";
-  return framework.trim().toLowerCase();
 }
 
 function formatCommitSha(commitSha?: string): string | null {
@@ -22,15 +16,12 @@ function formatCommitSha(commitSha?: string): string | null {
 
 export function CiMetadataDisplay({
   ciMetadata,
-  framework,
   compact = false,
 }: CiMetadataDisplayProps) {
   const branch = ciMetadata?.branch?.trim();
   const shortSha = formatCommitSha(ciMetadata?.commitSha);
-  const provider = ciMetadata?.provider?.trim();
   const runUrl = ciMetadata?.runUrl?.trim();
-  const hasMetadata =
-    !!branch || !!shortSha || !!provider || !!framework;
+  const hasMetadata = !!branch || !!shortSha || !!runUrl;
 
   if (!hasMetadata) {
     return null;
@@ -38,14 +29,6 @@ export function CiMetadataDisplay({
 
   const content = (
     <>
-      {provider && (
-        <Badge variant="outline" className="capitalize">
-          {provider}
-        </Badge>
-      )}
-      {framework && (
-        <Badge variant="outline">{normalizeFramework(framework)}</Badge>
-      )}
       {branch && (
         <Badge variant="outline" className="font-mono">
           <GitBranch className="mr-1 h-3 w-3" />

@@ -1,4 +1,5 @@
 import type {
+  EvalCiMetadata,
   EvalResultInput,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
@@ -17,8 +18,9 @@ import {
 
 export type CreateEvalRunReporterInput = Omit<
   ReportEvalResultsInput,
-  "results"
+  "results" | "framework" | "ci"
 > & {
+  ci?: Omit<EvalCiMetadata, "provider">;
   results?: EvalResultInput[];
 };
 
@@ -79,8 +81,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
         notes: this.input.notes,
         passCriteria: this.input.passCriteria,
         externalRunId: this.externalRunId,
-        framework: this.input.framework,
-        ci: this.input.ci,
+        ci: this.withoutCiProvider(this.input.ci),
       });
       this.runId = started.runId;
       if (
@@ -130,8 +131,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
         notes: this.input.notes,
         passCriteria: this.input.passCriteria,
         externalRunId: this.externalRunId,
-        framework: this.input.framework,
-        ci: this.input.ci,
+        ci: this.withoutCiProvider(this.input.ci),
         apiKey: this.input.apiKey,
         baseUrl: this.input.baseUrl,
         strict: this.input.strict,
@@ -189,6 +189,18 @@ class EvalRunReporterImpl implements EvalRunReporter {
         externalIterationId: `${this.externalRunId}-${this.generatedIterationCount}`,
       };
     });
+  }
+
+  private withoutCiProvider(
+    ci: CreateEvalRunReporterInput["ci"] | EvalCiMetadata | undefined
+  ): Omit<EvalCiMetadata, "provider"> | undefined {
+    if (!ci) {
+      return undefined;
+    }
+    const { provider: _provider, ...rest } = ci as EvalCiMetadata & {
+      [key: string]: unknown;
+    };
+    return rest;
   }
 
   private buildLocalFallbackResult(): ReportEvalResultsOutput {

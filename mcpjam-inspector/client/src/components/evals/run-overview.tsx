@@ -373,10 +373,8 @@ export function RunOverview({
 
               const isSelected = selectedRunIds.has(run._id);
               const showCiMetadata =
-                !!run.framework ||
                 !!run.ciMetadata?.branch ||
                 !!run.ciMetadata?.commitSha ||
-                !!run.ciMetadata?.provider ||
                 !!run.ciMetadata?.runUrl;
 
               const runButton = (
@@ -422,7 +420,6 @@ export function RunOverview({
                       <div className="mt-1">
                         <CiMetadataDisplay
                           ciMetadata={run.ciMetadata}
-                          framework={run.framework}
                           compact={true}
                         />
                       </div>

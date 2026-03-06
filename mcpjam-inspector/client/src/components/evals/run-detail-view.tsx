@@ -101,12 +101,11 @@ export function RunDetailView({
 
   return (
     <div className="relative">
-      {(selectedRunDetails.framework || selectedRunDetails.ciMetadata) && (
+      {(selectedRunDetails.ciMetadata?.branch ||
+        selectedRunDetails.ciMetadata?.commitSha ||
+        selectedRunDetails.ciMetadata?.runUrl) && (
         <div className="mb-4">
-          <CiMetadataDisplay
-            ciMetadata={selectedRunDetails.ciMetadata}
-            framework={selectedRunDetails.framework}
-          />
+          <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
         </div>
       )}
 

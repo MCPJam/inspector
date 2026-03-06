@@ -462,7 +462,6 @@ export function SuiteHeader({
         {latestRunForMetadata && (
           <CiMetadataDisplay
             ciMetadata={latestRunForMetadata.ciMetadata}
-            framework={latestRunForMetadata.framework}
             compact={true}
           />
         )}
