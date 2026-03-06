@@ -71,6 +71,9 @@ import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [visitedTabs, setVisitedTabs] = useState<Set<string>>(
+    () => new Set(["servers"]),
+  );
   const [activeOrganizationId, setActiveOrganizationId] = useState<
     string | undefined
   >(undefined);
@@ -373,6 +376,15 @@ export default function App() {
     applyNavigation(section, { updateHash: true });
   };
 
+  useEffect(() => {
+    setVisitedTabs((prev) => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
+
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
@@ -500,14 +512,18 @@ export default function App() {
               onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
-          {activeTab === "tools" && (
-            <div className="h-full overflow-hidden">
+          <div
+            className={
+              activeTab === "tools" ? "h-full overflow-hidden" : "hidden"
+            }
+          >
+            {(activeTab === "tools" || visitedTabs.has("tools")) && (
               <ToolsTab
                 serverConfig={selectedMCPConfig}
                 serverName={appState.selectedServer}
               />
-            </div>
-          )}
+            )}
+          </div>
           {activeTab === "evals" && (
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
@@ -518,23 +534,31 @@ export default function App() {
               onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
-          {activeTab === "resources" && (
-            <div className="h-full overflow-hidden">
+          <div
+            className={
+              activeTab === "resources" ? "h-full overflow-hidden" : "hidden"
+            }
+          >
+            {(activeTab === "resources" || visitedTabs.has("resources")) && (
               <ResourcesTab
                 serverConfig={selectedMCPConfig}
                 serverName={appState.selectedServer}
               />
-            </div>
-          )}
+            )}
+          </div>
 
-          {activeTab === "prompts" && (
-            <div className="h-full overflow-hidden">
+          <div
+            className={
+              activeTab === "prompts" ? "h-full overflow-hidden" : "hidden"
+            }
+          >
+            {(activeTab === "prompts" || visitedTabs.has("prompts")) && (
               <PromptsTab
                 serverConfig={selectedMCPConfig}
                 serverName={appState.selectedServer}
               />
-            </div>
-          )}
+            )}
+          </div>
 
           {activeTab === "skills" && <SkillsTab />}
 
@@ -578,12 +602,19 @@ export default function App() {
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
-          {activeTab === "app-builder" && (
-            <AppBuilderTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-            />
-          )}
+          <div
+            className={
+              activeTab === "app-builder" ? "h-full overflow-hidden" : "hidden"
+            }
+          >
+            {(activeTab === "app-builder" ||
+              visitedTabs.has("app-builder")) && (
+              <AppBuilderTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+              />
+            )}
+          </div>
           {activeTab === "settings" && <SettingsTab />}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
