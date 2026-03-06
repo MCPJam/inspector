@@ -471,9 +471,7 @@ export function SuiteHeader({
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="text-sm font-medium text-foreground">
-                  {suite.source === "sdk"
-                    ? "Suite Pass Rate:"
-                    : "Suite Accuracy:"}
+                  Suite Accuracy:
                 </span>
               </TooltipTrigger>
               <TooltipContent>
