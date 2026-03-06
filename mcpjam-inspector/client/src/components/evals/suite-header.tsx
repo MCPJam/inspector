@@ -468,9 +468,18 @@ export function SuiteHeader({
         {/* Accuracy Chart */}
         {accuracyChartData && accuracyChartData.donutData.length > 0 && (
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-foreground">
-              Accuracy:
-            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-sm font-medium text-foreground">
+                  {suite.source === "sdk"
+                    ? "Suite Pass Rate:"
+                    : "Suite Accuracy:"}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">Calculated across all active runs.</p>
+              </TooltipContent>
+            </Tooltip>
             <ChartContainer
               config={{
                 passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },

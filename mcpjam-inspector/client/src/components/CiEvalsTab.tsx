@@ -233,9 +233,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
         className="flex-1 overflow-hidden"
       >
         <ResizablePanel
-          defaultSize={30}
+          defaultSize={24}
           minSize={20}
-          maxSize={45}
+          maxSize={35}
           className="border-r bg-muted/30 flex flex-col"
         >
           <CiSuiteListSidebar
