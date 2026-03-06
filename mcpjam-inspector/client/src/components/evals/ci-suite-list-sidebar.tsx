@@ -1,7 +1,5 @@
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteOverviewEntry } from "./types";
-import { CiMetadataDisplay } from "./ci-metadata-display";
 
 interface CiSuiteListSidebarProps {
   suites: EvalSuiteOverviewEntry[];
@@ -10,53 +8,43 @@ interface CiSuiteListSidebarProps {
   isLoading?: boolean;
 }
 
+function getStatusDot(entry: EvalSuiteOverviewEntry): {
+  label: string;
+  dotClass: string;
+} {
+  const latestRun = entry.latestRun;
+  if (!latestRun) {
+    return { label: "No runs", dotClass: "bg-muted-foreground/40" };
+  }
+  if (latestRun.status === "running" || latestRun.status === "pending") {
+    return { label: "Running", dotClass: "bg-blue-500 animate-pulse" };
+  }
+  if (latestRun.result === "passed") {
+    return { label: "Passed", dotClass: "bg-emerald-500" };
+  }
+  if (latestRun.result === "failed") {
+    return { label: "Failed", dotClass: "bg-destructive" };
+  }
+  return { label: latestRun.status, dotClass: "bg-muted-foreground/40" };
+}
+
 function toPercent(value: number): number {
   const normalized = value <= 1 ? value * 100 : value;
   return Math.max(0, Math.min(100, Math.round(normalized)));
 }
 
-function getStatusChip(entry: EvalSuiteOverviewEntry): {
-  label: string;
-  className: string;
-} {
-  const latestRun = entry.latestRun;
-  if (!latestRun) {
-    return {
-      label: "No runs",
-      className: "bg-muted text-muted-foreground border-border",
-    };
-  }
-
-  if (latestRun.status === "running" || latestRun.status === "pending") {
-    return {
-      label: "Running",
-      className: "bg-blue-500/10 text-blue-700 border-blue-300",
-    };
-  }
-
-  if (latestRun.result === "passed") {
-    return {
-      label: "Passed",
-      className: "bg-emerald-500/10 text-emerald-700 border-emerald-300",
-    };
-  }
-
-  if (latestRun.result === "failed") {
-    return {
-      label: "Failed",
-      className: "bg-destructive/10 text-destructive border-destructive/30",
-    };
-  }
-
-  return {
-    label: latestRun.status,
-    className: "bg-muted text-muted-foreground border-border",
-  };
-}
-
-function formatTimestamp(timestamp?: number): string {
+function formatRelativeTime(timestamp?: number): string {
   if (!timestamp) return "No runs yet";
-  return new Date(timestamp).toLocaleString();
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
 }
 
 export function CiSuiteListSidebar({
@@ -68,90 +56,66 @@ export function CiSuiteListSidebar({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">Evals</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Eval suites you've run
-        </p>
+        <h2 className="text-sm font-semibold">Eval suites</h2>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
-            Loading CI suites...
+            Loading suites...
           </div>
         ) : suites.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
             No SDK suites found.
           </div>
         ) : (
-          <div className="divide-y">
+          <div>
             {suites.map((entry) => {
               const latestRun = entry.latestRun;
-              const status = getStatusChip(entry);
-              const lastTimestamp = formatTimestamp(
+              const status = getStatusDot(entry);
+              const trend = entry.passRateTrend
+                .slice(-12)
+                .map((value) => toPercent(value));
+              const timestamp = formatRelativeTime(
                 latestRun?.completedAt ??
                   latestRun?.createdAt ??
                   entry.suite.updatedAt,
               );
-              const trend = entry.passRateTrend
-                .slice(-12)
-                .map((value) => toPercent(value));
-              const latestPassRate = latestRun?.summary
-                ? Math.round(latestRun.summary.passRate * 100)
-                : null;
 
               return (
                 <button
                   key={entry.suite._id}
                   onClick={() => onSelectSuite(entry.suite._id)}
                   className={cn(
-                    "w-full px-4 py-3 text-left transition-colors hover:bg-accent/50",
+                    "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
                     selectedSuiteId === entry.suite._id && "bg-accent",
                   )}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)}
+                      title={status.label}
+                    />
+                    <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">
                         {entry.suite.name || "Untitled suite"}
                       </div>
-                      <div className="mt-1 text-[11px] text-muted-foreground">
-                        {lastTimestamp}
+                      <div className="text-[11px] text-muted-foreground">
+                        {timestamp}
                       </div>
                     </div>
-                    <Badge variant="outline" className={status.className}>
-                      {status.label}
-                    </Badge>
+                    {trend.length > 0 && (
+                      <div className="flex h-5 shrink-0 items-end gap-px">
+                        {trend.map((value, idx) => (
+                          <div
+                            key={`${entry.suite._id}-t-${idx}`}
+                            className="w-1 rounded-sm bg-primary/70"
+                            style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
-
-                  <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
-                    <span>{entry.totals.runs} runs</span>
-                    <span>•</span>
-                    <span>
-                      {latestPassRate !== null ? `${latestPassRate}%` : "—"}{" "}
-                      accuracy
-                    </span>
-                  </div>
-
-                  {trend.length > 0 ? (
-                    <div className="mt-2 flex h-6 items-end gap-0.5">
-                      {trend.map((value, idx) => (
-                        <div
-                          key={`${entry.suite._id}-trend-${idx}`}
-                          className="w-1 rounded-sm bg-primary/70"
-                          style={{ height: `${Math.max(4, (value / 100) * 24)}px` }}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {latestRun && (
-                    <div className="mt-2">
-                      <CiMetadataDisplay
-                        ciMetadata={latestRun.ciMetadata}
-                        compact={true}
-                      />
-                    </div>
-                  )}
                 </button>
               );
             })}
