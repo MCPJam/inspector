@@ -363,11 +363,19 @@ export const createDebugOAuthStateMachine = (
   const redirectUri =
     redirectUrl || `${window.location.origin}/oauth/callback/debug`;
 
-  const mergeHeaders = (requestHeaders: Record<string, string> = {}) => {
-    return {
+  const mergeHeaders = (
+    requestHeaders: Record<string, string> = {},
+    isAuthServer = false,
+  ) => {
+    const headers = {
       ...customHeaders,
       ...requestHeaders,
     };
+    if (isAuthServer) {
+      delete headers["Authorization"];
+      delete headers["authorization"];
+    }
+    return headers;
   };
 
   const getCurrentState = () => (getState ? getState() : initialState);
@@ -486,7 +494,7 @@ export const createDebugOAuthStateMachine = (
             const authServerRequest = {
               method: "GET",
               url: authServerUrls[0],
-              headers: mergeHeaders({}),
+              headers: mergeHeaders({}, true),
             };
 
             updateState({
@@ -524,7 +532,7 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                const requestHeaders = mergeHeaders({});
+                const requestHeaders = mergeHeaders({}, true);
 
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
                 if (updatedHistoryForRetry.length > 0) {
@@ -548,9 +556,12 @@ export const createDebugOAuthStateMachine = (
 
                 const response = await proxyFetch(url, {
                   method: "GET",
-                  headers: mergeHeaders({
-                    "MCP-Protocol-Version": "2025-03-26",
-                  }),
+                  headers: mergeHeaders(
+                    {
+                      "MCP-Protocol-Version": "2025-03-26",
+                    },
+                    true,
+                  ),
                 });
 
                 if (response.ok) {
@@ -774,9 +785,12 @@ export const createDebugOAuthStateMachine = (
               const registrationRequest = {
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
-                headers: mergeHeaders({
-                  "Content-Type": "application/json",
-                }),
+                headers: mergeHeaders(
+                  {
+                    "Content-Type": "application/json",
+                  },
+                  true,
+                ),
                 body: clientMetadata,
               };
 
@@ -823,9 +837,12 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
-                    "Content-Type": "application/json",
-                  }),
+                  headers: mergeHeaders(
+                    {
+                      "Content-Type": "application/json",
+                    },
+                    true,
+                  ),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1153,9 +1170,12 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
-                    "Content-Type": "application/x-www-form-urlencoded",
-                  }),
+                  headers: mergeHeaders(
+                    {
+                      "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    true,
+                  ),
                   body: tokenRequestBody.toString(),
                 },
               );

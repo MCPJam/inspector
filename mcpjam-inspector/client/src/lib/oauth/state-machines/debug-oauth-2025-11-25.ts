@@ -556,11 +556,21 @@ export const createDebugOAuthStateMachine = (
     redirectUrl || `${window.location.origin}/oauth/callback/debug`;
 
   // Helper to merge custom headers with request headers
-  const mergeHeaders = (requestHeaders: Record<string, string> = {}) => {
-    return {
+  // When isAuthServer is true, strip Authorization headers to prevent
+  // connection-level credentials from leaking to the authorization server
+  const mergeHeaders = (
+    requestHeaders: Record<string, string> = {},
+    isAuthServer = false,
+  ) => {
+    const headers = {
       ...customHeaders,
       ...requestHeaders, // Request headers override custom headers
     };
+    if (isAuthServer) {
+      delete headers["Authorization"];
+      delete headers["authorization"];
+    }
+    return headers;
   };
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
@@ -962,7 +972,7 @@ export const createDebugOAuthStateMachine = (
             const authServerRequest = {
               method: "GET",
               url: authServerUrls[0], // Show the first URL we'll try
-              headers: mergeHeaders({}),
+              headers: mergeHeaders({}, true),
             };
 
             // Update state with the request
@@ -1003,7 +1013,7 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                const requestHeaders = mergeHeaders({});
+                const requestHeaders = mergeHeaders({}, true);
 
                 // Update request URL as we try different endpoints
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
@@ -1029,7 +1039,7 @@ export const createDebugOAuthStateMachine = (
                 // Use backend proxy to bypass CORS
                 const response = await proxyFetch(url, {
                   method: "GET",
-                  headers: mergeHeaders({}),
+                  headers: mergeHeaders({}, true),
                 });
 
                 if (response.ok) {
@@ -1264,9 +1274,12 @@ export const createDebugOAuthStateMachine = (
               const registrationRequest = {
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
-                headers: mergeHeaders({
-                  "Content-Type": "application/json",
-                }),
+                headers: mergeHeaders(
+                  {
+                    "Content-Type": "application/json",
+                  },
+                  true,
+                ),
                 body: clientMetadata,
               };
 
@@ -1316,9 +1329,12 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
-                    "Content-Type": "application/json",
-                  }),
+                  headers: mergeHeaders(
+                    {
+                      "Content-Type": "application/json",
+                    },
+                    true,
+                  ),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1785,9 +1801,12 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
-                    "Content-Type": "application/x-www-form-urlencoded",
-                  }),
+                  headers: mergeHeaders(
+                    {
+                      "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    true,
+                  ),
                   body: tokenRequestBody.toString(),
                 },
               );
