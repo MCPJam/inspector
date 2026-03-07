@@ -380,7 +380,7 @@ The SDK collects anonymous usage metrics (e.g., eval test run counts) to help im
 To disable telemetry, set either of these environment variables:
 
 ```bash
-# Community standard (https://consoledonottrack.com)
+# Community standard
 export DO_NOT_TRACK=1
 
 # Or project-specific
