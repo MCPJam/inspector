@@ -1,4 +1,5 @@
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { logger } from "./logger";
 
 export class OAuthProxyError extends Error {
   status: number;
@@ -300,4 +301,48 @@ export async function fetchOAuthMetadata(
 
   const metadata = (await response.json()) as Record<string, unknown>;
   return { metadata };
+}
+
+/**
+ * Check if a URL is a token exchange endpoint (where client_secret needs injection).
+ */
+export function isTokenExchangeUrl(url: string): boolean {
+  return /\/(token|access_token)(?:[?#]|$)/.test(url);
+}
+
+/**
+ * Fetch OAuth credentials for a registry server from Convex.
+ * Server-to-server call protected by a shared secret.
+ */
+export async function fetchRegistryCredentials(
+  slug: string,
+): Promise<{ clientId: string; clientSecret: string } | null> {
+  const convexUrl = process.env.CONVEX_HTTP_URL;
+  const secret = process.env.REGISTRY_SECRET;
+  if (!convexUrl || !secret) {
+    logger.warn(
+      "[Registry] Missing CONVEX_HTTP_URL or REGISTRY_SECRET for credential fetch",
+    );
+    return null;
+  }
+
+  try {
+    const res = await fetch(
+      `${convexUrl}/registry/credentials?slug=${encodeURIComponent(slug)}`,
+      {
+        headers: { "x-registry-secret": secret },
+      },
+    );
+    if (!res.ok) {
+      logger.warn("[Registry] Credential fetch failed", {
+        slug,
+        status: res.status,
+      });
+      return null;
+    }
+    return (await res.json()) as { clientId: string; clientSecret: string };
+  } catch (err) {
+    logger.error("[Registry] Credential fetch error", { slug, err });
+    return null;
+  }
 }

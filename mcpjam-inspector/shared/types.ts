@@ -585,6 +585,8 @@ export interface ServerFormData {
   clientId?: string;
   clientSecret?: string;
   requestTimeout?: number;
+  registryManaged?: boolean;
+  registrySlug?: string;
 }
 
 export interface OauthTokens {

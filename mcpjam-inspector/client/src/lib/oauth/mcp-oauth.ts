@@ -17,7 +17,7 @@ const originalFetch = window.fetch;
 /**
  * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS
  */
-function createOAuthFetchInterceptor(): typeof fetch {
+function createOAuthFetchInterceptor(registrySlug?: string): typeof fetch {
   return async function interceptedFetch(
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -32,7 +32,7 @@ function createOAuthFetchInterceptor(): typeof fetch {
     // Check if this is an OAuth-related request that needs CORS bypass
     const isOAuthRequest =
       url.includes("/.well-known/") ||
-      url.match(/\/(register|token|authorize)$/);
+      url.match(/\/(register|access_token|token|authorize)(?:[?#]|$)/);
 
     if (!isOAuthRequest) {
       return await originalFetch(input, init);
@@ -62,6 +62,7 @@ function createOAuthFetchInterceptor(): typeof fetch {
             ? Object.fromEntries(new Headers(init.headers as HeadersInit))
             : {},
           body,
+          ...(registrySlug && { registrySlug }),
         }),
       });
 
@@ -101,6 +102,7 @@ export interface MCPOAuthOptions {
   scopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  registrySlug?: string;
 }
 
 export interface OAuthResult {
@@ -247,14 +249,15 @@ export async function initiateOAuth(
   options: MCPOAuthOptions,
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
+  const interceptedFetch = createOAuthFetchInterceptor(options.registrySlug);
   window.fetch = interceptedFetch;
 
   try {
     const provider = new MCPOAuthProvider(
       options.serverName,
       options.clientId,
-      options.clientSecret,
+      // For registry servers, the Hono server injects clientSecret during token exchange
+      options.registrySlug ? undefined : options.clientSecret,
     );
 
     // Store server URL for callback recovery
@@ -263,6 +266,14 @@ export async function initiateOAuth(
       options.serverUrl,
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
+
+    // Store registrySlug for callback recovery (survives full-page redirect)
+    if (options.registrySlug) {
+      localStorage.setItem(
+        `mcp-registry-slug-${options.serverName}`,
+        options.registrySlug,
+      );
+    }
 
     // Store OAuth configuration (scopes) for recovery if connection fails
     const oauthConfig: any = {};
@@ -362,17 +373,21 @@ export async function initiateOAuth(
 export async function handleOAuthCallback(
   authorizationCode: string,
 ): Promise<OAuthResult & { serverName?: string }> {
+  // Get pending server name from localStorage (needed before interceptor setup)
+  const serverName = localStorage.getItem("mcp-oauth-pending");
+  if (!serverName) {
+    throw new Error("No pending OAuth flow found");
+  }
+
+  // Retrieve registrySlug stored before the redirect
+  const registrySlug =
+    localStorage.getItem(`mcp-registry-slug-${serverName}`) || undefined;
+
   // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
+  const interceptedFetch = createOAuthFetchInterceptor(registrySlug);
   window.fetch = interceptedFetch;
 
   try {
-    // Get pending server name from localStorage
-    const serverName = localStorage.getItem("mcp-oauth-pending");
-    if (!serverName) {
-      throw new Error("No pending OAuth flow found");
-    }
-
     // Get server URL
     const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
     if (!serverUrl) {
@@ -384,9 +399,12 @@ export async function handleOAuthCallback(
     const customClientId = storedClientInfo
       ? JSON.parse(storedClientInfo).client_id
       : undefined;
-    const customClientSecret = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_secret
-      : undefined;
+    // For registry servers, don't use client_secret — Hono injects it server-side
+    const customClientSecret = registrySlug
+      ? undefined
+      : storedClientInfo
+        ? JSON.parse(storedClientInfo).client_secret
+        : undefined;
 
     const provider = new MCPOAuthProvider(
       serverName,
@@ -404,6 +422,7 @@ export async function handleOAuthCallback(
       if (tokens) {
         // Clean up pending state
         localStorage.removeItem("mcp-oauth-pending");
+        localStorage.removeItem(`mcp-registry-slug-${serverName}`);
 
         const serverConfig = createServerConfig(serverUrl, tokens);
         return {
@@ -514,8 +533,12 @@ export async function waitForTokens(
 export async function refreshOAuthTokens(
   serverName: string,
 ): Promise<OAuthResult> {
+  // Retrieve registrySlug if this is a registry-managed server
+  const registrySlug =
+    localStorage.getItem(`mcp-registry-slug-${serverName}`) || undefined;
+
   // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
+  const interceptedFetch = createOAuthFetchInterceptor(registrySlug);
   window.fetch = interceptedFetch;
 
   try {
@@ -524,9 +547,12 @@ export async function refreshOAuthTokens(
     const customClientId = storedClientInfo
       ? JSON.parse(storedClientInfo).client_id
       : undefined;
-    const customClientSecret = storedClientInfo
-      ? JSON.parse(storedClientInfo).client_secret
-      : undefined;
+    // For registry servers, don't use client_secret — Hono injects it server-side
+    const customClientSecret = registrySlug
+      ? undefined
+      : storedClientInfo
+        ? JSON.parse(storedClientInfo).client_secret
+        : undefined;
 
     const provider = new MCPOAuthProvider(
       serverName,
@@ -609,6 +635,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+  localStorage.removeItem(`mcp-registry-slug-${serverName}`);
 }
 
 /**
