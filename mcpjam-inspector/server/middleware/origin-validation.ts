@@ -50,7 +50,7 @@ export async function originValidationMiddleware(
   const origin = c.req.header("Origin");
 
   // No origin header = same-origin request or non-browser client (curl, etc.)
-  // These still require valid token, so this is safe
+  // Most routes still require valid token; OAuth proxy routes rely on HTTPS-only + private IP blocking
   if (!origin) {
     return next();
   }

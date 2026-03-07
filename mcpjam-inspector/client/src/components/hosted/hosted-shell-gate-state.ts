@@ -30,7 +30,7 @@ export function resolveHostedShellGateState({
   }
 
   if (!hasWorkOsUser && !isConvexAuthenticated) {
-    return "logged-out";
+    return "ready";
   }
 
   if (isLoadingRemoteWorkspaces) {
