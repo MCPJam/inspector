@@ -30,6 +30,7 @@ export interface EvalRunReporter {
   flush(): Promise<void>;
   finalize(): Promise<ReportEvalResultsOutput>;
   getBufferedCount(): number;
+  setExpectedIterations(count: number): void;
 }
 
 class EvalRunReporterImpl implements EvalRunReporter {
@@ -41,6 +42,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
   private completedResult: ReportEvalResultsOutput | null = null;
   private buffered: EvalResultInput[] = [];
   private generatedIterationCount = 0;
+  private expectedIterations: number | undefined;
 
   constructor(input: CreateEvalRunReporterInput) {
     this.input = input;
@@ -50,6 +52,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
       results: [],
     } as ReportEvalResultsInput);
     this.externalRunId = input.externalRunId ?? generateExternalRunId();
+    this.expectedIterations = input.expectedIterations;
     if (Array.isArray(input.results) && input.results.length > 0) {
       this.buffered.push(...input.results);
     }
@@ -82,6 +85,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
         passCriteria: this.input.passCriteria,
         externalRunId: this.externalRunId,
         ci: this.withoutCiProvider(this.input.ci),
+        expectedIterations: this.expectedIterations,
       });
       this.runId = started.runId;
       if (
@@ -168,6 +172,10 @@ class EvalRunReporterImpl implements EvalRunReporter {
 
   getBufferedCount(): number {
     return this.buffered.length;
+  }
+
+  setExpectedIterations(count: number): void {
+    this.expectedIterations = count;
   }
 
   private ensureNotFinalized(): void {

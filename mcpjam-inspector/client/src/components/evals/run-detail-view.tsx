@@ -97,6 +97,33 @@ export function RunDetailView({
     [caseGroupsForSelectedRun],
   );
 
+  const isRunning = selectedRunDetails.status === "running";
+  const expected = selectedRunDetails.expectedIterations;
+  const donutTotal = selectedRunChartData.donutData.reduce(
+    (sum, item) => sum + item.value,
+    0,
+  );
+  const remaining = useMemo(() => {
+    if (expected && isRunning && expected > donutTotal) {
+      return expected - donutTotal;
+    }
+    return 0;
+  }, [expected, isRunning, donutTotal]);
+
+  const progressDonutData = useMemo(() => {
+    if (remaining > 0) {
+      return [
+        ...selectedRunChartData.donutData,
+        { name: "remaining", value: remaining, fill: "hsl(240 3.7% 15.9% / 0.3)" },
+      ];
+    }
+    return selectedRunChartData.donutData;
+  }, [selectedRunChartData.donutData, remaining]);
+
+  const progressPercent = expected && expected > 0
+    ? Math.round((donutTotal / expected) * 100)
+    : null;
+
   const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
 
   return (
@@ -137,7 +164,9 @@ export function RunDetailView({
             <div className="space-y-0.5">
               <div className="text-xs text-muted-foreground">Total</div>
               <div className="text-sm font-semibold">
-                {computedStats.total.toLocaleString()}
+                {expected && isRunning
+                  ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
+                  : computedStats.total.toLocaleString()}
               </div>
             </div>
             <div className="space-y-0.5">
@@ -165,13 +194,17 @@ export function RunDetailView({
                     label: "Cancelled",
                     color: "hsl(240 3.7% 15.9%)",
                   },
+                  remaining: {
+                    label: "Remaining",
+                    color: "hsl(240 3.7% 15.9% / 0.3)",
+                  },
                 }}
                 className="h-12 w-12"
               >
                 <PieChart>
                   <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                   <Pie
-                    data={selectedRunChartData.donutData}
+                    data={progressDonutData}
                     dataKey="value"
                     nameKey="name"
                     innerRadius={15}
@@ -181,10 +214,6 @@ export function RunDetailView({
                     <Label
                       content={({ viewBox }) => {
                         if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                          const total = selectedRunChartData.donutData.reduce(
-                            (sum, item) => sum + item.value,
-                            0,
-                          );
                           return (
                             <text
                               x={viewBox.cx}
@@ -197,7 +226,9 @@ export function RunDetailView({
                                 y={viewBox.cy}
                                 className="fill-foreground text-xs font-bold"
                               >
-                                {total}
+                                {expected && isRunning
+                                  ? `${donutTotal}/${expected}`
+                                  : donutTotal}
                               </tspan>
                               <tspan
                                 x={viewBox.cx}
@@ -219,7 +250,9 @@ export function RunDetailView({
 
           {/* Status */}
           <span className="text-xs font-medium text-foreground capitalize">
-            {selectedRunDetails.status}
+            {isRunning && progressPercent !== null
+              ? `Running (${progressPercent}%)`
+              : selectedRunDetails.status}
           </span>
 
           {/* Pass/Fail Badge */}

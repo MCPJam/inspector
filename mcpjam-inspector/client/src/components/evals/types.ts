@@ -141,6 +141,7 @@ export type EvalSuiteRun = {
   createdAt: number;
   completedAt?: number;
   isActive?: boolean; // Mark runs as inactive when suite is edited
+  expectedIterations?: number;
   _creationTime?: number;
 };
 

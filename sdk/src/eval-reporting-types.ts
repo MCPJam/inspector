@@ -56,6 +56,7 @@ export type MCPJamReportingConfig = {
   externalRunId?: string;
   framework?: string;
   ci?: EvalCiMetadata;
+  expectedIterations?: number;
 };
 
 export type ReportEvalResultsInput = MCPJamReportingConfig & {

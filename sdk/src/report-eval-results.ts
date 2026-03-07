@@ -303,6 +303,7 @@ export async function reportEvalResults(
         externalRunId,
         framework: input.framework,
         ci: input.ci,
+        expectedIterations: input.expectedIterations,
         results: resultsWithIterationIds,
       }
     );
@@ -317,6 +318,7 @@ export async function reportEvalResults(
     externalRunId,
     framework: input.framework,
     ci: input.ci,
+    expectedIterations: input.expectedIterations,
   });
 
   if (
