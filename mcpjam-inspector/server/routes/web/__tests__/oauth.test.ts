@@ -32,6 +32,52 @@ interface OAuthErrorResponse {
   error: string;
 }
 
+describe("web routes — oauth no-auth required", () => {
+  const { app } = createWebTestApp();
+
+  beforeEach(() => {
+    executeOAuthProxyMock.mockReset();
+    fetchOAuthMetadataMock.mockReset();
+  });
+
+  it("POST /proxy succeeds without bearer token", async () => {
+    executeOAuthProxyMock.mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: { ok: true },
+    });
+
+    const response = await postJson(app, "/api/web/oauth/proxy", {
+      url: "https://example.com/token",
+    });
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: { ok: true },
+    });
+  });
+
+  it("GET /metadata succeeds without bearer token", async () => {
+    fetchOAuthMetadataMock.mockResolvedValueOnce({
+      metadata: { issuer: "https://example.com" },
+    });
+
+    const response = await getJson(
+      app,
+      "/api/web/oauth/metadata?url=https://example.com/.well-known/oauth",
+    );
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ issuer: "https://example.com" });
+  });
+});
+
 describe("web routes — oauth error contract", () => {
   const { app, token } = createWebTestApp();
 
