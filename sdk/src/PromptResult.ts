@@ -40,6 +40,12 @@ export class PromptResult {
   /** Error message if the prompt failed */
   private readonly _error?: string;
 
+  /** LLM provider name (e.g., "openai", "anthropic") */
+  private readonly _provider?: string;
+
+  /** LLM model name (e.g., "gpt-4o", "claude-3-5-sonnet-20241022") */
+  private readonly _model?: string;
+
   /**
    * Create a new PromptResult
    * @param data - The raw prompt result data
@@ -52,6 +58,8 @@ export class PromptResult {
     this._toolCalls = data.toolCalls;
     this._usage = data.usage;
     this._error = data.error;
+    this._provider = data.provider;
+    this._model = data.model;
   }
 
   /**
@@ -243,6 +251,24 @@ export class PromptResult {
   }
 
   /**
+   * Get the LLM provider name.
+   *
+   * @returns The provider name or undefined
+   */
+  getProvider(): string | undefined {
+    return this._provider;
+  }
+
+  /**
+   * Get the LLM model name.
+   *
+   * @returns The model name or undefined
+   */
+  getModel(): string | undefined {
+    return this._model;
+  }
+
+  /**
    * Create a PromptResult from raw data.
    * Factory method for convenience.
    *
@@ -264,7 +290,8 @@ export class PromptResult {
   static error(
     error: string,
     latency: LatencyBreakdown | number = 0,
-    prompt: string = ""
+    prompt: string = "",
+    metadata?: { provider?: string; model?: string }
   ): PromptResult {
     const latencyBreakdown: LatencyBreakdown =
       typeof latency === "number"
@@ -279,6 +306,8 @@ export class PromptResult {
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       latency: latencyBreakdown,
       error,
+      provider: metadata?.provider,
+      model: metadata?.model,
     });
   }
 
@@ -312,8 +341,8 @@ export class PromptResult {
       query: options?.query ?? this.prompt,
       passed,
       durationMs: options?.durationMs ?? this.e2eLatencyMs(),
-      provider: options?.provider,
-      model: options?.model,
+      provider: options?.provider ?? this._provider,
+      model: options?.model ?? this._model,
       expectedToolCalls: options?.expectedToolCalls,
       actualToolCalls: this.getToolCalls().map((toolCall) => ({
         toolName: toolCall.toolName,

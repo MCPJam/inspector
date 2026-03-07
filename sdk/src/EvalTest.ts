@@ -1,4 +1,4 @@
-import type { TestAgent } from "./TestAgent.js";
+import type { EvalAgent } from "./EvalAgent.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import type {
@@ -8,15 +8,16 @@ import type {
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
+import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
 
 /**
  * Configuration for an EvalTest
  *
- * All tests use the multi-turn pattern with a test function that receives a TestAgent.
+ * All tests use the multi-turn pattern with a test function that receives an EvalAgent.
  */
 export interface EvalTestConfig {
   name: string;
-  test: (agent: TestAgent) => boolean | Promise<boolean>;
+  test: (agent: EvalAgent) => boolean | Promise<boolean>;
 }
 
 /**
@@ -161,7 +162,7 @@ export class EvalTest {
    * Run this test with the given agent and options
    */
   async run(
-    agent: TestAgent,
+    agent: EvalAgent,
     options: EvalTestRunOptions
   ): Promise<EvalRunResult> {
     posthog.capture({
@@ -305,48 +306,7 @@ export class EvalTest {
   }
 
   private buildEvalResultInputs(iterations: IterationResult[]): EvalResultInput[] {
-    return iterations.map((iteration, index) => {
-      const prompts = iteration.prompts ?? [];
-      const durationMs = iteration.latencies.reduce((sum, latency) => {
-        return sum + latency.e2eMs;
-      }, 0);
-      const actualToolCalls = prompts.flatMap((prompt) =>
-        prompt.getToolCalls().map((toolCall) => ({
-          toolName: toolCall.toolName,
-          arguments: toolCall.arguments,
-        }))
-      );
-      const traceMessages = prompts.flatMap((prompt) =>
-        prompt.getMessages().map((message) => ({
-          role: message.role,
-          content: message.content,
-        }))
-      );
-
-      return {
-        caseTitle: this.getName(),
-        query: prompts[0]?.getPrompt() ?? this.getName(),
-        passed: iteration.passed,
-        durationMs: durationMs > 0 ? durationMs : undefined,
-        actualToolCalls,
-        tokens: {
-          input: iteration.tokens.input,
-          output: iteration.tokens.output,
-          total: iteration.tokens.total,
-        },
-        error: iteration.error,
-        trace:
-          traceMessages.length > 0
-            ? {
-                messages: traceMessages,
-              }
-            : undefined,
-        metadata: {
-          retryCount: iteration.retryCount ?? 0,
-          iterationNumber: index + 1,
-        },
-      };
-    });
+    return iterationsToEvalResultInputs(this.getName(), iterations);
   }
 
   private aggregateResults(iterations: IterationResult[]): EvalRunResult {

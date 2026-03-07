@@ -78,9 +78,12 @@ export {
   isMCPAuthError,
 } from "./mcp-client-manager/index.js";
 
+// EvalAgent interface (for deterministic testing without concrete TestAgent)
+export type { EvalAgent, PromptOptions } from "./EvalAgent.js";
+
 // TestAgent
 export { TestAgent } from "./TestAgent.js";
-export type { TestAgentConfig, PromptOptions } from "./TestAgent.js";
+export type { TestAgentConfig } from "./TestAgent.js";
 
 // PromptResult class (preferred over TestAgent's interface)
 export { PromptResult } from "./PromptResult.js";
@@ -137,6 +140,12 @@ export type {
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
+
+// Eval result mapping utilities
+export type {
+  RunToEvalResultsOptions,
+  SuiteRunToEvalResultsOptions,
+} from "./eval-result-mapping.js";
 
 // Core SDK types
 export type {

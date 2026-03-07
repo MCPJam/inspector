@@ -15,6 +15,14 @@ import {
   reportEvalResultsSafely,
   startEvalRun,
 } from "./report-eval-results.js";
+import type { PromptResult } from "./PromptResult.js";
+import type { EvalRunResult } from "./EvalTest.js";
+import {
+  runToEvalResults,
+  suiteRunToEvalResults,
+  type RunToEvalResultsOptions,
+  type SuiteRunToEvalResultsOptions,
+} from "./eval-result-mapping.js";
 
 export type CreateEvalRunReporterInput = Omit<
   ReportEvalResultsInput,
@@ -31,6 +39,64 @@ export interface EvalRunReporter {
   finalize(): Promise<ReportEvalResultsOutput>;
   getBufferedCount(): number;
   setExpectedIterations(count: number): void;
+
+  /**
+   * Convert a PromptResult to an EvalResultInput and add it to the buffer.
+   * Provider and model default to the prompt's metadata unless overridden.
+   */
+  addFromPrompt(
+    promptResult: PromptResult,
+    overrides?: Partial<
+      Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
+    >
+  ): void;
+
+  /**
+   * Convert a PromptResult to an EvalResultInput, add it to the buffer, and
+   * auto-flush when the buffer is large enough. Calls record() internally.
+   */
+  recordFromPrompt(
+    promptResult: PromptResult,
+    overrides?: Partial<
+      Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
+    >
+  ): Promise<void>;
+
+  /**
+   * Convert all iterations from an EvalTest run to EvalResultInputs and add them.
+   */
+  addFromRun(run: EvalRunResult, options: RunToEvalResultsOptions): void;
+
+  /**
+   * Convert all iterations from an EvalTest run to EvalResultInputs,
+   * add them, and auto-flush.
+   */
+  recordFromRun(
+    run: EvalRunResult,
+    options: RunToEvalResultsOptions
+  ): Promise<void>;
+
+  /**
+   * Convert all iterations from an EvalSuite run to EvalResultInputs and add them.
+   */
+  addFromSuiteRun(
+    suiteRun: Map<string, EvalRunResult>,
+    options: SuiteRunToEvalResultsOptions
+  ): void;
+
+  /**
+   * Convert all iterations from an EvalSuite run to EvalResultInputs,
+   * add them, and auto-flush.
+   */
+  recordFromSuiteRun(
+    suiteRun: Map<string, EvalRunResult>,
+    options: SuiteRunToEvalResultsOptions
+  ): Promise<void>;
+
+  /**
+   * Get the total count of results added (including via helper methods).
+   */
+  getAddedCount(): number;
 }
 
 class EvalRunReporterImpl implements EvalRunReporter {
@@ -43,6 +109,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
   private buffered: EvalResultInput[] = [];
   private generatedIterationCount = 0;
   private expectedIterations: number | undefined;
+  private addedCount = 0;
 
   constructor(input: CreateEvalRunReporterInput) {
     this.input = input;
@@ -55,12 +122,14 @@ class EvalRunReporterImpl implements EvalRunReporter {
     this.expectedIterations = input.expectedIterations;
     if (Array.isArray(input.results) && input.results.length > 0) {
       this.buffered.push(...input.results);
+      this.addedCount += input.results.length;
     }
   }
 
   add(result: EvalResultInput): void {
     this.ensureNotFinalized();
     this.buffered.push(result);
+    this.addedCount += 1;
   }
 
   async record(result: EvalResultInput): Promise<void> {
@@ -69,6 +138,65 @@ class EvalRunReporterImpl implements EvalRunReporter {
     if (preview.length > 1 || this.buffered.length >= 200) {
       await this.flush();
     }
+  }
+
+  addFromPrompt(
+    promptResult: PromptResult,
+    overrides?: Partial<
+      Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
+    >
+  ): void {
+    this.add(promptResult.toEvalResult(overrides));
+  }
+
+  async recordFromPrompt(
+    promptResult: PromptResult,
+    overrides?: Partial<
+      Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
+    >
+  ): Promise<void> {
+    await this.record(promptResult.toEvalResult(overrides));
+  }
+
+  addFromRun(run: EvalRunResult, options: RunToEvalResultsOptions): void {
+    const results = runToEvalResults(run, options);
+    for (const result of results) {
+      this.add(result);
+    }
+  }
+
+  async recordFromRun(
+    run: EvalRunResult,
+    options: RunToEvalResultsOptions
+  ): Promise<void> {
+    const results = runToEvalResults(run, options);
+    for (const result of results) {
+      await this.record(result);
+    }
+  }
+
+  addFromSuiteRun(
+    suiteRun: Map<string, EvalRunResult>,
+    options: SuiteRunToEvalResultsOptions
+  ): void {
+    const results = suiteRunToEvalResults(suiteRun, options);
+    for (const result of results) {
+      this.add(result);
+    }
+  }
+
+  async recordFromSuiteRun(
+    suiteRun: Map<string, EvalRunResult>,
+    options: SuiteRunToEvalResultsOptions
+  ): Promise<void> {
+    const results = suiteRunToEvalResults(suiteRun, options);
+    for (const result of results) {
+      await this.record(result);
+    }
+  }
+
+  getAddedCount(): number {
+    return this.addedCount;
   }
 
   async flush(): Promise<void> {

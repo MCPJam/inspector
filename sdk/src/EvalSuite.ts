@@ -1,4 +1,4 @@
-import type { TestAgent } from "./TestAgent.js";
+import type { EvalAgent } from "./EvalAgent.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import type {
@@ -12,6 +12,7 @@ import type {
   IterationResult,
 } from "./EvalTest.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
+import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
 
 /**
  * Configuration for an EvalSuite
@@ -117,7 +118,7 @@ export class EvalSuite {
    * Run all tests in the suite with the given agent and options
    */
   async run(
-    agent: TestAgent,
+    agent: EvalAgent,
     options: EvalTestRunOptions
   ): Promise<EvalSuiteResult> {
     const testResults = new Map<string, EvalRunResult>();
@@ -194,54 +195,7 @@ export class EvalSuite {
   private buildEvalResultInputs(
     testResults: Map<string, EvalRunResult>
   ): EvalResultInput[] {
-    const inputs: EvalResultInput[] = [];
-    for (const [testName, testResult] of testResults) {
-      for (let index = 0; index < testResult.iterationDetails.length; index++) {
-        const iteration = testResult.iterationDetails[index];
-        const prompts = iteration.prompts ?? [];
-        const durationMs = iteration.latencies.reduce((sum, latency) => {
-          return sum + latency.e2eMs;
-        }, 0);
-        const actualToolCalls = prompts.flatMap((prompt) =>
-          prompt.getToolCalls().map((toolCall) => ({
-            toolName: toolCall.toolName,
-            arguments: toolCall.arguments,
-          }))
-        );
-        const traceMessages = prompts.flatMap((prompt) =>
-          prompt.getMessages().map((message) => ({
-            role: message.role,
-            content: message.content,
-          }))
-        );
-
-        inputs.push({
-          caseTitle: testName,
-          query: prompts[0]?.getPrompt() ?? testName,
-          passed: iteration.passed,
-          durationMs: durationMs > 0 ? durationMs : undefined,
-          actualToolCalls,
-          tokens: {
-            input: iteration.tokens.input,
-            output: iteration.tokens.output,
-            total: iteration.tokens.total,
-          },
-          error: iteration.error,
-          trace:
-            traceMessages.length > 0
-              ? {
-                  messages: traceMessages,
-                }
-              : undefined,
-          metadata: {
-            testName,
-            iterationNumber: index + 1,
-            retryCount: iteration.retryCount ?? 0,
-          },
-        });
-      }
-    }
-    return inputs;
+    return suiteTestResultsToEvalResultInputs(testResults);
   }
 
   private aggregateResults(

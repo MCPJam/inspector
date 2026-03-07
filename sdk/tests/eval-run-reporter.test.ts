@@ -1,4 +1,6 @@
 import { createEvalRunReporter } from "../src/eval-run-reporter";
+import { PromptResult } from "../src/PromptResult";
+import type { EvalRunResult, IterationResult } from "../src/EvalTest";
 
 const successSummary = {
   total: 3,
@@ -79,5 +81,303 @@ describe("createEvalRunReporter", () => {
     expect(
       secondAppendBody.results.map((result: any) => result.externalIterationId)
     ).toEqual([`${externalRunId}-3`]);
+  });
+
+  describe("getAddedCount", () => {
+    it("tracks total added results", () => {
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "count-test",
+      });
+
+      expect(reporter.getAddedCount()).toBe(0);
+      reporter.add({ caseTitle: "a", passed: true });
+      reporter.add({ caseTitle: "b", passed: false });
+      expect(reporter.getAddedCount()).toBe(2);
+    });
+
+    it("counts results provided in constructor", () => {
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "count-test",
+        results: [
+          { caseTitle: "a", passed: true },
+          { caseTitle: "b", passed: true },
+        ],
+      });
+
+      expect(reporter.getAddedCount()).toBe(2);
+    });
+  });
+
+  describe("addFromPrompt / recordFromPrompt", () => {
+    it("addFromPrompt converts and adds a PromptResult", () => {
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "prompt-test",
+      });
+
+      const pr = PromptResult.from({
+        prompt: "test query",
+        messages: [{ role: "user", content: "test query" }],
+        text: "response",
+        toolCalls: [{ toolName: "my_tool", arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        latency: { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+        provider: "openai",
+        model: "gpt-4o",
+      });
+
+      reporter.addFromPrompt(pr, { caseTitle: "my-case", passed: true });
+      expect(reporter.getAddedCount()).toBe(1);
+      expect(reporter.getBufferedCount()).toBe(1);
+    });
+
+    it("addFromPrompt uses prompt metadata as defaults", () => {
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "prompt-test",
+      });
+
+      const pr = PromptResult.from({
+        prompt: "test",
+        messages: [],
+        text: "",
+        toolCalls: [],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        latency: { e2eMs: 0, llmMs: 0, mcpMs: 0 },
+        provider: "anthropic",
+        model: "claude-3-5-sonnet",
+      });
+
+      reporter.addFromPrompt(pr, { caseTitle: "test", passed: true });
+      expect(reporter.getAddedCount()).toBe(1);
+    });
+  });
+
+  describe("addFromRun / addFromSuiteRun", () => {
+    function createMockIterationResult(passed: boolean): IterationResult {
+      const pr = PromptResult.from({
+        prompt: "test",
+        messages: [{ role: "user", content: "test" }],
+        text: "ok",
+        toolCalls: [{ toolName: "my_tool", arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        latency: { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+        provider: "openai",
+        model: "gpt-4o",
+      });
+
+      return {
+        passed,
+        latencies: [{ e2eMs: 100, llmMs: 80, mcpMs: 20 }],
+        tokens: { total: 15, input: 10, output: 5 },
+        prompts: [pr],
+        retryCount: 0,
+      };
+    }
+
+    function createMockRunResult(count: number): EvalRunResult {
+      const iterations = Array.from({ length: count }, (_, i) =>
+        createMockIterationResult(i % 2 === 0)
+      );
+
+      return {
+        iterations: count,
+        successes: iterations.filter((i) => i.passed).length,
+        failures: iterations.filter((i) => !i.passed).length,
+        results: iterations.map((i) => i.passed),
+        iterationDetails: iterations,
+        tokenUsage: {
+          total: 15 * count,
+          input: 10 * count,
+          output: 5 * count,
+          perIteration: iterations.map((i) => i.tokens),
+        },
+        latency: {
+          e2e: { min: 100, max: 100, mean: 100, p50: 100, p95: 100, count },
+          llm: { min: 80, max: 80, mean: 80, p50: 80, p95: 80, count },
+          mcp: { min: 20, max: 20, mean: 20, p50: 20, p95: 20, count },
+          perIteration: iterations.flatMap((i) => i.latencies),
+        },
+      };
+    }
+
+    it("addFromRun converts all iterations", () => {
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "run-test",
+      });
+
+      const run = createMockRunResult(3);
+      reporter.addFromRun(run, { casePrefix: "test-case" });
+      expect(reporter.getAddedCount()).toBe(3);
+      expect(reporter.getBufferedCount()).toBe(3);
+    });
+
+    it("addFromSuiteRun converts all tests and iterations", () => {
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "suite-test",
+      });
+
+      const suiteRun = new Map<string, EvalRunResult>();
+      suiteRun.set("test-a", createMockRunResult(2));
+      suiteRun.set("test-b", createMockRunResult(3));
+
+      reporter.addFromSuiteRun(suiteRun, { casePrefix: "suite" });
+      expect(reporter.getAddedCount()).toBe(5);
+      expect(reporter.getBufferedCount()).toBe(5);
+    });
+  });
+
+  describe("recordFromRun / recordFromSuiteRun", () => {
+    function createMockIterationResult(passed: boolean): IterationResult {
+      const pr = PromptResult.from({
+        prompt: "test",
+        messages: [{ role: "user", content: "test" }],
+        text: "ok",
+        toolCalls: [{ toolName: "my_tool", arguments: {} }],
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        latency: { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+        provider: "openai",
+        model: "gpt-4o",
+      });
+
+      return {
+        passed,
+        latencies: [{ e2eMs: 100, llmMs: 80, mcpMs: 20 }],
+        tokens: { total: 15, input: 10, output: 5 },
+        prompts: [pr],
+        retryCount: 0,
+      };
+    }
+
+    function createMockRunResult(count: number): EvalRunResult {
+      const iterations = Array.from({ length: count }, (_, i) =>
+        createMockIterationResult(i % 2 === 0)
+      );
+
+      return {
+        iterations: count,
+        successes: iterations.filter((i) => i.passed).length,
+        failures: iterations.filter((i) => !i.passed).length,
+        results: iterations.map((i) => i.passed),
+        iterationDetails: iterations,
+        tokenUsage: {
+          total: 15 * count,
+          input: 10 * count,
+          output: 5 * count,
+          perIteration: iterations.map((i) => i.tokens),
+        },
+        latency: {
+          e2e: { min: 100, max: 100, mean: 100, p50: 100, p95: 100, count },
+          llm: { min: 80, max: 80, mean: 80, p50: 80, p95: 80, count },
+          mcp: { min: 20, max: 20, mean: 20, p50: 20, p95: 20, count },
+          perIteration: iterations.flatMap((i) => i.latencies),
+        },
+      };
+    }
+
+    it("recordFromRun adds results and tracks count", async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValue(
+          okResponse({
+            suiteId: "suite_1",
+            runId: "run_1",
+            status: "running",
+            result: "pending",
+          })
+        );
+      global.fetch = fetchMock as any;
+
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "record-run-test",
+      });
+
+      const run = createMockRunResult(3);
+      await reporter.recordFromRun(run, { casePrefix: "test-case" });
+      expect(reporter.getAddedCount()).toBe(3);
+    });
+
+    it("recordFromSuiteRun adds results and tracks count", async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValue(
+          okResponse({
+            suiteId: "suite_1",
+            runId: "run_1",
+            status: "running",
+            result: "pending",
+          })
+        );
+      global.fetch = fetchMock as any;
+
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "record-suite-test",
+      });
+
+      const suiteRun = new Map<string, EvalRunResult>();
+      suiteRun.set("test-a", createMockRunResult(2));
+      suiteRun.set("test-b", createMockRunResult(3));
+
+      await reporter.recordFromSuiteRun(suiteRun, { casePrefix: "suite" });
+      expect(reporter.getAddedCount()).toBe(5);
+    });
+
+    it("recordFromPrompt triggers auto-flush when buffer is large", async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce(
+          okResponse({
+            suiteId: "suite_1",
+            runId: "run_1",
+            status: "running",
+            result: "pending",
+          })
+        )
+        .mockResolvedValue(okResponse({ inserted: 200, skipped: 0, total: 200 }));
+      global.fetch = fetchMock as any;
+
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "autoflush-test",
+      });
+
+      // Fill the buffer to the 200-result threshold
+      for (let i = 0; i < 199; i++) {
+        reporter.add({ caseTitle: `case-${i}`, passed: true });
+      }
+      expect(reporter.getBufferedCount()).toBe(199);
+
+      // The 200th result via record() should trigger auto-flush
+      const pr = PromptResult.from({
+        prompt: "test",
+        messages: [{ role: "user", content: "test" }],
+        text: "ok",
+        toolCalls: [],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        latency: { e2eMs: 0, llmMs: 0, mcpMs: 0 },
+      });
+      await reporter.recordFromPrompt(pr, { caseTitle: "flush-trigger", passed: true });
+
+      // Buffer should be empty after auto-flush
+      expect(reporter.getBufferedCount()).toBe(0);
+      expect(reporter.getAddedCount()).toBe(200);
+      // fetch should have been called (startEvalRun + appendIterations)
+      expect(fetchMock).toHaveBeenCalled();
+    });
   });
 });

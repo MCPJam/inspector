@@ -5,11 +5,12 @@
 import { generateText, stepCountIs, dynamicTool, jsonSchema } from "ai";
 import type { ToolSet, ModelMessage, UserModelMessage } from "ai";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { createModelFromString } from "./model-factory.js";
+import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider } from "./types.js";
+import type { EvalAgent, PromptOptions } from "./EvalAgent.js";
 import type { Tool, AiSdkTool } from "./mcp-client-manager/types.js";
 import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
 
@@ -35,13 +36,8 @@ export interface TestAgentConfig {
     | Record<string, CustomProvider>;
 }
 
-/**
- * Options for the prompt() method
- */
-export interface PromptOptions {
-  /** Previous PromptResult(s) to include as conversation context for multi-turn conversations */
-  context?: PromptResult | PromptResult[];
-}
+// Re-export PromptOptions for backward compatibility
+export type { PromptOptions } from "./EvalAgent.js";
 
 /**
  * Type guard to check if tools is Tool[] (from getTools())
@@ -106,7 +102,7 @@ function convertToToolSet(tools: Tool[]): ToolSet {
  * console.log(result.text); // "The result of adding 2 and 3 is 5."
  * ```
  */
-export class TestAgent {
+export class TestAgent implements EvalAgent {
   private readonly tools: ToolSet;
   private readonly model: string;
   private readonly apiKey: string;
@@ -116,6 +112,11 @@ export class TestAgent {
   private readonly customProviders?:
     | Map<string, CustomProvider>
     | Record<string, CustomProvider>;
+
+  /** Normalized provider name parsed from the model string */
+  private readonly _parsedProvider: string;
+  /** Normalized model name parsed from the model string */
+  private readonly _parsedModel: string;
 
   /** The result of the last prompt (for toolsCalled() convenience method) */
   private lastResult: PromptResult | undefined;
@@ -138,6 +139,19 @@ export class TestAgent {
     this.temperature = config.temperature;
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
+
+    // Parse the model string once to extract provider/model metadata
+    try {
+      const parsed = parseLLMString(config.model);
+      this._parsedProvider =
+        parsed.type === "builtin" ? parsed.provider : parsed.providerName;
+      this._parsedModel = parsed.model;
+    } catch {
+      // Fallback for unparseable model strings (e.g., mock agents)
+      const parts = config.model.split("/");
+      this._parsedProvider = parts.length > 1 ? parts[0] : "";
+      this._parsedModel = parts.length > 1 ? parts.slice(1).join("/") : config.model;
+    }
   }
 
   /**
@@ -294,6 +308,8 @@ export class TestAgent {
           totalTokens: inputTokens + outputTokens,
         },
         latency: { e2eMs, llmMs: totalLlmMs, mcpMs: totalMcpMs },
+        provider: this._parsedProvider,
+        model: this._parsedModel,
       });
 
       this.promptHistory.push(this.lastResult);
@@ -310,7 +326,8 @@ export class TestAgent {
           llmMs: totalLlmMs,
           mcpMs: totalMcpMs,
         },
-        message
+        message,
+        { provider: this._parsedProvider, model: this._parsedModel }
       );
       this.promptHistory.push(this.lastResult);
       return this.lastResult;
@@ -421,6 +438,7 @@ export class TestAgent {
    */
   resetPromptHistory(): void {
     this.promptHistory = [];
+    this.lastResult = undefined;
   }
 
   /**
@@ -429,5 +447,72 @@ export class TestAgent {
    */
   getPromptHistory(): PromptResult[] {
     return [...this.promptHistory];
+  }
+
+  /**
+   * Get the normalized provider name parsed from the model string.
+   */
+  getParsedProvider(): string {
+    return this._parsedProvider;
+  }
+
+  /**
+   * Get the normalized model name parsed from the model string.
+   */
+  getParsedModel(): string {
+    return this._parsedModel;
+  }
+
+  /**
+   * Create a mock TestAgent for deterministic eval tests.
+   * The mock agent calls the provided function instead of making real LLM calls.
+   *
+   * @param promptFn - Function that returns a PromptResult for a given message
+   * @returns A TestAgent-compatible object for use in EvalTest/EvalSuite
+   *
+   * @example
+   * ```typescript
+   * const agent = TestAgent.mock(async (message) =>
+   *   PromptResult.from({
+   *     prompt: message,
+   *     messages: [{ role: "user", content: message }],
+   *     text: "mocked response",
+   *     toolCalls: [{ toolName: "my_tool", arguments: {} }],
+   *     usage: { inputTokens: 50, outputTokens: 50, totalTokens: 100 },
+   *     latency: { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+   *   })
+   * );
+   *
+   * const test = new EvalTest({
+   *   name: "my-test",
+   *   test: async (a) => {
+   *     const r = await a.prompt("test");
+   *     return r.hasToolCall("my_tool");
+   *   },
+   * });
+   * await test.run(agent, { iterations: 3 });
+   * ```
+   */
+  static mock(
+    promptFn: (message: string, options?: PromptOptions) => PromptResult | Promise<PromptResult>
+  ): EvalAgent {
+    const createAgent = (): EvalAgent => {
+      let promptHistory: PromptResult[] = [];
+
+      return {
+        prompt: async (message: string, options?: PromptOptions) => {
+          const result = await promptFn(message, options);
+          promptHistory.push(result);
+          return result;
+        },
+        resetPromptHistory: () => {
+          promptHistory = [];
+        },
+        getPromptHistory: () => [...promptHistory],
+        withOptions: () => createAgent(),
+      };
+    };
+
+    return createAgent();
   }
 }

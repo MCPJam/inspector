@@ -448,6 +448,31 @@ describe("TestAgent", () => {
       await agent.prompt("Subtract");
       expect(agent.toolsCalled()).toEqual(["subtract"]);
     });
+
+    it("should clear toolsCalled, getLastResult, and getPromptHistory after resetPromptHistory", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Done",
+        steps: [{ toolCalls: [{ toolName: "add", args: {} }] }],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Add numbers");
+      expect(agent.toolsCalled()).toEqual(["add"]);
+      expect(agent.getLastResult()).toBeDefined();
+      expect(agent.getPromptHistory()).toHaveLength(1);
+
+      agent.resetPromptHistory();
+
+      expect(agent.toolsCalled()).toEqual([]);
+      expect(agent.getLastResult()).toBeUndefined();
+      expect(agent.getPromptHistory()).toHaveLength(0);
+    });
   });
 
   describe("withOptions()", () => {
@@ -534,6 +559,145 @@ describe("TestAgent", () => {
 
       expect(lastResult).toBe(promptResult);
       expect(lastResult?.text).toBe("The answer");
+    });
+  });
+
+  describe("provider/model metadata", () => {
+    it("should parse builtin provider/model from model string", () => {
+      const agent = new TestAgent({
+        tools: {},
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      expect(agent.getParsedProvider()).toBe("openai");
+      expect(agent.getParsedModel()).toBe("gpt-4o");
+    });
+
+    it("should parse multi-segment model names", () => {
+      const agent = new TestAgent({
+        tools: {},
+        model: "openrouter/openai/gpt-5-mini",
+        apiKey: "test-key",
+      });
+
+      expect(agent.getParsedProvider()).toBe("openrouter");
+      expect(agent.getParsedModel()).toBe("openai/gpt-5-mini");
+    });
+
+    it("should handle unparseable model strings gracefully", () => {
+      const agent = new TestAgent({
+        tools: {},
+        model: "just-a-model",
+        apiKey: "test-key",
+      });
+
+      expect(agent.getParsedProvider()).toBe("");
+      expect(agent.getParsedModel()).toBe("just-a-model");
+    });
+
+    it("should inject provider/model into PromptResult on success", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: {},
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      const result = await agent.prompt("Test");
+      expect(result.getProvider()).toBe("openai");
+      expect(result.getModel()).toBe("gpt-4o");
+    });
+
+    it("should inject provider/model into PromptResult on error", async () => {
+      mockGenerateText.mockRejectedValueOnce(new Error("fail"));
+
+      const agent = new TestAgent({
+        tools: {},
+        model: "anthropic/claude-3-5-sonnet-20241022",
+        apiKey: "test-key",
+      });
+
+      const result = await agent.prompt("Test");
+      expect(result.getProvider()).toBe("anthropic");
+      expect(result.getModel()).toBe("claude-3-5-sonnet-20241022");
+    });
+  });
+
+  describe("mock()", () => {
+    it("should create a mock agent that calls promptFn", async () => {
+      const agent = TestAgent.mock(async (message) =>
+        PromptResult.from({
+          prompt: message,
+          messages: [{ role: "user", content: message }],
+          text: "mocked",
+          toolCalls: [{ toolName: "test_tool", arguments: {} }],
+          usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+          latency: { e2eMs: 50, llmMs: 30, mcpMs: 20 },
+        })
+      );
+
+      const result = await agent.prompt("hello");
+      expect(result.text).toBe("mocked");
+      expect(result.toolsCalled()).toEqual(["test_tool"]);
+      expect(result.prompt).toBe("hello");
+    });
+
+    it("should track prompt history", async () => {
+      const agent = TestAgent.mock(async (message) =>
+        PromptResult.from({
+          prompt: message,
+          messages: [],
+          text: message,
+          toolCalls: [],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          latency: { e2eMs: 0, llmMs: 0, mcpMs: 0 },
+        })
+      );
+
+      await agent.prompt("first");
+      await agent.prompt("second");
+      expect(agent.getPromptHistory()).toHaveLength(2);
+    });
+
+    it("should reset prompt history", async () => {
+      const agent = TestAgent.mock(async (message) =>
+        PromptResult.from({
+          prompt: message,
+          messages: [],
+          text: "",
+          toolCalls: [],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          latency: { e2eMs: 0, llmMs: 0, mcpMs: 0 },
+        })
+      );
+
+      await agent.prompt("test");
+      agent.resetPromptHistory();
+      expect(agent.getPromptHistory()).toHaveLength(0);
+    });
+
+    it("should create independent clones via withOptions", async () => {
+      const agent = TestAgent.mock(async (message) =>
+        PromptResult.from({
+          prompt: message,
+          messages: [],
+          text: "",
+          toolCalls: [],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          latency: { e2eMs: 0, llmMs: 0, mcpMs: 0 },
+        })
+      );
+
+      const clone = agent.withOptions({});
+      await agent.prompt("original");
+      expect(agent.getPromptHistory()).toHaveLength(1);
+      expect(clone.getPromptHistory()).toHaveLength(0);
     });
   });
 

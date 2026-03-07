@@ -117,4 +117,8 @@ export interface PromptResultData {
   usage: TokenUsage;
   latency: LatencyBreakdown;
   error?: string;
+  /** LLM provider name (e.g., "openai", "anthropic") */
+  provider?: string;
+  /** LLM model name (e.g., "gpt-4o", "claude-3-5-sonnet-20241022") */
+  model?: string;
 }
