@@ -1,6 +1,5 @@
-# Use specific Node.js version to avoid vulnerabilities in older versions
-# CVE fixes require Node.js 20.20.0+ (race condition, symlink following, uncaught exception)
-ARG NODE_VERSION=20.20.0
+# Use specific Node.js version to match local/CI runtimes and dependency engines
+ARG NODE_VERSION=24.14.0
 
 FROM node:${NODE_VERSION}-alpine AS base
 
