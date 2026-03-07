@@ -11,6 +11,80 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 
+const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
+
+function tryParseStructuredArgumentString(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const firstCharacter = trimmed[0];
+  if (firstCharacter !== "{" && firstCharacter !== "[") {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed !== null && typeof parsed === "object") {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function stringifyToolArgumentValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value);
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (value === undefined) {
+    return "undefined";
+  }
+
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+export function resolveFormattedArgumentValue(value: unknown):
+  | { kind: "structured"; value: unknown }
+  | { kind: "text"; value: string; renderAsBlock: boolean } {
+  if (value !== null && typeof value === "object") {
+    return { kind: "structured", value };
+  }
+
+  if (typeof value === "string") {
+    const parsedStructuredValue = tryParseStructuredArgumentString(value);
+    if (parsedStructuredValue !== null) {
+      return { kind: "structured", value: parsedStructuredValue };
+    }
+  }
+
+  const textValue = stringifyToolArgumentValue(value);
+  return {
+    kind: "text",
+    value: textValue,
+    renderAsBlock:
+      textValue.length > TOOL_ARGUMENT_BLOCK_THRESHOLD ||
+      textValue.includes("\n"),
+  };
+}
+
 export function IterationDetails({
   iteration,
   testCase,
@@ -161,12 +235,17 @@ export function IterationDetails({
       return <span className="text-muted-foreground italic">No arguments</span>;
     }
     return (
-      <div className="space-y-1">
+      <div className="space-y-2">
         {entries.map(([key, value]) => {
           const argSchema = toolName ? getArgumentSchema(toolName, key) : null;
+          const formattedValue = resolveFormattedArgumentValue(value);
+
           return (
-            <div key={key} className="flex items-start gap-2">
-              <div className="flex items-center gap-1.5">
+            <div
+              key={key}
+              className="rounded-md border border-border/20 bg-background/40 px-2 py-1.5"
+            >
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="font-medium text-foreground">{key}:</span>
                 {argSchema?.type && (
                   <span className="text-[10px] font-normal text-muted-foreground bg-background/50 px-1.5 py-0.5 rounded border border-border/40">
@@ -174,11 +253,27 @@ export function IterationDetails({
                   </span>
                 )}
               </div>
-              <span className="font-mono text-muted-foreground">
-                {typeof value === "object"
-                  ? JSON.stringify(value)
-                  : String(value)}
-              </span>
+
+              {formattedValue.kind === "structured" ? (
+                <div className="mt-2 overflow-hidden rounded-md border border-border/30 bg-background/80">
+                  <JsonEditor
+                    value={formattedValue.value}
+                    viewOnly
+                    collapsible
+                    defaultExpandDepth={1}
+                    collapseStringsAfterLength={160}
+                    className="max-h-72"
+                  />
+                </div>
+              ) : formattedValue.renderAsBlock ? (
+                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border/20 bg-background/70 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  {formattedValue.value}
+                </pre>
+              ) : (
+                <div className="mt-1 min-w-0 break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  {formattedValue.value}
+                </div>
+              )}
             </div>
           );
         })}
