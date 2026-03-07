@@ -178,3 +178,6 @@ export type {
   ParsedLLMString,
   ProviderLanguageModel,
 } from "./model-factory.js";
+
+// Skill reference (SKILL.md content for agent brief generation)
+export { SKILL_MD } from "./skill-reference.js";
