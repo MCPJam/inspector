@@ -134,7 +134,6 @@ MCP_SERVER_URL=https://your-server.example.com/sse
 
 # MCPJam reporting (optional - enables auto-upload)
 # MCPJAM_API_KEY=mcpjam_...
-# MCPJAM_BASE_URL=https://your-instance.convex.site
 ```
 
 ### .gitignore additions
@@ -179,6 +178,8 @@ const tools = await manager.getToolsForAiSdk(["server-id"]);
 // Cleanup
 await manager.disconnectAllServers();
 ```
+
+> **Tool names:** `getToolsForAiSdk()` uses the exact tool names from the MCP server — no server-id prefix is added. Use these names directly in `hasToolCall()` and validators. For example, if the server exposes `read_me`, use `result.hasToolCall("read_me")`, not `result.hasToolCall("myserver__read_me")`.
 
 ### TestAgent — LLM-Powered Agent
 
@@ -367,8 +368,7 @@ import type { EvalRunReporter } from "@mcpjam/sdk";
 await reportEvalResults({
   suiteName: "My Evals",
   apiKey: process.env.MCPJAM_API_KEY!,
-  baseUrl: process.env.MCPJAM_BASE_URL!,
-  strict: true,           // throw on error (false = warn only)
+  strict: true,           // true = throw on error; false = log warning + return null (results silently not uploaded)
   results: [
     { caseTitle: "test-1", passed: true },
     { caseTitle: "test-2", passed: false, error: "wrong tool" },
@@ -382,7 +382,6 @@ const output = await reportEvalResultsSafely({ ... });
 const reporter = createEvalRunReporter({
   suiteName: "My Evals",
   apiKey: process.env.MCPJAM_API_KEY!,
-  baseUrl: process.env.MCPJAM_BASE_URL!,
   strict: true,
   suiteDescription: "Eval suite for my MCP server",
   serverNames: ["my-server"],
@@ -429,7 +428,6 @@ const MODEL = process.env.EVAL_MODEL ?? "{LLM_MODEL}";
 const SERVER_ID = "my-server";
 
 const MCPJAM_API_KEY = process.env.MCPJAM_API_KEY;
-const MCPJAM_BASE_URL = process.env.MCPJAM_BASE_URL;
 const RUN_LLM_TESTS = Boolean(LLM_API_KEY);
 ```
 
@@ -454,7 +452,6 @@ if (MCPJAM_API_KEY) {
   reporter = createEvalRunReporter({
     suiteName: "My Server Evals",
     apiKey: MCPJAM_API_KEY,
-    baseUrl: MCPJAM_BASE_URL!,
     strict: true,
     expectedIterations: 10,
   });
@@ -466,6 +463,16 @@ afterAll(async () => {
   expect(output.runId).toBeTruthy();
 }, 90_000);
 ```
+
+The reporter buffers uploads. A run may not appear in the MCPJam UI until
+`reporter.flush()` or `reporter.finalize()` completes.
+
+For long-running files, call `await reporter.flush()` periodically if you want
+the run to become visible before the entire file finishes.
+
+`expectedIterations` must equal the exact number of reported results. Count
+every `recordFromPrompt()` call, every iteration emitted by `recordFromRun()`,
+and every iteration emitted by `recordFromSuiteRun()`.
 
 ### Pattern 4: Agent Parameterization
 
@@ -604,28 +611,32 @@ Follow these rules when generating eval test files:
 
 2. **One EvalTest per tool** — create a separate `EvalTest` for each tool you want to evaluate. Each test should prompt the agent with a natural-language request and assert the correct tool was selected.
 
-3. **Multi-turn for related tools** — when tools logically chain together (e.g., `get_user` then `list_workspaces`), create a multi-turn test using `{ context: previousResult }`.
+3. **Single-shot LLM tests are non-deterministic** — a single `agent.prompt()` may not select the expected tool every time. For single-shot tests, prefer recording results to the reporter without hard-asserting (`expect(...).toBe(true)`). Use `EvalTest` with `iterations >= 3` and assert on `accuracy()` for reliable pass/fail gates. Reserve hard asserts for high-confidence cases (negative tests, multi-turn with clear context).
 
-4. **Negative test** — always include at least one test that verifies the agent does NOT call tools when given an irrelevant prompt (e.g., "What is the capital of France?"). Use `matchNoToolCalls()`.
+4. **Write unambiguous prompts for similar tools** — when a server has tools with overlapping descriptions (e.g., `create_view` vs `export_to_excalidraw`), prompts must reference the tool's *unique* action. Mention specific verbs, targets, or outcomes. Bad: "Share my diagram". Good: "Export and upload my diagram to excalidraw.com so I can open it in a browser".
 
-5. **Reasonable defaults**:
+5. **Multi-turn for related tools** — when tools logically chain together (e.g., `get_user` then `list_workspaces`), create a multi-turn test using `{ context: previousResult }`.
+
+6. **Negative test** — always include at least one test that verifies the agent does NOT call tools when given an irrelevant prompt (e.g., "What is the capital of France?"). Use `matchNoToolCalls()`.
+
+7. **Reasonable defaults**:
    - `iterations: 5` for EvalTest runs
    - `timeoutMs: 60_000` for LLM tests
    - `maxSteps: 8` for TestAgent
    - `retries: 1` for flaky network tolerance
    - `concurrency: 5` (default, no need to set explicitly)
 
-6. **Timeout on test cases** — set explicit timeouts on `it()` blocks: `90_000` for single-turn, `120_000` for multi-turn and suite tests.
+8. **Timeout on test cases** — set explicit timeouts on `it()` blocks: `90_000` for single-turn, `120_000` for multi-turn and suite tests.
 
-7. **Always `await`** — every `agent.prompt()`, `test.run()`, `suite.run()`, `reporter.record*()`, and `reporter.finalize()` is async. Never forget `await`.
+9. **Always `await`** — every `agent.prompt()`, `test.run()`, `suite.run()`, `reporter.record*()`, and `reporter.finalize()` is async. Never forget `await`.
 
-8. **One reporter per file** — create the reporter at module level and finalize in `afterAll`. Never create multiple reporters in the same file.
+10. **One reporter per file** — create the reporter at module level and finalize in `afterAll`. Never create multiple reporters in the same file.
 
-9. **Use `describe.skip` for missing credentials** — wrap LLM tests in conditional describe blocks so CI runs cleanly without secrets.
+11. **Use `describe.skip` for missing credentials** — wrap LLM tests in conditional describe blocks so CI runs cleanly without secrets.
 
-10. **Match the repo's test runner** — check `package.json` and config files for an existing test framework before generating. Only default to Vitest if the repo has no test runner. If the user prefers no framework at all, use `@mcpjam/sdk` classes (`EvalTest.run()`, `EvalSuite.run()`) standalone in a plain script.
+12. **Match the repo's test runner** — check `package.json` and config files for an existing test framework before generating. Only default to Vitest if the repo has no test runner. If the user prefers no framework at all, use `@mcpjam/sdk` classes (`EvalTest.run()`, `EvalSuite.run()`) standalone in a plain script.
 
-11. **Log key metrics** — add `console.log` statements for accuracy, tool calls, and latency so CI output is informative.
+13. **Log key metrics** — add `console.log` statements for accuracy, tool calls, and latency so CI output is informative.
 
 ---
 
@@ -656,7 +667,6 @@ const MODEL = process.env.EVAL_MODEL ?? "{LLM_MODEL}";
 const SERVER_ID = "{server_id}";
 
 const MCPJAM_API_KEY = process.env.MCPJAM_API_KEY;
-const MCPJAM_BASE_URL = process.env.MCPJAM_BASE_URL;
 
 const RUN_LLM_TESTS = Boolean(LLM_API_KEY) && Boolean(MCP_SERVER_URL);
 
@@ -670,15 +680,14 @@ const PROMPTS = {
 // ─── Reporter ───────────────────────────────────────────────────────────────
 let reporter: EvalRunReporter;
 
-if (MCPJAM_API_KEY && MCPJAM_BASE_URL) {
+if (MCPJAM_API_KEY) {
   reporter = createEvalRunReporter({
     suiteName: "{Suite Name}",
     apiKey: MCPJAM_API_KEY,
-    baseUrl: MCPJAM_BASE_URL,
     strict: true,
     suiteDescription: "Eval suite for {server_name}",
     serverNames: [SERVER_ID],
-    expectedIterations: 10, // adjust based on test count * iterations
+    expectedIterations: 10, // must exactly match the number of reported results
   });
 }
 
@@ -851,6 +860,17 @@ afterAll(async () => {
 }, 90_000);
 ```
 
+### Expecting immediate UI visibility
+`recordFromPrompt()` and the other `record*()` helpers add buffered results, but
+they do not guarantee an immediate upload. A long-running file may not appear in
+the UI until `flush()` or `finalize()` runs.
+
+If you need the run to show up before the file completes, flush periodically:
+```typescript
+await reporter.recordFromPrompt(result, { caseTitle: "step-1", passed: true });
+await reporter.flush();
+```
+
 ### Not awaiting async methods
 Every SDK method that talks to an LLM, MCP server, or reporting API is async. Missing `await` causes silent failures:
 ```typescript
@@ -877,6 +897,26 @@ it("test name", async () => { ... }, 90_000);  // 90 seconds
 
 ### Creating multiple reporters
 One reporter per test file. Creating multiple reporters results in multiple incomplete runs instead of one consolidated run.
+
+### Incorrect `expectedIterations`
+`expectedIterations` is not a rough estimate. It should exactly equal the total
+number of eval results reported for the file.
+
+Count:
+- One result per `recordFromPrompt()`
+- One result per iteration inside `recordFromRun()`
+- One result per iteration inside `recordFromSuiteRun()`
+
+If the count is wrong, the UI can show misleading progress for a run.
+
+### Using `strict: false` without checking results
+With `strict: false`, reporting failures are silently swallowed — a `console.warn` is emitted and `finalize()` returns a local fallback with an empty `runId`. Always check `output.runId` after finalize to confirm results were uploaded:
+```typescript
+const output = await reporter.finalize();
+if (!output.runId) {
+  console.error("Results were NOT uploaded to MCPJam — check baseUrl and apiKey");
+}
+```
 
 ---
 
