@@ -1,16 +1,17 @@
 import { defineConfig, Plugin } from "vite";
 import { resolve } from "path";
 import { copyFileSync, mkdirSync } from "fs";
+import { builtinModules } from "module";
 
 // Plugin to copy sandbox proxy HTML files to the Electron main build output
 function copySandboxProxy(): Plugin {
   const filesToCopy = [
     {
-      src: "server/routes/mcp/sandbox-proxy.html",
+      src: "server/routes/apps/mcp-apps/sandbox-proxy.html",
       dest: "sandbox-proxy.html",
     },
     {
-      src: "server/routes/apps/chatgpt-sandbox-proxy.html",
+      src: "server/routes/apps/chatgpt-apps/sandbox-proxy.html",
       dest: "chatgpt-sandbox-proxy.html",
     },
   ];
@@ -44,11 +45,10 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
-        // Core Electron & Node modules only
         "electron",
-        // Native modules that can't be bundled
         "@ngrok/ngrok",
-        // Bundle everything else including electron-log, update-electron-app, etc.
+        ...builtinModules,
+        ...builtinModules.map((m) => `node:${m}`),
       ],
       output: {
         inlineDynamicImports: true,
