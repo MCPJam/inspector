@@ -54,7 +54,12 @@ describe("web routes — oauth no-auth required", () => {
     const { status, data } = await expectJson(response);
 
     expect(status).toBe(200);
-    expect(data).toEqual({ status: 200, statusText: "OK", headers: {}, body: { ok: true } });
+    expect(data).toEqual({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: { ok: true },
+    });
   });
 
   it("GET /metadata succeeds without bearer token", async () => {

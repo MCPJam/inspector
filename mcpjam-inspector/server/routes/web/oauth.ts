@@ -7,11 +7,7 @@ import {
   fetchOAuthMetadata,
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
-import {
-  ErrorCode,
-  WebRouteError,
-  mapRuntimeError,
-} from "./errors.js";
+import { ErrorCode, WebRouteError, mapRuntimeError } from "./errors.js";
 
 const oauthWeb = new Hono();
 

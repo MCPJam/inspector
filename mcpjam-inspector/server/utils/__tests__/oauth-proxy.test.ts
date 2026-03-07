@@ -25,9 +25,9 @@ describe("validateUrl — private IP blocking (httpsOnly)", () => {
 
   for (const url of privateHosts) {
     it(`blocks ${url} when httpsOnly`, async () => {
-      await expect(
-        executeOAuthProxy({ url, httpsOnly: true }),
-      ).rejects.toThrow(OAuthProxyError);
+      await expect(executeOAuthProxy({ url, httpsOnly: true })).rejects.toThrow(
+        OAuthProxyError,
+      );
 
       await expect(
         executeOAuthProxy({ url, httpsOnly: true }),

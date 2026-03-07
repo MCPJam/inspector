@@ -25,9 +25,13 @@ vi.mock("@/hooks/useOrganizations", () => ({
 }));
 
 vi.mock("@/components/ui/sidebar", () => ({
-  SidebarMenu: ({ children }: any) => <div data-testid="sidebar-menu">{children}</div>,
+  SidebarMenu: ({ children }: any) => (
+    <div data-testid="sidebar-menu">{children}</div>
+  ),
   SidebarMenuItem: ({ children }: any) => <div>{children}</div>,
-  SidebarMenuButton: ({ children, ...props }: any) => <button {...props}>{children}</button>,
+  SidebarMenuButton: ({ children, ...props }: any) => (
+    <button {...props}>{children}</button>
+  ),
   useSidebar: () => ({ isMobile: false }),
 }));
 
