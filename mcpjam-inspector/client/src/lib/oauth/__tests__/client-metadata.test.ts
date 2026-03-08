@@ -14,7 +14,7 @@ vi.mock("../state-machines/shared/helpers", () => ({
   generateRandomString: vi.fn(() => "mock-random-string"),
 }));
 
-const EXPECTED_LOGO_URI = "https://www.mcpjam.com/mcp_jam.svg";
+const EXPECTED_LOGO_URI = "https://www.mcpjam.com/mcp_jam_2row.png";
 
 describe("OAuth client metadata logo_uri", () => {
   beforeEach(() => {
