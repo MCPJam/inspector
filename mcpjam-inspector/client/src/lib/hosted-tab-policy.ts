@@ -1,10 +1,10 @@
 const HASH_TAB_ALIASES = {
-  registry: "servers",
   chat: "chat-v2",
 } as const;
 
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "servers",
+  "registry",
   "chat-v2",
   "app-builder",
   "views",

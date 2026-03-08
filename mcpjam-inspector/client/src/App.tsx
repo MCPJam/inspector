@@ -19,6 +19,7 @@ import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
+import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
@@ -498,6 +499,13 @@ export default function App() {
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
               onWorkspaceShared={handleWorkspaceShared}
               onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
+            />
+          )}
+          {activeTab === "registry" && (
+            <RegistryTab
+              onConnect={handleConnect}
+              onDisconnect={handleDisconnect}
+              servers={appState.servers}
             />
           )}
           {activeTab === "tools" && (

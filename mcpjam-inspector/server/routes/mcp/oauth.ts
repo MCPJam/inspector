@@ -6,6 +6,8 @@ import {
   executeDebugOAuthProxy,
   fetchOAuthMetadata,
   OAuthProxyError,
+  isTokenExchangeUrl,
+  fetchRegistryCredentials,
 } from "../../utils/oauth-proxy.js";
 
 const oauth = new Hono();
@@ -51,8 +53,23 @@ oauth.post("/debug/proxy", async (c) => {
  */
 oauth.post("/proxy", async (c) => {
   try {
-    const { url, method, body, headers } = await c.req.json();
-    const result = await executeOAuthProxy({ url, method, body, headers });
+    const { url, method, body, headers, registrySlug } = await c.req.json();
+
+    // For registry servers, inject clientSecret server-side during token exchange
+    let enrichedBody = body;
+    if (registrySlug && isTokenExchangeUrl(url)) {
+      const creds = await fetchRegistryCredentials(registrySlug);
+      if (creds?.clientSecret) {
+        enrichedBody = { ...body, client_secret: creds.clientSecret };
+      }
+    }
+
+    const result = await executeOAuthProxy({
+      url,
+      method,
+      body: enrichedBody,
+      headers,
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof OAuthProxyError) {

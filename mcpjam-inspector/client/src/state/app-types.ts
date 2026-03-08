@@ -41,6 +41,10 @@ export interface ServerWithName {
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
+  /** Whether this server is managed by the Registry tab (not shown in Servers tab). */
+  registryManaged?: boolean;
+  /** Registry slug for credential injection during OAuth. */
+  registrySlug?: string;
 }
 
 export interface Workspace {

@@ -13,6 +13,7 @@ import {
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
+  Package,
 } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 
@@ -53,6 +54,11 @@ const navigationSections = [
         title: "Servers",
         url: "#servers",
         icon: MCPIcon,
+      },
+      {
+        title: "Registry",
+        url: "#registry",
+        icon: Package,
       },
       {
         title: "Chat",

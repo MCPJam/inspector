@@ -25,6 +25,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  type MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
@@ -552,43 +553,49 @@ export function useServerState({
         retryCount: 0,
         enabled: true,
         useOAuth: formData.useOAuth ?? false,
+        registryManaged: formData.registryManaged,
+        registrySlug: formData.registrySlug,
       };
-      if (HOSTED_MODE) {
-        try {
-          const serverId = await syncServerToConvex(
-            formData.name,
-            serverEntryForSave,
-          );
-          if (serverId) {
-            injectHostedServerMapping(formData.name, serverId);
+
+      // Skip Convex workspace sync and workspace state for registry-managed servers
+      if (!formData.registryManaged) {
+        if (HOSTED_MODE) {
+          try {
+            const serverId = await syncServerToConvex(
+              formData.name,
+              serverEntryForSave,
+            );
+            if (serverId) {
+              injectHostedServerMapping(formData.name, serverId);
+            }
+          } catch (err) {
+            logger.warn("Sync to Convex failed (pre-connection)", {
+              serverName: formData.name,
+              err,
+            });
           }
-        } catch (err) {
-          logger.warn("Sync to Convex failed (pre-connection)", {
-            serverName: formData.name,
-            err,
-          });
+        } else {
+          syncServerToConvex(formData.name, serverEntryForSave).catch((err) =>
+            logger.warn("Background sync to Convex failed (pre-connection)", {
+              serverName: formData.name,
+              err,
+            }),
+          );
         }
-      } else {
-        syncServerToConvex(formData.name, serverEntryForSave).catch((err) =>
-          logger.warn("Background sync to Convex failed (pre-connection)", {
-            serverName: formData.name,
-            err,
-          }),
-        );
-      }
-      if (!isAuthenticated) {
-        const workspace = appState.workspaces[appState.activeWorkspaceId];
-        if (workspace) {
-          dispatch({
-            type: "UPDATE_WORKSPACE",
-            workspaceId: appState.activeWorkspaceId,
-            updates: {
-              servers: {
-                ...workspace.servers,
-                [formData.name]: serverEntryForSave,
+        if (!isAuthenticated) {
+          const workspace = appState.workspaces[appState.activeWorkspaceId];
+          if (workspace) {
+            dispatch({
+              type: "UPDATE_WORKSPACE",
+              workspaceId: appState.activeWorkspaceId,
+              updates: {
+                servers: {
+                  ...workspace.servers,
+                  [formData.name]: serverEntryForSave,
+                },
               },
-            },
-          });
+            });
+          }
         }
       }
 
@@ -654,15 +661,17 @@ export function useServerState({
             } as ServerWithName,
           });
 
-          const oauthOptions: any = {
+          const oauthOptions: MCPOAuthOptions = {
             serverName: formData.name,
             serverUrl: formData.url,
             clientId: formData.clientId,
-            clientSecret: formData.clientSecret,
+            // For registry servers, clientSecret is injected server-side
+            clientSecret: formData.registryManaged
+              ? undefined
+              : formData.clientSecret,
+            registrySlug: formData.registrySlug,
+            scopes: formData.oauthScopes,
           };
-          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
-            oauthOptions.scopes = formData.oauthScopes;
-          }
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
