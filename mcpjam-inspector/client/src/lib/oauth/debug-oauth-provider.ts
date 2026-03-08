@@ -32,6 +32,7 @@ export class DebugMCPOAuthClientProvider implements OAuthClientProvider {
       response_types: ["code"],
       client_name: "MCPJam",
       client_uri: "https://github.com/mcpjam/inspector",
+      logo_uri: "https://www.mcpjam.com/mcp_jam.svg",
     };
   }
 
