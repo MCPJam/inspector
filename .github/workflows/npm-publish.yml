@@ -12,7 +12,7 @@ on:
         type: string
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24.14.0"
 
 jobs:
   publish-npm:
