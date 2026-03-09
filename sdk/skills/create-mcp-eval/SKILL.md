@@ -20,7 +20,7 @@ Before generating any code, collect the following from the user:
 | **Connection type** | `stdio` (local binary) or `http` (SSE/Streamable HTTP URL) | `http` |
 | **Test framework** | `jest`, `vitest`, or `none` (SDK-only) | _(detect from repo; fall back to `vitest`)_ |
 | **LLM provider** | See Supported Providers table below. Format: `provider/model` | _(must ask user)_ |
-| **Save results to MCPJam** | `none`, `auto` (saves when MCPJAM_API_KEY is set), or `reporter` (shared EvalRunReporter) | `auto` |
+| **Save results to MCPJam** | `none`, `auto` (saves when MCPJAM_API_KEY is set), or `reporter` (shared EvalRunReporter). To get your API key, go to **Settings > Workspace API Key** in the MCPJam Inspector. | _(must ask user)_ |
 | **Tool list** | Ask user to paste their tool names or an **Agent Brief** (see Section 8) | — |
 
 If the user provides an **Agent Brief** (markdown with `## Tools` table), parse it to auto-populate tool names, descriptions, parameters, and suggested eval scenarios. See Section 8.
@@ -695,7 +695,8 @@ afterAll(async () => {
   if (!reporter || reporter.getAddedCount() === 0) return;
   const output = await reporter.finalize();
   expect(output.runId).toBeTruthy();
-  console.log(`Finalized: runId=${output.runId} passed=${output.summary.passed}/${output.summary.total}`);
+  console.log(`\n[mcpjam] Results saved — ${output.summary.passed}/${output.summary.total} passed`);
+  console.log(`[mcpjam] Open the Evals tab in the MCPJam Inspector to see your full results.\n`);
 }, 90_000);
 
 // ─── Deterministic Tests ────────────────────────────────────────────────────
@@ -845,6 +846,15 @@ if (!RUN_LLM_TESTS) {
     it.skip("Requires {LLM_ENV_VAR} + MCP_SERVER_URL", () => {});
   });
 }
+
+if (!MCPJAM_API_KEY) {
+  afterAll(() => {
+    console.log(`\n[mcpjam] You won't be able to see them in the CI/CD tab. To set up:`);
+    console.log(`[mcpjam] 1. Go to Settings > Workspace API Key in the MCPJam Inspector`);
+    console.log(`[mcpjam] 2. Add MCPJAM_API_KEY to your .env`);
+    console.log(`[mcpjam] 3. Re-run your evals — results are saved automatically\n`);
+  });
+}
 ```
 
 ---
@@ -989,10 +999,3 @@ it("selects search_tasks", async () => {
 }, 90_000);
 ```
 
----
-
-## 9. Post-Generation Message
-
-After generating the eval test file, if the user chose to save results to MCPJam (i.e., the save option is not `none`), include the following message:
-
-> Your eval results will be saved to MCPJam. After running your tests, check the **Evals** tab in the MCPJam Inspector to see your results, track accuracy over time, and compare across runs.
