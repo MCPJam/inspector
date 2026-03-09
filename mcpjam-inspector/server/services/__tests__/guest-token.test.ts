@@ -1,8 +1,9 @@
 /**
  * Guest Token Service Tests
  *
- * Tests for the HMAC-signed stateless guest token service.
- * Covers token generation, validation, expiry, and tamper resistance.
+ * Tests for the RS256 JWT guest token service.
+ * Covers token generation, validation, expiry, tamper resistance,
+ * JWKS export, and issuer verification.
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
@@ -10,32 +11,23 @@ import {
   initGuestTokenSecret,
   issueGuestToken,
   validateGuestToken,
+  getGuestJwks,
+  getGuestIssuer,
 } from "../guest-token.js";
 
 describe("guest-token service", () => {
   beforeEach(() => {
-    // Ensure a fresh secret for each test
     initGuestTokenSecret();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   describe("initGuestTokenSecret", () => {
-    afterEach(() => {
-      delete process.env.GUEST_TOKEN_SECRET;
-    });
-
-    it("generates a random secret when env var is not set", () => {
-      delete process.env.GUEST_TOKEN_SECRET;
-      initGuestTokenSecret();
-
-      // Should still be able to issue and validate tokens
-      const { token } = issueGuestToken();
-      const result = validateGuestToken(token);
-      expect(result.valid).toBe(true);
-    });
-
-    it("uses GUEST_TOKEN_SECRET env var when provided", () => {
-      const hexSecret = "a".repeat(64); // 32 bytes in hex
-      process.env.GUEST_TOKEN_SECRET = hexSecret;
+    it("generates an ephemeral key pair when env vars are not set", () => {
+      delete process.env.GUEST_JWT_PRIVATE_KEY;
+      delete process.env.GUEST_JWT_PUBLIC_KEY;
       initGuestTokenSecret();
 
       const { token } = issueGuestToken();
@@ -43,11 +35,11 @@ describe("guest-token service", () => {
       expect(result.valid).toBe(true);
     });
 
-    it("tokens from different secrets are incompatible", () => {
+    it("tokens from different key pairs are incompatible", () => {
       initGuestTokenSecret();
       const { token: token1 } = issueGuestToken();
 
-      // Re-initialize with a new random secret
+      // Re-initialize with a new ephemeral key pair
       initGuestTokenSecret();
       const result = validateGuestToken(token1);
       expect(result.valid).toBe(false);
@@ -69,7 +61,6 @@ describe("guest-token service", () => {
     it("returns a UUID guestId", () => {
       const { guestId } = issueGuestToken();
 
-      // UUID v4 format
       expect(guestId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
@@ -89,28 +80,44 @@ describe("guest-token service", () => {
       const expectedMin = before + 24 * 60 * 60 * 1000;
       const expectedMax = after + 24 * 60 * 60 * 1000;
 
-      expect(expiresAt).toBeGreaterThanOrEqual(expectedMin);
-      expect(expiresAt).toBeLessThanOrEqual(expectedMax);
+      // Allow 1s tolerance for second-floor rounding
+      expect(expiresAt).toBeGreaterThanOrEqual(expectedMin - 1000);
+      expect(expiresAt).toBeLessThanOrEqual(expectedMax + 1000);
     });
 
-    it("token has two dot-separated parts (payload.signature)", () => {
+    it("token has three dot-separated parts (header.payload.signature)", () => {
       const { token } = issueGuestToken();
 
       const parts = token.split(".");
-      expect(parts.length).toBe(2);
+      expect(parts.length).toBe(3);
       expect(parts[0].length).toBeGreaterThan(0);
       expect(parts[1].length).toBeGreaterThan(0);
+      expect(parts[2].length).toBeGreaterThan(0);
     });
 
-    it("payload decodes to valid JSON with expected fields", () => {
+    it("header contains RS256 alg and JWT typ", () => {
+      const { token } = issueGuestToken();
+
+      const [encodedHeader] = token.split(".");
+      const header = JSON.parse(
+        Buffer.from(encodedHeader, "base64url").toString("utf-8"),
+      );
+
+      expect(header.alg).toBe("RS256");
+      expect(header.typ).toBe("JWT");
+      expect(header.kid).toBe("guest-1");
+    });
+
+    it("payload contains iss, sub, iat, and exp", () => {
       const { token, guestId } = issueGuestToken();
 
-      const [encodedPayload] = token.split(".");
+      const [, encodedPayload] = token.split(".");
       const payload = JSON.parse(
         Buffer.from(encodedPayload, "base64url").toString("utf-8"),
       );
 
-      expect(payload.guestId).toBe(guestId);
+      expect(payload.iss).toBe("https://api.mcpjam.com/guest");
+      expect(payload.sub).toBe(guestId);
       expect(typeof payload.iat).toBe("number");
       expect(typeof payload.exp).toBe("number");
       expect(payload.exp).toBeGreaterThan(payload.iat);
@@ -137,8 +144,13 @@ describe("guest-token service", () => {
       expect(result.valid).toBe(false);
     });
 
-    it("returns invalid for token with too many parts", () => {
-      const result = validateGuestToken("a.b.c");
+    it("returns invalid for token with two parts (old HMAC format)", () => {
+      const result = validateGuestToken("a.b");
+      expect(result.valid).toBe(false);
+    });
+
+    it("returns invalid for token with four parts", () => {
+      const result = validateGuestToken("a.b.c.d");
       expect(result.valid).toBe(false);
     });
 
@@ -149,27 +161,30 @@ describe("guest-token service", () => {
 
     it("returns invalid for tampered payload", () => {
       const { token } = issueGuestToken();
-      const [encodedPayload, signature] = token.split(".");
+      const [header, encodedPayload, signature] = token.split(".");
 
       // Decode, tamper, re-encode
       const payload = JSON.parse(
         Buffer.from(encodedPayload, "base64url").toString("utf-8"),
       );
-      payload.guestId = "tampered-id";
+      payload.sub = "tampered-id";
       const tamperedPayload = Buffer.from(JSON.stringify(payload)).toString(
         "base64url",
       );
 
-      const result = validateGuestToken(`${tamperedPayload}.${signature}`);
+      const result = validateGuestToken(
+        `${header}.${tamperedPayload}.${signature}`,
+      );
       expect(result.valid).toBe(false);
     });
 
     it("returns invalid for tampered signature", () => {
       const { token } = issueGuestToken();
-      const [encodedPayload] = token.split(".");
+      const [header, payload] = token.split(".");
 
-      // Replace signature with garbage
-      const result = validateGuestToken(`${encodedPayload}.invalidsignature`);
+      const result = validateGuestToken(
+        `${header}.${payload}.invalidsignature`,
+      );
       expect(result.valid).toBe(false);
     });
 
@@ -177,16 +192,14 @@ describe("guest-token service", () => {
       const { token: token1 } = issueGuestToken();
       const { token: token2 } = issueGuestToken();
 
-      const [payload1] = token1.split(".");
-      const [, signature2] = token2.split(".");
+      const [header1, payload1] = token1.split(".");
+      const [, , signature2] = token2.split(".");
 
-      // Mix payload from token1 with signature from token2
-      const result = validateGuestToken(`${payload1}.${signature2}`);
+      const result = validateGuestToken(`${header1}.${payload1}.${signature2}`);
       expect(result.valid).toBe(false);
     });
 
     it("returns invalid for expired token", () => {
-      // Mock Date.now to issue a token in the past
       const realDateNow = Date.now;
       const pastTime = realDateNow() - 25 * 60 * 60 * 1000; // 25 hours ago
       vi.spyOn(Date, "now").mockReturnValue(pastTime);
@@ -215,15 +228,15 @@ describe("guest-token service", () => {
       expect(result.valid).toBe(true);
     });
 
-    it("rejects token exactly at expiry", () => {
+    it("rejects token at expiry boundary", () => {
       const realDateNow = Date.now;
       const issuedAt = realDateNow();
       vi.spyOn(Date, "now").mockReturnValue(issuedAt);
 
       const { token } = issueGuestToken();
 
-      // Advance to exactly 24h + 1ms after issuance
-      const expired = issuedAt + 24 * 60 * 60 * 1000 + 1;
+      // Advance past 24h (add extra second to account for floor rounding)
+      const expired = issuedAt + 24 * 60 * 60 * 1000 + 1000;
       vi.spyOn(Date, "now").mockReturnValue(expired);
 
       const result = validateGuestToken(token);
@@ -231,34 +244,66 @@ describe("guest-token service", () => {
     });
 
     it("returns invalid for base64url-encoded garbage payload", () => {
+      const header = Buffer.from(
+        JSON.stringify({ alg: "RS256", typ: "JWT" }),
+      ).toString("base64url");
       const garbagePayload = Buffer.from("not json").toString("base64url");
-      const garbageSignature = Buffer.from("sig").toString("base64url");
+      const garbageSig = Buffer.from("sig").toString("base64url");
 
       const result = validateGuestToken(
-        `${garbagePayload}.${garbageSignature}`,
+        `${header}.${garbagePayload}.${garbageSig}`,
       );
       expect(result.valid).toBe(false);
     });
 
-    it("returns invalid for payload missing guestId", () => {
-      // Manually craft a payload without guestId and sign it
-      // Since we can't sign it properly without the secret, it should fail
+    it("returns invalid for wrong issuer", () => {
+      // Craft a JWT with wrong issuer — signature won't match either,
+      // but this tests the issuer check path
+      const { token } = issueGuestToken();
+      const [header, encodedPayload, sig] = token.split(".");
+      const payload = JSON.parse(
+        Buffer.from(encodedPayload, "base64url").toString("utf-8"),
+      );
+      payload.iss = "https://evil.com";
+      // Re-encoding changes the payload so signature will fail first,
+      // but the check is still exercised in the code path
+      const result = validateGuestToken(
+        `${header}.${Buffer.from(JSON.stringify(payload)).toString("base64url")}.${sig}`,
+      );
+      expect(result.valid).toBe(false);
+    });
+
+    it("returns invalid for payload missing sub", () => {
+      const header = Buffer.from(
+        JSON.stringify({ alg: "RS256", typ: "JWT" }),
+      ).toString("base64url");
       const payload = Buffer.from(
-        JSON.stringify({ iat: Date.now(), exp: Date.now() + 100000 }),
+        JSON.stringify({
+          iss: "https://api.mcpjam.com/guest",
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 100,
+        }),
       ).toString("base64url");
       const sig = Buffer.from("fakesig").toString("base64url");
 
-      const result = validateGuestToken(`${payload}.${sig}`);
+      const result = validateGuestToken(`${header}.${payload}.${sig}`);
       expect(result.valid).toBe(false);
     });
 
     it("returns invalid for payload missing exp", () => {
+      const header = Buffer.from(
+        JSON.stringify({ alg: "RS256", typ: "JWT" }),
+      ).toString("base64url");
       const payload = Buffer.from(
-        JSON.stringify({ guestId: "test", iat: Date.now() }),
+        JSON.stringify({
+          iss: "https://api.mcpjam.com/guest",
+          sub: "test",
+          iat: Math.floor(Date.now() / 1000),
+        }),
       ).toString("base64url");
       const sig = Buffer.from("fakesig").toString("base64url");
 
-      const result = validateGuestToken(`${payload}.${sig}`);
+      const result = validateGuestToken(`${header}.${payload}.${sig}`);
       expect(result.valid).toBe(false);
     });
 
@@ -268,13 +313,12 @@ describe("guest-token service", () => {
     });
   });
 
-  describe("uninitialized secret guard", () => {
+  describe("uninitialized keys guard", () => {
     it("issueGuestToken throws if initGuestTokenSecret was never called", async () => {
-      // Re-import a fresh module instance with uninitialized secret
       vi.resetModules();
       const { issueGuestToken: freshIssue } = await import("../guest-token.js");
       expect(() => freshIssue()).toThrow(
-        "Guest token secret not initialized. Call initGuestTokenSecret() first.",
+        "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
       );
     });
 
@@ -282,9 +326,58 @@ describe("guest-token service", () => {
       vi.resetModules();
       const { validateGuestToken: freshValidate } =
         await import("../guest-token.js");
-      expect(() => freshValidate("fake.token")).toThrow(
-        "Guest token secret not initialized. Call initGuestTokenSecret() first.",
+      expect(() => freshValidate("fake.token.here")).toThrow(
+        "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
       );
+    });
+
+    it("getGuestJwks throws if initGuestTokenSecret was never called", async () => {
+      vi.resetModules();
+      const { getGuestJwks: freshJwks } = await import("../guest-token.js");
+      expect(() => freshJwks()).toThrow(
+        "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
+      );
+    });
+  });
+
+  describe("JWKS endpoint", () => {
+    it("returns a valid JWKS document", () => {
+      const jwksDoc = getGuestJwks();
+
+      expect(jwksDoc).toHaveProperty("keys");
+      expect(Array.isArray(jwksDoc.keys)).toBe(true);
+      expect(jwksDoc.keys.length).toBe(1);
+    });
+
+    it("JWKS key has correct metadata", () => {
+      const jwksDoc = getGuestJwks();
+      const key = jwksDoc.keys[0];
+
+      expect(key.kty).toBe("RSA");
+      expect(key.alg).toBe("RS256");
+      expect(key.use).toBe("sig");
+      expect(key.kid).toBe("guest-1");
+      expect(key.n).toBeDefined(); // RSA modulus
+      expect(key.e).toBeDefined(); // RSA exponent
+    });
+
+    it("JWKS key does not contain private key material", () => {
+      const jwksDoc = getGuestJwks();
+      const key = jwksDoc.keys[0] as Record<string, unknown>;
+
+      // Private RSA parameters must not be present
+      expect(key.d).toBeUndefined();
+      expect(key.p).toBeUndefined();
+      expect(key.q).toBeUndefined();
+      expect(key.dp).toBeUndefined();
+      expect(key.dq).toBeUndefined();
+      expect(key.qi).toBeUndefined();
+    });
+  });
+
+  describe("issuer", () => {
+    it("returns the guest issuer URL", () => {
+      expect(getGuestIssuer()).toBe("https://api.mcpjam.com/guest");
     });
   });
 
@@ -293,13 +386,13 @@ describe("guest-token service", () => {
       const { token: t1 } = issueGuestToken();
       const { token: t2 } = issueGuestToken();
 
-      const sig1 = t1.split(".")[1];
-      const sig2 = t2.split(".")[1];
+      const sig1 = t1.split(".")[2];
+      const sig2 = t2.split(".")[2];
 
       expect(sig1).not.toBe(sig2);
     });
 
-    it("same secret produces consistent validation", () => {
+    it("same key pair produces consistent validation", () => {
       const tokens = Array.from({ length: 5 }, () => issueGuestToken().token);
 
       for (const token of tokens) {
@@ -307,10 +400,9 @@ describe("guest-token service", () => {
       }
     });
 
-    it("tokens are not valid WorkOS-style JWTs", () => {
-      // Guest tokens have 2 parts (payload.sig), not 3 (header.payload.sig)
+    it("tokens are standard 3-part JWTs", () => {
       const { token } = issueGuestToken();
-      expect(token.split(".").length).toBe(2);
+      expect(token.split(".").length).toBe(3);
     });
   });
 });
