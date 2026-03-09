@@ -9,7 +9,10 @@ import {
   getUIResourceUri,
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { readToolResultMeta, readToolResultServerId } from "@/lib/tool-result-utils";
+import {
+  readToolResultMeta,
+  readToolResultServerId,
+} from "@/lib/tool-result-utils";
 
 export interface TraceContentPart {
   type: string;
@@ -534,9 +537,7 @@ function buildAssistantMessage(params: {
         !part.toolCallId,
       )?.part;
 
-      const toolCallWithId = part.toolCallId
-        ? part
-        : { ...part, toolCallId };
+      const toolCallWithId = part.toolCallId ? part : { ...part, toolCallId };
 
       parts.push(
         ...buildToolParts({

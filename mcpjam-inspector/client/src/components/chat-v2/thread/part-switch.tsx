@@ -41,7 +41,10 @@ import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { WidgetReplay } from "./widget-replay";
 
-import { readToolResultMeta, readToolResultServerId } from "@/lib/tool-result-utils";
+import {
+  readToolResultMeta,
+  readToolResultServerId,
+} from "@/lib/tool-result-utils";
 
 const NOOP_SEND_FOLLOW_UP = () => {};
 

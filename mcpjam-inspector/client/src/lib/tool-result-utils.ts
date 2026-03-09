@@ -33,9 +33,7 @@ export function readToolResultMeta(
   return undefined;
 }
 
-export function readToolResultServerId(
-  result: unknown,
-): string | undefined {
+export function readToolResultServerId(result: unknown): string | undefined {
   if (!isRecord(result)) return undefined;
 
   if (typeof result._serverId === "string") {

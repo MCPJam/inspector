@@ -9,7 +9,10 @@ import {
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getToolServerId, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import { readToolResultMeta, readToolResultServerId } from "@/lib/tool-result-utils";
+import {
+  readToolResultMeta,
+  readToolResultServerId,
+} from "@/lib/tool-result-utils";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 
 export interface WidgetReplayProps {
