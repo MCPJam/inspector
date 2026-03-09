@@ -28,7 +28,7 @@ import { PreferencesStoreProvider } from "./stores/preferences/preferences-provi
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
-import { usePostHog } from "posthog-js/react";
+import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
 
@@ -79,6 +79,7 @@ export default function App() {
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
+  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const {
     getAccessToken,
     signIn,
@@ -369,6 +370,16 @@ export default function App() {
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isSharedChatRoute]);
+
+  // Redirect away from tabs hidden by the ci-evals feature flag.
+  // Use strict equality to avoid redirecting while the flag is still loading (undefined).
+  useEffect(() => {
+    if (ciEvalsEnabled === true && activeTab === "evals") {
+      applyNavigation("servers", { updateHash: true });
+    } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
+      applyNavigation("servers", { updateHash: true });
+    }
+  }, [ciEvalsEnabled, activeTab, applyNavigation]);
 
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });

@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { toast } from "sonner";
-import { ServerConnectionCard } from "../ServerConnectionCard";
 import type { ServerWithName } from "@/hooks/use-app-state";
+
+// Mock the agent brief generator to avoid @mcpjam/sdk dependency
+vi.mock("@/lib/generate-agent-brief", () => ({
+  generateAgentBrief: vi.fn().mockReturnValue("mocked brief"),
+}));
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -12,6 +16,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
@@ -51,6 +56,9 @@ vi.mock("sonner", () => ({
     loading: vi.fn().mockReturnValue("toast-id"),
   },
 }));
+
+// Must import after mocks are set up
+import { ServerConnectionCard } from "../ServerConnectionCard";
 
 const createServer = (
   overrides: Partial<ServerWithName> = {},
