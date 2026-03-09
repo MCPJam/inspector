@@ -3,4 +3,4 @@ node_modules/
 .mcpjam/skills/
 **/.mcpjam/skills/
 .claude/
-*.bundled.ts
+mcpjam-inspector/server/routes/apps/**/*.bundled.ts
