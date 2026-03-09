@@ -180,10 +180,7 @@ function buildFetchUrl(targetUrl: URL): string {
 export async function executeOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const { url: targetUrl } = await validateUrl(
-    req.url,
-    req.httpsOnly,
-  );
+  const { url: targetUrl } = await validateUrl(req.url, req.httpsOnly);
   const method = req.method ?? "GET";
   const customHeaders = req.headers;
 
@@ -260,10 +257,7 @@ export async function executeOAuthProxy(
 export async function executeDebugOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const { url: targetUrl } = await validateUrl(
-    req.url,
-    req.httpsOnly,
-  );
+  const { url: targetUrl } = await validateUrl(req.url, req.httpsOnly);
   const method = req.method ?? "GET";
   const customHeaders = req.headers;
 

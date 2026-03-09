@@ -38,7 +38,9 @@ describe("web routes — guest OAuth validation", () => {
     disconnectAllServersMock.mockReset();
 
     getToolsForAiSdkMock.mockResolvedValue({});
-    getInitializationInfoMock.mockReturnValue({ serverVersion: { title: "T" } });
+    getInitializationInfoMock.mockReturnValue({
+      serverVersion: { title: "T" },
+    });
     disconnectAllServersMock.mockResolvedValue(undefined);
   });
 

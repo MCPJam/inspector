@@ -29,7 +29,9 @@ declare global {
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
 
-function mergeHeaders(...headersList: Array<HeadersInit | undefined>): HeadersInit {
+function mergeHeaders(
+  ...headersList: Array<HeadersInit | undefined>
+): HeadersInit {
   const merged: Record<string, string> = {};
 
   for (const headers of headersList) {

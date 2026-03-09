@@ -110,7 +110,9 @@ describe("authFetch hosted guest retry", () => {
       "Bearer workos-token",
     );
     vi.mocked(isGuestMode).mockReturnValue(false);
-    vi.mocked(global.fetch).mockResolvedValueOnce(new Response(null, { status: 401 }));
+    vi.mocked(global.fetch).mockResolvedValueOnce(
+      new Response(null, { status: 401 }),
+    );
 
     const response = await authFetch("/api/web/tools/list");
 
@@ -125,7 +127,9 @@ describe("authFetch hosted guest retry", () => {
       "Bearer stale-guest-token",
     );
     vi.mocked(isGuestMode).mockReturnValue(true);
-    vi.mocked(global.fetch).mockResolvedValueOnce(new Response(null, { status: 401 }));
+    vi.mocked(global.fetch).mockResolvedValueOnce(
+      new Response(null, { status: 401 }),
+    );
 
     const response = await authFetch("/api/web/tools/list", {
       headers: {

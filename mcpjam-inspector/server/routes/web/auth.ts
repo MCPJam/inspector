@@ -2,10 +2,7 @@ import { z } from "zod";
 import { MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
-import {
-  validateUrl,
-  OAuthProxyError,
-} from "../../utils/oauth-proxy.js";
+import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -417,9 +414,9 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         typeof (body as { oauthAccessToken?: unknown }).oauthAccessToken ===
         "string"
       ) {
-        headers["Authorization"] = `Bearer ${(
-          body as { oauthAccessToken: string }
-        ).oauthAccessToken}`;
+        headers["Authorization"] = `Bearer ${
+          (body as { oauthAccessToken: string }).oauthAccessToken
+        }`;
       }
 
       const httpConfig: HttpServerConfig = {
