@@ -16,6 +16,10 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
+vi.mock("@/lib/apis/web/context", () => ({
+  isGuestMode: () => false,
+}));
+
 import { reconnectServer, testConnection } from "../mcp-api";
 
 describe("mcp-api hosted-mode reconnect hardening", () => {

@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { webError, mapRuntimeError } from "./errors.js";
+import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
@@ -12,6 +14,12 @@ import exporter from "./export.js";
 import guestSession from "./guest-session.js";
 
 const web = new Hono();
+
+// Require bearer auth + guest rate limiting on MCP operation routes
+web.use("/servers/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
 web.route("/servers", servers);
 web.route("/tools", tools);

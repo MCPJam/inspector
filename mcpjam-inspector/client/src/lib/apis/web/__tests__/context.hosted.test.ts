@@ -15,6 +15,7 @@ describe("injectHostedServerMapping", () => {
   beforeEach(() => {
     setHostedApiContext({
       workspaceId: "workspace-1",
+      isAuthenticated: true,
       serverIdsByName: {
         "existing-server": "id-existing",
       },
@@ -50,6 +51,7 @@ describe("injectHostedServerMapping", () => {
     // Simulate the subscription catching up and calling setHostedApiContext
     setHostedApiContext({
       workspaceId: "workspace-1",
+      isAuthenticated: true,
       serverIdsByName: {
         "existing-server": "id-existing",
         "new-server": "id-new",
@@ -68,6 +70,7 @@ describe("injectHostedServerMapping", () => {
     // the injected mapping is lost — this is the edge case the await prevents
     setHostedApiContext({
       workspaceId: "workspace-1",
+      isAuthenticated: true,
       serverIdsByName: {
         "existing-server": "id-existing",
       },
