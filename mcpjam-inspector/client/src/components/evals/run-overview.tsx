@@ -1,7 +1,8 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { cn } from "@/lib/utils";
+import { cn, getInitials } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -26,10 +27,11 @@ import { AccuracyChart } from "./accuracy-chart";
 import { formatRunId, getIterationBorderColor } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
+import { CiMetadataDisplay } from "./ci-metadata-display";
 import { toast } from "sonner";
 
 interface RunOverviewProps {
-  suite: { _id: string; name: string };
+  suite: { _id: string; name: string; source?: "ui" | "sdk" };
   runs: EvalSuiteRun[];
   runsLoading: boolean;
   allIterations: EvalIteration[];
@@ -50,6 +52,121 @@ interface RunOverviewProps {
   onDirectDeleteRun: (runId: string) => Promise<void>;
   runsViewMode: "runs" | "test-cases";
   onViewModeChange: (value: "runs" | "test-cases") => void;
+  userMap?: Map<string, { name: string; imageUrl?: string }>;
+}
+
+type CiMetadataCompactMode = "full" | "chip";
+
+type RunsTableLayout = {
+  showTokens: boolean;
+  showRunBy: boolean;
+  metadataMode: CiMetadataCompactMode;
+  enableHorizontalScroll: boolean;
+  requiredTableWidthPx: number;
+};
+
+type RunsTableWidthInput = {
+  hasTokenData: boolean;
+  hasCiMetadata: boolean;
+  showTokens: boolean;
+  showRunBy: boolean;
+  metadataMode: CiMetadataCompactMode;
+};
+
+const TABLE_SELECTION_COL_PX = 28;
+const TABLE_GAP_X_PX = 12;
+const TABLE_HORIZONTAL_PADDING_PX = 32;
+const DEFAULT_TABLE_VIEWPORT_WIDTH_PX = 1200;
+
+const BASE_COL_WIDTHS_PX = {
+  runId: 110,
+  startTime: 180,
+  duration: 72,
+  passed: 56,
+  failed: 56,
+  total: 56,
+  passRate: 72,
+  tokens: 88,
+  runBy: 56,
+  metadataFull: 140,
+  metadataChip: 72,
+} as const;
+
+function getTableColumnCount(input: RunsTableWidthInput): number {
+  let count = 1; // selection checkbox column
+  count += 7; // required run columns
+  if (input.hasTokenData && input.showTokens) {
+    count += 1;
+  }
+  if (input.showRunBy) {
+    count += 1;
+  }
+  if (input.hasCiMetadata) {
+    count += 1;
+  }
+  return count;
+}
+
+export function estimateRunsTableRequiredWidth(
+  input: RunsTableWidthInput,
+): number {
+  let width =
+    TABLE_SELECTION_COL_PX +
+    BASE_COL_WIDTHS_PX.runId +
+    BASE_COL_WIDTHS_PX.startTime +
+    BASE_COL_WIDTHS_PX.duration +
+    BASE_COL_WIDTHS_PX.passed +
+    BASE_COL_WIDTHS_PX.failed +
+    BASE_COL_WIDTHS_PX.total +
+    BASE_COL_WIDTHS_PX.passRate;
+
+  if (input.hasTokenData && input.showTokens) {
+    width += BASE_COL_WIDTHS_PX.tokens;
+  }
+  if (input.showRunBy) {
+    width += BASE_COL_WIDTHS_PX.runBy;
+  }
+  if (input.hasCiMetadata) {
+    width +=
+      input.metadataMode === "chip"
+        ? BASE_COL_WIDTHS_PX.metadataChip
+        : BASE_COL_WIDTHS_PX.metadataFull;
+  }
+
+  const columnCount = getTableColumnCount(input);
+  const totalGaps = Math.max(0, columnCount - 1) * TABLE_GAP_X_PX;
+  return width + totalGaps + TABLE_HORIZONTAL_PADDING_PX;
+}
+
+export function resolveRunsTableLayout(input: {
+  containerWidth: number;
+  hasTokenData: boolean;
+  hasCiMetadata: boolean;
+}): RunsTableLayout {
+  const normalizedContainerWidth = Math.max(
+    0,
+    Math.floor(input.containerWidth),
+  );
+  const showTokens = input.hasTokenData;
+  const showRunBy = true;
+  const metadataMode: CiMetadataCompactMode = "full";
+  const requiredTableWidthPx = estimateRunsTableRequiredWidth({
+    hasTokenData: input.hasTokenData,
+    hasCiMetadata: input.hasCiMetadata,
+    showTokens,
+    showRunBy,
+    metadataMode,
+  });
+  const enableHorizontalScroll =
+    requiredTableWidthPx > normalizedContainerWidth;
+
+  return {
+    showTokens,
+    showRunBy,
+    metadataMode,
+    enableHorizontalScroll,
+    requiredTableWidthPx,
+  };
 }
 
 export function RunOverview({
@@ -63,7 +180,105 @@ export function RunOverview({
   onDirectDeleteRun,
   runsViewMode,
   onViewModeChange,
+  userMap,
 }: RunOverviewProps) {
+  const tableViewportRef = useRef<HTMLDivElement | null>(null);
+  const [tableViewportWidth, setTableViewportWidth] = useState(0);
+
+  const hasTokenData = useMemo(
+    () => allIterations.some((i) => (i.tokensUsed || 0) > 0),
+    [allIterations],
+  );
+
+  const hasCiMetadata = useMemo(
+    () =>
+      runs.some(
+        (r) =>
+          !!r.ciMetadata?.branch ||
+          !!r.ciMetadata?.commitSha ||
+          !!r.ciMetadata?.runUrl,
+      ),
+    [runs],
+  );
+
+  useEffect(() => {
+    const element = tableViewportRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateWidth = () => {
+      setTableViewportWidth(Math.max(0, Math.floor(element.clientWidth)));
+    };
+
+    updateWidth();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateWidth);
+      return () => {
+        window.removeEventListener("resize", updateWidth);
+      };
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateWidth();
+    });
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateWidth);
+    };
+  }, []);
+
+  const responsiveLayout = useMemo(
+    () =>
+      resolveRunsTableLayout({
+        containerWidth:
+          tableViewportWidth > 0
+            ? tableViewportWidth
+            : DEFAULT_TABLE_VIEWPORT_WIDTH_PX,
+        hasTokenData,
+        hasCiMetadata,
+      }),
+    [tableViewportWidth, hasTokenData, hasCiMetadata],
+  );
+
+  const rowGridTemplateColumns = useMemo(() => {
+    const columns = [
+      "minmax(110px, 1.1fr)",
+      "minmax(180px, 1.7fr)",
+      "minmax(72px, 0.7fr)",
+      "minmax(56px, 0.55fr)",
+      "minmax(56px, 0.55fr)",
+      "minmax(56px, 0.55fr)",
+      "minmax(72px, 0.65fr)",
+    ];
+
+    if (hasTokenData && responsiveLayout.showTokens) {
+      columns.push("minmax(88px, 0.8fr)");
+    }
+
+    if (responsiveLayout.showRunBy) {
+      columns.push("minmax(56px, 0.5fr)");
+    }
+
+    if (hasCiMetadata) {
+      columns.push(
+        responsiveLayout.metadataMode === "chip"
+          ? "minmax(72px, 0.7fr)"
+          : "minmax(140px, 1.3fr)",
+      );
+    }
+
+    return columns.join(" ");
+  }, [hasTokenData, hasCiMetadata, responsiveLayout]);
+
+  const fullGridTemplateColumns = useMemo(
+    () => `28px ${rowGridTemplateColumns}`,
+    [rowGridTemplateColumns],
+  );
+
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
@@ -126,7 +341,7 @@ export function RunOverview({
         <div className="rounded-xl border bg-card text-card-foreground">
           <div className="px-4 pt-3 pb-2">
             <div className="text-xs font-medium text-muted-foreground">
-              Accuracy
+              {suite.source === "sdk" ? "Pass Rate Trend" : "Accuracy Trend"}
             </div>
           </div>
           <div className="px-4 pb-4">
@@ -135,6 +350,7 @@ export function RunOverview({
               isLoading={runsLoading}
               height="h-32"
               onClick={onRunClick}
+              metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
             />
           </div>
         </div>
@@ -147,7 +363,7 @@ export function RunOverview({
             </div>
           </div>
           <div className="px-4 pb-4">
-            {modelStats.length > 0 ? (
+            {modelStats.length > 1 ? (
               <ChartContainer
                 config={modelChartConfig}
                 className="aspect-auto h-32 w-full"
@@ -289,149 +505,238 @@ export function RunOverview({
           </div>
         )}
 
-        {/* Column Headers */}
-        {runs.length > 0 && (
-          <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-            <div className="w-4"></div>
-            <div className="min-w-[120px]">Run ID</div>
-            <div className="min-w-[140px]">Start time</div>
-            <div className="min-w-[60px]">Duration</div>
-            <div className="min-w-[60px] text-right">Passed</div>
-            <div className="min-w-[60px] text-right">Failed</div>
-            <div className="min-w-[70px] text-right">Accuracy</div>
-            <div className="min-w-[70px] text-right">Tokens</div>
-          </div>
-        )}
-
-        <div className="divide-y overflow-y-auto">
-          {runs.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No runs found.
-            </div>
-          ) : (
-            runs.map((run) => {
-              const runIterations = allIterations.filter(
-                (iter) => iter.suiteRunId === run._id,
-              );
-              // Only count completed iterations - exclude pending/cancelled
-              const iterationResults = runIterations.map((i) =>
-                computeIterationResult(i),
-              );
-              const realTimePassed = iterationResults.filter(
-                (r) => r === "passed",
-              ).length;
-              const realTimeFailed = iterationResults.filter(
-                (r) => r === "failed",
-              ).length;
-              const realTimeTotal = realTimePassed + realTimeFailed;
-              const totalTokens = runIterations.reduce(
-                (sum, iter) => sum + (iter.tokensUsed || 0),
-                0,
-              );
-
-              const passed =
-                realTimePassed > 0
-                  ? realTimePassed
-                  : (run.summary?.passed ?? 0);
-              const failed =
-                realTimeFailed > 0
-                  ? realTimeFailed
-                  : (run.summary?.failed ?? 0);
-              const total =
-                realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0);
-              const passRate =
-                total > 0 ? Math.round((passed / total) * 100) : null;
-
-              const timestamp = formatTime(run.completedAt ?? run.createdAt);
-
-              const duration =
-                run.completedAt && run.createdAt
-                  ? formatDuration(run.completedAt - run.createdAt)
-                  : run.createdAt && run.status === "running"
-                    ? formatDuration(Date.now() - run.createdAt)
-                    : "—";
-
-              const isInactive = run.isActive === false;
-
-              const runResult =
-                run.result ||
-                (run.status === "completed" && passRate !== null
-                  ? passRate >= (run.passCriteria?.minimumPassRate ?? 100)
-                    ? "passed"
-                    : "failed"
-                  : run.status === "cancelled"
-                    ? "cancelled"
-                    : "pending");
-              const runBorderColor = getIterationBorderColor(runResult);
-
-              const isSelected = selectedRunIds.has(run._id);
-
-              const runButton = (
-                <div className="flex items-center gap-6 w-full">
-                  <div className="pl-3">
-                    <Checkbox
-                      checked={isSelected}
-                      onCheckedChange={() => toggleRunSelection(run._id)}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={`Select run ${formatRunId(run._id)}`}
-                    />
-                  </div>
-                  <button
-                    onClick={() => onRunClick(run._id)}
-                    className="flex flex-1 items-center gap-6 py-2.5 pr-3 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                  >
-                    <span className="text-xs font-medium min-w-[120px]">
-                      Run {formatRunId(run._id)}
-                    </span>
-                    <span className="text-xs text-muted-foreground min-w-[140px]">
-                      {timestamp}
-                    </span>
-                    <span className="text-xs text-muted-foreground font-mono min-w-[60px]">
-                      {duration}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground min-w-[60px] text-right">
-                      {passed}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground min-w-[60px] text-right">
-                      {failed}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
-                      {passRate !== null ? `${passRate}%` : "—"}
-                    </span>
-                    <span className="text-xs font-mono text-muted-foreground min-w-[70px] text-right">
-                      {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
-                    </span>
-                  </button>
-                </div>
-              );
-
-              return (
+        <div ref={tableViewportRef} className="overflow-x-auto">
+          <div
+            style={
+              responsiveLayout.enableHorizontalScroll
+                ? { minWidth: `${responsiveLayout.requiredTableWidthPx}px` }
+                : undefined
+            }
+          >
+            {/* Column Headers */}
+            {runs.length > 0 && (
+              <div className="px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
                 <div
-                  key={run._id}
-                  className={cn(
-                    "relative overflow-hidden",
-                    isInactive && "opacity-50",
-                  )}
+                  className="grid items-center gap-x-3"
+                  style={{ gridTemplateColumns: fullGridTemplateColumns }}
                 >
-                  <div
-                    className={`absolute left-0 top-0 h-full w-1 ${runBorderColor}`}
-                  />
-                  {isInactive ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>{runButton}</TooltipTrigger>
-                      <TooltipContent>
-                        <p className="text-xs">
-                          Run is inactive since test cases were updated
-                        </p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    runButton
+                  <div className="h-4 w-4" />
+                  <div>Run ID</div>
+                  <div>Start time</div>
+                  <div>Duration</div>
+                  <div className="text-right">Passed</div>
+                  <div className="text-right">Failed</div>
+                  <div className="text-right">Total</div>
+                  <div className="text-right">
+                    {suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+                  </div>
+                  {hasTokenData && responsiveLayout.showTokens && (
+                    <div className="text-right">Tokens</div>
                   )}
+                  {responsiveLayout.showRunBy && <div>Run by</div>}
+                  {hasCiMetadata && <div>Metadata</div>}
                 </div>
-              );
-            })
-          )}
+              </div>
+            )}
+
+            <div className="divide-y overflow-y-auto">
+              {runs.length === 0 ? (
+                <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  No runs found.
+                </div>
+              ) : (
+                runs.map((run) => {
+                  const runIterations = allIterations.filter(
+                    (iter) => iter.suiteRunId === run._id,
+                  );
+                  // Only count completed iterations - exclude pending/cancelled
+                  const iterationResults = runIterations.map((i) =>
+                    computeIterationResult(i),
+                  );
+                  const realTimePassed = iterationResults.filter(
+                    (r) => r === "passed",
+                  ).length;
+                  const realTimeFailed = iterationResults.filter(
+                    (r) => r === "failed",
+                  ).length;
+                  const realTimeTotal = realTimePassed + realTimeFailed;
+                  const totalTokens = runIterations.reduce(
+                    (sum, iter) => sum + (iter.tokensUsed || 0),
+                    0,
+                  );
+
+                  const passed =
+                    realTimePassed > 0
+                      ? realTimePassed
+                      : (run.summary?.passed ?? 0);
+                  const failed =
+                    realTimeFailed > 0
+                      ? realTimeFailed
+                      : (run.summary?.failed ?? 0);
+                  const total =
+                    realTimeTotal > 0
+                      ? realTimeTotal
+                      : (run.summary?.total ?? 0);
+                  const passRate =
+                    total > 0 ? Math.round((passed / total) * 100) : null;
+
+                  const timestamp = formatTime(
+                    run.completedAt ?? run.createdAt,
+                  );
+
+                  const duration =
+                    run.completedAt && run.createdAt
+                      ? formatDuration(run.completedAt - run.createdAt)
+                      : run.createdAt && run.status === "running"
+                        ? formatDuration(Date.now() - run.createdAt)
+                        : "—";
+
+                  const isInactive = run.isActive === false;
+
+                  const runResult =
+                    run.result ||
+                    (run.status === "completed" && passRate !== null
+                      ? passRate >= (run.passCriteria?.minimumPassRate ?? 100)
+                        ? "passed"
+                        : "failed"
+                      : run.status === "cancelled"
+                        ? "cancelled"
+                        : "pending");
+                  const runBorderColor = getIterationBorderColor(runResult);
+
+                  const isSelected = selectedRunIds.has(run._id);
+                  const showCiMetadata =
+                    !!run.ciMetadata?.branch ||
+                    !!run.ciMetadata?.commitSha ||
+                    !!run.ciMetadata?.runUrl;
+
+                  const runButton = (
+                    <div
+                      className="grid items-center gap-x-3 px-4 py-2.5"
+                      style={{ gridTemplateColumns: fullGridTemplateColumns }}
+                    >
+                      <div className="flex justify-center">
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() => toggleRunSelection(run._id)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Select run ${formatRunId(run._id)}`}
+                        />
+                      </div>
+                      <button
+                        onClick={() => onRunClick(run._id)}
+                        className="col-[2/-1] grid w-full items-center gap-x-3 rounded-sm text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                        style={{ gridTemplateColumns: rowGridTemplateColumns }}
+                      >
+                        <span className="truncate py-0.5 text-xs font-medium">
+                          Run {formatRunId(run._id)}
+                        </span>
+                        <span className="truncate py-0.5 text-xs text-muted-foreground">
+                          {timestamp}
+                        </span>
+                        <span className="py-0.5 text-xs font-mono text-muted-foreground">
+                          {duration}
+                        </span>
+                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                          {passed}
+                        </span>
+                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                          {failed}
+                        </span>
+                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                          {total}
+                        </span>
+                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                          {passRate !== null ? `${passRate}%` : "—"}
+                        </span>
+                        {hasTokenData && responsiveLayout.showTokens && (
+                          <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                            {totalTokens > 0
+                              ? totalTokens.toLocaleString()
+                              : "—"}
+                          </span>
+                        )}
+                        {responsiveLayout.showRunBy && (
+                          <span className="py-0.5">
+                            {(() => {
+                              const creator =
+                                run.createdBy && userMap?.get(run.createdBy);
+                              if (creator) {
+                                return (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Avatar className="size-6">
+                                        <AvatarImage
+                                          src={creator.imageUrl}
+                                          alt={creator.name}
+                                        />
+                                        <AvatarFallback className="text-[10px]">
+                                          {getInitials(creator.name)}
+                                        </AvatarFallback>
+                                      </Avatar>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p className="text-xs">{creator.name}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                );
+                              }
+                              return (
+                                <Avatar className="size-6">
+                                  <AvatarFallback className="text-[10px]">
+                                    ?
+                                  </AvatarFallback>
+                                </Avatar>
+                              );
+                            })()}
+                          </span>
+                        )}
+                        {hasCiMetadata && (
+                          <span className="min-w-0 py-0.5">
+                            {showCiMetadata ? (
+                              <CiMetadataDisplay
+                                ciMetadata={run.ciMetadata}
+                                compact={true}
+                                compactMode={responsiveLayout.metadataMode}
+                                interactive={false}
+                              />
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                —
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  );
+
+                  return (
+                    <div
+                      key={run._id}
+                      className={cn("relative", isInactive && "opacity-50")}
+                    >
+                      <div
+                        className={`absolute left-0 top-0 h-full w-1 ${runBorderColor}`}
+                      />
+                      {isInactive ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>{runButton}</TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">
+                              Run is inactive since test cases were updated
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        runButton
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

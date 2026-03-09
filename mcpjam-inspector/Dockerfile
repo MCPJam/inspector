@@ -1,6 +1,5 @@
-# Use specific Node.js version to avoid vulnerabilities in older versions
-# CVE fixes require Node.js 20.20.0+ (race condition, symlink following, uncaught exception)
-ARG NODE_VERSION=20.20.0
+# Use specific Node.js version to match local/CI runtimes and dependency engines
+ARG NODE_VERSION=24.14.0
 
 FROM node:${NODE_VERSION}-alpine AS base
 
@@ -50,6 +49,7 @@ COPY mcpjam-inspector/shared ./shared
 
 # Layer 4: Build SDK first (changes infrequently, required by server and client)
 COPY sdk/src ../sdk/src
+COPY sdk/skills ../sdk/skills
 RUN npm run build:sdk
 
 # Layer 5: Build lib (changes infrequently)
@@ -58,6 +58,8 @@ RUN npm run build:lib
 
 # Layer 6: Build server (changes moderately, depends on SDK)
 COPY mcpjam-inspector/server ./server
+COPY mcpjam-inspector/scripts ./scripts
+RUN npm run bundle:chatgpt && npm run bundle:mcp-apps && npm run bundle:sandbox-proxies
 RUN npm run build:server
 
 # Layer 7: Build client (changes most frequently, depends on SDK and shared)

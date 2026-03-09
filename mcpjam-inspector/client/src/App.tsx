@@ -10,6 +10,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
+import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
@@ -27,7 +28,7 @@ import { PreferencesStoreProvider } from "./stores/preferences/preferences-provi
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
-import { usePostHog } from "posthog-js/react";
+import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
 
@@ -78,6 +79,7 @@ export default function App() {
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
+  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const {
     getAccessToken,
     signIn,
@@ -278,11 +280,31 @@ export default function App() {
       ),
     [hostedServerIdsByName, appState.servers],
   );
+  // Extract MCPServerConfig objects for guest mode (keyed by server name)
+  const guestServerConfigs = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(appState.servers).map(([name, s]) => [name, s.config]),
+      ),
+    [appState.servers],
+  );
+  const guestOauthTokensByServerName = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(appState.servers)
+          .filter(([, server]) => !!server.oauthTokens?.access_token)
+          .map(([name, server]) => [name, server.oauthTokens!.access_token]),
+      ),
+    [appState.servers],
+  );
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,
     oauthTokensByServerId,
+    guestOauthTokensByServerName,
+    isAuthenticated,
+    serverConfigs: guestServerConfigs,
     enabled: !isSharedChatRoute,
   });
 
@@ -368,6 +390,16 @@ export default function App() {
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isSharedChatRoute]);
+
+  // Redirect away from tabs hidden by the ci-evals feature flag.
+  // Use strict equality to avoid redirecting while the flag is still loading (undefined).
+  useEffect(() => {
+    if (ciEvalsEnabled === true && activeTab === "evals") {
+      applyNavigation("servers", { updateHash: true });
+    } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
+      applyNavigation("servers", { updateHash: true });
+    }
+  }, [ciEvalsEnabled, activeTab, applyNavigation]);
 
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });
@@ -511,6 +543,9 @@ export default function App() {
           {activeTab === "evals" && (
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
+          {activeTab === "ci-evals" && (
+            <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+          )}
           {activeTab === "views" && (
             <ViewsTab
               selectedServer={appState.selectedServer}
@@ -584,7 +619,12 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
-          {activeTab === "settings" && <SettingsTab />}
+          {activeTab === "settings" && (
+            <SettingsTab
+              convexWorkspaceId={convexWorkspaceId}
+              workspaceName={activeWorkspace?.name ?? null}
+            />
+          )}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (

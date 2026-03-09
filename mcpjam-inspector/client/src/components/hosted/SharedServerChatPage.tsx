@@ -102,6 +102,7 @@ export function SharedServerChatPage({
     getAccessToken,
     oauthTokensByServerId: oauthTokensForChat,
     shareToken: session?.token,
+    isAuthenticated,
   });
 
   const sharedServerConfigs = useMemo(() => {

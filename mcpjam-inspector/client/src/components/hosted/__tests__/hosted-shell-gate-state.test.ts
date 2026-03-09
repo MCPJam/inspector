@@ -41,7 +41,7 @@ describe("resolveHostedShellGateState", () => {
     ).toBe("auth-loading");
   });
 
-  it("returns logged-out only when neither auth source is authenticated", () => {
+  it("returns ready when unauthenticated (no auth gate)", () => {
     expect(
       resolveHostedShellGateState({
         hostedMode: true,
@@ -51,7 +51,7 @@ describe("resolveHostedShellGateState", () => {
         hasWorkOsUser: false,
         isLoadingRemoteWorkspaces: false,
       }),
-    ).toBe("logged-out");
+    ).toBe("ready");
   });
 
   it("returns workspace-loading when auth is ready but workspace data is pending", () => {

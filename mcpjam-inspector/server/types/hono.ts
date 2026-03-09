@@ -5,4 +5,8 @@ declare module "hono" {
   interface Context {
     mcpClientManager: MCPClientManager;
   }
+
+  interface ContextVariableMap {
+    guestId?: string;
+  }
 }

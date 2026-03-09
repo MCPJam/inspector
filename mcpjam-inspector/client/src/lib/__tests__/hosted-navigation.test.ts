@@ -39,4 +39,10 @@ describe("hosted-navigation", () => {
     expect(resolved.rawSection).toBe("registry");
     expect(resolved.normalizedSection).toBe("servers");
   });
+
+  it("allows ci-evals in hosted mode", () => {
+    const resolved = resolveHostedNavigation("#ci-evals", true);
+    expect(resolved.normalizedTab).toBe("ci-evals");
+    expect(resolved.isBlocked).toBe(false);
+  });
 });

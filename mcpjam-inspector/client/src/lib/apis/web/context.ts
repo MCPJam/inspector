@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "@/lib/config";
+import { getGuestBearerToken } from "@/lib/guest-session";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
@@ -7,7 +8,11 @@ export interface HostedApiContext {
   serverIdsByName: Record<string, string>;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
+  guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
+  isAuthenticated?: boolean;
+  /** Maps server name → MCPServerConfig for guest mode (no Convex). */
+  serverConfigs?: Record<string, unknown>;
 }
 
 type HostedAccessScope = "workspace_member" | "chat_v2";
@@ -30,6 +35,41 @@ function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
   }
+}
+
+/**
+ * True when running in hosted mode without an authenticated workspace.
+ * Guest users store server configs in localStorage and connect directly
+ * (no Convex involvement).
+ */
+export function isGuestMode(): boolean {
+  if (!HOSTED_MODE) return false;
+  return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
+}
+
+function buildGuestServerRequest(
+  config: unknown,
+  oauthAccessToken?: string,
+): Record<string, unknown> {
+  const httpConfig = config as {
+    url?: string | URL;
+    requestInit?: { headers?: Record<string, string> };
+  };
+  if (!httpConfig.url) {
+    throw new Error("Guest server config must have a URL");
+  }
+  const urlStr =
+    typeof httpConfig.url === "string"
+      ? httpConfig.url
+      : httpConfig.url.toString();
+  const headers = httpConfig.requestInit?.headers;
+  return {
+    serverUrl: urlStr,
+    ...(headers && Object.keys(headers).length > 0
+      ? { serverHeaders: headers }
+      : {}),
+    ...(oauthAccessToken ? { oauthAccessToken } : {}),
+  };
 }
 
 export function setHostedApiContext(next: HostedApiContext | null): void {
@@ -112,13 +152,25 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
   return getHostedShareToken() ? "chat_v2" : undefined;
 }
 
-export function buildHostedServerRequest(serverNameOrId: string): {
-  workspaceId: string;
-  serverId: string;
-  oauthAccessToken?: string;
-  accessScope?: HostedAccessScope;
-  shareToken?: string;
-} {
+export function buildHostedServerRequest(
+  serverNameOrId: string,
+): Record<string, unknown> {
+  // Guest path: use directly-provided server config (no Convex)
+  if (isGuestMode()) {
+    const config = hostedApiContext.serverConfigs?.[serverNameOrId];
+    if (!config) {
+      throw new Error(
+        `No guest server config found for "${serverNameOrId}". ` +
+          "The server may not be loaded yet.",
+      );
+    }
+    return buildGuestServerRequest(
+      config,
+      hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId],
+    );
+  }
+
+  // Authenticated path: resolve via Convex server mappings
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
   const shareToken = getHostedShareToken();
@@ -171,19 +223,23 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
     return `Bearer ${cachedBearerToken.token}`;
   }
 
+  // Try WorkOS (logged-in user)
   const getAccessToken = hostedApiContext.getAccessToken;
-  if (!getAccessToken) return null;
-
-  const token = await getAccessToken();
-  if (!token) {
-    cachedBearerToken = null;
-    return null;
+  if (getAccessToken) {
+    try {
+      const token = await getAccessToken();
+      if (token) {
+        cachedBearerToken = { token, expiresAt: now + TOKEN_CACHE_TTL_MS };
+        return `Bearer ${token}`;
+      }
+    } catch {
+      // WorkOS LoginRequiredError — not authenticated, fall through to guest
+    }
   }
 
-  cachedBearerToken = {
-    token,
-    expiresAt: now + TOKEN_CACHE_TTL_MS,
-  };
+  // Fall back to guest token
+  const guestToken = await getGuestBearerToken();
+  if (guestToken) return `Bearer ${guestToken}`;
 
-  return `Bearer ${token}`;
+  return null;
 }

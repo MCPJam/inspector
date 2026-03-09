@@ -15,16 +15,16 @@ import { EvalTest } from "@mcpjam/sdk";
 ## Constructor
 
 ```typescript
-new EvalTest(options: EvalTestOptions)
+new EvalTest(options: EvalTestConfig)
 ```
 
 ### Parameters
 
-<ParamField path="options" type="EvalTestOptions" required>
+<ParamField path="options" type="EvalTestConfig" required>
   Configuration for the evaluation test.
 </ParamField>
 
-### EvalTestOptions
+### EvalTestConfig
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
@@ -34,12 +34,14 @@ new EvalTest(options: EvalTestOptions)
 ### TestFunction Type
 
 ```typescript
-type TestFunction = (agent: TestAgent) => Promise<boolean>
+type TestFunction = (agent: EvalAgent) => boolean | Promise<boolean>
 ```
 
-The test function receives a `TestAgent` and must return a `boolean`:
+The test function receives an [`EvalAgent`](/sdk/reference/test-agent) and must return a `boolean`:
 - `true` = test passed
 - `false` = test failed
+
+Both `TestAgent` and mock agents implement the `EvalAgent` interface, so you can use either for testing.
 
 ### Example
 
@@ -59,28 +61,34 @@ const test = new EvalTest({
 
 ### run()
 
-Executes the test multiple times.
+Executes the test multiple times and returns detailed results.
 
 ```typescript
-run(agent: TestAgent, options: RunOptions): Promise<void>
+run(agent: EvalAgent, options: EvalTestRunOptions): Promise<EvalRunResult>
 ```
 
 #### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `agent` | `TestAgent` | The agent to test with |
-| `options` | `RunOptions` | Run configuration |
+| `agent` | `EvalAgent` | The agent to test with (`TestAgent` or mock) |
+| `options` | `EvalTestRunOptions` | Run configuration |
 
-#### RunOptions
+#### EvalTestRunOptions
 
 | Property | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
 | `iterations` | `number` | Yes | - | Number of test runs |
-| `concurrency` | `number` | No | `1` | Parallel test runs |
+| `concurrency` | `number` | No | `5` | Parallel test runs |
 | `retries` | `number` | No | `0` | Retry failed tests |
-| `timeoutMs` | `number` | No | `60000` | Timeout per test (ms) |
+| `timeoutMs` | `number` | No | `30000` | Timeout per test (ms) |
 | `onProgress` | `ProgressCallback` | No | - | Progress callback |
+| `onFailure` | `(report: string) => void` | No | - | Called with a failure report if any iterations fail |
+| `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | - | Auto-save results to MCPJam |
+
+<Note>
+Results are automatically saved to MCPJam after the run completes when an API key is available via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable. Set `mcpjam.enabled: false` to disable.
+</Note>
 
 #### ProgressCallback Type
 
@@ -96,8 +104,15 @@ await test.run(agent, {
   concurrency: 5,
   retries: 2,
   timeoutMs: 30000,
+  mcpjam: {
+    suiteName: "Addition Eval",
+    strict: false,
+  },
   onProgress: (done, total) => {
     console.log(`${done}/${total}`);
+  },
+  onFailure: (report) => {
+    console.error(report);
   },
 });
 ```
@@ -199,35 +214,117 @@ console.log(`Avg tokens: ${test.averageTokenUse()}`);
 
 ### getResults()
 
-Returns raw results from all iterations.
+Returns the full run result from the last run.
 
 ```typescript
-getResults(): TestResult[]
+getResults(): EvalRunResult | null
 ```
 
 #### Returns
 
-`TestResult[]` - Array of individual test results.
+`EvalRunResult | null` - The run result, or `null` if `run()` hasn't been called.
 
-#### TestResult Type
+#### EvalRunResult Type
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `passed` | `boolean` | Whether the test passed |
+| `iterations` | `number` | Total iterations run |
+| `successes` | `number` | Number that passed |
+| `failures` | `number` | Number that failed |
+| `results` | `boolean[]` | Pass/fail per iteration |
+| `iterationDetails` | `IterationResult[]` | Detailed per-iteration results |
+| `tokenUsage` | `object` | Aggregate and per-iteration token usage |
+| `latency` | `object` | Latency stats (e2e, llm, mcp) with p50/p95 |
+
+#### IterationResult Type
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | Whether this iteration passed |
+| `latencies` | `LatencyBreakdown[]` | Latency per prompt in this iteration |
+| `tokens` | `{ total, input, output }` | Token usage |
 | `error` | `string \| undefined` | Error message if failed |
-| `latencyMs` | `number` | Time taken |
-| `tokens` | `number` | Tokens used |
+| `retryCount` | `number \| undefined` | Number of retries attempted |
+| `prompts` | `PromptResult[] \| undefined` | Prompt results from this iteration |
+
+---
+
+### getName()
+
+Returns the test's name.
+
+```typescript
+getName(): string
+```
+
+---
+
+### getConfig()
+
+Returns the test's configuration.
+
+```typescript
+getConfig(): EvalTestConfig
+```
+
+---
+
+### getAllIterations()
+
+Returns all iteration details from the last run.
+
+```typescript
+getAllIterations(): IterationResult[]
+```
+
+---
+
+### getFailedIterations()
+
+Returns only the failed iterations from the last run.
+
+```typescript
+getFailedIterations(): IterationResult[]
+```
 
 #### Example
 
 ```typescript
-const results = test.getResults();
-
-const failures = results.filter(r => !r.passed);
-console.log(`Failures: ${failures.length}`);
+const failures = test.getFailedIterations();
+console.log(`${failures.length} failures`);
 
 for (const fail of failures) {
   console.log(`  Error: ${fail.error}`);
+}
+```
+
+---
+
+### getSuccessfulIterations()
+
+Returns only the successful iterations from the last run.
+
+```typescript
+getSuccessfulIterations(): IterationResult[]
+```
+
+---
+
+### getFailureReport()
+
+Returns a formatted failure report with traces from all failed iterations. Useful for debugging.
+
+```typescript
+getFailureReport(): string
+```
+
+#### Example
+
+```typescript
+await test.run(agent, { iterations: 30 });
+
+if (test.accuracy() < 0.9) {
+  console.error(test.getFailureReport());
 }
 ```
 
@@ -237,10 +334,10 @@ for (const fail of failures) {
 
 ### name
 
-The test's identifier.
+The test's identifier (via `getName()`).
 
 ```typescript
-test.name // "addition-accuracy"
+test.getName() // "addition-accuracy"
 ```
 
 ---
@@ -342,11 +439,15 @@ async function main() {
 
   console.log("Running evaluation...");
 
-  await test.run(agent, {
+  const result = await test.run(agent, {
     iterations: 30,
     concurrency: 5,
+    mcpjam: { suiteName: "Addition Eval" },
     onProgress: (done, total) => {
       process.stdout.write(`\r${done}/${total}`);
+    },
+    onFailure: (report) => {
+      console.error(report);
     },
   });
 
@@ -355,6 +456,8 @@ async function main() {
   console.log(`  Precision: ${(test.precision() * 100).toFixed(1)}%`);
   console.log(`  Recall: ${(test.recall() * 100).toFixed(1)}%`);
   console.log(`  Avg tokens: ${test.averageTokenUse()}`);
+  console.log(`  Iterations: ${result.iterations}`);
+  console.log(`  Successes: ${result.successes}`);
 
   await manager.disconnectServer("everything");
 }
@@ -366,4 +469,5 @@ async function main() {
 
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalSuite Reference](/sdk/reference/eval-suite) - Group multiple tests
+- [Saving Eval Results](/sdk/reference/eval-reporting) - Save results to MCPJam
 - [Validators Reference](/sdk/reference/validators) - Assertion functions

@@ -27,6 +27,12 @@ servers.post("/validate", async (c) =>
 
 servers.post("/check-oauth", async (c) =>
   handleRoute(c, async () => {
+    // Guests have no Convex server records — OAuth is never applicable
+    const guestId = c.get("guestId") as string | undefined;
+    if (guestId) {
+      return { useOAuth: false, serverUrl: null };
+    }
+
     const bearerToken = assertBearerToken(c);
     const body = parseWithSchema(
       workspaceServerSchema,

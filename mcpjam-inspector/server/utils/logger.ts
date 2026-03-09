@@ -17,9 +17,7 @@ export const logger = {
       extra: { message, ...context },
     });
 
-    if (shouldLog()) {
-      console.error(message, error);
-    }
+    console.error(message, error);
   },
 
   /**

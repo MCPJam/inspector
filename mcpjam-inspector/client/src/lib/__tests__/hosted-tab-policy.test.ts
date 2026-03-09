@@ -21,6 +21,11 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("prompts")).toBe(true);
   });
 
+  it("keeps ci-evals visible in hosted sidebar allow-list", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("ci-evals");
+    expect(isHostedSidebarTabAllowed("ci-evals")).toBe(true);
+  });
+
   it("allows profile and organizations hashes in hosted mode", () => {
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("profile");
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("organizations");

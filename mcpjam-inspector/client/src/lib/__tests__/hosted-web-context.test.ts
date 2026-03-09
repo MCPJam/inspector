@@ -50,4 +50,85 @@ describe("hosted web context", () => {
       serverId: "srv_bench",
     });
   });
+
+  it("builds guest request from serverConfigs when in guest mode", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      serverConfigs: {
+        myServer: {
+          url: "https://example.com/mcp",
+          requestInit: { headers: { "X-Api-Key": "key123" } },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+      serverHeaders: { "X-Api-Key": "key123" },
+    });
+  });
+
+  it("includes the latest guest OAuth token separately from server headers", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      guestOauthTokensByServerName: {
+        myServer: "fresh-access-token",
+      },
+      serverConfigs: {
+        myServer: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {
+              Authorization: "Bearer stale-access-token",
+              "X-Api-Key": "key123",
+            },
+          },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+      serverHeaders: {
+        Authorization: "Bearer stale-access-token",
+        "X-Api-Key": "key123",
+      },
+      oauthAccessToken: "fresh-access-token",
+    });
+  });
+
+  it("handles URL objects in guest server configs", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      serverConfigs: {
+        myServer: {
+          url: new URL("https://example.com/mcp"),
+          requestInit: { headers: {} },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+    });
+  });
+
+  it("throws when guest server config is not found", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      serverConfigs: {},
+    });
+
+    expect(() => buildHostedServerRequest("unknown")).toThrow(
+      'No guest server config found for "unknown"',
+    );
+  });
 });

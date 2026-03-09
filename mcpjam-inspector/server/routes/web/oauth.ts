@@ -7,14 +7,17 @@ import {
   fetchOAuthMetadata,
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
-import {
-  assertBearerToken,
-  ErrorCode,
-  WebRouteError,
-  mapRuntimeError,
-} from "./errors.js";
+import { ErrorCode, WebRouteError, mapRuntimeError } from "./errors.js";
+import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 
 const oauthWeb = new Hono();
+
+// Require some form of bearer token (guest or WorkOS) on all OAuth proxy routes
+oauthWeb.use("*", bearerAuthMiddleware);
+
+// Rate limit guest users on OAuth proxy routes
+oauthWeb.use("*", guestRateLimitMiddleware);
 
 function statusToErrorCode(status: number): ErrorCode {
   if (status === 400) return ErrorCode.VALIDATION_ERROR;
@@ -59,13 +62,11 @@ function toRouteError(error: unknown): WebRouteError {
  * Proxy OAuth token exchange and client registration requests.
  * POST /api/web/oauth/proxy
  *
- * Mirrors /api/mcp/oauth/proxy but requires bearer JWT authentication.
+ * Mirrors /api/mcp/oauth/proxy with HTTPS-only + private IP blocking.
  * Body: { url: string, method?: string, body?: object, headers?: object }
  */
 oauthWeb.post("/proxy", async (c) => {
   try {
-    assertBearerToken(c);
-
     const { url, method, body, headers } = await c.req.json();
     const result = await executeOAuthProxy({
       url,
@@ -84,12 +85,10 @@ oauthWeb.post("/proxy", async (c) => {
  * Proxy OAuth metadata discovery requests.
  * GET /api/web/oauth/metadata?url=https://...
  *
- * Mirrors /api/mcp/oauth/metadata but requires bearer JWT authentication.
+ * Mirrors /api/mcp/oauth/metadata with HTTPS-only + private IP blocking.
  */
 oauthWeb.get("/metadata", async (c) => {
   try {
-    assertBearerToken(c);
-
     const url = c.req.query("url");
     if (!url) {
       throw new WebRouteError(
@@ -118,13 +117,11 @@ oauthWeb.get("/metadata", async (c) => {
  * Debug proxy for OAuth flow visualization (hosted mode).
  * POST /api/web/oauth/debug/proxy
  *
- * Mirrors /api/mcp/oauth/debug/proxy but requires bearer JWT and HTTPS only.
+ * Mirrors /api/mcp/oauth/debug/proxy with HTTPS-only + private IP blocking.
  * Body: { url: string, method?: string, body?: object, headers?: object }
  */
 oauthWeb.post("/debug/proxy", async (c) => {
   try {
-    assertBearerToken(c);
-
     const { url, method, body, headers } = await c.req.json();
     const result = await executeDebugOAuthProxy({
       url,
