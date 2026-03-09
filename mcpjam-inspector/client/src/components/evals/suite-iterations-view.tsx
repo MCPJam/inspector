@@ -20,7 +20,6 @@ import type {
 import type { EvalsRoute } from "@/lib/evals-router";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 
-
 export function SuiteIterationsView({
   suite,
   cases,
