@@ -38,11 +38,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install dependencies
-        run: |
-          npm install --legacy-peer-deps
-          npm run install:deps
-          cd ../sdk && npm install --legacy-peer-deps
+      - name: Install dependencies from lockfiles
+        run: npm run deps:ci
 
       - name: Setup Apple certificates and API key
         run: |
