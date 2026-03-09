@@ -28,6 +28,8 @@ import {
   buildResourceMetadataUrl,
   markLatestHttpEntryAsError,
   toLogErrorDetails,
+  mergeHeaders,
+  mergeHeadersForAuthServer,
 } from "./shared/helpers";
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
 
@@ -555,24 +557,6 @@ export const createDebugOAuthStateMachine = (
   const redirectUri =
     redirectUrl || `${window.location.origin}/oauth/callback/debug`;
 
-  // Helper to merge custom headers with request headers
-  // When isAuthServer is true, strip Authorization headers to prevent
-  // connection-level credentials from leaking to the authorization server
-  const mergeHeaders = (
-    requestHeaders: Record<string, string> = {},
-    isAuthServer = false,
-  ) => {
-    const headers = {
-      ...customHeaders,
-      ...requestHeaders, // Request headers override custom headers
-    };
-    if (isAuthServer) {
-      delete headers["Authorization"];
-      delete headers["authorization"];
-    }
-    return headers;
-  };
-
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
 
@@ -591,7 +575,7 @@ export const createDebugOAuthStateMachine = (
         switch (state.currentStep) {
           case "idle":
             // Step 1: Make initial MCP request without token
-            const initialRequestHeaders = mergeHeaders({
+            const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
             });
 
@@ -645,7 +629,7 @@ export const createDebugOAuthStateMachine = (
               // Use backend proxy to bypass CORS and capture all headers
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: mergeHeaders({
+                headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                 }),
                 body: JSON.stringify({
@@ -775,7 +759,7 @@ export const createDebugOAuthStateMachine = (
             const resourceMetadataRequest = {
               method: "GET",
               url: extractedResourceMetadataUrl,
-              headers: mergeHeaders({}),
+              headers: mergeHeaders(customHeaders, {}),
             };
 
             // Update state with the URL and request
@@ -837,7 +821,12 @@ export const createDebugOAuthStateMachine = (
 
             const loggingFetch: typeof fetch = async (url, init = {}) => {
               const requestUrl = typeof url === "string" ? url : url.toString();
+              // loggingFetch is only passed to discoverOAuthProtectedResourceMetadata,
+              // which fetches /.well-known/oauth-protected-resource from the MCP server's
+              // own domain — it does not redirect to the Authorization Server.
+              // Therefore we use mergeHeaders (not mergeHeadersForAuthServer) here.
               const mergedHeaders = mergeHeaders(
+                customHeaders,
                 normalizeHeaders(init.headers as HeadersInit | undefined),
               );
 
@@ -972,7 +961,7 @@ export const createDebugOAuthStateMachine = (
             const authServerRequest = {
               method: "GET",
               url: authServerUrls[0], // Show the first URL we'll try
-              headers: mergeHeaders({}, true),
+              headers: mergeHeadersForAuthServer(customHeaders, {}),
             };
 
             // Update state with the request
@@ -1013,7 +1002,7 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                const requestHeaders = mergeHeaders({}, true);
+                const requestHeaders = mergeHeadersForAuthServer(customHeaders, {});
 
                 // Update request URL as we try different endpoints
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
@@ -1039,7 +1028,7 @@ export const createDebugOAuthStateMachine = (
                 // Use backend proxy to bypass CORS
                 const response = await proxyFetch(url, {
                   method: "GET",
-                  headers: mergeHeaders({}, true),
+                  headers: mergeHeadersForAuthServer(customHeaders, {}),
                 });
 
                 if (response.ok) {
@@ -1274,12 +1263,9 @@ export const createDebugOAuthStateMachine = (
               const registrationRequest = {
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
-                headers: mergeHeaders(
-                  {
+                headers: mergeHeadersForAuthServer(customHeaders, {
                     "Content-Type": "application/json",
-                  },
-                  true,
-                ),
+                  }),
                 body: clientMetadata,
               };
 
@@ -1329,12 +1315,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders(
-                    {
+                  headers: mergeHeadersForAuthServer(customHeaders, {
                       "Content-Type": "application/json",
-                    },
-                    true,
-                  ),
+                    }),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1424,7 +1407,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders({}),
+                headers: mergeHeaders(customHeaders, {}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1801,12 +1784,9 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders(
-                    {
+                  headers: mergeHeadersForAuthServer(customHeaders, {
                       "Content-Type": "application/x-www-form-urlencoded",
-                    },
-                    true,
-                  ),
+                    }),
                   body: tokenRequestBody.toString(),
                 },
               );
@@ -2007,7 +1987,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders({}),
+                headers: mergeHeaders(customHeaders, {}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -2104,7 +2084,7 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: mergeHeaders({
+                headers: mergeHeaders(customHeaders, {
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                 }),
@@ -2258,7 +2238,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders({}),
+                headers: mergeHeaders(customHeaders, {}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
