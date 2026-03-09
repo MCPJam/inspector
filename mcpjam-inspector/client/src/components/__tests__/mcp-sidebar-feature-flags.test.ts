@@ -25,6 +25,14 @@ const makeSections = () => [
 ];
 
 describe("filterByFeatureFlags", () => {
+  it("treats a missing flag as disabled", () => {
+    const result = filterByFeatureFlags(makeSections(), {});
+    const titles = result[0].items.map((i) => i.title);
+    expect(titles).toContain("Always Visible");
+    expect(titles).toContain("Generate Evals");
+    expect(titles).not.toContain("Evals CI/CD");
+  });
+
   it("hides featureFlag items when flag is off", () => {
     const result = filterByFeatureFlags(makeSections(), {
       "ci-evals-enabled": false,

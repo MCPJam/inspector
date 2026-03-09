@@ -371,11 +371,12 @@ export default function App() {
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isSharedChatRoute]);
 
-  // Redirect away from tabs hidden by the ci-evals feature flag
+  // Redirect away from tabs hidden by the ci-evals feature flag.
+  // Use strict equality to avoid redirecting while the flag is still loading (undefined).
   useEffect(() => {
-    if (ciEvalsEnabled && activeTab === "evals") {
+    if (ciEvalsEnabled === true && activeTab === "evals") {
       applyNavigation("servers", { updateHash: true });
-    } else if (!ciEvalsEnabled && activeTab === "ci-evals") {
+    } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
       applyNavigation("servers", { updateHash: true });
     }
   }, [ciEvalsEnabled, activeTab, applyNavigation]);
