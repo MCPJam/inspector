@@ -1,4 +1,4 @@
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
@@ -69,25 +69,6 @@ import {
   clearPendingServerAdd,
 } from "./lib/shared-server-session";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
-
-function useKeepCiEvalsOverviewWarm({
-  isAuthenticated,
-  user,
-  workspaceId,
-}: {
-  isAuthenticated: boolean;
-  user: unknown;
-  workspaceId: string | null;
-}) {
-  const shouldSubscribe =
-    isAuthenticated && Boolean(user) && Boolean(workspaceId);
-
-  // Keep the CI suite list subscribed outside the tab so it stays current.
-  useQuery(
-    "testSuites:getTestSuitesOverview" as any,
-    shouldSubscribe ? ({ workspaceId } as any) : "skip",
-  );
-}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -270,11 +251,6 @@ export default function App() {
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-  useKeepCiEvalsOverviewWarm({
-    isAuthenticated,
-    user: workOsUser,
-    workspaceId: convexWorkspaceId,
-  });
 
   // Fetch views for the workspace to determine which servers have saved views
   const { viewsByServer } = useViewQueries({
