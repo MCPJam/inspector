@@ -1,3 +1,4 @@
+import dns from "node:dns/promises";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 export class OAuthProxyError extends Error {
@@ -26,9 +27,9 @@ export interface OAuthProxyResponse {
 
 function isPrivateHost(hostname: string): boolean {
   // Strip brackets from IPv6
-  const host = hostname.replace(/^\[|\]$/g, "");
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
 
-  if (host === "localhost" || host === "0.0.0.0" || host === "::1") {
+  if (host === "localhost" || host === "0.0.0.0" || host === "::1" || host === "::") {
     return true;
   }
 
@@ -49,10 +50,55 @@ function isPrivateHost(hostname: string): boolean {
     }
   }
 
+  // IPv6 unique local (fc00::/7) — covers fc00:: through fdff::
+  if (host.startsWith("fc") || host.startsWith("fd")) {
+    return true;
+  }
+
+  // IPv6 link-local (fe80::/10)
+  if (host.startsWith("fe80")) {
+    return true;
+  }
+
   return false;
 }
 
-function validateUrl(url: string, httpsOnly = false): URL {
+/**
+ * Resolve hostname via DNS and verify none of the resolved IPs are private.
+ * This mitigates DNS rebinding / TOCTOU attacks where a hostname initially
+ * resolves to a public IP but later resolves to a private one.
+ */
+async function assertPublicDns(hostname: string): Promise<void> {
+  // Skip DNS check for raw IP addresses — isPrivateHost already handles them
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":")) {
+    return;
+  }
+
+  const resolved: string[] = [];
+  try {
+    const ipv4 = await dns.resolve4(hostname);
+    resolved.push(...ipv4);
+  } catch {
+    // no A records is fine
+  }
+  try {
+    const ipv6 = await dns.resolve6(hostname);
+    resolved.push(...ipv6);
+  } catch {
+    // no AAAA records is fine
+  }
+
+  for (const ip of resolved) {
+    if (isPrivateHost(ip)) {
+      throw new OAuthProxyError(
+        400,
+        "Hostname resolves to a private/reserved IP address",
+      );
+    }
+  }
+}
+
+async function validateUrl(url: string, httpsOnly = false): Promise<URL> {
   if (!url) {
     throw new OAuthProxyError(400, "Missing url parameter");
   }
@@ -77,6 +123,7 @@ function validateUrl(url: string, httpsOnly = false): URL {
         "Private/reserved IP addresses are not allowed",
       );
     }
+    await assertPublicDns(targetUrl.hostname);
   } else if (
     targetUrl.protocol !== "https:" &&
     targetUrl.protocol !== "http:"
@@ -90,7 +137,7 @@ function validateUrl(url: string, httpsOnly = false): URL {
 export async function executeOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const targetUrl = validateUrl(req.url, req.httpsOnly);
+  const targetUrl = await validateUrl(req.url, req.httpsOnly);
   const method = req.method ?? "GET";
   const customHeaders = req.headers;
 
@@ -112,6 +159,8 @@ export async function executeOAuthProxy(
   const fetchOptions: RequestInit = {
     method,
     headers: requestHeaders,
+    // Prevent redirect-based SSRF: don't follow redirects in hosted mode
+    redirect: req.httpsOnly ? "manual" : "follow",
   };
 
   if (method === "POST" && req.body) {
@@ -164,7 +213,7 @@ export async function executeOAuthProxy(
 export async function executeDebugOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const targetUrl = validateUrl(req.url, req.httpsOnly);
+  const targetUrl = await validateUrl(req.url, req.httpsOnly);
   const method = req.method ?? "GET";
   const customHeaders = req.headers;
 
@@ -186,6 +235,7 @@ export async function executeDebugOAuthProxy(
   const fetchOptions: RequestInit = {
     method,
     headers: requestHeaders,
+    redirect: req.httpsOnly ? "manual" : "follow",
   };
 
   if (method === "POST" && req.body) {
@@ -315,7 +365,7 @@ export async function fetchOAuthMetadata(
   | { metadata: Record<string, unknown>; status?: undefined }
   | { status: number; statusText: string }
 > {
-  const metadataUrl = validateUrl(url, httpsOnly);
+  const metadataUrl = await validateUrl(url, httpsOnly);
 
   const response = await fetch(metadataUrl.toString(), {
     method: "GET",
@@ -323,6 +373,7 @@ export async function fetchOAuthMetadata(
       Accept: "application/json",
       "User-Agent": "MCP-Inspector/1.0",
     },
+    redirect: httpsOnly ? "manual" : "follow",
   });
 
   if (!response.ok) {

@@ -24,7 +24,15 @@ let secret: Buffer;
 export function initGuestTokenSecret(): void {
   const envSecret = process.env.GUEST_TOKEN_SECRET;
   if (envSecret) {
-    secret = Buffer.from(envSecret, "hex");
+    if (!/^[0-9a-fA-F]{64}$/.test(envSecret)) {
+      console.warn(
+        "GUEST_TOKEN_SECRET must be exactly 64 hex characters (32 bytes). " +
+          "Falling back to a random secret.",
+      );
+      secret = randomBytes(32);
+    } else {
+      secret = Buffer.from(envSecret, "hex");
+    }
   } else {
     secret = randomBytes(32);
   }
