@@ -121,7 +121,7 @@ interface ValidatedUrl {
   url: URL;
 }
 
-async function validateUrl(
+export async function validateUrl(
   url: string,
   httpsOnly = false,
 ): Promise<ValidatedUrl> {

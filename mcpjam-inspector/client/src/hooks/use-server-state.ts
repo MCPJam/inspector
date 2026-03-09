@@ -1021,6 +1021,10 @@ export function useServerState({
   const cliConfigProcessedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    if (HOSTED_MODE) {
+      return;
+    }
+
     if (!isLoading && !cliConfigProcessedRef.current) {
       cliConfigProcessedRef.current = true;
       authFetch("/api/mcp-cli-config")

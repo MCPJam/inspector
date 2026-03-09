@@ -3,6 +3,10 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
+  validateUrl,
+  OAuthProxyError,
+} from "../../utils/oauth-proxy.js";
+import {
   ErrorCode,
   WebRouteError,
   webError,
@@ -70,6 +74,13 @@ export const hostedChatSchema = z
     shareToken: z.string().min(1).optional(),
   })
   .passthrough();
+
+// ── Guest Schema ─────────────────────────────────────────────────────
+
+const guestServerInputSchema = z.object({
+  serverUrl: z.string().min(1),
+  serverHeaders: z.record(z.string(), z.string()).optional(),
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -327,6 +338,11 @@ function resolveConnectionParams(body: Record<string, unknown>): {
  *   6. Disconnect all servers (finally)
  *   7. Return JSON response (or structured error)
  *
+ * Guest users (identified by guestId in Hono context) bypass Convex authorization
+ * entirely. They provide a `serverUrl` (+optional `serverHeaders`) directly in the
+ * request body, which is validated for safety (HTTPS-only, no private IPs) before
+ * creating a direct ephemeral connection.
+ *
  * Not suitable for streaming routes (chat-v2) — those need manual lifecycle
  * management via `onStreamComplete` because the Response is returned before
  * the stream finishes.
@@ -341,8 +357,94 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   options?: { timeoutMs?: number },
 ) {
   return handleRoute(c, async () => {
+    // Read body once — Hono streams can only be consumed once
+    const rawBody = await readJsonBody<Record<string, unknown>>(c);
+
+    // Detect guest requests by body shape: presence of serverUrl without workspaceId.
+    // This is more robust than relying solely on guestId from middleware, which
+    // may not be set when the guest token is expired/invalid but the client still
+    // sends a guest-shaped body.
+    const isGuestRequest =
+      typeof rawBody.serverUrl === "string" && !rawBody.workspaceId;
+
+    if (isGuestRequest) {
+      // ── Guest path: direct connection, no Convex ────────────────
+      const guestId = c.get("guestId") as string | undefined;
+      if (!guestId) {
+        throw new WebRouteError(
+          401,
+          ErrorCode.UNAUTHORIZED,
+          "Valid guest token required. Please refresh the page to obtain a new session.",
+        );
+      }
+
+      // Validate guest-specific fields (serverUrl is required)
+      const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
+
+      // Safety: HTTPS-only, no private/reserved IPs
+      try {
+        await validateUrl(guestInput.serverUrl, true);
+      } catch (err) {
+        if (err instanceof OAuthProxyError) {
+          throw new WebRouteError(
+            err.status,
+            ErrorCode.VALIDATION_ERROR,
+            err.message,
+          );
+        }
+        throw err;
+      }
+
+      const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+
+      // Inject synthetic IDs so downstream schema parsing works unchanged
+      const augmentedBody = {
+        ...rawBody,
+        workspaceId: "__guest__",
+        serverId: "__guest__",
+      };
+      const body = parseWithSchema(schema, augmentedBody);
+
+      // Create ephemeral manager directly from guest-provided config
+      const headers: Record<string, string> = {
+        ...(guestInput.serverHeaders ?? {}),
+      };
+
+      // Allow callers to supply a fresh OAuth bearer explicitly. This avoids
+      // depending on reactive client state having already persisted updated
+      // Authorization headers after an OAuth callback completes.
+      if (
+        typeof (body as { oauthAccessToken?: unknown }).oauthAccessToken ===
+        "string"
+      ) {
+        headers["Authorization"] = `Bearer ${(
+          body as { oauthAccessToken: string }
+        ).oauthAccessToken}`;
+      }
+
+      const httpConfig: HttpServerConfig = {
+        url: guestInput.serverUrl,
+        requestInit: {
+          headers,
+        },
+        timeout: timeoutMs,
+      };
+
+      const manager = new MCPClientManager(
+        { __guest__: httpConfig },
+        { defaultTimeout: timeoutMs },
+      );
+
+      try {
+        return await fn(manager, body as z.infer<S>);
+      } finally {
+        await manager.disconnectAllServers();
+      }
+    }
+
+    // ── Authenticated path: Convex authorization ──────────────────
     const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(schema, await readJsonBody<unknown>(c));
+    const body = parseWithSchema(schema, rawBody);
     // Cast for internal plumbing — all web schemas include workspaceId + serverId(s).
     // The strongly-typed `body` is passed through to `fn` unchanged.
     const raw = body as Record<string, unknown>;
