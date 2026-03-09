@@ -145,8 +145,8 @@ describe("IPv6 checks must not false-positive on hostnames", () => {
   });
 });
 
-describe("DNS pinning — fetch must use validated IPs", () => {
-  it("passes the resolved IP to fetch, not the original hostname", async () => {
+describe("DNS validation — fetch preserves original hostname for TLS", () => {
+  it("uses the original hostname in the fetch URL (not the resolved IP)", async () => {
     const dns = await import("node:dns/promises");
     vi.mocked(dns.default.resolve4).mockResolvedValueOnce(["93.184.216.34"]);
     vi.mocked(dns.default.resolve6).mockResolvedValueOnce([]);
@@ -164,56 +164,10 @@ describe("DNS pinning — fetch must use validated IPs", () => {
       httpsOnly: true,
     });
 
-    // fetch must have been called with the resolved IP, not the hostname
+    // fetch must use the original hostname so TLS cert validation works
     const calledUrl = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0];
-    expect(calledUrl).toContain("93.184.216.34");
-  });
-
-  it("sets Host header to original hostname when fetching by IP", async () => {
-    const dns = await import("node:dns/promises");
-    vi.mocked(dns.default.resolve4).mockResolvedValueOnce(["93.184.216.34"]);
-    vi.mocked(dns.default.resolve6).mockResolvedValueOnce([]);
-
-    fetchMock.mockResolvedValueOnce({
-      status: 200,
-      statusText: "OK",
-      headers: new Headers(),
-      json: async () => ({ ok: true }),
-      text: async () => "",
-    });
-
-    await executeOAuthProxy({
-      url: "https://example.com/path",
-      httpsOnly: true,
-    });
-
-    const calledOptions =
-      fetchMock.mock.calls[fetchMock.mock.calls.length - 1][1];
-    expect(calledOptions.headers["Host"]).toBe("example.com");
-  });
-
-  it("uses IPv6 bracket notation when pinning to a resolved IPv6", async () => {
-    const dns = await import("node:dns/promises");
-    vi.mocked(dns.default.resolve4).mockResolvedValueOnce([]);
-    vi.mocked(dns.default.resolve6).mockResolvedValueOnce([
-      "2606:2800:220:1:248:1893:25c8:1946",
-    ]);
-
-    fetchMock.mockResolvedValueOnce({
-      status: 200,
-      statusText: "OK",
-      headers: new Headers(),
-      json: async () => ({ ok: true }),
-      text: async () => "",
-    });
-
-    await executeOAuthProxy({
-      url: "https://example.com/path",
-      httpsOnly: true,
-    });
-
-    const calledUrl = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0];
-    expect(calledUrl).toContain("[2606:2800:220:1:248:1893:25c8:1946]");
+    expect(calledUrl).toContain("example.com");
+    expect(calledUrl).not.toContain("93.184.216.34");
   });
 });
 

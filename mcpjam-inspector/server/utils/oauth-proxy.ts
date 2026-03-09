@@ -73,14 +73,17 @@ function isPrivateHost(hostname: string): boolean {
 }
 
 /**
- * Resolve hostname via DNS, verify none of the resolved IPs are private,
- * and return the first public IP for DNS pinning.
+ * Resolve hostname via DNS and verify none of the resolved IPs are
+ * private/reserved.  Throws if any resolved address is private.
  *
- * Returning the resolved IP lets callers pin fetch to the validated address,
- * eliminating the DNS rebinding TOCTOU window where a second lookup could
- * resolve to a different (private) IP.
+ * NOTE: There is a theoretical TOCTOU window between this check and
+ * the subsequent `fetch()` (which does its own DNS resolution).
+ * Socket-level pinning (e.g. via undici `Agent` + `connect.lookup`)
+ * would close the gap, but it requires a new dependency and the
+ * attack surface is narrow: the attacker must control DNS for an
+ * HTTPS-only hostname and flip the record within milliseconds.
  *
- * Returns null for raw IP addresses (no DNS lookup needed).
+ * Returns the first resolved IP (or null for raw IP literals).
  */
 async function resolveAndValidateDns(hostname: string): Promise<string | null> {
   // Skip DNS check for raw IP addresses — isPrivateHost already handles them
@@ -116,8 +119,6 @@ async function resolveAndValidateDns(hostname: string): Promise<string | null> {
 
 interface ValidatedUrl {
   url: URL;
-  /** Resolved IP to pin fetch to (null if no DNS pinning needed) */
-  pinnedIp: string | null;
 }
 
 async function validateUrl(
@@ -135,8 +136,6 @@ async function validateUrl(
     throw new OAuthProxyError(400, "Invalid URL format");
   }
 
-  let pinnedIp: string | null = null;
-
   if (httpsOnly) {
     if (targetUrl.protocol !== "https:") {
       throw new OAuthProxyError(
@@ -150,7 +149,7 @@ async function validateUrl(
         "Private/reserved IP addresses are not allowed",
       );
     }
-    pinnedIp = await resolveAndValidateDns(targetUrl.hostname);
+    await resolveAndValidateDns(targetUrl.hostname);
   } else if (
     targetUrl.protocol !== "https:" &&
     targetUrl.protocol !== "http:"
@@ -158,35 +157,30 @@ async function validateUrl(
     throw new OAuthProxyError(400, "Invalid protocol");
   }
 
-  return { url: targetUrl, pinnedIp };
+  return { url: targetUrl };
 }
 
 /**
- * Build a fetch URL pinned to the resolved IP (for DNS rebinding prevention).
- * Replaces the hostname with the resolved IP and sets the Host header.
+ * Build the fetch URL for the validated target.
+ *
+ * NOTE: We intentionally do NOT replace the hostname with the resolved IP.
+ * While IP pinning would close the DNS rebinding TOCTOU window, it breaks
+ * TLS certificate validation: the TLS handshake uses the URL hostname for
+ * SNI and cert verification, so `https://<ip>/...` fails when the cert is
+ * issued for the original hostname. The `Host` header is HTTP-level only
+ * and does not affect TLS.
+ *
+ * The DNS validation in `resolveAndValidateDns` already rejects hostnames
+ * that resolve to private IPs, which is sufficient for the threat model.
  */
-function buildPinnedFetchUrl(
-  targetUrl: URL,
-  pinnedIp: string | null,
-  headers: Record<string, string>,
-): string {
-  if (!pinnedIp) {
-    return targetUrl.toString();
-  }
-
-  const originalHost = targetUrl.hostname;
-  const pinned = new URL(targetUrl.toString());
-  // IPv6 addresses need bracket notation in URLs
-  pinned.hostname = pinnedIp.includes(":") ? `[${pinnedIp}]` : pinnedIp;
-  headers["Host"] = originalHost;
-
-  return pinned.toString();
+function buildFetchUrl(targetUrl: URL): string {
+  return targetUrl.toString();
 }
 
 export async function executeOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const { url: targetUrl, pinnedIp } = await validateUrl(
+  const { url: targetUrl } = await validateUrl(
     req.url,
     req.httpsOnly,
   );
@@ -231,7 +225,7 @@ export async function executeOAuthProxy(
     }
   }
 
-  const fetchUrl = buildPinnedFetchUrl(targetUrl, pinnedIp, requestHeaders);
+  const fetchUrl = buildFetchUrl(targetUrl);
   const response = await fetch(fetchUrl, fetchOptions);
 
   const headers: Record<string, string> = {};
@@ -266,7 +260,7 @@ export async function executeOAuthProxy(
 export async function executeDebugOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const { url: targetUrl, pinnedIp } = await validateUrl(
+  const { url: targetUrl } = await validateUrl(
     req.url,
     req.httpsOnly,
   );
@@ -310,7 +304,7 @@ export async function executeDebugOAuthProxy(
     }
   }
 
-  const fetchUrl = buildPinnedFetchUrl(targetUrl, pinnedIp, requestHeaders);
+  const fetchUrl = buildFetchUrl(targetUrl);
   const response = await fetch(fetchUrl, fetchOptions);
 
   const headers: Record<string, string> = {};
@@ -422,13 +416,13 @@ export async function fetchOAuthMetadata(
   | { metadata: Record<string, unknown>; status?: undefined }
   | { status: number; statusText: string }
 > {
-  const { url: metadataUrl, pinnedIp } = await validateUrl(url, httpsOnly);
+  const { url: metadataUrl } = await validateUrl(url, httpsOnly);
 
   const requestHeaders: Record<string, string> = {
     Accept: "application/json",
     "User-Agent": "MCP-Inspector/1.0",
   };
-  const fetchUrl = buildPinnedFetchUrl(metadataUrl, pinnedIp, requestHeaders);
+  const fetchUrl = buildFetchUrl(metadataUrl);
   const response = await fetch(fetchUrl, {
     method: "GET",
     headers: requestHeaders,
@@ -442,6 +436,23 @@ export async function fetchOAuthMetadata(
     };
   }
 
-  const metadata = (await response.json()) as Record<string, unknown>;
+  const contentType = response.headers.get("content-type");
+  if (!contentType?.includes("application/json")) {
+    return {
+      status: 502 as ContentfulStatusCode,
+      statusText: `Upstream returned non-JSON content-type: ${contentType ?? "(none)"}`,
+    };
+  }
+
+  let metadata: Record<string, unknown>;
+  try {
+    metadata = (await response.json()) as Record<string, unknown>;
+  } catch {
+    return {
+      status: 502 as ContentfulStatusCode,
+      statusText: "Upstream returned invalid JSON body",
+    };
+  }
+
   return { metadata };
 }
