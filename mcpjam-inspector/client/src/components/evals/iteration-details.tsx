@@ -141,10 +141,12 @@ export function IterationDetails({
   iteration,
   testCase,
   serverNames = EMPTY_SERVER_NAMES,
+  layoutMode = "compact",
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
   serverNames?: string[];
+  layoutMode?: "compact" | "full";
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -577,7 +579,7 @@ export function IterationDetails({
       {iteration.blob && (
         <div className="space-y-1.5">
           <div className="text-xs font-semibold">Trace</div>
-          <div className="rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto">
+          <div className={`rounded-md bg-muted/20 p-3${layoutMode === "compact" ? " max-h-[480px] overflow-y-auto" : ""}`}>
             {loading ? (
               <div className="text-xs text-muted-foreground">Loading trace</div>
             ) : error ? (

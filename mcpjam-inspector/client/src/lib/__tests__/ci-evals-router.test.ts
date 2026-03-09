@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   navigateToCiEvalsRoute,
   parseCiEvalsRoute,
@@ -59,5 +59,43 @@ describe("ci-evals-router", () => {
   it("returns null outside ci-evals routes", () => {
     window.location.hash = "#/evals";
     expect(parseCiEvalsRoute()).toBeNull();
+  });
+
+  describe("replace navigation", () => {
+    it("uses replaceState instead of setting hash when replace is true", () => {
+      const replaceStateSpy = vi.spyOn(history, "replaceState");
+      navigateToCiEvalsRoute(
+        { type: "run-detail", suiteId: "s_abc", runId: "r_def", iteration: "i_1" },
+        { replace: true },
+      );
+      expect(replaceStateSpy).toHaveBeenCalledWith(
+        {},
+        "",
+        "/#/ci-evals/suite/s_abc/runs/r_def?iteration=i_1",
+      );
+      replaceStateSpy.mockRestore();
+    });
+
+    it("dispatches hashchange event when replace is true", () => {
+      const handler = vi.fn();
+      window.addEventListener("hashchange", handler);
+      navigateToCiEvalsRoute(
+        { type: "run-detail", suiteId: "s_abc", runId: "r_def" },
+        { replace: true },
+      );
+      expect(handler).toHaveBeenCalledTimes(1);
+      window.removeEventListener("hashchange", handler);
+    });
+
+    it("does not use replaceState when replace option is not set", () => {
+      const replaceStateSpy = vi.spyOn(history, "replaceState");
+      navigateToCiEvalsRoute({
+        type: "run-detail",
+        suiteId: "s_abc",
+        runId: "r_def",
+      });
+      expect(replaceStateSpy).not.toHaveBeenCalled();
+      replaceStateSpy.mockRestore();
+    });
   });
 });

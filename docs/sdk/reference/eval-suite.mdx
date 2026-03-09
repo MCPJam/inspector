@@ -15,25 +15,42 @@ import { EvalSuite, EvalTest } from "@mcpjam/sdk";
 ## Constructor
 
 ```typescript
-new EvalSuite(options: EvalSuiteOptions)
+new EvalSuite(options?: EvalSuiteConfig)
 ```
 
 ### Parameters
 
-<ParamField path="options" type="EvalSuiteOptions" required>
+<ParamField path="options" type="EvalSuiteConfig">
   Configuration for the evaluation suite.
 </ParamField>
 
-### EvalSuiteOptions
+### EvalSuiteConfig
 
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
-| `name` | `string` | Yes | Name for the suite |
+| `name` | `string` | No | Name for the suite (defaults to `"EvalSuite"`) |
+| `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | Auto-report results to MCPJam when the suite completes |
+
+<Note>
+When an API key is available — via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable — all test results are consolidated into a single run and reported to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
+</Note>
 
 ### Example
 
 ```typescript
 const suite = new EvalSuite({ name: "Math Operations" });
+```
+
+With MCPJam reporting:
+
+```typescript
+const reportingSuite = new EvalSuite({
+  name: "Math Operations",
+  mcpjam: {
+    suiteName: "Math Eval",
+    passCriteria: { minimumPassRate: 90 },
+  },
+});
 ```
 
 ---
@@ -78,36 +95,52 @@ suite.add(new EvalTest({
 
 ### run()
 
-Runs all tests in the suite.
+Runs all tests in the suite and returns aggregate results.
 
 ```typescript
-run(agent: TestAgent, options: RunOptions): Promise<void>
+run(agent: EvalAgent, options: EvalTestRunOptions): Promise<EvalSuiteResult>
 ```
 
 #### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `agent` | `TestAgent` | The agent to test with |
-| `options` | `RunOptions` | Run configuration (same as EvalTest) |
+| `agent` | `EvalAgent` | The agent to test with (`TestAgent` or mock) |
+| `options` | `EvalTestRunOptions` | Run configuration (same as EvalTest) |
 
-#### RunOptions
+#### EvalTestRunOptions
 
 | Property | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
 | `iterations` | `number` | Yes | - | Number of runs per test |
-| `concurrency` | `number` | No | `1` | Parallel runs per test |
+| `concurrency` | `number` | No | `5` | Parallel runs per test |
 | `retries` | `number` | No | `0` | Retry failed tests |
-| `timeoutMs` | `number` | No | `60000` | Timeout per test (ms) |
-| `onProgress` | `ProgressCallback` | No | - | Progress callback |
+| `timeoutMs` | `number` | No | `30000` | Timeout per test (ms) |
+| `onProgress` | `ProgressCallback` | No | - | Progress callback (tracks total across all tests) |
+| `onFailure` | `(report: string) => void` | No | - | Called per test with a failure report if any iterations fail |
+| `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | - | Override suite-level MCPJam config |
+
+#### EvalSuiteResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `tests` | `Map<string, EvalRunResult>` | Per-test results |
+| `aggregate.iterations` | `number` | Total iterations across all tests |
+| `aggregate.successes` | `number` | Total passes |
+| `aggregate.failures` | `number` | Total failures |
+| `aggregate.accuracy` | `number` | Overall accuracy (0.0 - 1.0) |
+| `aggregate.tokenUsage` | `{ total, perTest[] }` | Token usage |
+| `aggregate.latency` | `{ e2e, llm, mcp }` | Latency stats with p50/p95 |
 
 #### Example
 
 ```typescript
-await suite.run(agent, {
+const result = await suite.run(agent, {
   iterations: 30,
   concurrency: 5,
 });
+
+console.log(`Overall: ${(result.aggregate.accuracy * 100).toFixed(1)}%`);
 ```
 
 <Note>
@@ -165,12 +198,12 @@ if (addTest) {
 
 ---
 
-### getTests()
+### getAll()
 
 Returns all tests in the suite.
 
 ```typescript
-getTests(): EvalTest[]
+getAll(): EvalTest[]
 ```
 
 #### Returns
@@ -180,9 +213,89 @@ getTests(): EvalTest[]
 #### Example
 
 ```typescript
-for (const test of suite.getTests()) {
-  console.log(`${test.name}: ${(test.accuracy() * 100).toFixed(1)}%`);
+for (const test of suite.getAll()) {
+  console.log(`${test.getName()}: ${(test.accuracy() * 100).toFixed(1)}%`);
 }
+```
+
+---
+
+### getName()
+
+Returns the suite's name.
+
+```typescript
+getName(): string
+```
+
+---
+
+### size()
+
+Returns the number of tests in the suite.
+
+```typescript
+size(): number
+```
+
+---
+
+### getResults()
+
+Returns the full suite results from the last run.
+
+```typescript
+getResults(): EvalSuiteResult | null
+```
+
+---
+
+### recall()
+
+Returns aggregate recall (same as accuracy in basic context).
+
+```typescript
+recall(): number
+```
+
+---
+
+### precision()
+
+Returns aggregate precision (same as accuracy in basic context).
+
+```typescript
+precision(): number
+```
+
+---
+
+### truePositiveRate()
+
+Returns aggregate true positive rate (same as recall).
+
+```typescript
+truePositiveRate(): number
+```
+
+---
+
+### falsePositiveRate()
+
+Returns aggregate false positive rate.
+
+```typescript
+falsePositiveRate(): number
+```
+
+---
+
+### averageTokenUse()
+
+Returns average tokens per iteration across all tests.
+
+```typescript
+averageTokenUse(): number
 ```
 
 ---
@@ -191,10 +304,10 @@ for (const test of suite.getTests()) {
 
 ### name
 
-The suite's name.
+The suite's name (via `getName()`).
 
 ```typescript
-suite.name // "Math Operations"
+suite.getName() // "Math Operations"
 ```
 
 ---
@@ -221,8 +334,14 @@ async function main() {
     temperature: 0.1,
   });
 
-  // Build suite
-  const suite = new EvalSuite({ name: "Everything Server Tests" });
+  // Build suite (with MCPJam auto-reporting)
+  const suite = new EvalSuite({
+    name: "Everything Server Tests",
+    mcpjam: {
+      suiteName: "Everything Server Eval",
+      passCriteria: { minimumPassRate: 90 },
+    },
+  });
 
   suite.add(new EvalTest({
     name: "add",
@@ -240,9 +359,9 @@ async function main() {
   }));
 
   // Run
-  console.log(`Running ${suite.name}...\n`);
+  console.log(`Running ${suite.getName()}...\n`);
 
-  await suite.run(agent, {
+  const result = await suite.run(agent, {
     iterations: 20,
     concurrency: 3,
     onProgress: (done, total) => {
@@ -251,15 +370,13 @@ async function main() {
   });
 
   // Report
-  console.log("\n\n📊 Results");
-  console.log("═".repeat(40));
-  console.log(`Overall: ${(suite.accuracy() * 100).toFixed(1)}%\n`);
+  console.log(`\n\nOverall: ${(suite.accuracy() * 100).toFixed(1)}%`);
+  console.log(`Total iterations: ${result.aggregate.iterations}\n`);
 
   console.log("Per-test breakdown:");
-  for (const test of suite.getTests()) {
+  for (const test of suite.getAll()) {
     const pct = (test.accuracy() * 100).toFixed(1);
-    const icon = test.accuracy() >= 0.9 ? "✅" : test.accuracy() >= 0.7 ? "⚠️" : "❌";
-    console.log(`  ${icon} ${test.name}: ${pct}%`);
+    console.log(`  ${test.getName()}: ${pct}%`);
   }
 
   // Access individual test
@@ -338,4 +455,5 @@ for (const { model, key } of providers) {
 
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalTest Reference](/sdk/reference/eval-test) - Individual test API
+- [Eval Reporting Reference](/sdk/reference/eval-reporting) - Reporting APIs
 - [Testing Across Providers](/sdk/concepts/multi-provider) - Compare LLMs

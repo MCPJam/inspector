@@ -287,7 +287,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               </div>
             </div>
           ) : (
-            <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
+            <div className={`flex-1 px-6 pb-6 pt-6 ${route.type === "run-detail" ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}>
               <CiSuiteDetail
                 suite={selectedSuite}
                 cases={queries.suiteDetails?.testCases || []}

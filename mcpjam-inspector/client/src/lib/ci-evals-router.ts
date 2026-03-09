@@ -75,7 +75,10 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
 /**
  * Navigate to a specific CI evals route.
  */
-export function navigateToCiEvalsRoute(route: CiEvalsRoute) {
+export function navigateToCiEvalsRoute(
+  route: CiEvalsRoute,
+  options?: { replace?: boolean },
+) {
   let hash = "";
 
   switch (route.type) {
@@ -111,7 +114,12 @@ export function navigateToCiEvalsRoute(route: CiEvalsRoute) {
     }
   }
 
-  window.location.hash = hash;
+  if (options?.replace) {
+    history.replaceState({}, "", `/${hash}`);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  } else {
+    window.location.hash = hash;
+  }
 }
 
 /**

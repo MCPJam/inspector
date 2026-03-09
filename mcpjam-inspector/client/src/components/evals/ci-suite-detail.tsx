@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SuiteHeader } from "./suite-header";
 import { RunOverview } from "./run-overview";
 import { RunDetailView } from "./run-detail-view";
@@ -96,6 +96,55 @@ export function CiSuiteDetail({
     return runs.find((run) => run._id === selectedRunId) ?? null;
   }, [selectedRunId, runs]);
 
+  // Derive selectedIterationId from route
+  const selectedIterationId =
+    route.type === "run-detail" ? route.iteration ?? null : null;
+
+  // Auto-select the first iteration when on run-detail with iterations but no ?iteration= param.
+  // Also handle stale iteration IDs that don't match any available iteration.
+  useEffect(() => {
+    if (route.type !== "run-detail" || caseGroupsForSelectedRun.length === 0) {
+      return;
+    }
+
+    const iterationIds = new Set(caseGroupsForSelectedRun.map((i) => i._id));
+
+    if (!route.iteration) {
+      // No iteration selected — auto-select the first one
+      navigateToCiEvalsRoute(
+        {
+          type: "run-detail",
+          suiteId: route.suiteId,
+          runId: route.runId,
+          iteration: caseGroupsForSelectedRun[0]._id,
+        },
+        { replace: true },
+      );
+    } else if (!iterationIds.has(route.iteration)) {
+      // Stale iteration — fall back to first available
+      navigateToCiEvalsRoute(
+        {
+          type: "run-detail",
+          suiteId: route.suiteId,
+          runId: route.runId,
+          iteration: caseGroupsForSelectedRun[0]._id,
+        },
+        { replace: true },
+      );
+    }
+  }, [route, caseGroupsForSelectedRun]);
+
+  const handleSelectIteration = (iterationId: string) => {
+    if (route.type === "run-detail") {
+      navigateToCiEvalsRoute({
+        type: "run-detail",
+        suiteId: route.suiteId,
+        runId: route.runId,
+        iteration: iterationId,
+      });
+    }
+  };
+
   const handleRunClick = (runId: string) => {
     navigateToCiEvalsRoute({
       type: "run-detail",
@@ -147,7 +196,7 @@ export function CiSuiteDetail({
         />
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 overflow-hidden">
         {viewMode === "test-detail" && selectedTestId ? (
           (() => {
             const selectedCase = cases.find((item) => item._id === selectedTestId);
@@ -241,6 +290,8 @@ export function CiSuiteDetail({
             showRunSummarySidebar={showRunSummarySidebar}
             setShowRunSummarySidebar={setShowRunSummarySidebar}
             serverNames={connectedSuiteServers}
+            selectedIterationId={selectedIterationId}
+            onSelectIteration={handleSelectIteration}
           />
         ) : null}
       </div>
