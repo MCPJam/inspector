@@ -72,14 +72,17 @@ function saveServerOrder(workspaceId: string, orderedNames: string[]): void {
 
 function SortableServerCard({
   id,
+  dndDisabled,
   server,
   onDisconnect,
   onReconnect,
   onEdit,
   onRemove,
+  onServerInfoModalOpenChange,
   hostedServerId,
 }: {
   id: string;
+  dndDisabled: boolean;
   server: ServerWithName;
   onDisconnect: (name: string) => void;
   onReconnect: (
@@ -88,6 +91,7 @@ function SortableServerCard({
   ) => Promise<void>;
   onEdit: (server: ServerWithName) => void;
   onRemove: (name: string) => void;
+  onServerInfoModalOpenChange: (isOpen: boolean) => void;
   hostedServerId?: string;
 }) {
   const {
@@ -97,7 +101,7 @@ function SortableServerCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id });
+  } = useSortable({ id, disabled: dndDisabled });
 
   const style = {
     transform: CSS.Translate.toString(transform),
@@ -113,6 +117,7 @@ function SortableServerCard({
         onReconnect={onReconnect}
         onEdit={onEdit}
         onRemove={onRemove}
+        onServerInfoModalOpenChange={onServerInfoModalOpenChange}
         hostedServerId={hostedServerId}
       />
     </div>
@@ -172,6 +177,7 @@ export function ServersTab({
   const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [isServerInfoModalOpen, setIsServerInfoModalOpen] = useState(false);
 
   // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
   const allNames = useMemo(
@@ -394,11 +400,13 @@ export function ServersTab({
                     <SortableServerCard
                       key={name}
                       id={name}
+                      dndDisabled={isServerInfoModalOpen}
                       server={server}
                       onDisconnect={onDisconnect}
                       onReconnect={onReconnect}
                       onEdit={handleEditServer}
                       onRemove={onRemove}
+                      onServerInfoModalOpenChange={setIsServerInfoModalOpen}
                       hostedServerId={sharedWorkspaceServersRecord[name]?._id}
                     />
                   );

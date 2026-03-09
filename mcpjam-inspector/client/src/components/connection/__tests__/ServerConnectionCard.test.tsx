@@ -330,6 +330,30 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("View server info")).toBeInTheDocument();
     });
+
+    it("notifies parent when server info modal opens and closes", () => {
+      const onServerInfoModalOpenChange = vi.fn();
+      const server = createServer({
+        initializationInfo: {
+          serverCapabilities: { tools: {} },
+          protocolVersion: "2024-11-05",
+        },
+      });
+
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onServerInfoModalOpenChange={onServerInfoModalOpenChange}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("View server info"));
+      expect(onServerInfoModalOpenChange).toHaveBeenCalledWith(true);
+
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+      expect(onServerInfoModalOpenChange).toHaveBeenCalledWith(false);
+    });
   });
 
   describe("tunnel URL", () => {

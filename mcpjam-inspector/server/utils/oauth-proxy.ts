@@ -24,6 +24,34 @@ export interface OAuthProxyResponse {
   body: unknown;
 }
 
+function isPrivateHost(hostname: string): boolean {
+  // Strip brackets from IPv6
+  const host = hostname.replace(/^\[|\]$/g, "");
+
+  if (host === "localhost" || host === "0.0.0.0" || host === "::1") {
+    return true;
+  }
+
+  if (
+    host.startsWith("127.") ||
+    host.startsWith("10.") ||
+    host.startsWith("192.168.") ||
+    host.startsWith("169.254.")
+  ) {
+    return true;
+  }
+
+  // 172.16.0.0 - 172.31.255.255
+  if (host.startsWith("172.")) {
+    const second = parseInt(host.split(".")[1], 10);
+    if (second >= 16 && second <= 31) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function validateUrl(url: string, httpsOnly = false): URL {
   if (!url) {
     throw new OAuthProxyError(400, "Missing url parameter");
@@ -41,6 +69,12 @@ function validateUrl(url: string, httpsOnly = false): URL {
       throw new OAuthProxyError(
         400,
         "Only HTTPS targets are allowed in hosted mode",
+      );
+    }
+    if (isPrivateHost(targetUrl.hostname)) {
+      throw new OAuthProxyError(
+        400,
+        "Private/reserved IP addresses are not allowed",
       );
     }
   } else if (

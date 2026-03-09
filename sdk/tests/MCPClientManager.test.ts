@@ -277,6 +277,25 @@ describe("MCPClientManager", () => {
       expect(capabilities?.tools).toBeDefined();
     }, 30000);
 
+    it("should advertise MCP Apps UI extension in client capabilities", async () => {
+      await manager.connectToServer("extensions-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+      });
+
+      const info = manager.getInitializationInfo("extensions-test");
+      expect(info).toBeDefined();
+
+      const extensions = (info!.clientCapabilities as Record<string, unknown>)
+        .extensions as Record<string, unknown>;
+      expect(extensions).toBeDefined();
+      expect(extensions["io.modelcontextprotocol/ui"]).toEqual({
+        mimeTypes: ["text/html;profile=mcp-app"],
+      });
+
+      await manager.disconnectServer("extensions-test");
+    }, 30000);
+
     it("should remove server", async () => {
       await manager.connectToServer("to-remove", {
         command: "npx",

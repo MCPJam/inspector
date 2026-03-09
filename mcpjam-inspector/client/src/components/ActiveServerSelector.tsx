@@ -133,6 +133,9 @@ export function ActiveServerSelector({
           new Date(a.lastConnectionTime).getTime(),
       );
       onServerChange(sorted[0][0]);
+    } else if (!isCurrentSelectionValid && selectedServer !== "none") {
+      // No available servers and selection is stale — clear it
+      onServerChange("none");
     }
   }, [servers.length, selectedServer, isMultiSelectEnabled, onServerChange]);
 

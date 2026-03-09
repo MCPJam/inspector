@@ -30,10 +30,12 @@ import {
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
+import { HOSTED_MODE } from "@/lib/config";
+import { Button } from "@/components/ui/button";
 
 export function SidebarUser() {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signOut } = useAuth();
+  const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -63,8 +65,19 @@ export function SidebarUser() {
 
   const avatarUrl = profilePictureUrl;
 
-  // Not logged in state - auth buttons are now in the header
+  // Not logged in state
   if (!user) {
+    if (HOSTED_MODE) {
+      return (
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <Button variant="outline" size="sm" onClick={() => signIn()}>
+              Sign in
+            </Button>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      );
+    }
     return null;
   }
 

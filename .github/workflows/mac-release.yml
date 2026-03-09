@@ -17,7 +17,7 @@ on:
         type: boolean
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "24.14.0"
 
 permissions:
   contents: write
