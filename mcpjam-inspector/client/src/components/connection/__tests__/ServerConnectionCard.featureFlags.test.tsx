@@ -88,9 +88,7 @@ describe("ServerConnectionCard feature flag gating", () => {
 
   it("calls useFeatureFlagEnabled with ci-evals-enabled", () => {
     useFeatureFlagEnabledMock.mockReturnValue(false);
-    render(
-      <ServerConnectionCard server={createServer()} {...defaultProps} />,
-    );
+    render(<ServerConnectionCard server={createServer()} {...defaultProps} />);
 
     expect(useFeatureFlagEnabledMock).toHaveBeenCalledWith("ci-evals-enabled");
   });
