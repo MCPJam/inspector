@@ -1,3 +1,4 @@
+import dns from "node:dns/promises";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 export class OAuthProxyError extends Error {
@@ -26,9 +27,14 @@ export interface OAuthProxyResponse {
 
 function isPrivateHost(hostname: string): boolean {
   // Strip brackets from IPv6
-  const host = hostname.replace(/^\[|\]$/g, "");
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
 
-  if (host === "localhost" || host === "0.0.0.0" || host === "::1") {
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host === "::"
+  ) {
     return true;
   }
 
@@ -49,10 +55,75 @@ function isPrivateHost(hostname: string): boolean {
     }
   }
 
+  // IPv6-specific checks — only apply to actual IPv6 addresses (contain ":")
+  // to avoid false-positives on hostnames like fdroid.org, fc-example.com, etc.
+  if (host.includes(":")) {
+    // IPv6 unique local (fc00::/7) — covers fc00:: through fdff::
+    if (host.startsWith("fc") || host.startsWith("fd")) {
+      return true;
+    }
+
+    // IPv6 link-local (fe80::/10)
+    if (/^fe[89ab][0-9a-f]/i.test(host)) {
+      return true;
+    }
+  }
+
   return false;
 }
 
-function validateUrl(url: string, httpsOnly = false): URL {
+/**
+ * Resolve hostname via DNS, verify none of the resolved IPs are private,
+ * and return the first public IP for DNS pinning.
+ *
+ * Returning the resolved IP lets callers pin fetch to the validated address,
+ * eliminating the DNS rebinding TOCTOU window where a second lookup could
+ * resolve to a different (private) IP.
+ *
+ * Returns null for raw IP addresses (no DNS lookup needed).
+ */
+async function resolveAndValidateDns(hostname: string): Promise<string | null> {
+  // Skip DNS check for raw IP addresses — isPrivateHost already handles them
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":")) {
+    return null;
+  }
+
+  const resolved: string[] = [];
+  try {
+    const ipv4 = await dns.resolve4(hostname);
+    resolved.push(...ipv4);
+  } catch {
+    // no A records is fine
+  }
+  try {
+    const ipv6 = await dns.resolve6(hostname);
+    resolved.push(...ipv6);
+  } catch {
+    // no AAAA records is fine
+  }
+
+  for (const ip of resolved) {
+    if (isPrivateHost(ip)) {
+      throw new OAuthProxyError(
+        400,
+        "Hostname resolves to a private/reserved IP address",
+      );
+    }
+  }
+
+  return resolved[0] ?? null;
+}
+
+interface ValidatedUrl {
+  url: URL;
+  /** Resolved IP to pin fetch to (null if no DNS pinning needed) */
+  pinnedIp: string | null;
+}
+
+async function validateUrl(
+  url: string,
+  httpsOnly = false,
+): Promise<ValidatedUrl> {
   if (!url) {
     throw new OAuthProxyError(400, "Missing url parameter");
   }
@@ -63,6 +134,8 @@ function validateUrl(url: string, httpsOnly = false): URL {
   } catch {
     throw new OAuthProxyError(400, "Invalid URL format");
   }
+
+  let pinnedIp: string | null = null;
 
   if (httpsOnly) {
     if (targetUrl.protocol !== "https:") {
@@ -77,6 +150,7 @@ function validateUrl(url: string, httpsOnly = false): URL {
         "Private/reserved IP addresses are not allowed",
       );
     }
+    pinnedIp = await resolveAndValidateDns(targetUrl.hostname);
   } else if (
     targetUrl.protocol !== "https:" &&
     targetUrl.protocol !== "http:"
@@ -84,13 +158,38 @@ function validateUrl(url: string, httpsOnly = false): URL {
     throw new OAuthProxyError(400, "Invalid protocol");
   }
 
-  return targetUrl;
+  return { url: targetUrl, pinnedIp };
+}
+
+/**
+ * Build a fetch URL pinned to the resolved IP (for DNS rebinding prevention).
+ * Replaces the hostname with the resolved IP and sets the Host header.
+ */
+function buildPinnedFetchUrl(
+  targetUrl: URL,
+  pinnedIp: string | null,
+  headers: Record<string, string>,
+): string {
+  if (!pinnedIp) {
+    return targetUrl.toString();
+  }
+
+  const originalHost = targetUrl.hostname;
+  const pinned = new URL(targetUrl.toString());
+  // IPv6 addresses need bracket notation in URLs
+  pinned.hostname = pinnedIp.includes(":") ? `[${pinnedIp}]` : pinnedIp;
+  headers["Host"] = originalHost;
+
+  return pinned.toString();
 }
 
 export async function executeOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const targetUrl = validateUrl(req.url, req.httpsOnly);
+  const { url: targetUrl, pinnedIp } = await validateUrl(
+    req.url,
+    req.httpsOnly,
+  );
   const method = req.method ?? "GET";
   const customHeaders = req.headers;
 
@@ -112,6 +211,8 @@ export async function executeOAuthProxy(
   const fetchOptions: RequestInit = {
     method,
     headers: requestHeaders,
+    // Prevent redirect-based SSRF: don't follow redirects in hosted mode
+    redirect: req.httpsOnly ? "manual" : "follow",
   };
 
   if (method === "POST" && req.body) {
@@ -130,7 +231,8 @@ export async function executeOAuthProxy(
     }
   }
 
-  const response = await fetch(targetUrl.toString(), fetchOptions);
+  const fetchUrl = buildPinnedFetchUrl(targetUrl, pinnedIp, requestHeaders);
+  const response = await fetch(fetchUrl, fetchOptions);
 
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => {
@@ -164,7 +266,10 @@ export async function executeOAuthProxy(
 export async function executeDebugOAuthProxy(
   req: OAuthProxyRequest,
 ): Promise<OAuthProxyResponse> {
-  const targetUrl = validateUrl(req.url, req.httpsOnly);
+  const { url: targetUrl, pinnedIp } = await validateUrl(
+    req.url,
+    req.httpsOnly,
+  );
   const method = req.method ?? "GET";
   const customHeaders = req.headers;
 
@@ -186,6 +291,7 @@ export async function executeDebugOAuthProxy(
   const fetchOptions: RequestInit = {
     method,
     headers: requestHeaders,
+    redirect: req.httpsOnly ? "manual" : "follow",
   };
 
   if (method === "POST" && req.body) {
@@ -204,7 +310,8 @@ export async function executeDebugOAuthProxy(
     }
   }
 
-  const response = await fetch(targetUrl.toString(), fetchOptions);
+  const fetchUrl = buildPinnedFetchUrl(targetUrl, pinnedIp, requestHeaders);
+  const response = await fetch(fetchUrl, fetchOptions);
 
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => {
@@ -315,14 +422,17 @@ export async function fetchOAuthMetadata(
   | { metadata: Record<string, unknown>; status?: undefined }
   | { status: number; statusText: string }
 > {
-  const metadataUrl = validateUrl(url, httpsOnly);
+  const { url: metadataUrl, pinnedIp } = await validateUrl(url, httpsOnly);
 
-  const response = await fetch(metadataUrl.toString(), {
+  const requestHeaders: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": "MCP-Inspector/1.0",
+  };
+  const fetchUrl = buildPinnedFetchUrl(metadataUrl, pinnedIp, requestHeaders);
+  const response = await fetch(fetchUrl, {
     method: "GET",
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "MCP-Inspector/1.0",
-    },
+    headers: requestHeaders,
+    redirect: httpsOnly ? "manual" : "follow",
   });
 
   if (!response.ok) {
