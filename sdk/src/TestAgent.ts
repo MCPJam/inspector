@@ -158,7 +158,8 @@ export class TestAgent implements EvalAgent {
       // Fallback for unparseable model strings (e.g., mock agents)
       const parts = config.model.split("/");
       this._parsedProvider = parts.length > 1 ? parts[0] : "";
-      this._parsedModel = parts.length > 1 ? parts.slice(1).join("/") : config.model;
+      this._parsedModel =
+        parts.length > 1 ? parts.slice(1).join("/") : config.model;
     }
   }
 
@@ -173,7 +174,11 @@ export class TestAgent implements EvalAgent {
     error?: unknown
   ) {
     const suffix =
-      error instanceof Error ? `: ${error.message}` : error ? `: ${String(error)}` : "";
+      error instanceof Error
+        ? `: ${error.message}`
+        : error
+          ? `: ${String(error)}`
+          : "";
     console.warn(
       `[mcpjam/sdk] skipped widget snapshot for "${toolName}"${suffix || `: ${message}`}`
     );
@@ -220,9 +225,12 @@ export class TestAgent implements EvalAgent {
     }
 
     try {
-      const resourceResult = await this.mcpClientManager.readResource(serverId, {
-        uri: resourceUri,
-      });
+      const resourceResult = await this.mcpClientManager.readResource(
+        serverId,
+        {
+          uri: resourceUri,
+        }
+      );
       const contents = Array.isArray((resourceResult as any)?.contents)
         ? (resourceResult as any).contents
         : [];
@@ -375,13 +383,10 @@ export class TestAgent implements EvalAgent {
       const model = createModelFromString(this.model, modelOptions);
 
       // Instrument tools to track MCP execution time
-      const instrumentedTools = this.createInstrumentedTools(
-        (ms) => {
-          totalMcpMs += ms;
-          stepMcpMs += ms; // Accumulate per-step for LLM calculation
-        },
-        widgetSnapshots
-      );
+      const instrumentedTools = this.createInstrumentedTools((ms) => {
+        totalMcpMs += ms;
+        stepMcpMs += ms; // Accumulate per-step for LLM calculation
+      }, widgetSnapshots);
 
       // Build messages array if context is provided for multi-turn
       const contextMessages = this.buildContextMessages(options?.context);
@@ -626,7 +631,10 @@ export class TestAgent implements EvalAgent {
    * ```
    */
   static mock(
-    promptFn: (message: string, options?: PromptOptions) => PromptResult | Promise<PromptResult>
+    promptFn: (
+      message: string,
+      options?: PromptOptions
+    ) => PromptResult | Promise<PromptResult>
   ): EvalAgent {
     const createAgent = (): EvalAgent => {
       let promptHistory: PromptResult[] = [];

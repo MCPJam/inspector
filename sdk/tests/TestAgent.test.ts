@@ -316,13 +316,13 @@ describe("TestAgent", () => {
       mockGenerateText.mockImplementationOnce(async (params: any) => {
         await params.tools.create_view.execute(
           { title: "Flow 1" },
-          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } },
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
         );
         params.onStepFinish?.();
 
         await params.tools.create_view.execute(
           { title: "Flow 2" },
-          { toolCallId: "call-2", abortSignal: { throwIfAborted: jest.fn() } },
+          { toolCallId: "call-2", abortSignal: { throwIfAborted: jest.fn() } }
         );
         params.onStepFinish?.();
 
@@ -375,7 +375,7 @@ describe("TestAgent", () => {
           resourceUri: "ui://widget/create-view.html",
           widgetPermissive: true,
           prefersBorder: false,
-        }),
+        })
       );
       // widgetHtml should contain the injected OpenAI compat runtime
       expect(snap0.widgetHtml).toContain('id="openai-compat-config"');
@@ -386,7 +386,7 @@ describe("TestAgent", () => {
         expect.objectContaining({
           toolCallId: "call-2",
           prefersBorder: true,
-        }),
+        })
       );
       expect(snap1.widgetHtml).toContain('id="openai-compat-config"');
       expect(snap1.widgetHtml).toContain("Second widget");
@@ -407,7 +407,7 @@ describe("TestAgent", () => {
       mockGenerateText.mockImplementationOnce(async (params: any) => {
         await params.tools.create_view.execute(
           { title: "Flow 1" },
-          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } },
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
         );
         params.onStepFinish?.();
 
@@ -441,7 +441,7 @@ describe("TestAgent", () => {
       expect(result.hasError()).toBe(false);
       expect(result.getWidgetSnapshots()).toEqual([]);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('skipped widget snapshot for "create_view"'),
+        expect.stringContaining('skipped widget snapshot for "create_view"')
       );
       warnSpy.mockRestore();
     });

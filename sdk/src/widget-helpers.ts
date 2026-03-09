@@ -40,7 +40,7 @@ export function injectOpenAICompat(
     theme?: string;
     viewMode?: string;
     viewParams?: Record<string, unknown>;
-  },
+  }
 ): string {
   if (html.includes('id="openai-compat-config"')) {
     return html;
@@ -59,7 +59,7 @@ export function injectOpenAICompat(
   const configScript = `<script type="application/json" id="openai-compat-config">${configJson}</script>`;
   const escapedRuntime = MCP_APPS_OPENAI_COMPATIBLE_RUNTIME_SCRIPT.replace(
     /<\//g,
-    "<\\/",
+    "<\\/"
   );
   const runtimeScript = `<script>${escapedRuntime}</script>`;
   const headContent = `${configScript}${runtimeScript}`;

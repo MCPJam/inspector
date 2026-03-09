@@ -354,58 +354,61 @@ export function SuiteHeader({
             <BarChart3 className="h-4 w-4" />
             View run summary
           </Button>
-          {!readOnlyConfig && (isRunInProgress ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onCancelRun(selectedRunDetails._id)}
-                  disabled={isCancelling}
-                  className="gap-2"
-                >
-                  {isCancelling ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Cancelling...
-                    </>
-                  ) : (
-                    <>
-                      <X className="h-4 w-4" />
-                      Cancel run
-                    </>
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Cancel the current evaluation run</TooltipContent>
-            </Tooltip>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
+          {!readOnlyConfig &&
+            (isRunInProgress ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => onRerun(suite)}
-                    disabled={!canRerun || showAsRunning}
+                    onClick={() => onCancelRun(selectedRunDetails._id)}
+                    disabled={isCancelling}
                     className="gap-2"
                   >
-                    <RotateCw
-                      className={`h-4 w-4 ${showAsRunning ? "animate-spin" : ""}`}
-                    />
-                    {showAsRunning ? "Running..." : "Rerun"}
+                    {isCancelling ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Cancelling...
+                      </>
+                    ) : (
+                      <>
+                        <X className="h-4 w-4" />
+                        Cancel run
+                      </>
+                    )}
                   </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                {!hasServersConfigured
-                  ? "No connected MCP servers are configured for this suite"
-                  : !canRerun
-                  ? `Connect the following servers: ${missingServers.join(", ")}`
-                  : "Run all tests"}
-              </TooltipContent>
-            </Tooltip>
-          ))}
+                </TooltipTrigger>
+                <TooltipContent>
+                  Cancel the current evaluation run
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onRerun(suite)}
+                      disabled={!canRerun || showAsRunning}
+                      className="gap-2"
+                    >
+                      <RotateCw
+                        className={`h-4 w-4 ${showAsRunning ? "animate-spin" : ""}`}
+                      />
+                      {showAsRunning ? "Running..." : "Rerun"}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {!hasServersConfigured
+                    ? "No connected MCP servers are configured for this suite"
+                    : !canRerun
+                      ? `Connect the following servers: ${missingServers.join(", ")}`
+                      : "Run all tests"}
+                </TooltipContent>
+              </Tooltip>
+            ))}
           <Button
             variant="outline"
             size="sm"
@@ -722,8 +725,8 @@ export function SuiteHeader({
               {!hasServersConfigured
                 ? "No connected MCP servers are configured for this suite"
                 : !canRerun
-                ? `Connect the following servers: ${missingServers.join(", ")}`
-                : "Run all tests"}
+                  ? `Connect the following servers: ${missingServers.join(", ")}`
+                  : "Run all tests"}
             </TooltipContent>
           </Tooltip>
         )}

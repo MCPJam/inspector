@@ -257,7 +257,10 @@ describe("PromptResult", () => {
         model: "claude-3-5-sonnet-20241022",
       });
       const result = new PromptResult(data);
-      const evalResult = result.toEvalResult({ caseTitle: "test", passed: true });
+      const evalResult = result.toEvalResult({
+        caseTitle: "test",
+        passed: true,
+      });
 
       expect(evalResult.provider).toBe("anthropic");
       expect(evalResult.model).toBe("claude-3-5-sonnet-20241022");
@@ -311,7 +314,10 @@ describe("PromptResult", () => {
         ],
       });
       const result = new PromptResult(data);
-      const evalResult = result.toEvalResult({ caseTitle: "test", passed: true });
+      const evalResult = result.toEvalResult({
+        caseTitle: "test",
+        passed: true,
+      });
 
       expect(evalResult.widgetSnapshots).toEqual(data.widgetSnapshots);
     });

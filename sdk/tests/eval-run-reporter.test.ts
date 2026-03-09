@@ -286,16 +286,14 @@ describe("createEvalRunReporter", () => {
     }
 
     it("recordFromRun adds results and tracks count", async () => {
-      const fetchMock = jest
-        .fn()
-        .mockResolvedValue(
-          okResponse({
-            suiteId: "suite_1",
-            runId: "run_1",
-            status: "running",
-            result: "pending",
-          })
-        );
+      const fetchMock = jest.fn().mockResolvedValue(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      );
       global.fetch = fetchMock as any;
 
       const reporter = createEvalRunReporter({
@@ -310,16 +308,14 @@ describe("createEvalRunReporter", () => {
     });
 
     it("recordFromSuiteRun adds results and tracks count", async () => {
-      const fetchMock = jest
-        .fn()
-        .mockResolvedValue(
-          okResponse({
-            suiteId: "suite_1",
-            runId: "run_1",
-            status: "running",
-            result: "pending",
-          })
-        );
+      const fetchMock = jest.fn().mockResolvedValue(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      );
       global.fetch = fetchMock as any;
 
       const reporter = createEvalRunReporter({
@@ -347,7 +343,9 @@ describe("createEvalRunReporter", () => {
             result: "pending",
           })
         )
-        .mockResolvedValue(okResponse({ inserted: 200, skipped: 0, total: 200 }));
+        .mockResolvedValue(
+          okResponse({ inserted: 200, skipped: 0, total: 200 })
+        );
       global.fetch = fetchMock as any;
 
       const reporter = createEvalRunReporter({
@@ -371,7 +369,10 @@ describe("createEvalRunReporter", () => {
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         latency: { e2eMs: 0, llmMs: 0, mcpMs: 0 },
       });
-      await reporter.recordFromPrompt(pr, { caseTitle: "flush-trigger", passed: true });
+      await reporter.recordFromPrompt(pr, {
+        caseTitle: "flush-trigger",
+        passed: true,
+      });
 
       // Buffer should be empty after auto-flush
       expect(reporter.getBufferedCount()).toBe(0);

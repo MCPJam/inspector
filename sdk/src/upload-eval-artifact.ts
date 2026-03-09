@@ -3,7 +3,11 @@ import type {
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
-import { parseJestJsonArtifact, parseJUnitXmlArtifact, parseVitestJsonArtifact } from "./artifact-parsers/index.js";
+import {
+  parseJestJsonArtifact,
+  parseJUnitXmlArtifact,
+  parseVitestJsonArtifact,
+} from "./artifact-parsers/index.js";
 import { reportEvalResults } from "./report-eval-results.js";
 
 export type EvalArtifactFormat =
@@ -12,7 +16,10 @@ export type EvalArtifactFormat =
   | "vitest-json"
   | "custom";
 
-export type UploadEvalArtifactInput = Omit<ReportEvalResultsInput, "results"> & {
+export type UploadEvalArtifactInput = Omit<
+  ReportEvalResultsInput,
+  "results"
+> & {
   artifact: string | Uint8Array | Record<string, unknown>;
   format: EvalArtifactFormat;
   customParser?: (
@@ -30,7 +37,11 @@ function artifactToString(artifact: string | Uint8Array): string {
 function artifactToObject(
   artifact: string | Uint8Array | Record<string, unknown>
 ): Record<string, unknown> {
-  if (artifact && typeof artifact === "object" && !ArrayBuffer.isView(artifact)) {
+  if (
+    artifact &&
+    typeof artifact === "object" &&
+    !ArrayBuffer.isView(artifact)
+  ) {
     return artifact;
   }
   const asString = artifactToString(artifact as string | Uint8Array);
@@ -41,17 +52,25 @@ function artifactToObject(
   return parsed as Record<string, unknown>;
 }
 
-function parseArtifactResults(input: UploadEvalArtifactInput): EvalResultInput[] {
+function parseArtifactResults(
+  input: UploadEvalArtifactInput
+): EvalResultInput[] {
   switch (input.format) {
     case "junit-xml":
-      return parseJUnitXmlArtifact(artifactToString(input.artifact as string | Uint8Array));
+      return parseJUnitXmlArtifact(
+        artifactToString(input.artifact as string | Uint8Array)
+      );
     case "jest-json":
       return parseJestJsonArtifact(
-        artifactToObject(input.artifact) as Parameters<typeof parseJestJsonArtifact>[0]
+        artifactToObject(input.artifact) as Parameters<
+          typeof parseJestJsonArtifact
+        >[0]
       );
     case "vitest-json":
       return parseVitestJsonArtifact(
-        artifactToObject(input.artifact) as Parameters<typeof parseVitestJsonArtifact>[0]
+        artifactToObject(input.artifact) as Parameters<
+          typeof parseVitestJsonArtifact
+        >[0]
       );
     case "custom":
       if (!input.customParser) {

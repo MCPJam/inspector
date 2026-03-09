@@ -41,7 +41,9 @@ export function parseJUnitXmlArtifact(xml: string): EvalResultInput[] {
 
     let errorMessage: string | undefined;
     if (!passed) {
-      const failureMatch = body.match(/<(failure|error)\b[^>]*>([\s\S]*?)<\/\1>/i);
+      const failureMatch = body.match(
+        /<(failure|error)\b[^>]*>([\s\S]*?)<\/\1>/i
+      );
       const skippedMatch = body.match(/<skipped\b[^>]*>([\s\S]*?)<\/skipped>/i);
       errorMessage = failureMatch?.[2]?.trim() || skippedMatch?.[1]?.trim();
       if (!errorMessage) {

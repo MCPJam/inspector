@@ -57,7 +57,9 @@ describe("reportEvalResults", () => {
 
     expect(result.runId).toBe("run_1");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("https://example.com/sdk/v1/evals/report");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.com/sdk/v1/evals/report"
+    );
   });
 
   it("adds external run and iteration ids for one-shot idempotency", async () => {
@@ -109,7 +111,9 @@ describe("reportEvalResults", () => {
           result: "pending",
         })
       )
-      .mockResolvedValueOnce(okResponse({ inserted: 200, skipped: 0, total: 200 }))
+      .mockResolvedValueOnce(
+        okResponse({ inserted: 200, skipped: 0, total: 200 })
+      )
       .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
       .mockResolvedValueOnce(
         okResponse({
@@ -141,7 +145,9 @@ describe("reportEvalResults", () => {
 
     expect(output.summary.total).toBe(201);
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(fetchMock.mock.calls[0][0]).toBe("https://example.com/sdk/v1/evals/runs/start");
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.com/sdk/v1/evals/runs/start"
+    );
     expect(fetchMock.mock.calls[3][0]).toBe(
       "https://example.com/sdk/v1/evals/runs/finalize"
     );
@@ -219,7 +225,9 @@ describe("reportEvalResults", () => {
         widgetHtmlBlobId: "storage_1",
       })
     );
-    expect(requestBody.results[0].widgetSnapshots[0].widgetHtml).toBeUndefined();
+    expect(
+      requestBody.results[0].widgetSnapshots[0].widgetHtml
+    ).toBeUndefined();
   });
 
   it("warns and continues when widget snapshot upload fails", async () => {
@@ -274,7 +282,9 @@ describe("reportEvalResults", () => {
 
     expect(result.runId).toBe("run_1");
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('skipped widget snapshot upload for "create_view"')
+      expect.stringContaining(
+        'skipped widget snapshot upload for "create_view"'
+      )
     );
 
     const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
@@ -282,7 +292,9 @@ describe("reportEvalResults", () => {
   });
 
   it("returns null in safe mode when strict is false", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(errorResponse(500, "backend down"));
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(errorResponse(500, "backend down"));
     global.fetch = fetchMock as any;
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
 

@@ -12,7 +12,12 @@ export type CiEvalsRoute =
   | { type: "list" }
   | { type: "suite-overview"; suiteId: string; view?: "runs" | "test-cases" }
   | { type: "run-detail"; suiteId: string; runId: string; iteration?: string }
-  | { type: "test-detail"; suiteId: string; testId: string; iteration?: string };
+  | {
+      type: "test-detail";
+      suiteId: string;
+      testId: string;
+      iteration?: string;
+    };
 
 /**
  * Parse the current hash to extract CI evals route information.

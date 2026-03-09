@@ -174,10 +174,7 @@ function resolveTraceMessages(
 
   if (Array.isArray(trace)) {
     messages = trace;
-  } else if (
-    isRecord(trace) &&
-    Array.isArray(trace.messages)
-  ) {
+  } else if (isRecord(trace) && Array.isArray(trace.messages)) {
     messages = trace.messages as TraceMessage[];
     if (Array.isArray(trace.widgetSnapshots)) {
       widgetSnapshots = trace.widgetSnapshots as TraceWidgetSnapshot[];
@@ -218,7 +215,10 @@ function getToolInput(part: TraceContentPart): Record<string, unknown> {
 
 function getToolResultPayload(part: TraceContentPart): unknown {
   if (part.result !== undefined) {
-    return attachServerId(part.result, typeof part.serverId === "string" ? part.serverId : undefined);
+    return attachServerId(
+      part.result,
+      typeof part.serverId === "string" ? part.serverId : undefined,
+    );
   }
 
   const unwrappedOutput = unwrapTraceToolOutput(part.output);
@@ -228,13 +228,17 @@ function getToolResultPayload(part: TraceContentPart): unknown {
   );
 }
 
-function getToolResultDisplayValue(part: TraceContentPart | undefined): unknown {
+function getToolResultDisplayValue(
+  part: TraceContentPart | undefined,
+): unknown {
   if (!part) return undefined;
   if (part.result !== undefined) return part.result;
   return unwrapTraceToolOutput(part.output);
 }
 
-function getToolErrorText(part: TraceContentPart | undefined): string | undefined {
+function getToolErrorText(
+  part: TraceContentPart | undefined,
+): string | undefined {
   if (!part) return undefined;
   const displayValue = getToolResultDisplayValue(part);
 
@@ -247,7 +251,9 @@ function getToolErrorText(part: TraceContentPart | undefined): string | undefine
   }
 
   if (isRecord(part.output) && part.output.type === "error-text") {
-    return typeof part.output.value === "string" ? part.output.value : "Tool error";
+    return typeof part.output.value === "string"
+      ? part.output.value
+      : "Tool error";
   }
 
   if (isRecord(part.result) && part.result.isError === true) {
@@ -315,7 +321,9 @@ function claimMatchingResult(
   return undefined;
 }
 
-function getRemainingResults(resultBuckets: ReturnType<typeof createResultBuckets>) {
+function getRemainingResults(
+  resultBuckets: ReturnType<typeof createResultBuckets>,
+) {
   const keyed = [...resultBuckets.keyed.values()].flat();
   return [...keyed, ...resultBuckets.unkeyed];
 }
@@ -334,8 +342,7 @@ function shouldAttemptWidgetReplay(params: {
   const liveServerId = getToolServerId(params.toolName, params.toolServerMap);
   const snapshot = params.widgetSnapshotMap.get(params.toolCallId);
   const historicalServerId =
-    snapshot?.serverId ??
-    readToolResultServerId(params.rawToolOutput);
+    snapshot?.serverId ?? readToolResultServerId(params.rawToolOutput);
 
   const hasCurrentWidgetResolution =
     !!liveToolMetadata &&
@@ -357,7 +364,11 @@ function shouldAttemptWidgetReplay(params: {
   return params.connectedServerIds.has(liveServerId);
 }
 
-function createReplayOverride(snapshot: TraceWidgetSnapshot, toolInput: Record<string, unknown>, toolOutput: unknown) {
+function createReplayOverride(
+  snapshot: TraceWidgetSnapshot,
+  toolInput: Record<string, unknown>,
+  toolOutput: unknown,
+) {
   return buildPersistedExecutionReplay({
     protocol: snapshot.protocol,
     toolCallId: snapshot.toolCallId,
@@ -394,7 +405,9 @@ function buildToolParts(params: {
     params.toolCall.toolCallId ??
     params.matchedResult?.toolCallId ??
     buildSyntheticToolCallId(params.messageIndex, params.partIndex, toolName);
-  const rawToolOutput = getToolResultPayload(params.matchedResult ?? params.toolCall);
+  const rawToolOutput = getToolResultPayload(
+    params.matchedResult ?? params.toolCall,
+  );
   const displayedOutput = getToolResultDisplayValue(params.matchedResult);
   const errorText = getToolErrorText(params.matchedResult);
   const isError = !!errorText;
@@ -523,14 +536,15 @@ function buildAssistantMessage(params: {
   toolRenderOverrides: Record<string, ToolRenderOverride>;
 }): { message: UIMessage; extraMessages: UIMessage[] } {
   const assistantParts = normalizeMessageContent(params.message);
-  const toolResultEntries = params.toolMessages.flatMap((toolMessage, toolMessageOffset) =>
-    normalizeMessageContent(toolMessage)
-      .map((part, partIndex) => ({
-        part,
-        messageIndex: params.messageIndex + toolMessageOffset + 1,
-        partIndex,
-      }))
-      .filter((entry) => entry.part.type === "tool-result"),
+  const toolResultEntries = params.toolMessages.flatMap(
+    (toolMessage, toolMessageOffset) =>
+      normalizeMessageContent(toolMessage)
+        .map((part, partIndex) => ({
+          part,
+          messageIndex: params.messageIndex + toolMessageOffset + 1,
+          partIndex,
+        }))
+        .filter((entry) => entry.part.type === "tool-result"),
   );
   const resultBuckets = createResultBuckets(toolResultEntries);
   const parts: UIMessage["parts"] = [];
@@ -539,7 +553,11 @@ function buildAssistantMessage(params: {
     if (part.type === "tool-call") {
       const toolCallId =
         part.toolCallId ??
-        buildSyntheticToolCallId(params.messageIndex, partIndex, getToolName(part));
+        buildSyntheticToolCallId(
+          params.messageIndex,
+          partIndex,
+          getToolName(part),
+        );
       const matchedResult = claimMatchingResult(
         resultBuckets,
         toolCallId,
@@ -572,42 +590,44 @@ function buildAssistantMessage(params: {
     }
   });
 
-  const extraMessages = getRemainingResults(resultBuckets).map((entry, orphanIndex) => {
-    const toolName = getToolName(entry.part);
-    const toolCallId =
-      entry.part.toolCallId ??
-      buildSyntheticToolCallId(
-        entry.messageIndex,
-        entry.partIndex,
-        `${toolName}-${orphanIndex}`,
-      );
-    const syntheticToolCall: TraceContentPart = {
-      type: "tool-call",
-      toolCallId,
-      toolName,
-      input: {},
-    };
+  const extraMessages = getRemainingResults(resultBuckets).map(
+    (entry, orphanIndex) => {
+      const toolName = getToolName(entry.part);
+      const toolCallId =
+        entry.part.toolCallId ??
+        buildSyntheticToolCallId(
+          entry.messageIndex,
+          entry.partIndex,
+          `${toolName}-${orphanIndex}`,
+        );
+      const syntheticToolCall: TraceContentPart = {
+        type: "tool-call",
+        toolCallId,
+        toolName,
+        input: {},
+      };
 
-    return {
-      id: `trace-assistant-orphan-${entry.messageIndex}-${entry.partIndex}`,
-      role: "assistant",
-      parts: buildToolParts({
-        toolCall: syntheticToolCall,
-        matchedResult: {
-          ...entry.part,
-          toolCallId,
-          toolName,
-        },
-        messageIndex: entry.messageIndex,
-        partIndex: entry.partIndex,
-        widgetSnapshotMap: params.widgetSnapshotMap,
-        toolsMetadata: params.toolsMetadata,
-        toolServerMap: params.toolServerMap,
-        connectedServerIds: params.connectedServerIds,
-        toolRenderOverrides: params.toolRenderOverrides,
-      }),
-    } satisfies UIMessage;
-  });
+      return {
+        id: `trace-assistant-orphan-${entry.messageIndex}-${entry.partIndex}`,
+        role: "assistant",
+        parts: buildToolParts({
+          toolCall: syntheticToolCall,
+          matchedResult: {
+            ...entry.part,
+            toolCallId,
+            toolName,
+          },
+          messageIndex: entry.messageIndex,
+          partIndex: entry.partIndex,
+          widgetSnapshotMap: params.widgetSnapshotMap,
+          toolsMetadata: params.toolsMetadata,
+          toolServerMap: params.toolServerMap,
+          connectedServerIds: params.connectedServerIds,
+          toolRenderOverrides: params.toolRenderOverrides,
+        }),
+      } satisfies UIMessage;
+    },
+  );
 
   return {
     message: {
@@ -619,7 +639,10 @@ function buildAssistantMessage(params: {
   };
 }
 
-function buildUserMessage(message: TraceMessage, messageIndex: number): UIMessage {
+function buildUserMessage(
+  message: TraceMessage,
+  messageIndex: number,
+): UIMessage {
   const parts = normalizeMessageContent(message)
     .map((part) => adaptTracePart(part))
     .filter((part): part is NonNullable<typeof part> => Boolean(part));
@@ -724,7 +747,10 @@ export function adaptTraceToUiMessages(params: {
         connectedServerIds,
         toolRenderOverrides,
       });
-      uiMessages.push(adaptedAssistant.message, ...adaptedAssistant.extraMessages);
+      uiMessages.push(
+        adaptedAssistant.message,
+        ...adaptedAssistant.extraMessages,
+      );
       index = nextIndex - 1;
       continue;
     }

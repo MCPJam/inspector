@@ -140,8 +140,14 @@ describe("adaptTraceToUiMessages", () => {
     const msg = result.messages[0];
     const dynamicTools = msg.parts.filter((p) => p.type === "dynamic-tool");
     expect(dynamicTools).toHaveLength(2);
-    expect(dynamicTools[0]).toMatchObject({ toolCallId: "call-1", toolName: "tool_a" });
-    expect(dynamicTools[1]).toMatchObject({ toolCallId: "call-2", toolName: "tool_b" });
+    expect(dynamicTools[0]).toMatchObject({
+      toolCallId: "call-1",
+      toolName: "tool_a",
+    });
+    expect(dynamicTools[1]).toMatchObject({
+      toolCallId: "call-2",
+      toolName: "tool_b",
+    });
   });
 
   // --- Test 3: Orphan tool-results ---
@@ -172,9 +178,7 @@ describe("adaptTraceToUiMessages", () => {
 
   // --- Test 4: String content ---
   it("normalizes string content into a text part", () => {
-    const trace: TraceMessage[] = [
-      { role: "user", content: "Hello" },
-    ];
+    const trace: TraceMessage[] = [{ role: "user", content: "Hello" }];
 
     const result = adaptTraceToUiMessages({ trace });
     expect(result.messages).toHaveLength(1);
@@ -222,30 +226,33 @@ describe("adaptTraceToUiMessages", () => {
   // --- Test 6: Deterministic synthetic IDs ---
   it("produces identical output for identical input across calls", () => {
     // Deep-clone because the adapter mutates input parts (sets toolCallId)
-    const makeTrace = (): TraceEnvelope => JSON.parse(JSON.stringify({
-      messages: [
-        {
-          role: "assistant",
-          content: [
+    const makeTrace = (): TraceEnvelope =>
+      JSON.parse(
+        JSON.stringify({
+          messages: [
             {
-              type: "tool-call",
-              toolName: "stable_tool",
-              input: { x: 1 },
+              role: "assistant",
+              content: [
+                {
+                  type: "tool-call",
+                  toolName: "stable_tool",
+                  input: { x: 1 },
+                },
+              ],
+            },
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolName: "stable_tool",
+                  output: "stable output",
+                },
+              ],
             },
           ],
-        },
-        {
-          role: "tool",
-          content: [
-            {
-              type: "tool-result",
-              toolName: "stable_tool",
-              output: "stable output",
-            },
-          ],
-        },
-      ],
-    }));
+        }),
+      );
 
     const result1 = adaptTraceToUiMessages({ trace: makeTrace() });
     const result2 = adaptTraceToUiMessages({ trace: makeTrace() });
@@ -363,9 +370,7 @@ describe("adaptTraceToUiMessages", () => {
     };
 
     const result = adaptTraceToUiMessages({ trace });
-    const textParts = result.messages[0].parts.filter(
-      (p) => p.type === "text",
-    );
+    const textParts = result.messages[0].parts.filter((p) => p.type === "text");
     expect(textParts.some((p) => (p as any).text === "extracted content")).toBe(
       true,
     );
@@ -403,9 +408,7 @@ describe("adaptTraceToUiMessages", () => {
     };
 
     const result = adaptTraceToUiMessages({ trace });
-    const textParts = result.messages[0].parts.filter(
-      (p) => p.type === "text",
-    );
+    const textParts = result.messages[0].parts.filter((p) => p.type === "text");
     const jsonFallback = textParts.find((p) =>
       (p as any).text?.startsWith("```json"),
     );
@@ -418,9 +421,7 @@ describe("adaptTraceToUiMessages", () => {
       messages: [
         {
           role: "assistant",
-          content: [
-            { type: "reasoning", text: "thinking..." } as any,
-          ],
+          content: [{ type: "reasoning", text: "thinking..." } as any],
         },
       ],
     };
@@ -532,7 +533,9 @@ describe("adaptTraceToUiMessages", () => {
     expect(toolPart.state).toBe("output-error");
     expect(result.toolRenderOverrides["call-error"]).toBeUndefined();
     expect(
-      textParts.some((part) => part.text === "Tool error: Invalid JSON in elements"),
+      textParts.some(
+        (part) => part.text === "Tool error: Invalid JSON in elements",
+      ),
     ).toBe(true);
   });
 
@@ -678,8 +681,8 @@ describe("adaptTraceToUiMessages", () => {
     // Resource with ui:// URI should be removed
     const outputContent = (toolPart.output as Record<string, unknown>)?.content;
     if (Array.isArray(outputContent)) {
-      const uiResources = outputContent.filter(
-        (item: any) => item?.resource?.uri?.startsWith("ui://"),
+      const uiResources = outputContent.filter((item: any) =>
+        item?.resource?.uri?.startsWith("ui://"),
       );
       expect(uiResources).toHaveLength(0);
     }

@@ -98,7 +98,7 @@ export function CiSuiteDetail({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? route.iteration ?? null : null;
+    route.type === "run-detail" ? (route.iteration ?? null) : null;
 
   // Auto-select the first iteration when on run-detail with iterations but no ?iteration= param.
   // Also handle stale iteration IDs that don't match any available iteration.
@@ -199,7 +199,9 @@ export function CiSuiteDetail({
       <div className="flex-1 min-h-0 overflow-hidden">
         {viewMode === "test-detail" && selectedTestId ? (
           (() => {
-            const selectedCase = cases.find((item) => item._id === selectedTestId);
+            const selectedCase = cases.find(
+              (item) => item._id === selectedTestId,
+            );
             if (!selectedCase) return null;
 
             const caseIterations = allIterations.filter(

@@ -20,7 +20,9 @@ interface TraceViewerProps {
   connectedServerIds?: string[];
 }
 
-function getTraceMessages(trace: TraceEnvelope | TraceMessage | TraceMessage[] | null) {
+function getTraceMessages(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+) {
   if (!trace) return [];
 
   if (Array.isArray(trace)) {
@@ -69,7 +71,7 @@ export function TraceViewer({
         toolsMetadata,
         toolServerMap,
         connectedServerIds,
-    }),
+      }),
     [trace, toolsMetadata, toolServerMap, connectedServerIds],
   );
 

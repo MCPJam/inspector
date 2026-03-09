@@ -16,7 +16,9 @@ describe("CiMetadataDisplay", () => {
   });
 
   it("renders non-interactive badges in full mode when interactive is false", () => {
-    render(<CiMetadataDisplay ciMetadata={metadata} compact interactive={false} />);
+    render(
+      <CiMetadataDisplay ciMetadata={metadata} compact interactive={false} />,
+    );
 
     expect(screen.queryAllByRole("link")).toHaveLength(0);
     expect(screen.getByText("main")).toBeTruthy();

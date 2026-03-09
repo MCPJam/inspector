@@ -83,7 +83,9 @@ function stringifyToolArgumentValue(value: unknown): string {
   }
 }
 
-export function resolveFormattedArgumentValue(value: unknown):
+export function resolveFormattedArgumentValue(
+  value: unknown,
+):
   | { kind: "structured"; value: unknown }
   | { kind: "text"; value: string; renderAsBlock: boolean } {
   if (value !== null && typeof value === "object") {
@@ -125,7 +127,9 @@ function resolveTraceModel(
   const provider = snapshotProvider || fallbackProvider || "openai";
   const model = snapshotModel || fallbackModel || "unknown-model";
   const providerModelId =
-    model.startsWith(`${provider}/`) || !provider ? model : `${provider}/${model}`;
+    model.startsWith(`${provider}/`) || !provider
+      ? model
+      : `${provider}/${model}`;
 
   return (
     getModelById(providerModelId) ??
@@ -261,7 +265,10 @@ export function IterationDetails({
         .catch((loadError) => {
           if (cancelled) return;
 
-          console.warn(`Failed to fetch tools for server ${serverId}:`, loadError);
+          console.warn(
+            `Failed to fetch tools for server ${serverId}:`,
+            loadError,
+          );
         });
     });
 
@@ -278,7 +285,9 @@ export function IterationDetails({
   // Use snapshot values first (reflects what was actually tested, including unsaved edits)
   const snapshotExpected = iteration.testCaseSnapshot?.expectedToolCalls;
   const expectedToolCalls =
-    (snapshotExpected && snapshotExpected.length > 0 ? snapshotExpected : null) ??
+    (snapshotExpected && snapshotExpected.length > 0
+      ? snapshotExpected
+      : null) ??
     testCase?.expectedToolCalls ??
     [];
   const actualToolCalls = iteration.actualToolCalls || [];
@@ -579,7 +588,9 @@ export function IterationDetails({
       {iteration.blob && (
         <div className="space-y-1.5">
           <div className="text-xs font-semibold">Trace</div>
-          <div className={`rounded-md bg-muted/20 p-3${layoutMode === "compact" ? " max-h-[480px] overflow-y-auto" : ""}`}>
+          <div
+            className={`rounded-md bg-muted/20 p-3${layoutMode === "compact" ? " max-h-[480px] overflow-y-auto" : ""}`}
+          >
             {loading ? (
               <div className="text-xs text-muted-foreground">Loading trace</div>
             ) : error ? (

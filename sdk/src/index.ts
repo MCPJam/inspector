@@ -120,7 +120,10 @@ export type {
 } from "./EvalSuite.js";
 
 // Eval reporting APIs (DX-first ingestion)
-export { reportEvalResults, reportEvalResultsSafely } from "./report-eval-results.js";
+export {
+  reportEvalResults,
+  reportEvalResultsSafely,
+} from "./report-eval-results.js";
 export { createEvalRunReporter } from "./eval-run-reporter.js";
 export type {
   CreateEvalRunReporterInput,

@@ -86,7 +86,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) return null;
-    return sdkSuites.find((entry) => entry.suite._id === selectedSuiteId) ?? null;
+    return (
+      sdkSuites.find((entry) => entry.suite._id === selectedSuiteId) ?? null
+    );
   }, [sdkSuites, selectedSuiteId]);
 
   const selectedSuite = selectedSuiteEntry?.suite ?? null;
@@ -179,7 +181,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           });
         }
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to delete run");
+        toast.error(
+          error instanceof Error ? error.message : "Failed to delete run",
+        );
       } finally {
         setDeletingRunId(null);
       }
@@ -248,7 +252,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
         <ResizableHandle withHandle />
 
-        <ResizablePanel defaultSize={70} className="flex flex-col overflow-hidden">
+        <ResizablePanel
+          defaultSize={70}
+          className="flex flex-col overflow-hidden"
+        >
           {sdkSuites.length === 0 ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center max-w-md mx-auto p-8">
@@ -283,11 +290,15 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             <div className="flex h-full items-center justify-center">
               <div className="text-center">
                 <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                <p className="mt-4 text-muted-foreground">Loading suite data...</p>
+                <p className="mt-4 text-muted-foreground">
+                  Loading suite data...
+                </p>
               </div>
             </div>
           ) : (
-            <div className={`flex-1 px-6 pb-6 pt-6 ${route.type === "run-detail" ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}>
+            <div
+              className={`flex-1 px-6 pb-6 pt-6 ${route.type === "run-detail" ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}
+            >
               <CiSuiteDetail
                 suite={selectedSuite}
                 cases={queries.suiteDetails?.testCases || []}

@@ -95,7 +95,9 @@ function chunkResultsForUpload(
 
   for (const result of results) {
     const candidate = [...currentChunk, result];
-    const candidateBytes = getByteLength(JSON.stringify({ results: candidate }));
+    const candidateBytes = getByteLength(
+      JSON.stringify({ results: candidate })
+    );
     const shouldSplit =
       currentChunk.length >= maxCount ||
       (candidateBytes > maxBytes && currentChunk.length > 0);
@@ -373,8 +375,7 @@ async function uploadWidgetSnapshots(
           })
         );
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         console.warn(
           `[mcpjam/sdk] skipped widget snapshot upload for "${snapshot.toolName}": ${message}`
         );

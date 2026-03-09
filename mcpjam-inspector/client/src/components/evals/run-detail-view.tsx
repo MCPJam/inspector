@@ -116,22 +116,27 @@ export function RunDetailView({
     if (remaining > 0) {
       return [
         ...selectedRunChartData.donutData,
-        { name: "remaining", value: remaining, fill: "hsl(240 3.7% 15.9% / 0.3)" },
+        {
+          name: "remaining",
+          value: remaining,
+          fill: "hsl(240 3.7% 15.9% / 0.3)",
+        },
       ];
     }
     return selectedRunChartData.donutData;
   }, [selectedRunChartData.donutData, remaining]);
 
-  const progressPercent = expected && expected > 0
-    ? Math.round((donutTotal / expected) * 100)
-    : null;
+  const progressPercent =
+    expected && expected > 0 ? Math.round((donutTotal / expected) * 100) : null;
 
   const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
 
   const selectedIteration = useMemo(
     () =>
       selectedIterationId
-        ? caseGroupsForSelectedRun.find((i) => i._id === selectedIterationId) ?? null
+        ? (caseGroupsForSelectedRun.find(
+            (i) => i._id === selectedIterationId,
+          ) ?? null)
         : null,
     [selectedIterationId, caseGroupsForSelectedRun],
   );
@@ -154,7 +159,9 @@ export function RunDetailView({
             {/* Metrics */}
             <div className="flex gap-6 flex-1">
               <div className="space-y-0.5">
-                <div className="text-xs text-muted-foreground">{metricLabel}</div>
+                <div className="text-xs text-muted-foreground">
+                  {metricLabel}
+                </div>
                 <div className="text-sm font-semibold">
                   {computedStats.total > 0
                     ? `${Math.round(computedStats.passRate * 100)}%`
@@ -184,7 +191,8 @@ export function RunDetailView({
               <div className="space-y-0.5">
                 <div className="text-xs text-muted-foreground">Duration</div>
                 <div className="text-sm font-semibold">
-                  {selectedRunDetails.completedAt && selectedRunDetails.createdAt
+                  {selectedRunDetails.completedAt &&
+                  selectedRunDetails.createdAt
                     ? formatDuration(
                         selectedRunDetails.completedAt -
                           selectedRunDetails.createdAt,
@@ -199,9 +207,15 @@ export function RunDetailView({
               <div className="flex items-center gap-2">
                 <ChartContainer
                   config={{
-                    passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
+                    passed: {
+                      label: "Passed",
+                      color: "hsl(142.1 76.2% 36.3%)",
+                    },
                     failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                    pending: { label: "Pending", color: "hsl(45.4 93.4% 47.5%)" },
+                    pending: {
+                      label: "Pending",
+                      color: "hsl(45.4 93.4% 47.5%)",
+                    },
                     cancelled: {
                       label: "Cancelled",
                       color: "hsl(240 3.7% 15.9%)",
@@ -268,7 +282,11 @@ export function RunDetailView({
             </span>
 
             {/* Pass/Fail Badge */}
-            <PassCriteriaBadge run={selectedRunDetails} variant="compact" metricLabel={metricLabel} />
+            <PassCriteriaBadge
+              run={selectedRunDetails}
+              variant="compact"
+              metricLabel={metricLabel}
+            />
           </div>
         </div>
       </div>
@@ -314,7 +332,10 @@ export function RunDetailView({
         {/* Right pane: iteration detail */}
         <div className="flex-1 min-w-0 flex flex-col">
           {selectedIteration ? (
-            <div key={selectedIterationId} className="flex-1 min-h-0 overflow-y-auto p-4">
+            <div
+              key={selectedIterationId}
+              className="flex-1 min-h-0 overflow-y-auto p-4"
+            >
               <IterationDetails
                 iteration={selectedIteration}
                 testCase={null}

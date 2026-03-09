@@ -263,13 +263,13 @@ export function MCPAppsRenderer({
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
   const isCachedReplay = !!cachedWidgetHtmlUrl;
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
-    isCachedReplay ? undefined : initialWidgetCsp ?? undefined,
+    isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),
   );
   const [widgetPermissions, setWidgetPermissions] = useState<
     McpUiResourcePermissions | undefined
-  >(isCachedReplay ? undefined : initialWidgetPermissions ?? undefined);
+  >(isCachedReplay ? undefined : (initialWidgetPermissions ?? undefined));
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(
-    isCachedReplay ? true : initialWidgetPermissive ?? false,
+    isCachedReplay ? true : (initialWidgetPermissive ?? false),
   );
   const [prefersBorder, setPrefersBorder] = useState<boolean>(
     initialPrefersBorder ?? true,
@@ -292,11 +292,13 @@ export function MCPAppsRenderer({
     setWidgetHtml(null);
     setLoadedCspMode(null);
     setLoadError(null);
-    setWidgetCsp(isCachedReplay ? undefined : initialWidgetCsp ?? undefined);
+    setWidgetCsp(isCachedReplay ? undefined : (initialWidgetCsp ?? undefined));
     setWidgetPermissions(
-      isCachedReplay ? undefined : initialWidgetPermissions ?? undefined,
+      isCachedReplay ? undefined : (initialWidgetPermissions ?? undefined),
     );
-    setWidgetPermissive(isCachedReplay ? true : initialWidgetPermissive ?? false);
+    setWidgetPermissive(
+      isCachedReplay ? true : (initialWidgetPermissive ?? false),
+    );
     setPrefersBorder(initialPrefersBorder ?? true);
   }, [
     cachedWidgetHtmlUrl,

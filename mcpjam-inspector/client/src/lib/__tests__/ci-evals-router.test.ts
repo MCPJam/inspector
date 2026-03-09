@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  navigateToCiEvalsRoute,
-  parseCiEvalsRoute,
-} from "../ci-evals-router";
+import { navigateToCiEvalsRoute, parseCiEvalsRoute } from "../ci-evals-router";
 
 describe("ci-evals-router", () => {
   it("parses list route", () => {
@@ -65,7 +62,12 @@ describe("ci-evals-router", () => {
     it("uses replaceState instead of setting hash when replace is true", () => {
       const replaceStateSpy = vi.spyOn(history, "replaceState");
       navigateToCiEvalsRoute(
-        { type: "run-detail", suiteId: "s_abc", runId: "r_def", iteration: "i_1" },
+        {
+          type: "run-detail",
+          suiteId: "s_abc",
+          runId: "r_def",
+          iteration: "i_1",
+        },
         { replace: true },
       );
       expect(replaceStateSpy).toHaveBeenCalledWith(

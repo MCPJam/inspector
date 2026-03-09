@@ -128,7 +128,9 @@ export function WidgetReplay({
   minimalMode = false,
 }: WidgetReplayProps) {
   const effectiveToolMeta =
-    renderOverride?.toolMetadata ?? toolMetadata ?? readToolResultMeta(rawOutput);
+    renderOverride?.toolMetadata ??
+    toolMetadata ??
+    readToolResultMeta(rawOutput);
   const resolvedToolOutput = toolOutput ?? rawOutput;
   const uiType = detectUIType(effectiveToolMeta, rawOutput ?? toolOutput);
   const uiResourceUri =

@@ -105,7 +105,10 @@ export function CiSuiteListSidebar({
                 >
                   <div className="flex items-center gap-2.5">
                     <div
-                      className={cn("h-2 w-2 shrink-0 rounded-full", status.dotClass)}
+                      className={cn(
+                        "h-2 w-2 shrink-0 rounded-full",
+                        status.dotClass,
+                      )}
                       title={status.label}
                     />
                     <div className="min-w-0 flex-1">
@@ -122,7 +125,9 @@ export function CiSuiteListSidebar({
                           <div
                             key={`${entry.suite._id}-t-${idx}`}
                             className="w-1 rounded-sm bg-primary/70"
-                            style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
+                            style={{
+                              height: `${Math.max(3, (value / 100) * 20)}px`,
+                            }}
                           />
                         ))}
                       </div>

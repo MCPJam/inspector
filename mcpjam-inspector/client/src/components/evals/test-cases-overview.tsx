@@ -260,7 +260,9 @@ export function TestCasesOverview({
           <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
             <div className="flex-1 min-w-[200px]">Test Case Name</div>
             <div className="min-w-[100px] text-right">Iterations</div>
-            <div className="min-w-[100px] text-right">{suite.source === "sdk" ? "Avg Pass Rate" : "Avg Accuracy"}</div>
+            <div className="min-w-[100px] text-right">
+              {suite.source === "sdk" ? "Avg Pass Rate" : "Avg Accuracy"}
+            </div>
             <div className="min-w-[100px] text-right">Avg Duration</div>
           </div>
         )}

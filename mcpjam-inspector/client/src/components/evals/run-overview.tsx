@@ -107,7 +107,9 @@ function getTableColumnCount(input: RunsTableWidthInput): number {
   return count;
 }
 
-export function estimateRunsTableRequiredWidth(input: RunsTableWidthInput): number {
+export function estimateRunsTableRequiredWidth(
+  input: RunsTableWidthInput,
+): number {
   let width =
     TABLE_SELECTION_COL_PX +
     BASE_COL_WIDTHS_PX.runId +
@@ -141,7 +143,10 @@ export function resolveRunsTableLayout(input: {
   hasTokenData: boolean;
   hasCiMetadata: boolean;
 }): RunsTableLayout {
-  const normalizedContainerWidth = Math.max(0, Math.floor(input.containerWidth));
+  const normalizedContainerWidth = Math.max(
+    0,
+    Math.floor(input.containerWidth),
+  );
   const showTokens = input.hasTokenData;
   const showRunBy = true;
   const metadataMode: CiMetadataCompactMode = "full";
@@ -152,7 +157,8 @@ export function resolveRunsTableLayout(input: {
     showRunBy,
     metadataMode,
   });
-  const enableHorizontalScroll = requiredTableWidthPx > normalizedContainerWidth;
+  const enableHorizontalScroll =
+    requiredTableWidthPx > normalizedContainerWidth;
 
   return {
     showTokens,
@@ -568,11 +574,15 @@ export function RunOverview({
                       ? realTimeFailed
                       : (run.summary?.failed ?? 0);
                   const total =
-                    realTimeTotal > 0 ? realTimeTotal : (run.summary?.total ?? 0);
+                    realTimeTotal > 0
+                      ? realTimeTotal
+                      : (run.summary?.total ?? 0);
                   const passRate =
                     total > 0 ? Math.round((passed / total) * 100) : null;
 
-                  const timestamp = formatTime(run.completedAt ?? run.createdAt);
+                  const timestamp = formatTime(
+                    run.completedAt ?? run.createdAt,
+                  );
 
                   const duration =
                     run.completedAt && run.createdAt
@@ -641,7 +651,9 @@ export function RunOverview({
                         </span>
                         {hasTokenData && responsiveLayout.showTokens && (
                           <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
-                            {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
+                            {totalTokens > 0
+                              ? totalTokens.toLocaleString()
+                              : "—"}
                           </span>
                         )}
                         {responsiveLayout.showRunBy && (
@@ -689,7 +701,9 @@ export function RunOverview({
                                 interactive={false}
                               />
                             ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
+                              <span className="text-xs text-muted-foreground">
+                                —
+                              </span>
                             )}
                           </span>
                         )}

@@ -25,7 +25,9 @@ function sanitizeId(value: string): string {
 export function parseJestJsonArtifact(
   artifact: JestJsonArtifact
 ): EvalResultInput[] {
-  const suites = Array.isArray(artifact.testResults) ? artifact.testResults : [];
+  const suites = Array.isArray(artifact.testResults)
+    ? artifact.testResults
+    : [];
   const results: EvalResultInput[] = [];
   let index = 0;
 
@@ -55,7 +57,9 @@ export function parseJestJsonArtifact(
         query: caseTitle,
         passed,
         durationMs:
-          typeof assertion.duration === "number" ? assertion.duration : undefined,
+          typeof assertion.duration === "number"
+            ? assertion.duration
+            : undefined,
         externalIterationId: `${sanitizeId(caseTitle)}-${index + 1}`,
         error,
       });

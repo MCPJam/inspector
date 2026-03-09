@@ -375,8 +375,7 @@ export class PromptResult {
       metadata: options?.metadata,
       isNegativeTest: options?.isNegativeTest,
       advancedConfig: options?.advancedConfig,
-      widgetSnapshots:
-        options?.widgetSnapshots ?? this.getWidgetSnapshots(),
+      widgetSnapshots: options?.widgetSnapshots ?? this.getWidgetSnapshots(),
     };
   }
 }

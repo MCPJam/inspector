@@ -41,13 +41,17 @@ function collectFromVitestTasks(
       const caseTitle = task.fullName || task.name || "test";
       const state = task.result?.state ?? "fail";
       const passed = state === "pass";
-      const errors = Array.isArray(task.result?.errors) ? task.result?.errors : [];
+      const errors = Array.isArray(task.result?.errors)
+        ? task.result?.errors
+        : [];
       const error =
         passed || errors.length === 0
           ? undefined
           : errors
               .map((entry) =>
-                typeof entry === "string" ? entry : entry.message ?? "Test failed"
+                typeof entry === "string"
+                  ? entry
+                  : (entry.message ?? "Test failed")
               )
               .join("\n");
       results.push({

@@ -95,7 +95,9 @@ export function generateAgentBrief(
     for (const tool of toolsForTable) {
       const desc = truncate(tool.description ?? "", maxDesc);
       const params = formatToolParams(tool);
-      lines.push(`| \`${tool.name}\` | ${escapeCell(desc)} | ${escapeCell(params)} |`);
+      lines.push(
+        `| \`${tool.name}\` | ${escapeCell(desc)} | ${escapeCell(params)} |`,
+      );
     }
 
     if (data.tools.length > maxTools) {
@@ -131,9 +133,7 @@ export function generateAgentBrief(
     lines.push("|------|-------------|-----------|");
     for (const prompt of data.prompts) {
       const args = (prompt.arguments ?? [])
-        .map(
-          (a) => `${a.name}${a.required ? " (required)" : ""}`,
-        )
+        .map((a) => `${a.name}${a.required ? " (required)" : ""}`)
         .join(", ");
       lines.push(
         `| \`${prompt.name}\` | ${escapeCell(prompt.description ?? "")} | ${escapeCell(args)} |`,
@@ -181,8 +181,7 @@ export function generateAgentBrief(
   lines.push("### Argument Accuracy");
   lines.push("");
   const toolsWithRequired = data.tools.filter(
-    (t) =>
-      t.inputSchema?.required && t.inputSchema.required.length > 0,
+    (t) => t.inputSchema?.required && t.inputSchema.required.length > 0,
   );
   if (toolsWithRequired.length > 0) {
     for (const tool of toolsWithRequired.slice(0, 5)) {
@@ -204,7 +203,7 @@ export function generateAgentBrief(
   lines.push("### Negative Test");
   lines.push("");
   lines.push(
-    "- Irrelevant prompt should trigger no tool calls (e.g., \"What is the capital of France?\")",
+    '- Irrelevant prompt should trigger no tool calls (e.g., "What is the capital of France?")',
   );
   lines.push("");
 
@@ -216,7 +215,6 @@ export function generateAgentBrief(
 
   return lines.join("\n");
 }
-
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -268,10 +266,11 @@ function detectMultiToolWorkflows(tools: ExportedTool[]): WorkflowPair[] {
       const resource = tool.name.slice(5); // "list_projects" → "projects"
       // Look for get_<singular> or get_<plural>
       const singular = resource.replace(/s$/, "");
-      const getMatch =
-        toolNames.has(`get_${singular}`) ? `get_${singular}` :
-        toolNames.has(`get_${resource}`) ? `get_${resource}` :
-        null;
+      const getMatch = toolNames.has(`get_${singular}`)
+        ? `get_${singular}`
+        : toolNames.has(`get_${resource}`)
+          ? `get_${resource}`
+          : null;
       if (getMatch) {
         workflows.push({
           from: tool.name,
@@ -285,10 +284,11 @@ function detectMultiToolWorkflows(tools: ExportedTool[]): WorkflowPair[] {
     if (tool.name.startsWith("search_")) {
       const resource = tool.name.slice(7);
       const singular = resource.replace(/s$/, "");
-      const getMatch =
-        toolNames.has(`get_${singular}`) ? `get_${singular}` :
-        toolNames.has(`get_${resource}`) ? `get_${resource}` :
-        null;
+      const getMatch = toolNames.has(`get_${singular}`)
+        ? `get_${singular}`
+        : toolNames.has(`get_${resource}`)
+          ? `get_${resource}`
+          : null;
       if (getMatch) {
         workflows.push({
           from: tool.name,
@@ -302,10 +302,11 @@ function detectMultiToolWorkflows(tools: ExportedTool[]): WorkflowPair[] {
     if (tool.name.startsWith("create_")) {
       const resource = tool.name.slice(7);
       const singular = resource.replace(/s$/, "");
-      const getMatch =
-        toolNames.has(`get_${singular}`) ? `get_${singular}` :
-        toolNames.has(`get_${resource}`) ? `get_${resource}` :
-        null;
+      const getMatch = toolNames.has(`get_${singular}`)
+        ? `get_${singular}`
+        : toolNames.has(`get_${resource}`)
+          ? `get_${resource}`
+          : null;
       if (getMatch) {
         workflows.push({
           from: tool.name,
@@ -318,10 +319,12 @@ function detectMultiToolWorkflows(tools: ExportedTool[]): WorkflowPair[] {
 
   // Deduplicate and limit
   const seen = new Set<string>();
-  return workflows.filter((wf) => {
-    const key = `${wf.from}→${wf.to}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, 5);
+  return workflows
+    .filter((wf) => {
+      const key = `${wf.from}→${wf.to}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 5);
 }

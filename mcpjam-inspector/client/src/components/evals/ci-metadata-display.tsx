@@ -96,7 +96,11 @@ export function CiMetadataDisplay({
       );
 
     if (compact) {
-      return <div className="flex flex-wrap items-center gap-1.5">{chipWithTooltip}</div>;
+      return (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {chipWithTooltip}
+        </div>
+      );
     }
 
     return (
@@ -104,7 +108,9 @@ export function CiMetadataDisplay({
         <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground">
           CI Metadata
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">{chipWithTooltip}</div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {chipWithTooltip}
+        </div>
       </div>
     );
   }

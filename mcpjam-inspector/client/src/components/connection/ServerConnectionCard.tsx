@@ -273,7 +273,9 @@ export function ServerConnectionCard({
         "url" in server.config && server.config.url
           ? server.config.url.toString()
           : "command" in server.config
-            ? [server.config.command, ...(server.config.args ?? [])].filter(Boolean).join(" ")
+            ? [server.config.command, ...(server.config.args ?? [])]
+                .filter(Boolean)
+                .join(" ")
             : undefined;
       const markdown = generateAgentBrief(data, { serverUrl });
       await navigator.clipboard.writeText(markdown);

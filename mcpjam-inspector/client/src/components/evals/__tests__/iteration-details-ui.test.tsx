@@ -95,9 +95,7 @@ describe("IterationDetails raw tool calls", () => {
     );
 
     expect(screen.getAllByTestId("json-editor")).toHaveLength(1);
-    expect(
-      mockJsonEditor.mock.calls.map(([props]) => props),
-    ).toEqual(
+    expect(mockJsonEditor.mock.calls.map(([props]) => props)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           value: [{ type: "rectangle", id: "r1" }],

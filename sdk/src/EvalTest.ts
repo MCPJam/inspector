@@ -305,7 +305,9 @@ export class EvalTest {
     });
   }
 
-  private buildEvalResultInputs(iterations: IterationResult[]): EvalResultInput[] {
+  private buildEvalResultInputs(
+    iterations: IterationResult[]
+  ): EvalResultInput[] {
     return iterationsToEvalResultInputs(this.getName(), iterations);
   }
 

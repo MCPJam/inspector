@@ -24,11 +24,23 @@ vi.mock("@/components/ui/json-editor", () => ({
 vi.mock("@/components/chat-v2/thread/message-view", () => ({
   MessageView: (props: Record<string, unknown>) => {
     mockMessageView(props);
-    const message = props.message as { id: string; role: string; parts: unknown[] };
+    const message = props.message as {
+      id: string;
+      role: string;
+      parts: unknown[];
+    };
     return (
-      <div data-testid="message-view" data-message-id={message.id} data-role={message.role}>
+      <div
+        data-testid="message-view"
+        data-message-id={message.id}
+        data-role={message.role}
+      >
         {message.parts?.map((part: any, i: number) => (
-          <div key={i} data-testid={`part-${part.type}`} data-part-type={part.type}>
+          <div
+            key={i}
+            data-testid={`part-${part.type}`}
+            data-part-type={part.type}
+          >
             {part.type === "text" ? part.text : null}
           </div>
         ))}

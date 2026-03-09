@@ -253,15 +253,16 @@ export function PartSwitch({
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
     const toolInfo = toolInfoFromPart ?? getToolInfo(toolPart);
     const approvalId = toolPart.approval?.id;
-    const approvalProps = interactive && approvalId
-      ? {
-          approvalId,
-          onApprove: (id: string) =>
-            onToolApprovalResponse?.({ id, approved: true }),
-          onDeny: (id: string) =>
-            onToolApprovalResponse?.({ id, approved: false }),
-        }
-      : {};
+    const approvalProps =
+      interactive && approvalId
+        ? {
+            approvalId,
+            onApprove: (id: string) =>
+              onToolApprovalResponse?.({ id, approved: true }),
+            onDeny: (id: string) =>
+              onToolApprovalResponse?.({ id, approved: false }),
+          }
+        : {};
     const renderOverride = toolInfo.toolCallId
       ? toolRenderOverrides?.[toolInfo.toolCallId]
       : undefined;
@@ -397,7 +398,9 @@ export function PartSwitch({
                 : undefined
             }
             onWidgetStateChange={interactive ? onWidgetStateChange : undefined}
-            onModelContextUpdate={interactive ? onModelContextUpdate : undefined}
+            onModelContextUpdate={
+              interactive ? onModelContextUpdate : undefined
+            }
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
             onRequestPip={interactive ? onRequestPip : undefined}

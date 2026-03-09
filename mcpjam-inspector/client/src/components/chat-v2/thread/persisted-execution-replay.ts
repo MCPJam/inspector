@@ -36,7 +36,7 @@ export interface PersistedExecutionReplay {
 }
 
 export function buildPersistedExecutionReplay(
-  input: PersistedExecutionReplayInput
+  input: PersistedExecutionReplayInput,
 ): PersistedExecutionReplay {
   return {
     toolName: input.toolName,
@@ -52,7 +52,8 @@ export function buildPersistedExecutionReplay(
       cachedWidgetHtmlUrl: input.cachedWidgetHtmlUrl,
       initialWidgetState:
         input.protocol === "openai-apps" ? input.initialWidgetState : undefined,
-      resourceUri: input.protocol === "mcp-apps" ? input.resourceUri : undefined,
+      resourceUri:
+        input.protocol === "mcp-apps" ? input.resourceUri : undefined,
       toolMetadata: input.toolMetadata,
       widgetCsp: input.protocol === "mcp-apps" ? input.widgetCsp : undefined,
       widgetPermissions:

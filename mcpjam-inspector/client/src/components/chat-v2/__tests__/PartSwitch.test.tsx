@@ -3,11 +3,13 @@ import { render, screen } from "@testing-library/react";
 import { PartSwitch } from "../thread/part-switch";
 import type { UIMessage } from "@ai-sdk/react";
 
-const { mockUseSaveView, mockDetectUIType, mockWidgetReplay } = vi.hoisted(() => ({
-  mockUseSaveView: vi.fn(),
-  mockDetectUIType: vi.fn(),
-  mockWidgetReplay: vi.fn(),
-}));
+const { mockUseSaveView, mockDetectUIType, mockWidgetReplay } = vi.hoisted(
+  () => ({
+    mockUseSaveView: vi.fn(),
+    mockDetectUIType: vi.fn(),
+    mockWidgetReplay: vi.fn(),
+  }),
+);
 
 // Mock all part components
 vi.mock("../thread/parts/text-part", () => ({

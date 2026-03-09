@@ -24,24 +24,37 @@ function makePrompt(overrides: {
   error?: string;
 }): PromptResult {
   if (overrides.error) {
-    return PromptResult.error(overrides.error, overrides.latency ?? 0, overrides.prompt ?? "", {
-      provider: overrides.provider,
-      model: overrides.model,
-    });
+    return PromptResult.error(
+      overrides.error,
+      overrides.latency ?? 0,
+      overrides.prompt ?? "",
+      {
+        provider: overrides.provider,
+        model: overrides.model,
+      }
+    );
   }
   return PromptResult.from({
     prompt: overrides.prompt ?? "test prompt",
-    messages: (overrides.messages as any) ?? [{ role: "user", content: overrides.prompt ?? "test prompt" }],
+    messages: (overrides.messages as any) ?? [
+      { role: "user", content: overrides.prompt ?? "test prompt" },
+    ],
     text: overrides.text ?? "response",
     toolCalls: overrides.toolCalls ?? [],
-    usage: overrides.usage ?? { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    usage: overrides.usage ?? {
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+    },
     latency: overrides.latency ?? { e2eMs: 100, llmMs: 80, mcpMs: 20 },
     provider: overrides.provider,
     model: overrides.model,
   });
 }
 
-function makeIteration(overrides: Partial<IterationResult> = {}): IterationResult {
+function makeIteration(
+  overrides: Partial<IterationResult> = {}
+): IterationResult {
   return {
     passed: true,
     latencies: [{ e2eMs: 100, llmMs: 80, mcpMs: 20 }],
@@ -93,7 +106,9 @@ describe("iterationToEvalResult", () => {
     expect(result.query).toBe("hello");
     expect(result.provider).toBe("openai");
     expect(result.model).toBe("gpt-4o");
-    expect(result.actualToolCalls).toEqual([{ toolName: "tool_a", arguments: { x: 1 } }]);
+    expect(result.actualToolCalls).toEqual([
+      { toolName: "tool_a", arguments: { x: 1 } },
+    ]);
     expect(result.tokens).toEqual({ input: 10, output: 5, total: 15 });
     expect(result.durationMs).toBe(100);
     expect(result.metadata).toEqual({ iterationNumber: 1, retryCount: 0 });
@@ -160,8 +175,16 @@ describe("iterationToEvalResult", () => {
   });
 
   it("uses promptSelector to pick query/provider/model from selected prompt", () => {
-    const p1 = makePrompt({ prompt: "first", provider: "openai", model: "gpt-4o" });
-    const p2 = makePrompt({ prompt: "last", provider: "anthropic", model: "claude" });
+    const p1 = makePrompt({
+      prompt: "first",
+      provider: "openai",
+      model: "gpt-4o",
+    });
+    const p2 = makePrompt({
+      prompt: "last",
+      provider: "anthropic",
+      model: "claude",
+    });
     const iteration = makeIteration({ prompts: [p1, p2] });
 
     const resultFirst = iterationToEvalResult(iteration, 0, {
@@ -246,7 +269,10 @@ describe("iterationToEvalResult", () => {
   });
 
   it("sets retryCount from iteration", () => {
-    const iteration = makeIteration({ retryCount: 3, prompts: [makePrompt({})] });
+    const iteration = makeIteration({
+      retryCount: 3,
+      prompts: [makePrompt({})],
+    });
 
     const result = iterationToEvalResult(iteration, 0, { caseTitle: "retry" });
 
@@ -311,13 +337,17 @@ describe("runToEvalResults", () => {
 describe("suiteRunToEvalResults", () => {
   it("maps multiple tests with correct case titles", () => {
     const testResults = new Map<string, EvalRunResult>();
-    testResults.set("login", makeRunResult([
-      makeIteration({ prompts: [makePrompt({})] }),
-    ]));
-    testResults.set("logout", makeRunResult([
-      makeIteration({ prompts: [makePrompt({})] }),
-      makeIteration({ prompts: [makePrompt({})] }),
-    ]));
+    testResults.set(
+      "login",
+      makeRunResult([makeIteration({ prompts: [makePrompt({})] })])
+    );
+    testResults.set(
+      "logout",
+      makeRunResult([
+        makeIteration({ prompts: [makePrompt({})] }),
+        makeIteration({ prompts: [makePrompt({})] }),
+      ])
+    );
 
     const results = suiteRunToEvalResults(testResults, { casePrefix: "suite" });
 
@@ -329,12 +359,14 @@ describe("suiteRunToEvalResults", () => {
 
   it("routes expectedToolCallsByTest correctly", () => {
     const testResults = new Map<string, EvalRunResult>();
-    testResults.set("test-a", makeRunResult([
-      makeIteration({ prompts: [makePrompt({})] }),
-    ]));
-    testResults.set("test-b", makeRunResult([
-      makeIteration({ prompts: [makePrompt({})] }),
-    ]));
+    testResults.set(
+      "test-a",
+      makeRunResult([makeIteration({ prompts: [makePrompt({})] })])
+    );
+    testResults.set(
+      "test-b",
+      makeRunResult([makeIteration({ prompts: [makePrompt({})] })])
+    );
 
     const expectedByTest = {
       "test-a": [{ toolName: "tool_x" }],
@@ -350,7 +382,9 @@ describe("suiteRunToEvalResults", () => {
     const testB = results.find((r) => r.caseTitle.includes("test-b"));
 
     expect(testA?.expectedToolCalls).toEqual([{ toolName: "tool_x" }]);
-    expect(testB?.expectedToolCalls).toEqual([{ toolName: "tool_y", arguments: { z: 1 } }]);
+    expect(testB?.expectedToolCalls).toEqual([
+      { toolName: "tool_y", arguments: { z: 1 } },
+    ]);
   });
 });
 
@@ -439,9 +473,12 @@ describe("iterationsToEvalResultInputs", () => {
 describe("suiteTestResultsToEvalResultInputs", () => {
   it("includes testName in metadata", () => {
     const testResults = new Map<string, EvalRunResult>();
-    testResults.set("auth-test", makeRunResult([
-      makeIteration({ prompts: [makePrompt({ prompt: "login" })] }),
-    ]));
+    testResults.set(
+      "auth-test",
+      makeRunResult([
+        makeIteration({ prompts: [makePrompt({ prompt: "login" })] }),
+      ])
+    );
 
     const results = suiteTestResultsToEvalResultInputs(testResults);
 
@@ -453,13 +490,17 @@ describe("suiteTestResultsToEvalResultInputs", () => {
 
   it("maps multiple tests with multiple iterations", () => {
     const testResults = new Map<string, EvalRunResult>();
-    testResults.set("test-1", makeRunResult([
-      makeIteration({ prompts: [makePrompt({})] }),
-      makeIteration({ prompts: [makePrompt({})] }),
-    ]));
-    testResults.set("test-2", makeRunResult([
-      makeIteration({ prompts: [makePrompt({})] }),
-    ]));
+    testResults.set(
+      "test-1",
+      makeRunResult([
+        makeIteration({ prompts: [makePrompt({})] }),
+        makeIteration({ prompts: [makePrompt({})] }),
+      ])
+    );
+    testResults.set(
+      "test-2",
+      makeRunResult([makeIteration({ prompts: [makePrompt({})] })])
+    );
 
     const results = suiteTestResultsToEvalResultInputs(testResults);
 
@@ -476,9 +517,10 @@ describe("suiteTestResultsToEvalResultInputs", () => {
     const p1 = makePrompt({ toolCalls: [{ toolName: "a", arguments: {} }] });
     const p2 = makePrompt({ toolCalls: [{ toolName: "b", arguments: {} }] });
     const testResults = new Map<string, EvalRunResult>();
-    testResults.set("multi", makeRunResult([
-      makeIteration({ prompts: [p1, p2] }),
-    ]));
+    testResults.set(
+      "multi",
+      makeRunResult([makeIteration({ prompts: [p1, p2] })])
+    );
 
     const results = suiteTestResultsToEvalResultInputs(testResults);
 
