@@ -76,7 +76,12 @@ const navigationSections = [
         icon: Layers,
       },
       {
-        title: "Evals",
+        title: "Generate Evals",
+        url: "#evals",
+        icon: FlaskConical,
+      },
+      {
+        title: "Evals CI/CD",
         url: "#ci-evals",
         icon: GitBranch,
       },
