@@ -56,7 +56,16 @@ For remote MCP servers via SSE or Streamable HTTP.
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `url` | `string` | Yes | The server URL (e.g., `"https://mcp.example.com/sse"`) |
+| `accessToken` | `string` | No | Static bearer token added as `Authorization: Bearer <token>` |
 | `requestInit` | `RequestInit` | No | Fetch options including headers for authentication |
+| `eventSourceInit` | `EventSourceInit` | No | SSE-specific options |
+| `authProvider` | `OAuthClientProvider` | No | Custom MCP SDK OAuth provider |
+| `refreshToken` | `string` | No | Refresh token used for non-interactive OAuth token exchange and automatic token refresh |
+| `clientId` | `string` | No | OAuth client ID. Required when `refreshToken` is set |
+| `clientSecret` | `string` | No | OAuth client secret for confidential clients |
+| `reconnectionOptions` | `StreamableHTTPClientTransportOptions["reconnectionOptions"]` | No | Streamable HTTP reconnection behavior |
+| `sessionId` | `string` | No | Existing Streamable HTTP session ID |
+| `preferSSE` | `boolean` | No | Forces SSE instead of Streamable HTTP |
 
 ```typescript
 {
@@ -71,6 +80,25 @@ For remote MCP servers via SSE or Streamable HTTP.
   },
 }
 ```
+
+##### Refresh Token Example
+
+```typescript
+{
+  remoteServer: {
+    url: "https://mcp.example.com/mcp",
+    refreshToken: process.env.MCP_REFRESH_TOKEN!,
+    clientId: process.env.MCP_CLIENT_ID!,
+    clientSecret: process.env.MCP_CLIENT_SECRET,
+  },
+}
+```
+
+When `refreshToken` is provided, the SDK will exchange it for an access token during connection and automatically refresh tokens if the server challenges the current token.
+
+<Note>
+`refreshToken` is mutually exclusive with `accessToken`, `authProvider`, and `requestInit.headers.Authorization`.
+</Note>
 
 ### Example
 
@@ -100,7 +128,7 @@ const manager = new MCPClientManager({
 Establishes a connection to a configured server.
 
 ```typescript
-connectToServer(serverId: string): Promise<void>
+connectToServer(serverId: string): Promise<Client>
 ```
 
 #### Parameters
@@ -111,7 +139,7 @@ connectToServer(serverId: string): Promise<void>
 
 #### Returns
 
-`Promise<void>` - Resolves when connected, rejects on failure.
+`Promise<Client>` - Resolves with the connected MCP client, rejects on failure.
 
 #### Example
 
@@ -193,7 +221,7 @@ try {
 Returns all tools available on a server.
 
 ```typescript
-listTools(serverId: string): Promise<Tool[]>
+listTools(serverId: string): Promise<{ tools: Tool[] }>
 ```
 
 #### Parameters
@@ -204,7 +232,7 @@ listTools(serverId: string): Promise<Tool[]>
 
 #### Returns
 
-`Promise<Tool[]>` - Array of tool definitions.
+`Promise<{ tools: Tool[] }>` - Tool list response from the server.
 
 #### Tool Object
 
@@ -219,7 +247,7 @@ listTools(serverId: string): Promise<Tool[]>
 ```typescript
 const tools = await manager.listTools("myServer");
 
-for (const tool of tools) {
+for (const tool of tools.tools) {
   console.log(`${tool.name}: ${tool.description}`);
 }
 ```
@@ -503,8 +531,8 @@ async function main() {
     // List capabilities
     const mathTools = await manager.listTools("math");
     const asanaTools = await manager.listTools("asana");
-    console.log("Math tools:", mathTools.length);
-    console.log("Asana tools:", asanaTools.length);
+    console.log("Math tools:", mathTools.tools.length);
+    console.log("Asana tools:", asanaTools.tools.length);
 
     // Create agent with all tools
     const agent = new TestAgent({

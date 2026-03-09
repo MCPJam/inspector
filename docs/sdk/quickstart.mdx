@@ -33,12 +33,29 @@ await manager.connectToServer("everything");
 
 // List available tools
 const tools = await manager.listTools("everything");
-console.log("Tools:", tools.map(t => t.name));
+console.log("Tools:", tools.tools.map((t) => t.name));
 ```
 
 <Note>
 `@modelcontextprotocol/server-everything` is a reference MCP server with sample tools like `add`, `echo`, and `longRunningOperation`.
 </Note>
+
+If you're connecting to an OAuth-protected HTTP server and already have a refresh token, pass `refreshToken` and `clientId` instead of a static access token:
+
+```typescript
+const manager = new MCPClientManager({
+  remoteServer: {
+    url: "https://mcp.example.com/mcp",
+    refreshToken: process.env.MCP_REFRESH_TOKEN!,
+    clientId: process.env.MCP_CLIENT_ID!,
+    clientSecret: process.env.MCP_CLIENT_SECRET,
+  },
+});
+
+await manager.connectToServer("remoteServer");
+```
+
+The SDK will exchange the refresh token for an access token and automatically refresh it when needed.
 
 ## Step 2: Execute Tools Directly
 
