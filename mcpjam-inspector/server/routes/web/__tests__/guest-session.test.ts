@@ -48,12 +48,12 @@ describe("POST /guest-session", () => {
       );
     });
 
-    it("returns a two-part token (payload.signature)", async () => {
+    it("returns a three-part JWT token (header.payload.signature)", async () => {
       const res = await app.request("/guest-session", { method: "POST" });
       const data = await res.json();
 
       const parts = data.token.split(".");
-      expect(parts.length).toBe(2);
+      expect(parts.length).toBe(3);
     });
 
     it("returns expiresAt in the future", async () => {
