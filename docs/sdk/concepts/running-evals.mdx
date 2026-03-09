@@ -33,15 +33,16 @@ const test = new EvalTest({
   },
 });
 
-await test.run(agent, { iterations: 30 });
+const result = await test.run(agent, { iterations: 30 });
 
 console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
 // "Accuracy: 96.7%"
+console.log(`${result.successes}/${result.iterations} passed`);
 ```
 
 ### Writing Test Functions
 
-Test functions receive a `TestAgent` and return `boolean`:
+Test functions receive an `EvalAgent` (implemented by `TestAgent` and mock agents) and return `boolean`:
 
 ```typescript
 // Simple: did the right tool get called?
@@ -73,6 +74,11 @@ await test.run(agent, {
   concurrency: 5,      // Parallel runs (careful with rate limits)
   retries: 2,          // Retry failures
   timeoutMs: 30000,    // Per-test timeout
+  mcpjam: {
+    // Auto-save is enabled when MCPJAM_API_KEY is available
+    suiteName: "SDK eval smoke",
+    strict: false, // warn by default; true to fail CI on upload errors
+  },
   onProgress: (done, total) => {
     console.log(`${done}/${total}`);
   },
@@ -123,8 +129,103 @@ suite.add(new EvalTest({
   },
 }));
 
-await suite.run(agent, { iterations: 30 });
+const result = await suite.run(agent, { iterations: 30 });
+console.log(`Overall: ${(result.aggregate.accuracy * 100).toFixed(1)}%`);
 ```
+
+## Auto-Reporting to MCPJam
+
+Both `EvalTest` and `EvalSuite` can automatically report results to MCPJam when a run completes. This is the simplest way to get results into the MCPJam dashboard.
+
+```typescript
+// Auto-report from EvalTest
+await test.run(agent, {
+  iterations: 30,
+  mcpjam: {
+    suiteName: "Addition Eval",
+    passCriteria: { minimumPassRate: 90 },
+  },
+});
+
+// Auto-report from EvalSuite (constructor or run options)
+const suite = new EvalSuite({
+  name: "Math Operations",
+  mcpjam: {
+    suiteName: "Math Eval",
+    ci: {
+      branch: process.env.GITHUB_REF_NAME,
+      commitSha: process.env.GITHUB_SHA,
+      runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+    },
+  },
+});
+```
+
+Auto-reporting is enabled when an API key is available — either via `mcpjam.apiKey` directly or the `MCPJAM_API_KEY` environment variable — and `mcpjam.enabled` is not set to `false`. If no API key is found through either method, reporting is silently skipped.
+
+When a suite runs, individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. The suite consolidates all test results into a single run.
+
+## Reporting APIs
+
+For more control, the SDK provides dedicated reporting APIs that work independently of `EvalTest`/`EvalSuite`. These are useful for custom test runners, CI post-steps, or framework-agnostic flows.
+
+```typescript
+import {
+  reportEvalResults,
+  reportEvalResultsSafely,
+  createEvalRunReporter,
+  uploadEvalArtifact,
+} from "@mcpjam/sdk";
+
+// 1) One-shot report (strict — throws on failure)
+await reportEvalResults({
+  suiteName: "Nightly",
+  results: [{ caseTitle: "healthcheck", passed: true }],
+});
+
+// 2) One-shot report (safe — returns null on failure)
+const result = await reportEvalResultsSafely({
+  suiteName: "Nightly",
+  results: [{ caseTitle: "healthcheck", passed: true }],
+});
+
+// 3) Incremental reporter (long-running processes)
+const reporter = createEvalRunReporter({ suiteName: "Incremental" });
+await reporter.record({ caseTitle: "step-1", passed: true });
+await reporter.record({ caseTitle: "step-2", passed: false, error: "timeout" });
+const output = await reporter.finalize();
+
+// 4) Artifact upload (JUnit XML, Jest JSON, Vitest JSON)
+await uploadEvalArtifact({
+  suiteName: "JUnit import",
+  format: "junit-xml",
+  artifact: junitXmlString,
+});
+```
+
+### CI Metadata
+
+Attach CI/CD context to your eval runs for traceability in the MCPJam dashboard:
+
+```typescript
+await reportEvalResults({
+  suiteName: "Nightly",
+  results: [...],
+  ci: {
+    provider: "github",
+    branch: process.env.GITHUB_REF_NAME,
+    commitSha: process.env.GITHUB_SHA,
+    runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+    pipelineId: process.env.GITHUB_WORKFLOW,
+    jobId: process.env.GITHUB_JOB,
+  },
+});
+```
+
+### CI Hardening Pattern
+
+For enterprise CI pipelines, prefer artifact upload in a final post-step (`if: always()`)
+so results are preserved even when the main test job exits early.
 
 ### Suite Results
 
@@ -133,8 +234,8 @@ await suite.run(agent, { iterations: 30 });
 console.log(`Suite: ${(suite.accuracy() * 100).toFixed(1)}%`);
 
 // Per-test breakdown
-for (const test of suite.getTests()) {
-  console.log(`  ${test.name}: ${(test.accuracy() * 100).toFixed(1)}%`);
+for (const test of suite.getAll()) {
+  console.log(`  ${test.getName()}: ${(test.accuracy() * 100).toFixed(1)}%`);
 }
 
 // Get specific test
@@ -221,5 +322,8 @@ if (suite.accuracy() < 0.90) {
   </Card>
   <Card title="EvalSuite Reference" icon="book" href="/sdk/reference/eval-suite">
     Full EvalSuite API
+  </Card>
+  <Card title="Eval Reporting Reference" icon="book" href="/sdk/reference/eval-reporting">
+    Reporting APIs, CI metadata, and artifact upload
   </Card>
 </CardGroup>

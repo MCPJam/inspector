@@ -10,11 +10,13 @@ import { EvalSuiteRun } from "./types";
 interface PassCriteriaBadgeProps {
   run: EvalSuiteRun;
   variant?: "compact" | "detailed";
+  metricLabel?: string;
 }
 
 export function PassCriteriaBadge({
   run,
   variant = "compact",
+  metricLabel = "Accuracy",
 }: PassCriteriaBadgeProps) {
   // Get criteria and result from DB fields
   const minimumPassRate = run.passCriteria?.minimumPassRate ?? 100;
@@ -58,7 +60,7 @@ export function PassCriteriaBadge({
               {passed ? "✓ Suite Passed" : "✗ Suite Failed"}
             </div>
             <div className="text-white">
-              Required: {minimumPassRate}% Accuracy
+              Required: {minimumPassRate}% {metricLabel}
             </div>
           </div>
         </TooltipContent>
@@ -84,12 +86,12 @@ export function PassCriteriaBadge({
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">Criteria:</span>
           <Badge variant="outline" className="text-xs">
-            Min {minimumPassRate}% Accuracy
+            Min {minimumPassRate}% {metricLabel}
           </Badge>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Accuracy:</span>
+          <span className="text-muted-foreground">{metricLabel}:</span>
           <span className="font-mono">{passRate.toFixed(1)}%</span>
           <span className="text-muted-foreground">
             (threshold: {minimumPassRate}%)
@@ -98,7 +100,8 @@ export function PassCriteriaBadge({
 
         {!passed && passRate < minimumPassRate && (
           <div className="mt-2 rounded border-l-2 border-destructive bg-destructive/10 p-2 text-xs">
-            Accuracy {passRate.toFixed(1)}% below threshold {minimumPassRate}%
+            {metricLabel} {passRate.toFixed(1)}% below threshold{" "}
+            {minimumPassRate}%
           </div>
         )}
       </div>

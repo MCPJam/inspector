@@ -13,6 +13,7 @@ import {
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
+  GitBranch,
 } from "lucide-react";
 import { usePostHog } from "posthog-js/react";
 
@@ -75,9 +76,9 @@ const navigationSections = [
         icon: Layers,
       },
       {
-        title: "Test Cases",
-        url: "#evals",
-        icon: FlaskConical,
+        title: "Evals",
+        url: "#ci-evals",
+        icon: GitBranch,
       },
     ],
   },

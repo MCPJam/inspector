@@ -22,6 +22,7 @@ import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 
 interface EvalsTabProps {
   selectedServer?: string;
@@ -64,6 +65,29 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     [appState.servers],
   );
 
+  // Get workspace members for the "Run by" column
+  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
+  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+
+  const { members } = useWorkspaceMembers({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
+
+  const userMap = useMemo(() => {
+    if (!members) return undefined;
+    const map = new Map<string, { name: string; imageUrl?: string }>();
+    for (const m of members) {
+      if (m.userId && m.user) {
+        map.set(m.userId, {
+          name: m.user.name,
+          imageUrl: m.user.imageUrl,
+        });
+      }
+    }
+    return map;
+  }, [members]);
+
   // Initialize mutations
   const mutations = useEvalMutations();
 
@@ -73,6 +97,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     user,
     selectedSuiteId: null,
     deletingSuiteId: null,
+    workspaceId: null,
   });
 
   // Check if selected server is valid and connected
@@ -106,6 +131,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     user,
     selectedSuiteId: serverSuiteId,
     deletingSuiteId: handlers.deletingSuiteId,
+    workspaceId: null,
   });
 
   // Use queries for rendering
@@ -382,6 +408,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
                   deletingRunId={handlers.deletingRunId}
                   availableModels={availableModels}
                   route={route}
+                  userMap={userMap}
                 />
               </div>
             ) : null}

@@ -3,9 +3,13 @@ import { render, screen } from "@testing-library/react";
 import { PartSwitch } from "../thread/part-switch";
 import type { UIMessage } from "@ai-sdk/react";
 
-const { mockUseSaveView } = vi.hoisted(() => ({
-  mockUseSaveView: vi.fn(),
-}));
+const { mockUseSaveView, mockDetectUIType, mockWidgetReplay } = vi.hoisted(
+  () => ({
+    mockUseSaveView: vi.fn(),
+    mockDetectUIType: vi.fn(),
+    mockWidgetReplay: vi.fn(),
+  }),
+);
 
 // Mock all part components
 vi.mock("../thread/parts/text-part", () => ({
@@ -62,15 +66,23 @@ vi.mock("../thread/parts/mcp-ui-resource-part", () => ({
   ),
 }));
 
+vi.mock("../thread/widget-replay", () => ({
+  WidgetReplay: (props: { toolName: string; renderOverride?: any }) => {
+    mockWidgetReplay(props);
+    return (
+      <div
+        data-testid="widget-replay"
+        data-cached-url={props.renderOverride?.cachedWidgetHtmlUrl ?? ""}
+      >
+        {props.toolName}
+      </div>
+    );
+  },
+}));
+
 vi.mock("../thread/chatgpt-app-renderer", () => ({
   ChatGPTAppRenderer: ({ toolName }: { toolName: string }) => (
     <div data-testid="chatgpt-app-renderer">{toolName}</div>
-  ),
-}));
-
-vi.mock("../thread/mcp-apps-renderer", () => ({
-  MCPAppsRenderer: ({ toolName }: { toolName: string }) => (
-    <div data-testid="mcp-apps-renderer">{toolName}</div>
   ),
 }));
 
@@ -126,7 +138,7 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 
 // Mock mcp-apps-utils
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
-  detectUIType: () => null,
+  detectUIType: mockDetectUIType,
   getUIResourceUri: () => null,
   UIType: {
     OPENAI_SDK: "openai-apps",
@@ -152,6 +164,7 @@ describe("PartSwitch", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDetectUIType.mockReturnValue(null);
   });
 
   describe("text parts", () => {
@@ -321,6 +334,55 @@ describe("PartSwitch", () => {
       expect(mockUseSaveView).toHaveBeenCalledWith(
         expect.objectContaining({
           serverName: "server-1",
+        }),
+      );
+    });
+
+    it("reuses WidgetReplay for offline widget overrides", () => {
+      mockDetectUIType.mockReturnValue("mcp-apps");
+      const part = {
+        type: "tool-invocation",
+        toolName: "create_view",
+        toolCallId: "call-1",
+        state: "output-available",
+        input: { title: "Flow" },
+        output: { content: "saved" },
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          toolsMetadata={{
+            create_view: {
+              ui: { resourceUri: "ui://widget/create-view.html" },
+            },
+          }}
+          toolRenderOverrides={{
+            "call-1": {
+              serverId: "server-1",
+              isOffline: true,
+              cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+              resourceUri: "ui://widget/create-view.html",
+              toolMetadata: {
+                ui: { resourceUri: "ui://widget/create-view.html" },
+              },
+            },
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId("widget-replay")).toBeInTheDocument();
+      expect(screen.getByTestId("widget-replay")).toHaveAttribute(
+        "data-cached-url",
+        "https://storage.example.com/widget.html",
+      );
+      expect(mockWidgetReplay).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolName: "create_view",
+          renderOverride: expect.objectContaining({
+            cachedWidgetHtmlUrl: "https://storage.example.com/widget.html",
+          }),
         }),
       );
     });

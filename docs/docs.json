@@ -63,6 +63,7 @@
               "sdk/reference/prompt-result",
               "sdk/reference/eval-test",
               "sdk/reference/eval-suite",
+              "sdk/reference/eval-reporting",
               "sdk/reference/validators",
               "sdk/reference/llm-providers"
             ]

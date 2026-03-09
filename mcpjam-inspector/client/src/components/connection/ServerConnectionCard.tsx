@@ -25,6 +25,7 @@ import {
   AlertCircle,
   Share2,
   Info,
+  FileText,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -40,6 +41,7 @@ import {
 } from "@/lib/apis/mcp-tools-api";
 import { ServerInfoModal } from "./ServerInfoModal";
 import { downloadJsonFile } from "@/lib/json-config-parser";
+import { generateAgentBrief } from "@/lib/generate-agent-brief";
 import {
   TunnelExplanationModal,
   TUNNEL_EXPLANATION_DISMISSED_KEY,
@@ -96,6 +98,7 @@ export function ServerConnectionCard({
   const { isAuthenticated } = useConvexAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isCopyingBrief, setIsCopyingBrief] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -261,6 +264,36 @@ export function ServerConnectionCard({
       toast.error(`Failed to export ${server.name}: ${errorMessage}`);
     } finally {
       setIsExporting(false);
+    }
+  };
+
+  const handleCopyAgentBrief = async () => {
+    setIsCopyingBrief(true);
+    try {
+      const data = await exportServerApi(server.name);
+      const serverUrl =
+        "url" in server.config && server.config.url
+          ? server.config.url.toString()
+          : "command" in server.config
+            ? [server.config.command, ...(server.config.args ?? [])]
+                .filter(Boolean)
+                .join(" ")
+            : undefined;
+      const markdown = generateAgentBrief(data, { serverUrl });
+      await navigator.clipboard.writeText(markdown);
+      toast.success("Agent brief copied to clipboard");
+      posthog.capture("copy_agent_brief_clicked", {
+        location: "server_connection_card",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        server_id: server.name,
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      toast.error(`Failed to copy agent brief: ${errorMessage}`);
+    } finally {
+      setIsCopyingBrief(false);
     }
   };
 
@@ -487,6 +520,25 @@ export function ServerConnectionCard({
                         <Download className="h-3 w-3 mr-2" />
                       )}
                       {isExporting ? "Exporting..." : "Export server info"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        handleCopyAgentBrief();
+                      }}
+                      disabled={
+                        isCopyingBrief ||
+                        server.connectionStatus !== "connected"
+                      }
+                      className="text-xs cursor-pointer"
+                    >
+                      {isCopyingBrief ? (
+                        <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                      ) : (
+                        <FileText className="h-3 w-3 mr-2" />
+                      )}
+                      {isCopyingBrief
+                        ? "Copying..."
+                        : "Copy markdown for server evals"}
                     </DropdownMenuItem>
                     <Separator />
                     <DropdownMenuItem

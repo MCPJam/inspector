@@ -10,6 +10,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
+import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
@@ -511,6 +512,9 @@ export default function App() {
           {activeTab === "evals" && (
             <EvalsTab selectedServer={appState.selectedServer} />
           )}
+          {activeTab === "ci-evals" && (
+            <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+          )}
           {activeTab === "views" && (
             <ViewsTab
               selectedServer={appState.selectedServer}
@@ -584,7 +588,12 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
-          {activeTab === "settings" && <SettingsTab />}
+          {activeTab === "settings" && (
+            <SettingsTab
+              convexWorkspaceId={convexWorkspaceId}
+              workspaceName={activeWorkspace?.name ?? null}
+            />
+          )}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (

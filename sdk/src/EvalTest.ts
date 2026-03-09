@@ -1,17 +1,23 @@
-import type { TestAgent } from "./TestAgent.js";
+import type { EvalAgent } from "./EvalAgent.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
+import type {
+  EvalResultInput,
+  MCPJamReportingConfig,
+} from "./eval-reporting-types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
+import { reportEvalResultsSafely } from "./report-eval-results.js";
+import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
 
 /**
  * Configuration for an EvalTest
  *
- * All tests use the multi-turn pattern with a test function that receives a TestAgent.
+ * All tests use the multi-turn pattern with a test function that receives an EvalAgent.
  */
 export interface EvalTestConfig {
   name: string;
-  test: (agent: TestAgent) => boolean | Promise<boolean>;
+  test: (agent: EvalAgent) => boolean | Promise<boolean>;
 }
 
 /**
@@ -25,6 +31,9 @@ export interface EvalTestRunOptions {
   onProgress?: (completed: number, total: number) => void;
   /** Called with a failure report if any iterations fail */
   onFailure?: (report: string) => void;
+  mcpjam?: MCPJamReportingConfig;
+  /** @internal used by EvalSuite to prevent duplicate per-test uploads */
+  __suppressMcpjamAutoSave?: boolean;
 }
 
 /**
@@ -153,7 +162,7 @@ export class EvalTest {
    * Run this test with the given agent and options
    */
   async run(
-    agent: TestAgent,
+    agent: EvalAgent,
     options: EvalTestRunOptions
   ): Promise<EvalRunResult> {
     posthog.capture({
@@ -252,7 +261,54 @@ export class EvalTest {
       options.onFailure(this.getFailureReport());
     }
 
+    await this.autoSaveRunIfConfigured(runResult, options);
+
     return runResult;
+  }
+
+  private async autoSaveRunIfConfigured(
+    runResult: EvalRunResult,
+    options: EvalTestRunOptions
+  ): Promise<void> {
+    if (options.__suppressMcpjamAutoSave) {
+      return;
+    }
+
+    const config = options.mcpjam;
+    if (config?.enabled === false) {
+      return;
+    }
+
+    const apiKey = config?.apiKey ?? process.env.MCPJAM_API_KEY;
+    if (!apiKey) {
+      return;
+    }
+
+    const results = this.buildEvalResultInputs(runResult.iterationDetails);
+    if (results.length === 0) {
+      return;
+    }
+
+    await reportEvalResultsSafely({
+      suiteName: config?.suiteName ?? `EvalTest: ${this.getName()}`,
+      suiteDescription: config?.suiteDescription,
+      serverNames: config?.serverNames,
+      notes: config?.notes,
+      passCriteria: config?.passCriteria,
+      externalRunId: config?.externalRunId,
+      framework: config?.framework,
+      ci: config?.ci,
+      apiKey,
+      baseUrl: config?.baseUrl,
+      strict: config?.strict,
+      results,
+    });
+  }
+
+  private buildEvalResultInputs(
+    iterations: IterationResult[]
+  ): EvalResultInput[] {
+    return iterationsToEvalResultInputs(this.getName(), iterations);
   }
 
   private aggregateResults(iterations: IterationResult[]): EvalRunResult {

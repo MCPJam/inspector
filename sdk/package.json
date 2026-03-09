@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./skill-reference": {
+      "types": "./dist/skill-reference.d.ts",
+      "import": "./dist/skill-reference.mjs",
+      "require": "./dist/skill-reference.js"
     }
   },
   "files": [
