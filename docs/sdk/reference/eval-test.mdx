@@ -84,10 +84,10 @@ run(agent: EvalAgent, options: EvalTestRunOptions): Promise<EvalRunResult>
 | `timeoutMs` | `number` | No | `30000` | Timeout per test (ms) |
 | `onProgress` | `ProgressCallback` | No | - | Progress callback |
 | `onFailure` | `(report: string) => void` | No | - | Called with a failure report if any iterations fail |
-| `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | - | Auto-report results to MCPJam |
+| `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | - | Auto-save results to MCPJam |
 
 <Note>
-Results are automatically reported to MCPJam after the run completes when an API key is available via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable. Set `mcpjam.enabled: false` to disable.
+Results are automatically saved to MCPJam after the run completes when an API key is available via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable. Set `mcpjam.enabled: false` to disable.
 </Note>
 
 #### ProgressCallback Type
@@ -469,5 +469,5 @@ async function main() {
 
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalSuite Reference](/sdk/reference/eval-suite) - Group multiple tests
-- [Eval Reporting Reference](/sdk/reference/eval-reporting) - Reporting APIs
+- [Saving Eval Results](/sdk/reference/eval-reporting) - Save results to MCPJam
 - [Validators Reference](/sdk/reference/validators) - Assertion functions

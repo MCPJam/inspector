@@ -1,0 +1,128 @@
+---
+title: "Save Results to MCPJam"
+description: "Save eval results to the MCPJam dashboard for tracking and CI visibility"
+icon: "cloud-upload"
+---
+
+After running evals, you can save results to MCPJam to track accuracy over time, compare across branches, and get visibility in the CI Evals dashboard.
+
+## Setup
+
+Set your MCPJam API key as an environment variable:
+
+```bash
+export MCPJAM_API_KEY=mcpjam_...
+```
+
+That's it — both `EvalTest` and `EvalSuite` will auto-save results when this key is available.
+
+## Auto-Save from EvalTest
+
+When `MCPJAM_API_KEY` is set, `EvalTest.run()` automatically saves results:
+
+```typescript
+await test.run(agent, {
+  iterations: 30,
+  mcpjam: {
+    suiteName: "Addition Eval",
+    passCriteria: { minimumPassRate: 90 },
+  },
+});
+```
+
+To disable auto-save for a specific run:
+
+```typescript
+await test.run(agent, {
+  iterations: 30,
+  mcpjam: { enabled: false },
+});
+```
+
+## Auto-Save from EvalSuite
+
+Suites can be configured at construction or run time:
+
+```typescript
+const suite = new EvalSuite({
+  name: "Math Operations",
+  mcpjam: {
+    suiteName: "Math Eval",
+    ci: {
+      branch: process.env.GITHUB_REF_NAME,
+      commitSha: process.env.GITHUB_SHA,
+      runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+    },
+  },
+});
+```
+
+When a suite runs, individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. The suite consolidates all test results into a single run.
+
+## Manual Save APIs
+
+For more control — custom test runners, CI post-steps, or framework-agnostic flows — the SDK provides dedicated APIs:
+
+```typescript
+import {
+  reportEvalResults,
+  reportEvalResultsSafely,
+  createEvalRunReporter,
+  uploadEvalArtifact,
+} from "@mcpjam/sdk";
+
+// 1) One-shot save (strict — throws on failure)
+await reportEvalResults({
+  suiteName: "Nightly",
+  results: [{ caseTitle: "healthcheck", passed: true }],
+});
+
+// 2) One-shot save (safe — returns null on failure)
+const result = await reportEvalResultsSafely({
+  suiteName: "Nightly",
+  results: [{ caseTitle: "healthcheck", passed: true }],
+});
+
+// 3) Incremental reporter (long-running processes)
+const reporter = createEvalRunReporter({ suiteName: "Incremental" });
+await reporter.record({ caseTitle: "step-1", passed: true });
+await reporter.record({ caseTitle: "step-2", passed: false, error: "timeout" });
+const output = await reporter.finalize();
+
+// 4) Artifact upload (JUnit XML, Jest JSON, Vitest JSON)
+await uploadEvalArtifact({
+  suiteName: "JUnit import",
+  format: "junit-xml",
+  artifact: junitXmlString,
+});
+```
+
+## CI Metadata
+
+Attach CI/CD context to your eval runs for traceability in the dashboard:
+
+```typescript
+await reportEvalResults({
+  suiteName: "Nightly",
+  results: [...],
+  ci: {
+    provider: "github",
+    branch: process.env.GITHUB_REF_NAME,
+    commitSha: process.env.GITHUB_SHA,
+    runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+    pipelineId: process.env.GITHUB_WORKFLOW,
+    jobId: process.env.GITHUB_JOB,
+  },
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Running Evals" icon="chart-bar" href="/sdk/concepts/running-evals">
+    Learn about EvalTest, EvalSuite, and iteration strategies
+  </Card>
+  <Card title="Saving Results Reference" icon="book" href="/sdk/reference/eval-reporting">
+    Full API reference for all saving and reporting methods
+  </Card>
+</CardGroup>
