@@ -123,9 +123,7 @@ describe("guest-session module", () => {
         expiresAt: Date.now() - 1000, // Already expired
       };
 
-      vi.mocked(localStorage.getItem).mockReturnValue(
-        JSON.stringify(expired),
-      );
+      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(expired));
 
       const newSession = {
         guestId: "fresh-guest-id",
@@ -248,9 +246,7 @@ describe("guest-session module", () => {
         expiresAt: Date.now() + 5 * 60 * 1000 + 1, // 5 min + 1ms buffer
       };
 
-      vi.mocked(localStorage.getItem).mockReturnValue(
-        JSON.stringify(session),
-      );
+      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session));
 
       const result = await guestSession.getOrCreateGuestSession();
 
@@ -296,9 +292,7 @@ describe("guest-session module", () => {
         expiresAt: Date.now() + 24 * 60 * 60 * 1000,
       };
 
-      vi.mocked(localStorage.getItem).mockReturnValue(
-        JSON.stringify(session),
-      );
+      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session));
 
       const token = await guestSession.getGuestBearerToken();
 
@@ -331,9 +325,7 @@ describe("guest-session module", () => {
         token: "first-token",
         expiresAt: Date.now() + 24 * 60 * 60 * 1000,
       };
-      vi.mocked(localStorage.getItem).mockReturnValue(
-        JSON.stringify(session1),
-      );
+      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session1));
 
       const result1 = await guestSession.getGuestBearerToken();
       expect(result1).toBe("first-token");

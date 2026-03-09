@@ -16,10 +16,7 @@ vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: vi.fn(),
 }));
 
-import {
-  setHostedApiContext,
-  getHostedAuthorizationHeader,
-} from "../context";
+import { setHostedApiContext, getHostedAuthorizationHeader } from "../context";
 
 import { getGuestBearerToken } from "@/lib/guest-session";
 
