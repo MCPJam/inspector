@@ -49,6 +49,7 @@ COPY mcpjam-inspector/shared ./shared
 
 # Layer 4: Build SDK first (changes infrequently, required by server and client)
 COPY sdk/src ../sdk/src
+COPY sdk/skills ../sdk/skills
 RUN npm run build:sdk
 
 # Layer 5: Build lib (changes infrequently)
