@@ -58,6 +58,8 @@ RUN npm run build:lib
 
 # Layer 6: Build server (changes moderately, depends on SDK)
 COPY mcpjam-inspector/server ./server
+COPY mcpjam-inspector/scripts ./scripts
+RUN npm run bundle:chatgpt && npm run bundle:mcp-apps && npm run bundle:sandbox-proxies
 RUN npm run build:server
 
 # Layer 7: Build client (changes most frequently, depends on SDK and shared)
