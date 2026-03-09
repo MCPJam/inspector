@@ -2,3 +2,4 @@
 node_modules/
 .mcpjam/skills/
 **/.mcpjam/skills/
+.claude/
