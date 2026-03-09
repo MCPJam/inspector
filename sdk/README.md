@@ -370,3 +370,19 @@ matchToolArgumentWith("add", "a", (v) => v > 0, calls);      // predicate
 ```
 
 </details>
+
+---
+
+## Telemetry
+
+The SDK collects anonymous usage metrics (e.g., eval test run counts) to help improve the product. No personal data is collected.
+
+To disable telemetry, set either of these environment variables:
+
+```bash
+# Community standard
+export DO_NOT_TRACK=1
+
+# Or project-specific
+export MCPJAM_TELEMETRY_DISABLED=1
+```
