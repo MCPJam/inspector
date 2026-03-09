@@ -27,6 +27,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token.js";
+import { initGuestTokenSecret, getGuestJwks } from "./services/guest-token.js";
 import { isAllowedHost } from "./utils/localhost-check.js";
 import {
   sessionAuthMiddleware,
@@ -83,6 +84,10 @@ export function createHonoApp() {
 
   // Generate session token for API authentication
   generateSessionToken();
+
+  // Initialize RS256 key pair for guest JWTs
+  initGuestTokenSecret();
+
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>
     c.json(
@@ -211,6 +216,13 @@ export function createHonoApp() {
   // Health check
   app.get("/health", (c) => {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // Guest JWT JWKS endpoint — public, cacheable, no auth required.
+  // Convex uses this to verify guest JWTs natively.
+  app.get("/guest/jwks", (c) => {
+    c.header("Cache-Control", "public, max-age=3600");
+    return c.json(getGuestJwks());
   });
 
   // Session token endpoint (for dev mode where HTML isn't served by this server)

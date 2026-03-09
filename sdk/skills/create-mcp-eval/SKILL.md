@@ -20,7 +20,7 @@ Before generating any code, collect the following from the user:
 | **Connection type** | `stdio` (local binary) or `http` (SSE/Streamable HTTP URL) | `http` |
 | **Test framework** | `jest`, `vitest`, or `none` (SDK-only) | _(detect from repo; fall back to `vitest`)_ |
 | **LLM provider** | See Supported Providers table below. Format: `provider/model` | _(must ask user)_ |
-| **Reporting** | `none`, `auto` (MCPJAM_API_KEY env), or `reporter` (shared EvalRunReporter) | `auto` |
+| **Save results to MCPJam** | `none`, `auto` (saves when MCPJAM_API_KEY is set), or `reporter` (shared EvalRunReporter). To get your API key, go to **Settings > Workspace API Key** in the MCPJam Inspector. | _(must ask user)_ |
 | **Tool list** | Ask user to paste their tool names or an **Agent Brief** (see Section 8) | — |
 
 If the user provides an **Agent Brief** (markdown with `## Tools` table), parse it to auto-populate tool names, descriptions, parameters, and suggested eval scenarios. See Section 8.
@@ -132,7 +132,7 @@ MCP_SERVER_URL=https://your-server.example.com/sse
 # MCP_CLIENT_ID=...
 # MCP_CLIENT_SECRET=...
 
-# MCPJam reporting (optional - enables auto-upload)
+# Save eval results to MCPJam (optional)
 # MCPJAM_API_KEY=mcpjam_...
 ```
 
@@ -354,7 +354,7 @@ matchToolArgument("tool", "key", "val", toolCalls);             // single arg ex
 matchToolArgumentWith("tool", "key", (v) => v > 0, toolCalls);  // custom predicate
 ```
 
-### Reporting — Upload Results to MCPJam
+### Save Results to MCPJam
 
 ```typescript
 import {
@@ -441,9 +441,9 @@ Use a conditional wrapper so tests skip gracefully when credentials are missing:
 });
 ```
 
-### Pattern 3: Shared Reporter
+### Pattern 3: Shared Reporter (Save Results to MCPJam)
 
-Create a module-level reporter and finalize in `afterAll`:
+Create a module-level reporter to save results to MCPJam, and finalize in `afterAll`:
 
 ```typescript
 let reporter: EvalRunReporter;
@@ -464,7 +464,7 @@ afterAll(async () => {
 }, 90_000);
 ```
 
-The reporter buffers uploads. A run may not appear in the MCPJam UI until
+The reporter buffers results before saving. A run may not appear in the MCPJam UI until
 `reporter.flush()` or `reporter.finalize()` completes.
 
 For long-running files, call `await reporter.flush()` periodically if you want
@@ -492,7 +492,7 @@ for (const { name, suffix, getAgent } of agentConfigs) {
 }
 ```
 
-### Pattern 5: Four Reporting Styles
+### Pattern 5: Four Ways to Save Results
 
 ```typescript
 // Style 1: Manual toEvalResult + record
@@ -611,7 +611,7 @@ Follow these rules when generating eval test files:
 
 2. **One EvalTest per tool** — create a separate `EvalTest` for each tool you want to evaluate. Each test should prompt the agent with a natural-language request and assert the correct tool was selected.
 
-3. **Single-shot LLM tests are non-deterministic** — a single `agent.prompt()` may not select the expected tool every time. For single-shot tests, prefer recording results to the reporter without hard-asserting (`expect(...).toBe(true)`). Use `EvalTest` with `iterations >= 3` and assert on `accuracy()` for reliable pass/fail gates. Reserve hard asserts for high-confidence cases (negative tests, multi-turn with clear context).
+3. **Single-shot LLM tests are non-deterministic** — a single `agent.prompt()` may not select the expected tool every time. For single-shot tests, prefer saving results to MCPJam without hard-asserting (`expect(...).toBe(true)`). Use `EvalTest` with `iterations >= 3` and assert on `accuracy()` for reliable pass/fail gates. Reserve hard asserts for high-confidence cases (negative tests, multi-turn with clear context).
 
 4. **Write unambiguous prompts for similar tools** — when a server has tools with overlapping descriptions (e.g., `create_view` vs `export_to_excalidraw`), prompts must reference the tool's *unique* action. Mention specific verbs, targets, or outcomes. Bad: "Share my diagram". Good: "Export and upload my diagram to excalidraw.com so I can open it in a browser".
 
@@ -630,7 +630,7 @@ Follow these rules when generating eval test files:
 
 9. **Always `await`** — every `agent.prompt()`, `test.run()`, `suite.run()`, `reporter.record*()`, and `reporter.finalize()` is async. Never forget `await`.
 
-10. **One reporter per file** — create the reporter at module level and finalize in `afterAll`. Never create multiple reporters in the same file.
+10. **One reporter per file** — create the reporter at module level to save results to MCPJam, and finalize in `afterAll`. Never create multiple reporters in the same file.
 
 11. **Use `describe.skip` for missing credentials** — wrap LLM tests in conditional describe blocks so CI runs cleanly without secrets.
 
@@ -677,7 +677,7 @@ const PROMPTS = {
   // NEGATIVE: "What is the capital of France?",
 } as const;
 
-// ─── Reporter ───────────────────────────────────────────────────────────────
+// ─── Save Results to MCPJam ──────────────────────────────────────────────────
 let reporter: EvalRunReporter;
 
 if (MCPJAM_API_KEY) {
@@ -695,7 +695,8 @@ afterAll(async () => {
   if (!reporter || reporter.getAddedCount() === 0) return;
   const output = await reporter.finalize();
   expect(output.runId).toBeTruthy();
-  console.log(`Finalized: runId=${output.runId} passed=${output.summary.passed}/${output.summary.total}`);
+  console.log(`\n[mcpjam] Results saved — ${output.summary.passed}/${output.summary.total} passed`);
+  console.log(`[mcpjam] Open the Evals tab in the MCPJam Inspector to see your full results.\n`);
 }, 90_000);
 
 // ─── Deterministic Tests ────────────────────────────────────────────────────
@@ -845,6 +846,15 @@ if (!RUN_LLM_TESTS) {
     it.skip("Requires {LLM_ENV_VAR} + MCP_SERVER_URL", () => {});
   });
 }
+
+if (!MCPJAM_API_KEY) {
+  afterAll(() => {
+    console.log(`\n[mcpjam] You won't be able to see them in the CI/CD tab. To set up:`);
+    console.log(`[mcpjam] 1. Go to Settings > Workspace API Key in the MCPJam Inspector`);
+    console.log(`[mcpjam] 2. Add MCPJAM_API_KEY to your .env`);
+    console.log(`[mcpjam] 3. Re-run your evals — results are saved automatically\n`);
+  });
+}
 ```
 
 ---
@@ -861,8 +871,8 @@ afterAll(async () => {
 ```
 
 ### Expecting immediate UI visibility
-`recordFromPrompt()` and the other `record*()` helpers add buffered results, but
-they do not guarantee an immediate upload. A long-running file may not appear in
+`recordFromPrompt()` and the other `record*()` helpers buffer results, but
+they do not guarantee an immediate save to MCPJam. A long-running file may not appear in
 the UI until `flush()` or `finalize()` runs.
 
 If you need the run to show up before the file completes, flush periodically:
@@ -884,10 +894,10 @@ await reporter.recordFromPrompt(result, { ... });
 ### Low `maxSteps` on TestAgent
 If the agent needs multiple tool calls to answer a prompt, a low `maxSteps` causes incomplete responses. Default to `8` for most servers, increase to `12-15` for complex workflows.
 
-### Mixing reporting modes
+### Mixing save modes
 Don't use both `reportEvalResults()` and a shared `EvalRunReporter` in the same file. Pick one approach:
 - Use `createEvalRunReporter` for multi-test files (recommended)
-- Use `reportEvalResults` for single one-off reports
+- Use `reportEvalResults` for single one-off saves
 
 ### Missing test timeouts
 LLM calls can take 10-30 seconds. Always set explicit timeouts on `it()` blocks:
@@ -896,7 +906,7 @@ it("test name", async () => { ... }, 90_000);  // 90 seconds
 ```
 
 ### Creating multiple reporters
-One reporter per test file. Creating multiple reporters results in multiple incomplete runs instead of one consolidated run.
+One reporter per test file. Creating multiple reporters results in multiple incomplete runs instead of one consolidated run saved to MCPJam.
 
 ### Incorrect `expectedIterations`
 `expectedIterations` is not a rough estimate. It should exactly equal the total
@@ -910,11 +920,11 @@ Count:
 If the count is wrong, the UI can show misleading progress for a run.
 
 ### Using `strict: false` without checking results
-With `strict: false`, reporting failures are silently swallowed — a `console.warn` is emitted and `finalize()` returns a local fallback with an empty `runId`. Always check `output.runId` after finalize to confirm results were uploaded:
+With `strict: false`, save failures are silently swallowed — a `console.warn` is emitted and `finalize()` returns a local fallback with an empty `runId`. Always check `output.runId` after finalize to confirm results were saved:
 ```typescript
 const output = await reporter.finalize();
 if (!output.runId) {
-  console.error("Results were NOT uploaded to MCPJam — check baseUrl and apiKey");
+  console.error("Results were NOT saved to MCPJam — check baseUrl and apiKey");
 }
 ```
 
@@ -988,3 +998,4 @@ it("selects search_tasks", async () => {
   expect(result.hasToolCall("search_tasks")).toBe(true);
 }, 90_000);
 ```
+

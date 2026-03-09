@@ -29,10 +29,10 @@ new EvalSuite(options?: EvalSuiteConfig)
 | Property | Type | Required | Description |
 |----------|------|----------|-------------|
 | `name` | `string` | No | Name for the suite (defaults to `"EvalSuite"`) |
-| `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | Auto-report results to MCPJam when the suite completes |
+| `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | Auto-save results to MCPJam when the suite completes |
 
 <Note>
-When an API key is available — via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable — all test results are consolidated into a single run and reported to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
+When an API key is available — via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable — all test results are consolidated into a single run and saved to MCPJam after the suite completes. Individual `EvalTest` auto-saves are suppressed to avoid duplicate uploads. Set `mcpjam.enabled: false` to disable.
 </Note>
 
 ### Example
@@ -41,7 +41,7 @@ When an API key is available — via `mcpjam.apiKey` or the `MCPJAM_API_KEY` env
 const suite = new EvalSuite({ name: "Math Operations" });
 ```
 
-With MCPJam reporting:
+With results saved to MCPJam:
 
 ```typescript
 const reportingSuite = new EvalSuite({
@@ -334,7 +334,7 @@ async function main() {
     temperature: 0.1,
   });
 
-  // Build suite (with MCPJam auto-reporting)
+  // Build suite (with auto-save to MCPJam)
   const suite = new EvalSuite({
     name: "Everything Server Tests",
     mcpjam: {
@@ -455,5 +455,5 @@ for (const { model, key } of providers) {
 
 - [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
 - [EvalTest Reference](/sdk/reference/eval-test) - Individual test API
-- [Eval Reporting Reference](/sdk/reference/eval-reporting) - Reporting APIs
+- [Saving Eval Results](/sdk/reference/eval-reporting) - Save results to MCPJam
 - [Testing Across Providers](/sdk/concepts/multi-provider) - Compare LLMs

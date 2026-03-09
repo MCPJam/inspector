@@ -15,7 +15,7 @@ import {
   MessageCircleQuestionIcon,
   GitBranch,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
+import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -45,8 +45,44 @@ import {
 } from "@/lib/hosted-tab-policy";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
+interface NavItem {
+  title: string;
+  url: string;
+  icon: React.ComponentType;
+  /** Only show this item when the named feature flag is enabled */
+  featureFlag?: string;
+  /** Hide this item when the named feature flag is enabled */
+  hiddenByFlag?: string;
+}
+
+interface NavSection {
+  id: string;
+  items: NavItem[];
+}
+
+/**
+ * Filter navigation items based on active feature flags.
+ * Items with `featureFlag` are shown only when that flag is enabled.
+ * Items with `hiddenByFlag` are hidden when that flag is enabled.
+ */
+export function filterByFeatureFlags(
+  sections: NavSection[],
+  flags: Record<string, boolean>,
+): NavSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        if (item.featureFlag && !flags[item.featureFlag]) return false;
+        if (item.hiddenByFlag && flags[item.hiddenByFlag]) return false;
+        return true;
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
+}
+
 // Define sections with their respective items
-const navigationSections = [
+const navigationSections: NavSection[] = [
   {
     id: "connection",
     items: [
@@ -76,9 +112,16 @@ const navigationSections = [
         icon: Layers,
       },
       {
-        title: "Evals",
+        title: "Generate Evals",
+        url: "#evals",
+        icon: FlaskConical,
+        hiddenByFlag: "ci-evals-enabled",
+      },
+      {
+        title: "Evals CI/CD",
         url: "#ci-evals",
         icon: GitBranch,
+        featureFlag: "ci-evals-enabled",
       },
     ],
   },
@@ -173,6 +216,7 @@ export function MCPSidebar({
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
+  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { updateReady, restartAndInstall } = useUpdateNotification();
   const [toolsDataMap, setToolsDataMap] = useState<
@@ -262,9 +306,14 @@ export function MCPSidebar({
         onDismiss: dismissAppBuilderBubble,
       }
     : null;
-  const visibleNavigationSections = HOSTED_MODE
-    ? hostedNavigationSections
-    : navigationSections;
+  const featureFlags = useMemo(
+    () => ({ "ci-evals-enabled": !!ciEvalsEnabled }),
+    [ciEvalsEnabled],
+  );
+  const visibleNavigationSections = filterByFeatureFlags(
+    HOSTED_MODE ? hostedNavigationSections : navigationSections,
+    featureFlags,
+  );
 
   return (
     <Sidebar collapsible="icon" {...props}>

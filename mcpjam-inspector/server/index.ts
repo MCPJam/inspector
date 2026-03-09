@@ -18,6 +18,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
+import { initGuestTokenSecret } from "./services/guest-token";
 import { isAllowedHost } from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
@@ -181,6 +182,9 @@ try {
 
 // Generate session token for API authentication
 generateSessionToken();
+
+// Initialize guest token secret for hosted mode
+initGuestTokenSecret();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
