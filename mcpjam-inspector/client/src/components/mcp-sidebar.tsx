@@ -15,7 +15,7 @@ import {
   MessageCircleQuestionIcon,
   GitBranch,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
+import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -178,6 +178,7 @@ export function MCPSidebar({
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
+  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { updateReady, restartAndInstall } = useUpdateNotification();
   const [toolsDataMap, setToolsDataMap] = useState<
@@ -267,9 +268,19 @@ export function MCPSidebar({
         onDismiss: dismissAppBuilderBubble,
       }
     : null;
-  const visibleNavigationSections = HOSTED_MODE
-    ? hostedNavigationSections
-    : navigationSections;
+  const visibleNavigationSections = useMemo(() => {
+    const sections = HOSTED_MODE
+      ? hostedNavigationSections
+      : navigationSections;
+    return sections.map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        if (item.url === "#ci-evals" && !ciEvalsEnabled) return false;
+        if (item.url === "#evals" && ciEvalsEnabled) return false;
+        return true;
+      }),
+    }));
+  }, [ciEvalsEnabled]);
 
   return (
     <Sidebar collapsible="icon" {...props}>
