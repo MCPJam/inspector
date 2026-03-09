@@ -289,6 +289,32 @@ describe("PromptResult", () => {
       expect(result.getProvider()).toBe("openai");
       expect(result.getModel()).toBe("gpt-4o");
     });
+
+    it("toEvalResult should include captured widget snapshots", () => {
+      const data = createMockData({
+        widgetSnapshots: [
+          {
+            toolCallId: "call-1",
+            toolName: "create_view",
+            protocol: "mcp-apps",
+            serverId: "server-1",
+            resourceUri: "ui://widget/create-view.html",
+            toolMetadata: {
+              ui: { resourceUri: "ui://widget/create-view.html" },
+            },
+            widgetCsp: null,
+            widgetPermissions: null,
+            widgetPermissive: true,
+            prefersBorder: true,
+            widgetHtml: "<html>cached</html>",
+          },
+        ],
+      });
+      const result = new PromptResult(data);
+      const evalResult = result.toEvalResult({ caseTitle: "test", passed: true });
+
+      expect(evalResult.widgetSnapshots).toEqual(data.widgetSnapshots);
+    });
   });
 
   describe("latency methods", () => {

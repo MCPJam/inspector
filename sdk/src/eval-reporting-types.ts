@@ -21,6 +21,35 @@ export type EvalTraceInput =
       raw?: unknown;
     };
 
+export type EvalWidgetCsp = {
+  connectDomains?: string[];
+  resourceDomains?: string[];
+  frameDomains?: string[];
+  baseUriDomains?: string[];
+};
+
+export type EvalWidgetPermissions = {
+  camera?: Record<string, never>;
+  microphone?: Record<string, never>;
+  geolocation?: Record<string, never>;
+  clipboardWrite?: Record<string, never>;
+};
+
+export type EvalWidgetSnapshotInput = {
+  toolCallId: string;
+  toolName: string;
+  protocol: "mcp-apps";
+  serverId: string;
+  resourceUri: string;
+  toolMetadata: Record<string, unknown>;
+  widgetCsp: EvalWidgetCsp | null;
+  widgetPermissions: EvalWidgetPermissions | null;
+  widgetPermissive: boolean;
+  prefersBorder: boolean;
+  widgetHtml?: string;
+  widgetHtmlBlobId?: string;
+};
+
 export type EvalResultInput = {
   caseTitle: string;
   query?: string;
@@ -39,6 +68,7 @@ export type EvalResultInput = {
   metadata?: Record<string, string | number | boolean>;
   isNegativeTest?: boolean;
   advancedConfig?: Record<string, unknown>;
+  widgetSnapshots?: EvalWidgetSnapshotInput[];
 };
 
 export type MCPJamReportingConfig = {

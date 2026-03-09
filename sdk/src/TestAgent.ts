@@ -12,7 +12,11 @@ import { PromptResult } from "./PromptResult.js";
 import type { CustomProvider } from "./types.js";
 import type { EvalAgent, PromptOptions } from "./EvalAgent.js";
 import type { Tool, AiSdkTool } from "./mcp-client-manager/types.js";
+import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
+import type { EvalWidgetSnapshotInput } from "./eval-reporting-types.js";
 import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
+import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
+import { injectOpenAICompat } from "./widget-helpers.js";
 
 /**
  * Configuration for creating a TestAgent
@@ -34,6 +38,8 @@ export interface TestAgentConfig {
   customProviders?:
     | Map<string, CustomProvider>
     | Record<string, CustomProvider>;
+  /** Optional MCP client manager for capturing MCP App replay snapshots */
+  mcpClientManager?: MCPClientManager;
 }
 
 // Re-export PromptOptions for backward compatibility
@@ -112,6 +118,7 @@ export class TestAgent implements EvalAgent {
   private readonly customProviders?:
     | Map<string, CustomProvider>
     | Record<string, CustomProvider>;
+  private readonly mcpClientManager?: MCPClientManager;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -139,6 +146,7 @@ export class TestAgent implements EvalAgent {
     this.temperature = config.temperature;
     this.maxSteps = config.maxSteps ?? 10;
     this.customProviders = config.customProviders;
+    this.mcpClientManager = config.mcpClientManager;
 
     // Parse the model string once to extract provider/model metadata
     try {
@@ -159,7 +167,116 @@ export class TestAgent implements EvalAgent {
    * @param onLatency - Callback to report latency for each tool execution
    * @returns ToolSet with instrumented execute functions
    */
-  private createInstrumentedTools(onLatency: (ms: number) => void): ToolSet {
+  private warnWidgetSnapshotFailure(
+    toolName: string,
+    message: string,
+    error?: unknown
+  ) {
+    const suffix =
+      error instanceof Error ? `: ${error.message}` : error ? `: ${String(error)}` : "";
+    console.warn(
+      `[mcpjam/sdk] skipped widget snapshot for "${toolName}"${suffix || `: ${message}`}`
+    );
+  }
+
+  private async captureMcpAppSnapshot(params: {
+    toolName: string;
+    tool: ToolSet[string];
+    options: { toolCallId?: string } | undefined;
+    toolInput: Record<string, unknown>;
+    toolOutput: unknown;
+    snapshotBuffer: Map<string, EvalWidgetSnapshotInput>;
+  }) {
+    if (!this.mcpClientManager) {
+      return;
+    }
+
+    const toolCallId =
+      typeof params.options?.toolCallId === "string"
+        ? params.options.toolCallId
+        : undefined;
+    if (!toolCallId) {
+      return;
+    }
+
+    const serverId = (params.tool as any)._serverId;
+    if (typeof serverId !== "string" || !serverId) {
+      return;
+    }
+
+    const toolMetadata = this.mcpClientManager.getToolMetadata(
+      serverId,
+      params.toolName
+    );
+    if (!toolMetadata) {
+      return;
+    }
+
+    const ui = toolMetadata.ui as { resourceUri?: string } | undefined;
+    const resourceUri =
+      typeof ui?.resourceUri === "string" ? ui.resourceUri : undefined;
+    if (!resourceUri) {
+      return;
+    }
+
+    try {
+      const resourceResult = await this.mcpClientManager.readResource(serverId, {
+        uri: resourceUri,
+      });
+      const contents = Array.isArray((resourceResult as any)?.contents)
+        ? (resourceResult as any).contents
+        : [];
+      const content = contents[0];
+      if (!content) {
+        this.warnWidgetSnapshotFailure(
+          params.toolName,
+          "resource read returned no content"
+        );
+        return;
+      }
+
+      const snapshot = buildMcpAppWidgetSnapshot({
+        toolCallId,
+        toolName: params.toolName,
+        serverId,
+        resourceUri,
+        toolMetadata,
+        resourceContent: content,
+      });
+      if (!snapshot) {
+        this.warnWidgetSnapshotFailure(
+          params.toolName,
+          "resource did not contain HTML content"
+        );
+        return;
+      }
+
+      // Inject the OpenAI compat runtime so stored blobs are self-contained
+      // (identical to what the server injects for live widgets and Views)
+      snapshot.widgetHtml = injectOpenAICompat(snapshot.widgetHtml ?? "", {
+        toolId: toolCallId,
+        toolName: params.toolName,
+        toolInput: params.toolInput ?? {},
+        toolOutput: params.toolOutput,
+        theme: "dark",
+        viewMode: "inline",
+        viewParams: {},
+      });
+
+      params.snapshotBuffer.set(toolCallId, snapshot);
+    } catch (error) {
+      this.warnWidgetSnapshotFailure(
+        params.toolName,
+        "resource read failed",
+        error
+      );
+    }
+  }
+
+  private createInstrumentedTools(
+    onLatency: (ms: number) => void,
+    snapshotBuffer: Map<string, EvalWidgetSnapshotInput>
+  ): ToolSet {
     const instrumented: ToolSet = {};
     for (const [name, tool] of Object.entries(this.tools)) {
       // Only instrument tools that have an execute function
@@ -170,7 +287,16 @@ export class TestAgent implements EvalAgent {
           execute: async (args: any, options: any) => {
             const start = Date.now();
             try {
-              return await originalExecute(args, options);
+              const result = await originalExecute(args, options);
+              await this.captureMcpAppSnapshot({
+                toolName: name,
+                tool,
+                options,
+                toolInput: args as Record<string, unknown>,
+                toolOutput: result,
+                snapshotBuffer,
+              });
+              return result;
             } finally {
               onLatency(Date.now() - start);
             }
@@ -239,6 +365,7 @@ export class TestAgent implements EvalAgent {
     let lastStepEndTime = startTime;
     let totalLlmMs = 0;
     let stepMcpMs = 0; // MCP time within current step
+    const widgetSnapshots = new Map<string, EvalWidgetSnapshotInput>();
 
     try {
       const modelOptions: CreateModelOptions = {
@@ -248,10 +375,13 @@ export class TestAgent implements EvalAgent {
       const model = createModelFromString(this.model, modelOptions);
 
       // Instrument tools to track MCP execution time
-      const instrumentedTools = this.createInstrumentedTools((ms) => {
-        totalMcpMs += ms;
-        stepMcpMs += ms; // Accumulate per-step for LLM calculation
-      });
+      const instrumentedTools = this.createInstrumentedTools(
+        (ms) => {
+          totalMcpMs += ms;
+          stepMcpMs += ms; // Accumulate per-step for LLM calculation
+        },
+        widgetSnapshots
+      );
 
       // Build messages array if context is provided for multi-turn
       const contextMessages = this.buildContextMessages(options?.context);
@@ -310,6 +440,7 @@ export class TestAgent implements EvalAgent {
         latency: { e2eMs, llmMs: totalLlmMs, mcpMs: totalMcpMs },
         provider: this._parsedProvider,
         model: this._parsedModel,
+        widgetSnapshots: Array.from(widgetSnapshots.values()),
       });
 
       this.promptHistory.push(this.lastResult);
@@ -363,6 +494,7 @@ export class TestAgent implements EvalAgent {
       temperature: options.temperature ?? this.temperature,
       maxSteps: options.maxSteps ?? this.maxSteps,
       customProviders: options.customProviders ?? this.customProviders,
+      mcpClientManager: options.mcpClientManager ?? this.mcpClientManager,
     });
   }
 

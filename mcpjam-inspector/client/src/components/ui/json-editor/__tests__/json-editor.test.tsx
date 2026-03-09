@@ -123,4 +123,21 @@ describe("JsonEditor", () => {
       expect(textarea.getAttribute("wrap")).toBe("off");
     });
   });
+
+  describe("expandJsonStrings", () => {
+    it("expands stringified JSON in viewOnly mode", () => {
+      render(
+        <JsonEditor
+          value={{ toolInput: { elements: '[{"type":"ellipse","x":10}]' } }}
+          viewOnly
+          collapsible
+          expandJsonStrings
+        />,
+      );
+
+      expect(screen.getByText('"elements"')).toBeDefined();
+      expect(screen.getByText('"type"')).toBeDefined();
+      expect(screen.getByText("10")).toBeDefined();
+    });
+  });
 });

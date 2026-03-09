@@ -58,6 +58,28 @@ describe("TestAgent", () => {
     },
   };
 
+  function createMcpAppToolSet(): ToolSet {
+    const createViewTool = {
+      description: "Create a saved view",
+      inputSchema: jsonSchema({
+        type: "object",
+        properties: {
+          title: { type: "string" },
+        },
+        required: ["title"],
+      }),
+      execute: jest.fn(async (args: { title: string }) => ({
+        content: [{ type: "text", text: `Created ${args.title}` }],
+      })),
+    } as ToolSet[string] & { _serverId?: string };
+
+    createViewTool._serverId = "server-1";
+
+    return {
+      create_view: createViewTool,
+    };
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -251,6 +273,177 @@ describe("TestAgent", () => {
         toolName: "subtract",
         arguments: { a: 5, b: 3 },
       });
+    });
+
+    it("captures widget snapshots across multiple MCP App tool calls", async () => {
+      const tools = createMcpAppToolSet();
+      const mockManager = {
+        getToolMetadata: jest.fn().mockReturnValue({
+          ui: { resourceUri: "ui://widget/create-view.html" },
+        }),
+        readResource: jest
+          .fn()
+          .mockResolvedValueOnce({
+            contents: [
+              {
+                text: "<html>First widget</html>",
+                _meta: {
+                  ui: {
+                    csp: { connectDomains: ["https://api.example.com"] },
+                    permissions: { clipboardWrite: {} },
+                    prefersBorder: false,
+                  },
+                },
+              },
+            ],
+          })
+          .mockResolvedValueOnce({
+            contents: [
+              {
+                text: "<html>Second widget</html>",
+                _meta: {
+                  ui: {
+                    csp: { resourceDomains: ["https://cdn.example.com"] },
+                    permissions: { camera: {} },
+                    prefersBorder: true,
+                  },
+                },
+              },
+            ],
+          }),
+      };
+
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        await params.tools.create_view.execute(
+          { title: "Flow 1" },
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } },
+        );
+        params.onStepFinish?.();
+
+        await params.tools.create_view.execute(
+          { title: "Flow 2" },
+          { toolCallId: "call-2", abortSignal: { throwIfAborted: jest.fn() } },
+        );
+        params.onStepFinish?.();
+
+        return {
+          text: "Saved both views",
+          steps: [
+            {
+              toolCalls: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "create_view",
+                  input: { title: "Flow 1" },
+                },
+              ],
+            },
+            {
+              toolCalls: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-2",
+                  toolName: "create_view",
+                  input: { title: "Flow 2" },
+                },
+              ],
+            },
+          ],
+          usage: { inputTokens: 12, outputTokens: 8, totalTokens: 20 },
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-api-key",
+        mcpClientManager: mockManager as any,
+      });
+
+      const result = await agent.prompt("Create two views");
+
+      expect(result.getWidgetSnapshots()).toHaveLength(2);
+
+      const snap0 = result.getWidgetSnapshots()[0];
+      expect(snap0).toEqual(
+        expect.objectContaining({
+          toolCallId: "call-1",
+          toolName: "create_view",
+          protocol: "mcp-apps",
+          serverId: "server-1",
+          resourceUri: "ui://widget/create-view.html",
+          widgetPermissive: true,
+          prefersBorder: false,
+        }),
+      );
+      // widgetHtml should contain the injected OpenAI compat runtime
+      expect(snap0.widgetHtml).toContain('id="openai-compat-config"');
+      expect(snap0.widgetHtml).toContain("First widget");
+
+      const snap1 = result.getWidgetSnapshots()[1];
+      expect(snap1).toEqual(
+        expect.objectContaining({
+          toolCallId: "call-2",
+          prefersBorder: true,
+        }),
+      );
+      expect(snap1.widgetHtml).toContain('id="openai-compat-config"');
+      expect(snap1.widgetHtml).toContain("Second widget");
+      expect(mockManager.getToolMetadata).toHaveBeenCalledTimes(2);
+      expect(mockManager.readResource).toHaveBeenCalledTimes(2);
+    });
+
+    it("warns and skips widget snapshots when resource reads fail", async () => {
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const tools = createMcpAppToolSet();
+      const mockManager = {
+        getToolMetadata: jest.fn().mockReturnValue({
+          ui: { resourceUri: "ui://widget/create-view.html" },
+        }),
+        readResource: jest.fn().mockRejectedValue(new Error("server hiccup")),
+      };
+
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        await params.tools.create_view.execute(
+          { title: "Flow 1" },
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } },
+        );
+        params.onStepFinish?.();
+
+        return {
+          text: "Done",
+          steps: [
+            {
+              toolCalls: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "create_view",
+                  input: { title: "Flow 1" },
+                },
+              ],
+            },
+          ],
+          usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 },
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-api-key",
+        mcpClientManager: mockManager as any,
+      });
+
+      const result = await agent.prompt("Create a view");
+
+      expect(result.hasError()).toBe(false);
+      expect(result.getWidgetSnapshots()).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('skipped widget snapshot for "create_view"'),
+      );
+      warnSpy.mockRestore();
     });
 
     it("should return error result on LLM failure", async () => {

@@ -135,6 +135,9 @@ export type {
   EvalExpectedToolCall,
   EvalCiMetadata,
   EvalTraceInput,
+  EvalWidgetCsp,
+  EvalWidgetPermissions,
+  EvalWidgetSnapshotInput,
   EvalResultInput,
   MCPJamReportingConfig,
   ReportEvalResultsInput,
@@ -178,6 +181,9 @@ export type {
   ParsedLLMString,
   ProviderLanguageModel,
 } from "./model-factory.js";
+
+// Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
+export { injectOpenAICompat } from "./widget-helpers.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
 export { SKILL_MD } from "./skill-reference.js";

@@ -147,6 +147,140 @@ describe("reportEvalResults", () => {
     );
   });
 
+  it("uploads widget snapshots before reporting results", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          uploadUrl: "https://upload.example.com/widget-1",
+        })
+      )
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({ storageId: "storage_1" }),
+      })
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-snapshots",
+      results: [
+        {
+          caseTitle: "happy-path",
+          passed: true,
+          widgetSnapshots: [
+            {
+              toolCallId: "call-1",
+              toolName: "create_view",
+              protocol: "mcp-apps",
+              serverId: "server-1",
+              resourceUri: "ui://widget/create-view.html",
+              toolMetadata: {
+                ui: { resourceUri: "ui://widget/create-view.html" },
+              },
+              widgetCsp: null,
+              widgetPermissions: null,
+              widgetPermissive: true,
+              prefersBorder: true,
+              widgetHtml: "<html>cached</html>",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.com/sdk/v1/evals/artifacts/upload-url"
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "https://upload.example.com/widget-1"
+    );
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "https://example.com/sdk/v1/evals/report"
+    );
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
+    expect(requestBody.results[0].widgetSnapshots[0]).toEqual(
+      expect.objectContaining({
+        toolCallId: "call-1",
+        widgetHtmlBlobId: "storage_1",
+      })
+    );
+    expect(requestBody.results[0].widgetSnapshots[0].widgetHtml).toBeUndefined();
+  });
+
+  it("warns and continues when widget snapshot upload fails", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          uploadUrl: "https://upload.example.com/widget-1",
+        })
+      )
+      .mockResolvedValueOnce(errorResponse(400, "upload failed"))
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+
+    const result = await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-snapshots-best-effort",
+      results: [
+        {
+          caseTitle: "happy-path",
+          passed: true,
+          widgetSnapshots: [
+            {
+              toolCallId: "call-1",
+              toolName: "create_view",
+              protocol: "mcp-apps",
+              serverId: "server-1",
+              resourceUri: "ui://widget/create-view.html",
+              toolMetadata: {
+                ui: { resourceUri: "ui://widget/create-view.html" },
+              },
+              widgetCsp: null,
+              widgetPermissions: null,
+              widgetPermissive: true,
+              prefersBorder: true,
+              widgetHtml: "<html>cached</html>",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.runId).toBe("run_1");
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('skipped widget snapshot upload for "create_view"')
+    );
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
+    expect(requestBody.results[0].widgetSnapshots).toBeUndefined();
+  });
+
   it("returns null in safe mode when strict is false", async () => {
     const fetchMock = jest.fn().mockResolvedValue(errorResponse(500, "backend down"));
     global.fetch = fetchMock as any;

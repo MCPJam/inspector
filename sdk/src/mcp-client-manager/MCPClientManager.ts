@@ -425,6 +425,22 @@ export class MCPClientManager {
   }
 
   /**
+   * Gets cached metadata for a specific tool.
+   * Metadata is populated when tools are listed via listTools()/getTools()/getToolsForAiSdk().
+   */
+  getToolMetadata(
+    serverId: string,
+    toolName: string
+  ): Record<string, unknown> | undefined {
+    const metadataMap = this.toolsMetadataCache.get(serverId);
+    const metadata = metadataMap?.get(toolName);
+    if (!metadata || typeof metadata !== "object") {
+      return undefined;
+    }
+    return { ...(metadata as Record<string, unknown>) };
+  }
+
+  /**
    * Gets tools formatted for Vercel AI SDK.
    *
    * @param serverIds - Server IDs to get tools from (or all if omitted)

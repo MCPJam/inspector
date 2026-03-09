@@ -54,6 +54,7 @@ export function iterationToEvalResult(
       content: message.content,
     }))
   );
+  const widgetSnapshots = prompts.flatMap((prompt) => prompt.getWidgetSnapshots());
 
   // Use iteration-level tokens (already pre-aggregated by EvalTest)
   const durationMs = iteration.latencies.reduce(
@@ -84,6 +85,7 @@ export function iterationToEvalResult(
       traceMessages.length > 0
         ? { messages: traceMessages }
         : undefined,
+    widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
     metadata: {
       iterationNumber: index + 1,
       retryCount: iteration.retryCount ?? 0,
@@ -181,6 +183,9 @@ export function iterationsToEvalResultInputs(
         content: message.content,
       }))
     );
+    const widgetSnapshots = prompts.flatMap((prompt) =>
+      prompt.getWidgetSnapshots()
+    );
 
     return {
       caseTitle: testName,
@@ -200,6 +205,8 @@ export function iterationsToEvalResultInputs(
               messages: traceMessages,
             }
           : undefined,
+      widgetSnapshots:
+        widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
       metadata: {
         retryCount: iteration.retryCount ?? 0,
         iterationNumber: index + 1,
@@ -239,6 +246,9 @@ export function suiteTestResultsToEvalResultInputs(
           content: message.content,
         }))
       );
+      const widgetSnapshots = prompts.flatMap((prompt) =>
+        prompt.getWidgetSnapshots()
+      );
 
       inputs.push({
         caseTitle: testName,
@@ -258,6 +268,8 @@ export function suiteTestResultsToEvalResultInputs(
                 messages: traceMessages,
               }
             : undefined,
+        widgetSnapshots:
+          widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
         metadata: {
           testName,
           iterationNumber: index + 1,

@@ -12,7 +12,10 @@ import type {
   CoreAssistantMessage,
   CoreToolMessage,
 } from "./types.js";
-import type { EvalResultInput } from "./eval-reporting-types.js";
+import type {
+  EvalResultInput,
+  EvalWidgetSnapshotInput,
+} from "./eval-reporting-types.js";
 
 /**
  * Represents the result of a TestAgent prompt.
@@ -37,6 +40,9 @@ export class PromptResult {
   /** Token usage statistics */
   private readonly _usage: TokenUsage;
 
+  /** Widget snapshots captured during tool execution */
+  private readonly _widgetSnapshots: EvalWidgetSnapshotInput[];
+
   /** Error message if the prompt failed */
   private readonly _error?: string;
 
@@ -57,6 +63,7 @@ export class PromptResult {
     this._latency = data.latency;
     this._toolCalls = data.toolCalls;
     this._usage = data.usage;
+    this._widgetSnapshots = data.widgetSnapshots ?? [];
     this._error = data.error;
     this._provider = data.provider;
     this._model = data.model;
@@ -233,6 +240,13 @@ export class PromptResult {
   }
 
   /**
+   * Get widget snapshots captured during tool execution.
+   */
+  getWidgetSnapshots(): EvalWidgetSnapshotInput[] {
+    return [...this._widgetSnapshots];
+  }
+
+  /**
    * Check if this prompt resulted in an error.
    *
    * @returns true if there was an error
@@ -361,6 +375,8 @@ export class PromptResult {
       metadata: options?.metadata,
       isNegativeTest: options?.isNegativeTest,
       advancedConfig: options?.advancedConfig,
+      widgetSnapshots:
+        options?.widgetSnapshots ?? this.getWidgetSnapshots(),
     };
   }
 }

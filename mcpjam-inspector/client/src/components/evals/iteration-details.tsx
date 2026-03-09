@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import { MessageSquare, Code2, ChevronDown, ChevronRight } from "lucide-react";
@@ -10,8 +10,30 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  getModelById,
+  type ModelDefinition,
+  type ModelProvider,
+} from "@/shared/types";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
+const EMPTY_SERVER_NAMES: string[] = [];
+const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
+  "anthropic",
+  "azure",
+  "openai",
+  "ollama",
+  "deepseek",
+  "google",
+  "meta",
+  "xai",
+  "mistral",
+  "moonshotai",
+  "openrouter",
+  "z-ai",
+  "minimax",
+  "custom",
+];
 
 function tryParseStructuredArgumentString(value: string): unknown | null {
   const trimmed = value.trim();
@@ -85,10 +107,40 @@ export function resolveFormattedArgumentValue(value: unknown):
   };
 }
 
+function normalizeModelProvider(provider?: string): ModelProvider {
+  return KNOWN_MODEL_PROVIDERS.includes(provider as ModelProvider)
+    ? (provider as ModelProvider)
+    : "custom";
+}
+
+function resolveTraceModel(
+  iteration: EvalIteration,
+  testCase: EvalCase | null,
+): ModelDefinition {
+  const snapshotProvider = iteration.testCaseSnapshot?.provider;
+  const snapshotModel = iteration.testCaseSnapshot?.model;
+  const fallbackProvider = testCase?.models[0]?.provider;
+  const fallbackModel = testCase?.models[0]?.model;
+
+  const provider = snapshotProvider || fallbackProvider || "openai";
+  const model = snapshotModel || fallbackModel || "unknown-model";
+  const providerModelId =
+    model.startsWith(`${provider}/`) || !provider ? model : `${provider}/${model}`;
+
+  return (
+    getModelById(providerModelId) ??
+    getModelById(model) ?? {
+      id: providerModelId,
+      name: model.includes("/") ? model.split("/").slice(1).join("/") : model,
+      provider: normalizeModelProvider(provider),
+    }
+  );
+}
+
 export function IterationDetails({
   iteration,
   testCase,
-  serverNames = [],
+  serverNames = EMPTY_SERVER_NAMES,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
@@ -108,6 +160,7 @@ export function IterationDetails({
     Record<string, Record<string, any>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [connectedServerIds, setConnectedServerIds] = useState<string[]>([]);
   const [toolsWithSchema, setToolsWithSchema] = useState<
     Record<string, { name: string; inputSchema?: any }>
   >({});
@@ -142,65 +195,83 @@ export function IterationDetails({
   }, [iteration.blob, getBlob]);
 
   useEffect(() => {
-    const fetchToolsMetadata = async () => {
-      if (serverNames.length === 0) {
-        setToolsMetadata({});
-        setToolServerMap({});
-        setToolsWithSchema({});
-        return;
-      }
-      try {
-        // Fetch tools with their inputSchema for type display
-        // This makes only ONE call per server instead of two
-        const toolsMap: Record<string, { name: string; inputSchema?: any }> =
-          {};
-        const metadata: Record<string, Record<string, any>> = {};
-        const toolServerMap: ToolServerMap = {};
+    let cancelled = false;
 
-        await Promise.all(
-          serverNames.map(async (serverId) => {
-            try {
-              const result = await listTools({ serverId: serverId });
+    if (serverNames.length === 0) {
+      setToolsMetadata({});
+      setToolServerMap({});
+      setToolsWithSchema({});
+      setConnectedServerIds([]);
+      return () => {
+        cancelled = true;
+      };
+    }
 
-              // Extract tools with schemas
-              if (result.tools) {
-                for (const tool of result.tools) {
-                  toolsMap[tool.name] = {
-                    name: tool.name,
-                    inputSchema: tool.inputSchema,
-                  };
-                  toolServerMap[tool.name] = serverId;
-                }
+    setToolsMetadata({});
+    setToolServerMap({});
+    setToolsWithSchema({});
+    setConnectedServerIds([]);
+
+    serverNames.forEach((serverId) => {
+      void listTools({ serverId })
+        .then((result) => {
+          if (cancelled) return;
+
+          setConnectedServerIds((prev) =>
+            prev.includes(serverId) ? prev : [...prev, serverId],
+          );
+
+          if (result.tools?.length) {
+            setToolsWithSchema((prev) => {
+              const next = { ...prev };
+              for (const tool of result.tools ?? []) {
+                next[tool.name] = {
+                  name: tool.name,
+                  inputSchema: tool.inputSchema,
+                };
               }
+              return next;
+            });
 
-              // Extract metadata
-              const toolsMetadata = result.toolsMetadata ?? {};
-              for (const [toolName, meta] of Object.entries(toolsMetadata)) {
-                metadata[toolName] = meta as Record<string, unknown>;
+            setToolServerMap((prev) => {
+              const next = { ...prev };
+              for (const tool of result.tools ?? []) {
+                next[tool.name] = serverId;
               }
-            } catch (error) {
-              // Silently fail for disconnected servers
-              console.warn(
-                `Failed to fetch tools for server ${serverId}:`,
-                error,
-              );
-            }
-          }),
-        );
+              return next;
+            });
+          }
 
-        setToolsWithSchema(toolsMap);
-        setToolsMetadata(metadata);
-        setToolServerMap(toolServerMap);
-      } catch (error) {
-        // Silently fail if servers aren't connected
-        // This is expected in evals where servers may not be running
-        setToolsMetadata({});
-        setToolServerMap({});
-        setToolsWithSchema({});
-      }
+          if (result.toolsMetadata) {
+            setToolsMetadata((prev) => ({
+              ...prev,
+              ...Object.fromEntries(
+                Object.entries(result.toolsMetadata ?? {}).map(
+                  ([toolName, meta]) => [
+                    toolName,
+                    meta as Record<string, unknown>,
+                  ],
+                ),
+              ),
+            }));
+          }
+        })
+        .catch((loadError) => {
+          if (cancelled) return;
+
+          console.warn(`Failed to fetch tools for server ${serverId}:`, loadError);
+        });
+    });
+
+    return () => {
+      cancelled = true;
     };
-    fetchToolsMetadata();
   }, [serverNames]);
+
+  const traceModel = useMemo(
+    () => resolveTraceModel(iteration, testCase),
+    [iteration, testCase],
+  );
 
   // Use snapshot values first (reflects what was actually tested, including unsaved edits)
   const snapshotExpected = iteration.testCaseSnapshot?.expectedToolCalls;
@@ -262,13 +333,22 @@ export function IterationDetails({
                     collapsible
                     defaultExpandDepth={1}
                     collapseStringsAfterLength={160}
+                    expandJsonStrings
                     className="max-h-72"
                   />
                 </div>
               ) : formattedValue.renderAsBlock ? (
-                <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border/20 bg-background/70 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
-                  {formattedValue.value}
-                </pre>
+                <div className="mt-2 overflow-hidden rounded-md border border-border/30 bg-background/80">
+                  <JsonEditor
+                    value={formattedValue.value}
+                    viewOnly
+                    collapsible
+                    defaultExpandDepth={1}
+                    collapseStringsAfterLength={160}
+                    expandJsonStrings
+                    className="max-h-72"
+                  />
+                </div>
               ) : (
                 <div className="mt-1 min-w-0 break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
                   {formattedValue.value}
@@ -277,6 +357,32 @@ export function IterationDetails({
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  const renderRawToolCalls = (
+    toolCalls: Array<{ toolName: string; arguments: Record<string, any> }>,
+    emptyMessage: string,
+  ) => {
+    if (toolCalls.length === 0) {
+      return (
+        <div className="text-xs text-muted-foreground italic">
+          {emptyMessage}
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-hidden rounded-md border border-border/30 bg-background/50">
+        <JsonEditor
+          value={toolCalls}
+          viewOnly
+          collapsible
+          defaultExpandDepth={2}
+          collapseStringsAfterLength={160}
+          className="min-h-[160px] max-h-72"
+        />
       </div>
     );
   };
@@ -381,14 +487,9 @@ export function IterationDetails({
                 <div className="text-xs font-medium text-muted-foreground uppercase">
                   Expected
                 </div>
-                {expectedToolCalls.length === 0 ? (
-                  <div className="text-xs text-muted-foreground italic">
-                    No expected tool calls
-                  </div>
-                ) : (
-                  <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto">
-                    {JSON.stringify(expectedToolCalls, null, 2)}
-                  </pre>
+                {renderRawToolCalls(
+                  expectedToolCalls,
+                  "No expected tool calls",
                 )}
               </div>
 
@@ -397,15 +498,7 @@ export function IterationDetails({
                 <div className="text-xs font-medium text-muted-foreground uppercase">
                   Actual
                 </div>
-                {actualToolCalls.length === 0 ? (
-                  <div className="text-xs text-muted-foreground italic">
-                    No tool calls made
-                  </div>
-                ) : (
-                  <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto">
-                    {JSON.stringify(actualToolCalls, null, 2)}
-                  </pre>
-                )}
+                {renderRawToolCalls(actualToolCalls, "No tool calls made")}
               </div>
             </div>
           ) : (
@@ -492,13 +585,10 @@ export function IterationDetails({
             ) : (
               <TraceViewer
                 trace={blob}
-                modelProvider={
-                  testCase?.models[0]?.provider ||
-                  iteration.testCaseSnapshot?.provider ||
-                  "openai"
-                }
+                model={traceModel}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
+                connectedServerIds={connectedServerIds}
               />
             )}
           </div>

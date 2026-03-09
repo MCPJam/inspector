@@ -9,6 +9,7 @@ import type {
   AssistantModelMessage,
   ToolModelMessage,
 } from "ai";
+import type { EvalWidgetSnapshotInput } from "./eval-reporting-types.js";
 
 export type {
   ModelMessage,
@@ -121,4 +122,6 @@ export interface PromptResultData {
   provider?: string;
   /** LLM model name (e.g., "gpt-4o", "claude-3-5-sonnet-20241022") */
   model?: string;
+  /** Persisted widget snapshots captured during MCP App tool execution */
+  widgetSnapshots?: EvalWidgetSnapshotInput[];
 }

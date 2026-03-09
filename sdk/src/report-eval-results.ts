@@ -1,5 +1,6 @@
 import type {
   EvalResultInput,
+  EvalWidgetSnapshotInput,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
@@ -39,6 +40,10 @@ type BackendEnvelope<T> = {
   ok?: boolean;
   error?: string;
 } & T;
+
+type EvalArtifactUploadUrlResponse = {
+  uploadUrl: string;
+};
 
 function getByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -246,6 +251,146 @@ async function finalizeEvalRun(
   );
 }
 
+async function getEvalArtifactUploadUrl(
+  config: RuntimeConfig
+): Promise<string> {
+  const response = await requestWithRetry<EvalArtifactUploadUrlResponse>(
+    config,
+    "/sdk/v1/evals/artifacts/upload-url",
+    {}
+  );
+  if (!response.uploadUrl) {
+    throw new Error("Eval artifact upload URL response was missing uploadUrl");
+  }
+  return response.uploadUrl;
+}
+
+async function uploadBlobToConvex(
+  config: RuntimeConfig,
+  uploadUrl: string,
+  body: string,
+  contentType: string
+): Promise<string> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= config.retryDelaysMs.length; attempt++) {
+    try {
+      const response = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": contentType,
+        },
+        body,
+      });
+
+      const responseBody = (await response.json().catch(() => ({}))) as {
+        storageId?: string;
+        error?: string;
+      };
+
+      if (response.ok && responseBody.storageId) {
+        return responseBody.storageId;
+      }
+
+      const message =
+        responseBody.error ??
+        `Artifact upload failed with status ${response.status}: ${response.statusText}`;
+      if (
+        isRetryableStatus(response.status) &&
+        attempt < config.retryDelaysMs.length
+      ) {
+        await sleep(jitter(config.retryDelaysMs[attempt]));
+        continue;
+      }
+
+      throw new Error(message);
+    } catch (error) {
+      lastError = error;
+      const shouldRetry =
+        error instanceof TypeError ||
+        (error instanceof Error &&
+          /network|fetch|timeout|429|5\d\d/i.test(error.message));
+      if (shouldRetry && attempt < config.retryDelaysMs.length) {
+        await sleep(jitter(config.retryDelaysMs[attempt]));
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Failed to upload eval artifact");
+}
+
+function removeInlineWidgetHtml(
+  snapshot: EvalWidgetSnapshotInput
+): EvalWidgetSnapshotInput {
+  const { widgetHtml: _widgetHtml, ...rest } = snapshot;
+  return rest;
+}
+
+async function uploadWidgetSnapshots(
+  config: RuntimeConfig,
+  results: EvalResultInput[]
+): Promise<EvalResultInput[]> {
+  const rewrittenResults: EvalResultInput[] = [];
+
+  for (const result of results) {
+    const snapshots = result.widgetSnapshots;
+    if (!Array.isArray(snapshots) || snapshots.length === 0) {
+      rewrittenResults.push(result);
+      continue;
+    }
+
+    const uploadedSnapshots: EvalWidgetSnapshotInput[] = [];
+
+    for (const snapshot of snapshots) {
+      if (snapshot.widgetHtmlBlobId) {
+        uploadedSnapshots.push(removeInlineWidgetHtml(snapshot));
+        continue;
+      }
+
+      if (!snapshot.widgetHtml) {
+        console.warn(
+          `[mcpjam/sdk] skipped widget snapshot upload for "${snapshot.toolName}": widgetHtml was missing`
+        );
+        continue;
+      }
+
+      try {
+        const uploadUrl = await getEvalArtifactUploadUrl(config);
+        const storageId = await uploadBlobToConvex(
+          config,
+          uploadUrl,
+          snapshot.widgetHtml,
+          "text/html; charset=utf-8"
+        );
+        uploadedSnapshots.push(
+          removeInlineWidgetHtml({
+            ...snapshot,
+            widgetHtmlBlobId: storageId,
+          })
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[mcpjam/sdk] skipped widget snapshot upload for "${snapshot.toolName}": ${message}`
+        );
+      }
+    }
+
+    rewrittenResults.push({
+      ...result,
+      widgetSnapshots:
+        uploadedSnapshots.length > 0 ? uploadedSnapshots : undefined,
+    });
+  }
+
+  return rewrittenResults;
+}
+
 function shouldUseOneShotUpload(
   input: ReportEvalResultsInput,
   config: RuntimeConfig
@@ -279,9 +424,10 @@ export async function reportEvalResults(
   }
 
   const config = createRuntimeConfig(input);
+  const uploadedResults = await uploadWidgetSnapshots(config, input.results);
   const externalRunId = input.externalRunId ?? generateExternalRunId();
   const resultsWithIterationIds = withExternalIterationIds(
-    input.results,
+    uploadedResults,
     externalRunId
   );
 

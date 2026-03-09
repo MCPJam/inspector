@@ -1,5 +1,15 @@
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteOverviewEntry } from "./types";
+
+/** Force a re-render every `intervalMs` so relative timestamps stay fresh. */
+function useTick(intervalMs = 60_000) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+}
 
 interface CiSuiteListSidebarProps {
   suites: EvalSuiteOverviewEntry[];
@@ -53,6 +63,8 @@ export function CiSuiteListSidebar({
   onSelectSuite,
   isLoading = false,
 }: CiSuiteListSidebarProps) {
+  useTick(); // keep "Xm ago" labels ticking
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-3">
