@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "@/lib/config";
+import { getGuestBearerToken } from "@/lib/guest-session";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
@@ -171,19 +172,23 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
     return `Bearer ${cachedBearerToken.token}`;
   }
 
+  // Try WorkOS (logged-in user)
   const getAccessToken = hostedApiContext.getAccessToken;
-  if (!getAccessToken) return null;
-
-  const token = await getAccessToken();
-  if (!token) {
-    cachedBearerToken = null;
-    return null;
+  if (getAccessToken) {
+    try {
+      const token = await getAccessToken();
+      if (token) {
+        cachedBearerToken = { token, expiresAt: now + TOKEN_CACHE_TTL_MS };
+        return `Bearer ${token}`;
+      }
+    } catch {
+      // WorkOS LoginRequiredError — not authenticated, fall through to guest
+    }
   }
 
-  cachedBearerToken = {
-    token,
-    expiresAt: now + TOKEN_CACHE_TTL_MS,
-  };
+  // Fall back to guest token
+  const guestToken = await getGuestBearerToken();
+  if (guestToken) return `Bearer ${guestToken}`;
 
-  return `Bearer ${token}`;
+  return null;
 }
