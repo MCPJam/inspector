@@ -82,7 +82,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "ship": "bash scripts/ship.sh"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.36",
