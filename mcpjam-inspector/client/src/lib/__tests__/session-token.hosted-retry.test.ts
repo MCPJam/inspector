@@ -73,6 +73,15 @@ describe("authFetch hosted 401 retry", () => {
     expect(resetTokenCache).toHaveBeenCalledTimes(1);
     expect(forceRefreshGuestSession).toHaveBeenCalledTimes(1);
     expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/web/tools/list",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer fresh-token",
+        }),
+      }),
+    );
   });
 
   it("returns 401 if retry also fails (no infinite loop)", async () => {
