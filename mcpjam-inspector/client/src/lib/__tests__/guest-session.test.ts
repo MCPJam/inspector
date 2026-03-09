@@ -311,7 +311,6 @@ describe("guest-session module", () => {
     });
 
     it("can be called safely when no session exists", () => {
-      // Should not throw
       expect(() => guestSession.clearGuestSession()).not.toThrow();
       expect(localStorage.removeItem).toHaveBeenCalledWith(
         "mcpjam_guest_session_v1",
@@ -350,6 +349,62 @@ describe("guest-session module", () => {
       const result2 = await guestSession.getGuestBearerToken();
       expect(result2).toBe("second-token");
       expect(global.fetch).toHaveBeenCalled();
+    });
+  });
+
+  describe("forceRefreshGuestSession", () => {
+    it("clears localStorage and fetches a new token", async () => {
+      // Seed a cached session that looks valid by time
+      const staleSession = {
+        guestId: "stale",
+        token: "stale-token",
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      };
+      vi.mocked(localStorage.getItem).mockReturnValue(
+        JSON.stringify(staleSession),
+      );
+
+      // Verify the stale session would be returned normally
+      const before = await guestSession.getOrCreateGuestSession();
+      expect(before?.token).toBe("stale-token");
+      expect(global.fetch).not.toHaveBeenCalled();
+
+      // Now simulate localStorage returning null after clear
+      vi.mocked(localStorage.getItem).mockReturnValue(null);
+
+      const freshSession = {
+        guestId: "fresh",
+        token: "fresh-token",
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      };
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(freshSession),
+      } as Response);
+
+      const result = await guestSession.forceRefreshGuestSession();
+
+      expect(localStorage.removeItem).toHaveBeenCalledWith(
+        "mcpjam_guest_session_v1",
+      );
+      expect(result).toBe("fresh-token");
+      expect(global.fetch).toHaveBeenCalledWith("/api/web/guest-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    it("returns null when server is unreachable", async () => {
+      vi.mocked(localStorage.getItem).mockReturnValue(null);
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+      } as Response);
+
+      const result = await guestSession.forceRefreshGuestSession();
+
+      expect(result).toBeNull();
     });
   });
 });

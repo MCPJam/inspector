@@ -27,7 +27,7 @@ let cachedBearerToken: { token: string; expiresAt: number } | null = null;
 
 const TOKEN_CACHE_TTL_MS = 30_000;
 
-function resetTokenCache() {
+export function resetTokenCache() {
   cachedBearerToken = null;
 }
 

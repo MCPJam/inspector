@@ -93,3 +93,16 @@ export async function getGuestBearerToken(): Promise<string | null> {
 export function clearGuestSession(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
+
+/**
+ * Force-refresh the guest session by clearing the cached token
+ * and fetching a new one from the server. Used when the server
+ * rejects a token that hasn't expired client-side (e.g., after
+ * a server restart with new signing keys).
+ */
+export async function forceRefreshGuestSession(): Promise<string | null> {
+  clearGuestSession();
+  inFlightRequest = null;
+  const session = await getOrCreateGuestSession();
+  return session?.token ?? null;
+}
