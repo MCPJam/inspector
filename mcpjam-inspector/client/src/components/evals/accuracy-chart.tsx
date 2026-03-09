@@ -20,6 +20,7 @@ interface AccuracyChartProps {
   height?: string;
   onClick?: (runId: string) => void;
   showLabel?: boolean;
+  metricLabel?: string;
 }
 
 export function AccuracyChart({
@@ -29,6 +30,7 @@ export function AccuracyChart({
   height = "h-32",
   onClick,
   showLabel = false,
+  metricLabel = "Accuracy",
 }: AccuracyChartProps) {
   if (isLoading) {
     return <Skeleton className={`${height} w-full`} />;
@@ -44,7 +46,7 @@ export function AccuracyChart({
     <ChartContainer
       config={{
         passRate: {
-          label: "Accuracy",
+          label: metricLabel,
           color: "var(--chart-1)",
         },
       }}

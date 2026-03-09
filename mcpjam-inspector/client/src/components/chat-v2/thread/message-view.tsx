@@ -34,6 +34,7 @@ export function MessageView({
   toolRenderOverrides,
   showSaveViewButton = true,
   minimalMode = false,
+  interactive = true,
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -61,6 +62,7 @@ export function MessageView({
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
+  interactive?: boolean;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const logoSrc = getProviderLogoFromModel(model, themeMode);
@@ -107,6 +109,7 @@ export function MessageView({
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
+                interactive={interactive}
               />
             ))}
           </div>
@@ -138,6 +141,7 @@ export function MessageView({
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
+                interactive={interactive}
               />
             ))}
           </UserMessageBubble>
@@ -190,6 +194,7 @@ export function MessageView({
                 toolRenderOverrides={toolRenderOverrides}
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
+                interactive={interactive}
               />
             ))}
           </div>

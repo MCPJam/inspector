@@ -18,6 +18,7 @@ export type EvalSuiteConfigTest = {
 export type EvalSuite = {
   _id: string;
   createdBy: string;
+  workspaceId?: string;
   name: string;
   description: string;
   configRevision: string;
@@ -27,6 +28,8 @@ export type EvalSuite = {
   createdAt: number;
   updatedAt: number;
   latestRunId?: string;
+  source?: "ui" | "sdk";
+  runCounter?: number;
   defaultPassCriteria?: {
     minimumPassRate: number;
   };
@@ -37,6 +40,7 @@ export type EvalCase = {
   _id: string;
   testSuiteId: string;
   createdBy: string;
+  workspaceId?: string;
   title: string;
   query: string;
   models: Array<{
@@ -59,6 +63,7 @@ export type EvalCase = {
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
+  workspaceId?: string;
   testCaseSnapshot?: {
     title: string;
     query: string;
@@ -91,6 +96,9 @@ export type EvalIteration = {
   tokensUsed: number;
   error?: string;
   errorDetails?: string;
+  resultSource?: "reported" | "derived";
+  externalIterationId?: string;
+  metadata?: Record<string, string | number | boolean>;
   _creationTime?: number; // Convex auto field
 };
 
@@ -105,6 +113,7 @@ export type EvalSuiteRun = {
   _id: string;
   suiteId: string;
   createdBy: string;
+  workspaceId?: string;
   runNumber: number;
   configRevision: string;
   configSnapshot: {
@@ -117,10 +126,22 @@ export type EvalSuiteRun = {
     minimumPassRate: number;
   };
   result?: "pending" | "passed" | "failed" | "cancelled";
+  source?: "ui" | "sdk";
+  externalRunId?: string;
+  framework?: string;
+  ciMetadata?: {
+    provider?: string;
+    pipelineId?: string;
+    jobId?: string;
+    runUrl?: string;
+    branch?: string;
+    commitSha?: string;
+  };
   notes?: string;
   createdAt: number;
   completedAt?: number;
   isActive?: boolean; // Mark runs as inactive when suite is edited
+  expectedIterations?: number;
   _creationTime?: number;
 };
 

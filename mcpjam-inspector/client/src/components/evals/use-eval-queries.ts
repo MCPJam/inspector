@@ -14,17 +14,23 @@ export function useEvalQueries({
   user,
   selectedSuiteId,
   deletingSuiteId,
+  workspaceId,
 }: {
   isAuthenticated: boolean;
   user: any;
   selectedSuiteId: string | null;
   deletingSuiteId: string | null;
+  workspaceId: string | null;
 }) {
   // Overview query - list all suites
   const enableOverviewQuery = isAuthenticated && !!user;
   const suiteOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    enableOverviewQuery ? ({} as any) : "skip",
+    enableOverviewQuery
+      ? ({
+          ...(workspaceId ? { workspaceId } : {}),
+        } as any)
+      : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
 
   // Suite details query - full suite data for selected suite

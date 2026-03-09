@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { X, Loader2, ChevronDown, ChevronRight } from "lucide-react";
+import { useMemo } from "react";
+import { X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ChartContainer,
@@ -24,10 +24,12 @@ import {
   computeIterationPassed,
 } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
+import { CiMetadataDisplay } from "./ci-metadata-display";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
   caseGroupsForSelectedRun: EvalIteration[];
+  source?: "ui" | "sdk";
   selectedRunChartData: {
     donutData: Array<{ name: string; value: number; fill: string }>;
     durationData: Array<{
@@ -52,20 +54,23 @@ interface RunDetailViewProps {
   showRunSummarySidebar: boolean;
   setShowRunSummarySidebar: (show: boolean) => void;
   serverNames?: string[];
+  selectedIterationId: string | null;
+  onSelectIteration: (id: string) => void;
 }
 
 export function RunDetailView({
   selectedRunDetails,
   caseGroupsForSelectedRun,
+  source,
   selectedRunChartData,
   runDetailSortBy,
   onSortChange,
   showRunSummarySidebar,
   setShowRunSummarySidebar,
   serverNames = [],
+  selectedIterationId,
+  onSelectIteration,
 }: RunDetailViewProps) {
-  const [openIterationId, setOpenIterationId] = useState<string | null>(null);
-
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
     if (caseGroupsForSelectedRun.length === 0) {
@@ -89,181 +94,263 @@ export function RunDetailView({
     return { passed, failed, total, passRate };
   }, [caseGroupsForSelectedRun, selectedRunDetails.summary]);
 
+  const hasTokenData = useMemo(
+    () => caseGroupsForSelectedRun.some((i) => (i.tokensUsed || 0) > 0),
+    [caseGroupsForSelectedRun],
+  );
+
+  const isRunning = selectedRunDetails.status === "running";
+  const expected = selectedRunDetails.expectedIterations;
+  const donutTotal = selectedRunChartData.donutData.reduce(
+    (sum, item) => sum + item.value,
+    0,
+  );
+  const remaining = useMemo(() => {
+    if (expected && isRunning && expected > donutTotal) {
+      return expected - donutTotal;
+    }
+    return 0;
+  }, [expected, isRunning, donutTotal]);
+
+  const progressDonutData = useMemo(() => {
+    if (remaining > 0) {
+      return [
+        ...selectedRunChartData.donutData,
+        {
+          name: "remaining",
+          value: remaining,
+          fill: "hsl(240 3.7% 15.9% / 0.3)",
+        },
+      ];
+    }
+    return selectedRunChartData.donutData;
+  }, [selectedRunChartData.donutData, remaining]);
+
+  const progressPercent =
+    expected && expected > 0 ? Math.round((donutTotal / expected) * 100) : null;
+
+  const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
+
+  const selectedIteration = useMemo(
+    () =>
+      selectedIterationId
+        ? (caseGroupsForSelectedRun.find(
+            (i) => i._id === selectedIterationId,
+          ) ?? null)
+        : null,
+    [selectedIterationId, caseGroupsForSelectedRun],
+  );
+
   return (
-    <div className="relative">
-      {/* Run Metrics and Chart */}
-      <div className="rounded-lg border bg-background/80 px-3 py-2">
-        <div className="flex items-center gap-6">
-          {/* Metrics */}
-          <div className="flex gap-6 flex-1">
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Accuracy</div>
-              <div className="text-sm font-semibold">
-                {computedStats.total > 0
-                  ? `${Math.round(computedStats.passRate * 100)}%`
-                  : "—"}
-              </div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Passed</div>
-              <div className="text-sm font-semibold">
-                {computedStats.passed.toLocaleString()}
-              </div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Failed</div>
-              <div className="text-sm font-semibold">
-                {computedStats.failed.toLocaleString()}
-              </div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Total</div>
-              <div className="text-sm font-semibold">
-                {computedStats.total.toLocaleString()}
-              </div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Duration</div>
-              <div className="text-sm font-semibold">
-                {selectedRunDetails.completedAt && selectedRunDetails.createdAt
-                  ? formatDuration(
-                      selectedRunDetails.completedAt -
-                        selectedRunDetails.createdAt,
-                    )
-                  : "—"}
-              </div>
-            </div>
-          </div>
-
-          {/* Test Results Chart */}
-          {selectedRunChartData.donutData.length > 0 && (
-            <div className="flex items-center gap-2">
-              <ChartContainer
-                config={{
-                  passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
-                  failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                  pending: { label: "Pending", color: "hsl(45.4 93.4% 47.5%)" },
-                  cancelled: {
-                    label: "Cancelled",
-                    color: "hsl(240 3.7% 15.9%)",
-                  },
-                }}
-                className="h-12 w-12"
-              >
-                <PieChart>
-                  <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                  <Pie
-                    data={selectedRunChartData.donutData}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={15}
-                    outerRadius={22}
-                    strokeWidth={1}
-                  >
-                    <Label
-                      content={({ viewBox }) => {
-                        if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                          const total = selectedRunChartData.donutData.reduce(
-                            (sum, item) => sum + item.value,
-                            0,
-                          );
-                          return (
-                            <text
-                              x={viewBox.cx}
-                              y={viewBox.cy}
-                              textAnchor="middle"
-                              dominantBaseline="middle"
-                            >
-                              <tspan
-                                x={viewBox.cx}
-                                y={viewBox.cy}
-                                className="fill-foreground text-xs font-bold"
-                              >
-                                {total}
-                              </tspan>
-                              <tspan
-                                x={viewBox.cx}
-                                y={(viewBox.cy || 0) + 8}
-                                className="fill-muted-foreground text-[8px]"
-                              >
-                                Total
-                              </tspan>
-                            </text>
-                          );
-                        }
-                      }}
-                    />
-                  </Pie>
-                </PieChart>
-              </ChartContainer>
-            </div>
-          )}
-
-          {/* Status */}
-          <span className="text-xs font-medium text-foreground capitalize">
-            {selectedRunDetails.status}
-          </span>
-
-          {/* Pass/Fail Badge */}
-          <PassCriteriaBadge run={selectedRunDetails} variant="compact" />
-        </div>
-      </div>
-
-      {/* Test Cases for this Run */}
-      <div className="rounded-xl border bg-card text-card-foreground mt-4">
-        <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-semibold">All Iterations</div>
-            <p className="text-xs text-muted-foreground">
-              All test iterations from this run
-            </p>
-          </div>
-          <select
-            value={runDetailSortBy}
-            onChange={(e) =>
-              onSortChange(e.target.value as "model" | "test" | "result")
-            }
-            className="text-xs border rounded px-2 py-1 bg-background"
-          >
-            <option value="model">Sort by Model</option>
-            <option value="test">Sort by Test</option>
-            <option value="result">Sort by Result</option>
-          </select>
-        </div>
-
-        {/* Column Headers */}
-        {caseGroupsForSelectedRun.length > 0 && (
-          <div className="flex items-center gap-4 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground pl-7">
-            <div className="flex-1">Test</div>
-            <div className="flex items-center gap-4 shrink-0">
-              <div className="min-w-[120px]">Model</div>
-              <div className="min-w-[50px]">Tools</div>
-              <div className="min-w-[60px]">Tokens</div>
-              <div className="min-w-[40px] text-right">Duration</div>
-            </div>
+    <div className="relative flex h-full flex-col">
+      {/* Run Header (sticky) */}
+      <div className="sticky top-0 z-10 bg-background shrink-0">
+        {(selectedRunDetails.ciMetadata?.branch ||
+          selectedRunDetails.ciMetadata?.commitSha ||
+          selectedRunDetails.ciMetadata?.runUrl) && (
+          <div className="mb-4">
+            <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
           </div>
         )}
 
-        <div className="divide-y">
-          {caseGroupsForSelectedRun.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No test cases found for this run.
+        {/* Run Metrics and Chart */}
+        <div className="rounded-lg border bg-background/80 px-3 py-2">
+          <div className="flex items-center gap-6">
+            {/* Metrics */}
+            <div className="flex gap-6 flex-1">
+              <div className="space-y-0.5">
+                <div className="text-xs text-muted-foreground">
+                  {metricLabel}
+                </div>
+                <div className="text-sm font-semibold">
+                  {computedStats.total > 0
+                    ? `${Math.round(computedStats.passRate * 100)}%`
+                    : "—"}
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs text-muted-foreground">Passed</div>
+                <div className="text-sm font-semibold">
+                  {computedStats.passed.toLocaleString()}
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs text-muted-foreground">Failed</div>
+                <div className="text-sm font-semibold">
+                  {computedStats.failed.toLocaleString()}
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs text-muted-foreground">Total</div>
+                <div className="text-sm font-semibold">
+                  {expected && isRunning
+                    ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
+                    : computedStats.total.toLocaleString()}
+                </div>
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs text-muted-foreground">Duration</div>
+                <div className="text-sm font-semibold">
+                  {selectedRunDetails.completedAt &&
+                  selectedRunDetails.createdAt
+                    ? formatDuration(
+                        selectedRunDetails.completedAt -
+                          selectedRunDetails.createdAt,
+                      )
+                    : "—"}
+                </div>
+              </div>
+            </div>
+
+            {/* Test Results Chart */}
+            {selectedRunChartData.donutData.length > 0 && (
+              <div className="flex items-center gap-2">
+                <ChartContainer
+                  config={{
+                    passed: {
+                      label: "Passed",
+                      color: "hsl(142.1 76.2% 36.3%)",
+                    },
+                    failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
+                    pending: {
+                      label: "Pending",
+                      color: "hsl(45.4 93.4% 47.5%)",
+                    },
+                    cancelled: {
+                      label: "Cancelled",
+                      color: "hsl(240 3.7% 15.9%)",
+                    },
+                    remaining: {
+                      label: "Remaining",
+                      color: "hsl(240 3.7% 15.9% / 0.3)",
+                    },
+                  }}
+                  className="h-12 w-12"
+                >
+                  <PieChart>
+                    <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                    <Pie
+                      data={progressDonutData}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={15}
+                      outerRadius={22}
+                      strokeWidth={1}
+                    >
+                      <Label
+                        content={({ viewBox }) => {
+                          if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                            return (
+                              <text
+                                x={viewBox.cx}
+                                y={viewBox.cy}
+                                textAnchor="middle"
+                                dominantBaseline="middle"
+                              >
+                                <tspan
+                                  x={viewBox.cx}
+                                  y={viewBox.cy}
+                                  className="fill-foreground text-xs font-bold"
+                                >
+                                  {expected && isRunning
+                                    ? `${donutTotal}/${expected}`
+                                    : donutTotal}
+                                </tspan>
+                                <tspan
+                                  x={viewBox.cx}
+                                  y={(viewBox.cy || 0) + 8}
+                                  className="fill-muted-foreground text-[8px]"
+                                >
+                                  Total
+                                </tspan>
+                              </text>
+                            );
+                          }
+                        }}
+                      />
+                    </Pie>
+                  </PieChart>
+                </ChartContainer>
+              </div>
+            )}
+
+            {/* Status */}
+            <span className="text-xs font-medium text-foreground capitalize">
+              {isRunning && progressPercent !== null
+                ? `Running (${progressPercent}%)`
+                : selectedRunDetails.status}
+            </span>
+
+            {/* Pass/Fail Badge */}
+            <PassCriteriaBadge
+              run={selectedRunDetails}
+              variant="compact"
+              metricLabel={metricLabel}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Two-pane body */}
+      <div className="flex h-0 flex-1 mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden">
+        {/* Left pane: iteration list */}
+        <div className="w-[280px] shrink-0 border-r flex flex-col">
+          <div className="border-b px-3 py-2 shrink-0 flex items-center justify-between">
+            <div className="text-xs font-semibold">Iterations</div>
+            <select
+              value={runDetailSortBy}
+              onChange={(e) =>
+                onSortChange(e.target.value as "model" | "test" | "result")
+              }
+              className="text-[10px] border rounded px-1.5 py-0.5 bg-background"
+            >
+              <option value="model">Model</option>
+              <option value="test">Test</option>
+              <option value="result">Result</option>
+            </select>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="divide-y">
+              {caseGroupsForSelectedRun.length === 0 ? (
+                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                  No iterations found.
+                </div>
+              ) : (
+                caseGroupsForSelectedRun.map((iteration) => (
+                  <IterationListItem
+                    key={iteration._id}
+                    iteration={iteration}
+                    isSelected={selectedIterationId === iteration._id}
+                    onSelect={() => onSelectIteration(iteration._id)}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right pane: iteration detail */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          {selectedIteration ? (
+            <div
+              key={selectedIterationId}
+              className="flex-1 min-h-0 overflow-y-auto p-4"
+            >
+              <IterationDetails
+                iteration={selectedIteration}
+                testCase={null}
+                serverNames={serverNames}
+                layoutMode="full"
+              />
             </div>
           ) : (
-            caseGroupsForSelectedRun.map((iteration) => (
-              <IterationRow
-                key={iteration._id}
-                iteration={iteration}
-                isOpen={openIterationId === iteration._id}
-                onToggle={() =>
-                  setOpenIterationId(
-                    openIterationId === iteration._id ? null : iteration._id,
-                  )
-                }
-                showModelInfo={true}
-                serverNames={serverNames}
-              />
-            ))
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-sm text-muted-foreground">
+                {caseGroupsForSelectedRun.length === 0
+                  ? "No iterations in this run yet."
+                  : "Select an iteration to view details"}
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -456,7 +543,7 @@ export function RunDetailView({
                   )}
 
                   {/* Per-Model Performance for this run */}
-                  {selectedRunChartData.modelData.length > 0 && (
+                  {selectedRunChartData.modelData.length > 1 && (
                     <div className="rounded-lg border bg-background/50 p-4">
                       <div className="text-xs font-medium text-muted-foreground mb-3">
                         Performance by model
@@ -464,7 +551,7 @@ export function RunDetailView({
                       <ChartContainer
                         config={{
                           passRate: {
-                            label: "Accuracy",
+                            label: metricLabel,
                             color: "var(--chart-1)",
                           },
                         }}
@@ -559,19 +646,15 @@ export function RunDetailView({
   );
 }
 
-// Simple iteration row component for flat list display
-function IterationRow({
+// Compact iteration list item for the left pane
+function IterationListItem({
   iteration,
-  isOpen,
-  onToggle,
-  showModelInfo = false,
-  serverNames = [],
+  isSelected,
+  onSelect,
 }: {
   iteration: EvalIteration;
-  isOpen: boolean;
-  onToggle: () => void;
-  showModelInfo?: boolean;
-  serverNames?: string[];
+  isSelected: boolean;
+  onSelect: () => void;
 }) {
   const startedAt = iteration.startedAt ?? iteration.createdAt;
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
@@ -581,10 +664,8 @@ function IterationRow({
     iteration.status === "pending" || iteration.status === "running";
 
   const testInfo = iteration.testCaseSnapshot;
-  const actualToolCalls = iteration.actualToolCalls || [];
   const modelName = testInfo?.model || "—";
 
-  // Recompute pass/fail to ensure consistency with charts/aggregations
   const computedResult = computeIterationResult(iteration);
 
   return (
@@ -595,72 +676,40 @@ function IterationRow({
         )}`}
       />
       <button
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
+        onClick={onSelect}
+        className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer ${
+          isSelected
+            ? "bg-primary/10 border-r-2 border-r-primary"
+            : "hover:bg-muted/50"
+        }`}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
-          <div className="text-muted-foreground shrink-0">
-            {isOpen ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
-            )}
-          </div>
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="text-xs font-medium truncate">
-              {testInfo?.title || "Iteration"}
-            </span>
-            {testInfo?.isNegativeTest && (
-              <span
-                className="text-[10px] text-orange-500 shrink-0"
-                title="Negative test"
-              >
-                NEG
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
-          {showModelInfo && (
-            <div className="min-w-[120px] text-left truncate">
-              <span className="font-mono text-xs">{modelName}</span>
-            </div>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs font-medium truncate flex-1">
+            {testInfo?.title || "Iteration"}
+          </span>
+          {isPending && (
+            <Loader2 className="h-3 w-3 animate-spin text-warning shrink-0" />
           )}
-          <div className="min-w-[50px] text-center">
-            <span className="font-mono">
-              {isPending ? "—" : actualToolCalls.length}
+          {testInfo?.isNegativeTest && (
+            <span
+              className="text-[10px] text-orange-500 shrink-0"
+              title="Negative test"
+            >
+              NEG
             </span>
-          </div>
-          <div className="min-w-[60px] text-center">
-            <span className="font-mono">
-              {isPending
-                ? "—"
-                : Number(iteration.tokensUsed || 0).toLocaleString()}
-            </span>
-          </div>
-          <div className="font-mono min-w-[40px] text-right">
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span className="font-mono truncate">{modelName}</span>
+          <span className="shrink-0">
             {isPending
               ? "—"
               : durationMs !== null
                 ? formatDuration(durationMs)
                 : "—"}
-          </div>
-          {isPending && (
-            <div className="w-3.5 flex items-center justify-center">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />
-            </div>
-          )}
+          </span>
         </div>
       </button>
-      {isOpen ? (
-        <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-          <IterationDetails
-            iteration={iteration}
-            testCase={null}
-            serverNames={serverNames}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

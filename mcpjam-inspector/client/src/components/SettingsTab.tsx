@@ -28,7 +28,15 @@ interface ProviderConfig {
   getApiKeyUrl: string;
 }
 
-export function SettingsTab() {
+interface SettingsTabProps {
+  convexWorkspaceId: string | null;
+  workspaceName: string | null;
+}
+
+export function SettingsTab({
+  convexWorkspaceId,
+  workspaceName,
+}: SettingsTabProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
   const {
@@ -286,9 +294,12 @@ export function SettingsTab() {
           />
         </SettingsSection>
 
-        {/* Account */}
-        <SettingsSection title="Account">
-          <AccountApiKeySection />
+        {/* Workspace */}
+        <SettingsSection title="Workspace">
+          <AccountApiKeySection
+            workspaceId={convexWorkspaceId}
+            workspaceName={workspaceName}
+          />
         </SettingsSection>
 
         {!HOSTED_MODE && (

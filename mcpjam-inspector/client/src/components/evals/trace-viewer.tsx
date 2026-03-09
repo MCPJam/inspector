@@ -1,54 +1,79 @@
-import { Badge } from "@/components/ui/badge";
-import {
-  ChevronDown,
-  CheckCircle2,
-  AlertTriangle,
-  Code2,
-  MessageSquare,
-  MessageCircle,
-} from "lucide-react";
-import { useState } from "react";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getProviderLogo } from "@/lib/provider-logos";
-import { ToolServerMap, getToolServerId } from "@/lib/apis/mcp-tools-api";
-import { ChatGPTAppRenderer } from "@/components/chat-v2/thread/chatgpt-app-renderer";
-import { MCPAppsRenderer } from "@/components/chat-v2/thread/mcp-apps/mcp-apps-renderer";
+import { useMemo, useState } from "react";
+import { Code2, MessageSquare } from "lucide-react";
+import type { ModelDefinition, ModelProvider } from "@/shared/types";
+import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { MessageView } from "@/components/chat-v2/thread/message-view";
+import {
+  adaptTraceToUiMessages,
+  type TraceEnvelope,
+  type TraceMessage,
+} from "./trace-viewer-adapter";
 
-interface ContentPart {
-  type: string;
-  text?: string;
-  input?: Record<string, any>;
-  output?: any;
-  toolCallId?: string;
-  toolName?: string;
-  isError?: boolean;
-}
-
-interface TraceMessage {
-  role: string;
-  content?: string | ContentPart[];
-}
-
-interface TraceData {
-  messages?: TraceMessage[];
-  [key: string]: any;
-}
+const NOOP = (..._args: unknown[]) => {};
 
 interface TraceViewerProps {
-  trace: TraceData | TraceMessage | TraceMessage[] | null;
-  modelProvider?: string;
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
+  model?: ModelDefinition;
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
+  connectedServerIds?: string[];
+}
+
+function getTraceMessages(
+  trace: TraceEnvelope | TraceMessage | TraceMessage[] | null,
+) {
+  if (!trace) return [];
+
+  if (Array.isArray(trace)) {
+    return trace;
+  }
+
+  if (
+    typeof trace === "object" &&
+    trace !== null &&
+    "messages" in trace &&
+    Array.isArray(trace.messages)
+  ) {
+    return trace.messages;
+  }
+
+  if (
+    typeof trace === "object" &&
+    trace !== null &&
+    "role" in trace &&
+    typeof trace.role === "string"
+  ) {
+    return [trace as TraceMessage];
+  }
+
+  return [];
 }
 
 export function TraceViewer({
   trace,
-  modelProvider = "openai",
+  model,
   toolsMetadata = {},
   toolServerMap = {},
+  connectedServerIds = [],
 }: TraceViewerProps) {
   const [viewMode, setViewMode] = useState<"formatted" | "raw">("formatted");
+  const resolvedModel: ModelDefinition = model ?? {
+    id: "unknown",
+    name: "Unknown",
+    provider: "custom" as ModelProvider,
+  };
+  const traceMessages = getTraceMessages(trace);
+  const adaptedTrace = useMemo(
+    () =>
+      adaptTraceToUiMessages({
+        trace,
+        toolsMetadata,
+        toolServerMap,
+        connectedServerIds,
+      }),
+    [trace, toolsMetadata, toolServerMap, connectedServerIds],
+  );
 
   if (!trace) {
     return (
@@ -58,69 +83,17 @@ export function TraceViewer({
     );
   }
 
-  // Handle different trace formats
-  let messages: TraceMessage[] = [];
-
-  if (Array.isArray(trace)) {
-    messages = trace;
-  } else if (
-    typeof trace === "object" &&
-    "messages" in trace &&
-    Array.isArray(trace.messages)
-  ) {
-    messages = trace.messages;
-  } else if (typeof trace === "object" && "role" in trace) {
-    messages = [trace as TraceMessage];
-  }
-
-  if (messages.length === 0) {
+  if (traceMessages.length === 0) {
     return (
       <div className="text-xs text-muted-foreground">No messages in trace</div>
     );
-  }
-
-  // Group messages to combine tool calls with their results
-  const groupedMessages: Array<{
-    type: "user" | "assistant" | "tool-group";
-    messages: TraceMessage[];
-  }> = [];
-
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    if (message.role === "assistant") {
-      // Check if next message is a tool result
-      const nextMessage = messages[i + 1];
-      if (nextMessage && nextMessage.role === "tool") {
-        groupedMessages.push({
-          type: "tool-group",
-          messages: [message, nextMessage],
-        });
-        i++; // Skip the tool message
-      } else {
-        groupedMessages.push({
-          type: "assistant",
-          messages: [message],
-        });
-      }
-    } else if (message.role === "user") {
-      groupedMessages.push({
-        type: "user",
-        messages: [message],
-      });
-    } else {
-      // Orphaned tool message
-      groupedMessages.push({
-        type: "tool-group",
-        messages: [message],
-      });
-    }
   }
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between border-b border-border/40 pb-2">
         <div className="text-xs font-medium text-muted-foreground">
-          {messages.length} message{messages.length !== 1 ? "s" : ""}
+          {traceMessages.length} message{traceMessages.length !== 1 ? "s" : ""}
         </div>
         <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
           <button
@@ -155,407 +128,29 @@ export function TraceViewer({
       {viewMode === "raw" ? (
         <JsonEditor height="100%" viewOnly value={trace} />
       ) : (
-        <div className="space-y-6">
-          {groupedMessages.map((group, idx) => {
-            if (group.type === "user") {
-              return (
-                <TraceMessage
-                  key={idx}
-                  message={group.messages[0]}
-                  modelProvider={modelProvider}
-                />
-              );
-            } else if (group.type === "tool-group") {
-              return (
-                <TraceMessageGroup
-                  key={idx}
-                  messages={group.messages}
-                  modelProvider={modelProvider}
-                  toolsMetadata={toolsMetadata}
-                  toolServerMap={toolServerMap}
-                />
-              );
-            } else {
-              return (
-                <TraceMessage
-                  key={idx}
-                  message={group.messages[0]}
-                  modelProvider={modelProvider}
-                />
-              );
-            }
-          })}
+        <div className="max-w-4xl space-y-8 px-4 pt-2">
+          {adaptedTrace.messages.map((message) => (
+            <MessageView
+              key={message.id}
+              message={message}
+              model={resolvedModel}
+              onSendFollowUp={NOOP}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
+              pipWidgetId={null}
+              fullscreenWidgetId={null}
+              onRequestPip={NOOP}
+              onExitPip={NOOP}
+              onRequestFullscreen={NOOP}
+              onExitFullscreen={NOOP}
+              toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+              showSaveViewButton={false}
+              minimalMode={true}
+              interactive={false}
+            />
+          ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function TraceMessage({
-  message,
-  modelProvider,
-}: {
-  message: TraceMessage;
-  modelProvider: string;
-}) {
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const logoSrc = getProviderLogo(modelProvider, themeMode);
-  const isUser = message.role === "user";
-
-  if (isUser) {
-    // User messages can have content as string or array
-    const userContent =
-      typeof message.content === "string"
-        ? message.content
-        : message.content?.[0]?.text || "";
-
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-3xl rounded-lg bg-primary px-4 py-3 text-sm text-primary-foreground shadow-sm">
-          <div className="whitespace-pre-wrap break-words leading-6">
-            {userContent}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // For non-user messages without tool grouping
-  const contentParts = Array.isArray(message.content) ? message.content : [];
-
-  return (
-    <article className="flex gap-4 w-full">
-      <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/40 bg-muted/40">
-        {logoSrc ? (
-          <img
-            src={logoSrc}
-            alt="Model logo"
-            className="h-4 w-4 object-contain"
-          />
-        ) : (
-          <MessageCircle className="h-4 w-4 text-muted-foreground" />
-        )}
-      </div>
-
-      <div className="flex-1 min-w-0 space-y-3 text-sm leading-6">
-        {contentParts.map((part, i) => (
-          <TracePart key={i} part={part} />
-        ))}
-      </div>
-    </article>
-  );
-}
-
-function TraceMessageGroup({
-  messages,
-  modelProvider,
-  toolsMetadata = {},
-  toolServerMap = {},
-}: {
-  messages: TraceMessage[];
-  modelProvider: string;
-  toolsMetadata?: Record<string, Record<string, any>>;
-  toolServerMap?: ToolServerMap;
-}) {
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const logoSrc = getProviderLogo(modelProvider, themeMode);
-
-  // Extract tool calls from assistant message and results from tool message
-  const toolCalls: ContentPart[] = [];
-  const toolResults: ContentPart[] = [];
-  const otherParts: ContentPart[] = [];
-
-  for (const message of messages) {
-    const contentParts = Array.isArray(message.content) ? message.content : [];
-    for (const part of contentParts) {
-      if (part.type === "tool-call") {
-        toolCalls.push(part);
-      } else if (part.type === "tool-result") {
-        toolResults.push(part);
-      } else {
-        otherParts.push(part);
-      }
-    }
-  }
-
-  // Match tool calls with their results
-  const combined = toolCalls.map((toolCall) => {
-    const result = toolResults.find(
-      (r) => r.toolCallId === toolCall.toolCallId,
-    );
-    return { toolCall, toolResult: result };
-  });
-
-  return (
-    <article className="flex gap-4 w-full">
-      <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/40 bg-muted/40">
-        {logoSrc ? (
-          <img
-            src={logoSrc}
-            alt="Model logo"
-            className="h-4 w-4 object-contain"
-          />
-        ) : (
-          <MessageCircle className="h-4 w-4 text-muted-foreground" />
-        )}
-      </div>
-
-      <div className="flex-1 min-w-0 space-y-3 text-sm leading-6">
-        {otherParts.map((part, i) => (
-          <TracePart key={`other-${i}`} part={part} />
-        ))}
-        {combined.map((combo, i) => (
-          <CombinedToolPart
-            key={`tool-${i}`}
-            toolCall={combo.toolCall}
-            toolResult={combo.toolResult}
-            toolsMetadata={toolsMetadata}
-            toolServerMap={toolServerMap}
-          />
-        ))}
-      </div>
-    </article>
-  );
-}
-
-function TracePart({ part }: { part: ContentPart }) {
-  if (part.type === "text" && part.text) {
-    return (
-      <div className="text-sm whitespace-pre-wrap break-words text-foreground">
-        {part.text}
-      </div>
-    );
-  }
-
-  if (part.type === "reasoning") {
-    // Reasoning parts may have empty text - they're just hidden reasoning tokens
-    // OpenAI o1 models return these with encrypted/hidden content
-    if (!part.text) {
-      return (
-        <div className="rounded-lg border border-border/30 bg-muted/10 px-3 py-2 text-xs text-muted-foreground italic flex items-center gap-2">
-          <span className="inline-block h-2 w-2 rounded-full bg-purple-500/60 animate-pulse" />
-          Model used internal reasoning (content not visible)
-        </div>
-      );
-    }
-    return (
-      <div className="rounded-lg border border-purple-500/20 bg-purple-500/5 p-3 text-xs">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="inline-block h-2 w-2 rounded-full bg-purple-500/60" />
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-purple-700 dark:text-purple-400">
-            Reasoning
-          </span>
-        </div>
-        <pre className="whitespace-pre-wrap break-words text-muted-foreground leading-relaxed">
-          {part.text}
-        </pre>
-      </div>
-    );
-  }
-
-  // Unknown part type - show raw JSON
-  return (
-    <div className="rounded-md border border-border/40 bg-muted/20 p-2">
-      <div className="text-xs font-semibold text-muted-foreground mb-1">
-        Unknown part type: {part.type}
-      </div>
-      <JsonEditor height="100%" viewOnly value={part} />
-    </div>
-  );
-}
-
-function CombinedToolPart({
-  toolCall,
-  toolResult,
-  toolsMetadata = {},
-  toolServerMap = {},
-}: {
-  toolCall?: ContentPart;
-  toolResult?: ContentPart;
-  toolsMetadata?: Record<string, Record<string, any>>;
-  toolServerMap?: ToolServerMap;
-}) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const mcpIconClassName =
-    themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
-  const toolName = toolCall?.toolName || toolResult?.toolName || "Unknown tool";
-  const hasInput = toolCall?.input !== undefined && toolCall?.input !== null;
-  const hasOutput =
-    toolResult?.output !== undefined && toolResult?.output !== null;
-  const isError = toolResult?.isError === true;
-
-  // Check if this tool has OpenAI App or MCP Apps metadata
-  const toolMetadata = toolName ? toolsMetadata[toolName] : undefined;
-  const hasOpenAIApp = !!toolMetadata?.["openai/outputTemplate"];
-  const hasMCPApp = !!toolMetadata?.ui?.resourceUri;
-  const mcpAppsResourceUri = toolMetadata?.ui?.resourceUri as
-    | string
-    | undefined;
-  const serverId = toolName
-    ? getToolServerId(toolName, toolServerMap)
-    : undefined;
-
-  // Unwrap the output if it has the { type: "json", value: {...} } structure
-  const unwrappedOutput =
-    toolResult?.output &&
-    typeof toolResult.output === "object" &&
-    "type" in toolResult.output &&
-    "value" in toolResult.output
-      ? toolResult.output.value
-      : toolResult?.output;
-
-  // Extract text from nested content structure if it exists
-  let displayOutput = unwrappedOutput;
-  if (
-    hasOutput &&
-    typeof toolResult?.output === "object" &&
-    toolResult?.output !== null &&
-    "content" in toolResult.output &&
-    Array.isArray(toolResult.output.content)
-  ) {
-    const textContent = toolResult.output.content.find(
-      (c: any) => c.type === "text",
-    );
-    if (textContent?.text) {
-      displayOutput = textContent.text;
-    }
-  }
-
-  return (
-    <div className="rounded-lg border border-border/50 bg-background/70 text-xs">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
-        onClick={() => setIsExpanded((prev) => !prev)}
-        aria-expanded={isExpanded}
-      >
-        <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground">
-          <span className="inline-flex items-center gap-2">
-            <img
-              src="/mcp.svg"
-              alt=""
-              role="presentation"
-              aria-hidden="true"
-              className={mcpIconClassName}
-            />
-            <span className="font-mono text-xs tracking-tight text-muted-foreground/80">
-              {toolName}
-            </span>
-          </span>
-        </span>
-        <span className="inline-flex items-center gap-2 text-muted-foreground">
-          <span className="inline-flex h-5 w-5 items-center justify-center">
-            {isError ? (
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-            ) : toolResult ? (
-              <CheckCircle2 className="h-4 w-4 text-success" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-            )}
-          </span>
-          <ChevronDown
-            className={`h-4 w-4 transition-transform duration-150 ${
-              isExpanded ? "rotate-180" : ""
-            }`}
-          />
-        </span>
-      </button>
-
-      {isExpanded && (
-        <div className="space-y-4 border-t border-border/40 px-3 py-3">
-          {hasInput && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                Input
-              </div>
-              <JsonEditor height="100%" viewOnly value={toolCall!.input} />
-            </div>
-          )}
-
-          {hasOutput && (
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                {isError ? "Error" : "Result"}
-              </div>
-              {typeof displayOutput === "string" ? (
-                <pre
-                  className={`whitespace-pre-wrap break-words rounded-md border p-2 text-[11px] leading-relaxed ${
-                    isError
-                      ? "border-destructive/40 bg-destructive/10 text-destructive"
-                      : "border-border/30 bg-muted/20"
-                  }`}
-                >
-                  {displayOutput}
-                </pre>
-              ) : (
-                <div
-                  className={
-                    isError
-                      ? "[&_.rounded-lg]:border-destructive/40 [&_.rounded-lg]:bg-destructive/10 [&_.rounded-lg]:text-destructive"
-                      : ""
-                  }
-                >
-                  <JsonEditor height="100%" viewOnly value={displayOutput} />
-                </div>
-              )}
-            </div>
-          )}
-
-          {!hasInput && !hasOutput && (
-            <div className="text-muted-foreground/70">
-              No tool details available.
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Render MCP Apps widget if available (SEP-1865) */}
-      {hasMCPApp &&
-        serverId &&
-        mcpAppsResourceUri &&
-        hasOutput &&
-        !isError &&
-        (() => {
-          return (
-            <MCPAppsRenderer
-              serverId={serverId}
-              toolCallId={
-                toolCall?.toolCallId ?? `evals-${toolName}-${Date.now()}`
-              }
-              toolName={toolName}
-              toolState="output-available"
-              toolInput={toolCall?.input}
-              toolOutput={unwrappedOutput}
-              resourceUri={mcpAppsResourceUri}
-              toolMetadata={toolMetadata}
-              onSendFollowUp={undefined}
-              onCallTool={undefined}
-            />
-          );
-        })()}
-
-      {/* Render OpenAI App widget if available */}
-      {hasOpenAIApp &&
-        !hasMCPApp &&
-        serverId &&
-        hasOutput &&
-        !isError &&
-        (() => {
-          return (
-            <ChatGPTAppRenderer
-              serverId={serverId}
-              toolCallId={toolCall?.toolCallId}
-              toolName={toolName}
-              toolState="output-available"
-              toolInput={toolCall?.input ?? null}
-              toolOutput={unwrappedOutput ?? null}
-              toolMetadata={toolMetadata}
-              onSendFollowUp={undefined}
-              onCallTool={undefined}
-            />
-          );
-        })()}
     </div>
   );
 }
