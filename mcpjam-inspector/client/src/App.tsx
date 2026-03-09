@@ -280,11 +280,31 @@ export default function App() {
       ),
     [hostedServerIdsByName, appState.servers],
   );
+  // Extract MCPServerConfig objects for guest mode (keyed by server name)
+  const guestServerConfigs = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(appState.servers).map(([name, s]) => [name, s.config]),
+      ),
+    [appState.servers],
+  );
+  const guestOauthTokensByServerName = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(appState.servers)
+          .filter(([, server]) => !!server.oauthTokens?.access_token)
+          .map(([name, server]) => [name, server.oauthTokens!.access_token]),
+      ),
+    [appState.servers],
+  );
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,
     oauthTokensByServerId,
+    guestOauthTokensByServerName,
+    isAuthenticated,
+    serverConfigs: guestServerConfigs,
     enabled: !isSharedChatRoute,
   });
 

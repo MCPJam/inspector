@@ -8,34 +8,13 @@ import {
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
 import { ErrorCode, WebRouteError, mapRuntimeError } from "./errors.js";
-import { validateGuestToken } from "../../services/guest-token.js";
+import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 
 const oauthWeb = new Hono();
 
 // Require some form of bearer token (guest or WorkOS) on all OAuth proxy routes
-oauthWeb.use("*", async (c, next) => {
-  const authHeader = c.req.header("authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return c.json(
-      { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
-      401,
-    );
-  }
-
-  const token = authHeader.slice("Bearer ".length);
-
-  // Try validating as a guest token
-  const result = validateGuestToken(token);
-  if (result.valid && result.guestId) {
-    c.set("guestId", result.guestId);
-    return next();
-  }
-
-  // Not a guest token — assume WorkOS token, allow through
-  // (matches current no-validation behavior for authenticated users)
-  return next();
-});
+oauthWeb.use("*", bearerAuthMiddleware);
 
 // Rate limit guest users on OAuth proxy routes
 oauthWeb.use("*", guestRateLimitMiddleware);

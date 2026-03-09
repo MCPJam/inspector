@@ -27,6 +27,26 @@ let privateKey: KeyObject;
 let publicKey: KeyObject;
 let jwks: { keys: JsonWebKey[] };
 
+function warnAboutEphemeralKeys(reason: "missing" | "invalid"): void {
+  if (process.env.NODE_ENV !== "production") {
+    return;
+  }
+
+  const baseMessage =
+    "Guest JWT: using ephemeral signing keys in production. " +
+    "Guest sessions will be invalid after restart unless " +
+    "GUEST_JWT_PRIVATE_KEY and GUEST_JWT_PUBLIC_KEY are set.";
+
+  if (reason === "invalid") {
+    logger.warn(
+      `${baseMessage} Falling back because the configured key pair could not be parsed.`,
+    );
+    return;
+  }
+
+  logger.warn(`${baseMessage} Falling back because the env vars are missing.`);
+}
+
 function base64url(input: string | Buffer): string {
   const buf = typeof input === "string" ? Buffer.from(input) : input;
   return buf.toString("base64url");
@@ -54,9 +74,11 @@ export function initGuestTokenSecret(): void {
       logger.warn(
         "Guest JWT: failed to parse env key pair, generating ephemeral keys",
       );
+      warnAboutEphemeralKeys("invalid");
       generateEphemeralKeyPair();
     }
   } else {
+    warnAboutEphemeralKeys("missing");
     generateEphemeralKeyPair();
   }
 
