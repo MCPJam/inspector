@@ -83,6 +83,140 @@ describe("validateUrl — private IP blocking (httpsOnly)", () => {
   });
 });
 
+describe("IPv6 checks must not false-positive on hostnames", () => {
+  it("allows https://fdroid.org (hostname starts with 'fd')", async () => {
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      json: async () => ({ ok: true }),
+      text: async () => "",
+    });
+
+    const result = await executeOAuthProxy({
+      url: "https://fdroid.org/foo",
+      httpsOnly: true,
+    });
+    expect(result.status).toBe(200);
+  });
+
+  it("allows https://fc-example.com (hostname starts with 'fc')", async () => {
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      json: async () => ({ ok: true }),
+      text: async () => "",
+    });
+
+    const result = await executeOAuthProxy({
+      url: "https://fc-example.com/foo",
+      httpsOnly: true,
+    });
+    expect(result.status).toBe(200);
+  });
+
+  it("allows https://fe90.example.com (hostname matches fe80::/10 regex)", async () => {
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      json: async () => ({ ok: true }),
+      text: async () => "",
+    });
+
+    const result = await executeOAuthProxy({
+      url: "https://fe90.example.com/foo",
+      httpsOnly: true,
+    });
+    expect(result.status).toBe(200);
+  });
+
+  it("still blocks actual IPv6 private addresses like [fc00::1]", async () => {
+    await expect(
+      executeOAuthProxy({ url: "https://[fc00::1]/foo", httpsOnly: true }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("still blocks actual IPv6 link-local like [fe80::1]", async () => {
+    await expect(
+      executeOAuthProxy({ url: "https://[fe80::1]/foo", httpsOnly: true }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe("DNS pinning — fetch must use validated IPs", () => {
+  it("passes the resolved IP to fetch, not the original hostname", async () => {
+    const dns = await import("node:dns/promises");
+    vi.mocked(dns.default.resolve4).mockResolvedValueOnce(["93.184.216.34"]);
+    vi.mocked(dns.default.resolve6).mockResolvedValueOnce([]);
+
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      json: async () => ({ ok: true }),
+      text: async () => "",
+    });
+
+    await executeOAuthProxy({
+      url: "https://example.com/path",
+      httpsOnly: true,
+    });
+
+    // fetch must have been called with the resolved IP, not the hostname
+    const calledUrl = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0];
+    expect(calledUrl).toContain("93.184.216.34");
+  });
+
+  it("sets Host header to original hostname when fetching by IP", async () => {
+    const dns = await import("node:dns/promises");
+    vi.mocked(dns.default.resolve4).mockResolvedValueOnce(["93.184.216.34"]);
+    vi.mocked(dns.default.resolve6).mockResolvedValueOnce([]);
+
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      json: async () => ({ ok: true }),
+      text: async () => "",
+    });
+
+    await executeOAuthProxy({
+      url: "https://example.com/path",
+      httpsOnly: true,
+    });
+
+    const calledOptions =
+      fetchMock.mock.calls[fetchMock.mock.calls.length - 1][1];
+    expect(calledOptions.headers["Host"]).toBe("example.com");
+  });
+
+  it("uses IPv6 bracket notation when pinning to a resolved IPv6", async () => {
+    const dns = await import("node:dns/promises");
+    vi.mocked(dns.default.resolve4).mockResolvedValueOnce([]);
+    vi.mocked(dns.default.resolve6).mockResolvedValueOnce([
+      "2606:2800:220:1:248:1893:25c8:1946",
+    ]);
+
+    fetchMock.mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: new Headers(),
+      json: async () => ({ ok: true }),
+      text: async () => "",
+    });
+
+    await executeOAuthProxy({
+      url: "https://example.com/path",
+      httpsOnly: true,
+    });
+
+    const calledUrl = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0];
+    expect(calledUrl).toContain("[2606:2800:220:1:248:1893:25c8:1946]");
+  });
+});
+
 describe("DNS rebinding protection (httpsOnly)", () => {
   it("blocks a hostname that resolves to a private IPv4", async () => {
     const dns = await import("node:dns/promises");

@@ -12,6 +12,8 @@ import {
   generateKeyPairSync,
   createSign,
   createVerify,
+  createPrivateKey,
+  createPublicKey,
   randomUUID,
   type KeyObject,
 } from "crypto";
@@ -45,7 +47,6 @@ export function initGuestTokenSecret(): void {
 
   if (envPrivate && envPublic) {
     try {
-      const { createPrivateKey, createPublicKey } = require("crypto");
       privateKey = createPrivateKey(envPrivate);
       publicKey = createPublicKey(envPublic);
       logger.info("Guest JWT: using keys from environment");
