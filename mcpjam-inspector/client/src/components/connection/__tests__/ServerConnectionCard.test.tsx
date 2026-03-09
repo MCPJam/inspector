@@ -1,14 +1,19 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
-import { ServerConnectionCard } from "../ServerConnectionCard";
 import type { ServerWithName } from "@/hooks/use-app-state";
+
+// Mock the agent brief generator to avoid @mcpjam/sdk dependency
+vi.mock("@/lib/generate-agent-brief", () => ({
+  generateAgentBrief: vi.fn().mockReturnValue("mocked brief"),
+}));
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 // Mock the APIs
@@ -50,6 +55,9 @@ vi.mock("sonner", () => ({
     loading: vi.fn().mockReturnValue("toast-id"),
   },
 }));
+
+// Must import after mocks are set up
+import { ServerConnectionCard } from "../ServerConnectionCard";
 
 // Mock navigator.clipboard
 const mockClipboard = {
