@@ -6,6 +6,10 @@ icon: "cloud-upload"
 
 After running evals, you can save results to MCPJam to track accuracy over time, compare across branches, and get visibility in the CI Evals dashboard.
 
+<Frame caption="CI Runs page showing eval suite accuracy, pass rate trends, per-model performance, and more">
+  <img src="/images/ci-runs-overview.png" alt="CI Runs overview" />
+</Frame>
+
 ## Setup
 
 Set your MCPJam API key as an environment variable:
@@ -115,6 +119,12 @@ await reportEvalResults({
   },
 });
 ```
+
+Each iteration records the expected and actual tool calls side by side, along with the model's reasoning trace, so you can pinpoint exactly why a test passed or failed:
+
+<Frame caption="Test case iteration detail showing expected vs actual tool calls and the model's reasoning trace">
+  <img src="/images/test-case-detail.png" alt="Test case detail view" />
+</Frame>
 
 ## Next Steps
 
