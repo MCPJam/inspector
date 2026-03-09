@@ -159,6 +159,20 @@ async function main() {
 main();
 ```
 
+## Generate evals from the Inspector
+
+You can also generate eval code directly from the MCPJam Inspector:
+
+1. Connect your MCP server in the Inspector
+2. Click the **⋮** menu on the server card
+3. Select **Copy markdown for server evals**
+4. Paste the copied markdown into an LLM (Claude, ChatGPT, etc.)
+5. The LLM will generate eval test code using `@mcpjam/sdk`
+
+The copied markdown is a ready-to-use prompt that includes your server's capabilities and the full `@mcpjam/sdk` API reference, so the LLM has everything it needs to write your eval tests.
+
+If you have a `MCPJAM_API_KEY` set up, the generated eval code will automatically save results to MCPJam — you can view them in the **Evals** tab of the Inspector. Go to **Settings > Workspace API Key** in the Inspector to get your key.
+
 ## Next Steps
 
 <CardGroup cols={2}>
