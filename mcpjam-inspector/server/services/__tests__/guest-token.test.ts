@@ -34,8 +34,7 @@ describe("guest-token service", () => {
     });
 
     it("uses GUEST_TOKEN_SECRET env var when provided", () => {
-      const hexSecret =
-        "a".repeat(64); // 32 bytes in hex
+      const hexSecret = "a".repeat(64); // 32 bytes in hex
       process.env.GUEST_TOKEN_SECRET = hexSecret;
       initGuestTokenSecret();
 
@@ -266,6 +265,26 @@ describe("guest-token service", () => {
     it("handles non-string token input gracefully", () => {
       const result = validateGuestToken(undefined as unknown as string);
       expect(result.valid).toBe(false);
+    });
+  });
+
+  describe("uninitialized secret guard", () => {
+    it("issueGuestToken throws if initGuestTokenSecret was never called", async () => {
+      // Re-import a fresh module instance with uninitialized secret
+      vi.resetModules();
+      const { issueGuestToken: freshIssue } = await import("../guest-token.js");
+      expect(() => freshIssue()).toThrow(
+        "Guest token secret not initialized. Call initGuestTokenSecret() first.",
+      );
+    });
+
+    it("validateGuestToken throws if initGuestTokenSecret was never called", async () => {
+      vi.resetModules();
+      const { validateGuestToken: freshValidate } =
+        await import("../guest-token.js");
+      expect(() => freshValidate("fake.token")).toThrow(
+        "Guest token secret not initialized. Call initGuestTokenSecret() first.",
+      );
     });
   });
 

@@ -9,10 +9,7 @@ import { ErrorCode } from "../routes/web/errors.js";
 const GUEST_RATE_LIMIT = 60;
 const GUEST_WINDOW_MS = 60_000;
 
-const guestWindows = new Map<
-  string,
-  { count: number; windowStart: number }
->();
+const guestWindows = new Map<string, { count: number; windowStart: number }>();
 
 // Cleanup stale entries every 5 minutes
 setInterval(() => {

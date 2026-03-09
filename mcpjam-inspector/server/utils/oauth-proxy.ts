@@ -29,7 +29,12 @@ function isPrivateHost(hostname: string): boolean {
   // Strip brackets from IPv6
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
 
-  if (host === "localhost" || host === "0.0.0.0" || host === "::1" || host === "::") {
+  if (
+    host === "localhost" ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    host === "::"
+  ) {
     return true;
   }
 
@@ -56,7 +61,7 @@ function isPrivateHost(hostname: string): boolean {
   }
 
   // IPv6 link-local (fe80::/10)
-  if (host.startsWith("fe80")) {
+  if (/^fe[89ab][0-9a-f]/i.test(host)) {
     return true;
   }
 

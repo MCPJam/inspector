@@ -11,6 +11,7 @@
 
 import { randomBytes, createHmac, timingSafeEqual } from "crypto";
 import { randomUUID } from "crypto";
+import { logger } from "../utils/logger.js";
 
 const GUEST_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -25,7 +26,7 @@ export function initGuestTokenSecret(): void {
   const envSecret = process.env.GUEST_TOKEN_SECRET;
   if (envSecret) {
     if (!/^[0-9a-fA-F]{64}$/.test(envSecret)) {
-      console.warn(
+      logger.warn(
         "GUEST_TOKEN_SECRET must be exactly 64 hex characters (32 bytes). " +
           "Falling back to a random secret.",
       );
@@ -48,6 +49,10 @@ function base64urlDecode(str: string): Buffer {
 }
 
 function sign(payload: string): string {
+  if (!secret)
+    throw new Error(
+      "Guest token secret not initialized. Call initGuestTokenSecret() first.",
+    );
   return createHmac("sha256", secret).update(payload).digest("base64url");
 }
 

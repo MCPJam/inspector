@@ -33,6 +33,9 @@ describe("validateUrl — private IP blocking (httpsOnly)", () => {
     "https://[fc00::1]/foo",
     "https://[fd12::1]/foo",
     "https://[fe80::1]/foo",
+    "https://[fe90::1]/foo",
+    "https://[fea0::1]/foo",
+    "https://[febf::1]/foo",
   ];
 
   for (const url of privateHosts) {
@@ -87,7 +90,10 @@ describe("DNS rebinding protection (httpsOnly)", () => {
     vi.mocked(dns.default.resolve6).mockResolvedValueOnce([]);
 
     await expect(
-      executeOAuthProxy({ url: "https://evil.example.com/foo", httpsOnly: true }),
+      executeOAuthProxy({
+        url: "https://evil.example.com/foo",
+        httpsOnly: true,
+      }),
     ).rejects.toMatchObject({ status: 400 });
   });
 
@@ -97,7 +103,10 @@ describe("DNS rebinding protection (httpsOnly)", () => {
     vi.mocked(dns.default.resolve6).mockResolvedValueOnce(["::1"]);
 
     await expect(
-      executeOAuthProxy({ url: "https://evil.example.com/bar", httpsOnly: true }),
+      executeOAuthProxy({
+        url: "https://evil.example.com/bar",
+        httpsOnly: true,
+      }),
     ).rejects.toMatchObject({ status: 400 });
   });
 });
