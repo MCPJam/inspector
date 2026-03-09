@@ -20,6 +20,7 @@ import type {
 import type { EvalsRoute } from "@/lib/evals-router";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 
+
 export function SuiteIterationsView({
   suite,
   cases,
@@ -119,6 +120,39 @@ export function SuiteIterationsView({
     const run = runs.find((r) => r._id === selectedRunId);
     return run ?? null;
   }, [selectedRunId, runs]);
+
+  // Derive selectedIterationId from route
+  const selectedIterationId =
+    route.type === "run-detail" ? (route.iteration ?? null) : null;
+
+  // Auto-select the first iteration when on run-detail with iterations but no ?iteration= param.
+  useEffect(() => {
+    if (route.type !== "run-detail" || caseGroupsForSelectedRun.length === 0) {
+      return;
+    }
+
+    const iterationIds = new Set(caseGroupsForSelectedRun.map((i) => i._id));
+
+    if (!route.iteration || !iterationIds.has(route.iteration)) {
+      navigateToEvalsRoute({
+        type: "run-detail",
+        suiteId: route.suiteId,
+        runId: route.runId,
+        iteration: caseGroupsForSelectedRun[0]._id,
+      });
+    }
+  }, [route, caseGroupsForSelectedRun]);
+
+  const handleSelectIteration = (iterationId: string) => {
+    if (route.type === "run-detail") {
+      navigateToEvalsRoute({
+        type: "run-detail",
+        suiteId: route.suiteId,
+        runId: route.runId,
+        iteration: iterationId,
+      });
+    }
+  };
 
   // Update local description state when suite changes
   useEffect(() => {
@@ -358,6 +392,8 @@ export function SuiteIterationsView({
               serverNames={(suite.environment?.servers || []).filter((name) =>
                 connectedServerNames.has(name),
               )}
+              selectedIterationId={selectedIterationId}
+              onSelectIteration={handleSelectIteration}
             />
           ) : null}
         </div>
