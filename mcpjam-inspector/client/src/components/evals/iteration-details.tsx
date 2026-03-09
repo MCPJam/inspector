@@ -283,11 +283,8 @@ export function IterationDetails({
   );
 
   // Use snapshot values first (reflects what was actually tested, including unsaved edits)
-  const snapshotExpected = iteration.testCaseSnapshot?.expectedToolCalls;
   const expectedToolCalls =
-    (snapshotExpected && snapshotExpected.length > 0
-      ? snapshotExpected
-      : null) ??
+    iteration.testCaseSnapshot?.expectedToolCalls ??
     testCase?.expectedToolCalls ??
     [];
   const actualToolCalls = iteration.actualToolCalls || [];

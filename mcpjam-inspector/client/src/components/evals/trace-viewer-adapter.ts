@@ -9,6 +9,7 @@ import {
   getUIResourceUri,
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
+import { readToolResultMeta, readToolResultServerId } from "@/lib/tool-result-utils";
 
 export interface TraceContentPart {
   type: string;
@@ -84,37 +85,6 @@ function attachServerId<T>(value: T, serverId?: string): T {
     ...value,
     _serverId: serverId,
   } as T;
-}
-
-function readToolResultMeta(
-  result: unknown,
-): Record<string, unknown> | undefined {
-  if (!isRecord(result)) return undefined;
-
-  if (isRecord(result._meta)) {
-    return result._meta;
-  }
-
-  if (isRecord(result.value) && isRecord(result.value._meta)) {
-    return result.value._meta;
-  }
-
-  return undefined;
-}
-
-function readToolResultServerId(result: unknown): string | undefined {
-  if (!isRecord(result)) return undefined;
-
-  if (typeof result._serverId === "string") {
-    return result._serverId;
-  }
-
-  if (isRecord(result.value) && typeof result.value._serverId === "string") {
-    return result.value._serverId;
-  }
-
-  const meta = readToolResultMeta(result);
-  return typeof meta?._serverId === "string" ? meta._serverId : undefined;
 }
 
 function isWidgetUiType(uiType: UIType | null): boolean {
@@ -564,13 +534,13 @@ function buildAssistantMessage(params: {
         !part.toolCallId,
       )?.part;
 
-      if (!part.toolCallId) {
-        part.toolCallId = toolCallId;
-      }
+      const toolCallWithId = part.toolCallId
+        ? part
+        : { ...part, toolCallId };
 
       parts.push(
         ...buildToolParts({
-          toolCall: part,
+          toolCall: toolCallWithId,
           matchedResult,
           messageIndex: params.messageIndex,
           partIndex,

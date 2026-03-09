@@ -36,13 +36,21 @@ export function parseJestJsonArtifact(
       ? suite.assertionResults
       : [];
     for (const assertion of assertions) {
+      const status = assertion.status ?? "failed";
+      const isSkipped =
+        status === "skipped" ||
+        status === "pending" ||
+        status === "todo" ||
+        status === "disabled";
+      if (isSkipped) {
+        continue;
+      }
       const fullName =
         assertion.fullName ||
         [...(assertion.ancestorTitles ?? []), assertion.title ?? ""]
           .filter(Boolean)
           .join(" ");
       const caseTitle = fullName || assertion.title || suite.name || "test";
-      const status = assertion.status ?? "failed";
       const passed = status === "passed";
       const failureMessages = Array.isArray(assertion.failureMessages)
         ? assertion.failureMessages

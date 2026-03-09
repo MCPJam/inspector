@@ -2,10 +2,10 @@ import type { EvalResultInput } from "../eval-reporting-types.js";
 
 function parseAttributes(raw: string): Record<string, string> {
   const attributes: Record<string, string> = {};
-  const attrRegex = /([A-Za-z_:][\w:.-]*)="([^"]*)"/g;
+  const attrRegex = /([A-Za-z_:][\w:.-]*)=(["'])([\s\S]*?)\2/g;
   for (const match of raw.matchAll(attrRegex)) {
     const key = match[1];
-    const value = match[2] ?? "";
+    const value = match[3] ?? "";
     attributes[key] = value;
   }
   return attributes;
@@ -41,17 +41,26 @@ export function parseJUnitXmlArtifact(xml: string): EvalResultInput[] {
 
     let errorMessage: string | undefined;
     if (!passed) {
+      // Match paired or self-closing failure/error/skipped elements
       const failureMatch = body.match(
-        /<(failure|error)\b[^>]*>([\s\S]*?)<\/\1>/i
+        /<(failure|error)\b([^>]*?)(?:>([\s\S]*?)<\/\1>|\/?>)/i
       );
-      const skippedMatch = body.match(/<skipped\b[^>]*>([\s\S]*?)<\/skipped>/i);
-      errorMessage = failureMatch?.[2]?.trim() || skippedMatch?.[1]?.trim();
+      const skippedMatch = body.match(
+        /<skipped\b([^>]*?)(?:>([\s\S]*?)<\/skipped>|\/?>)/i
+      );
+
+      if (failureMatch) {
+        const attrs = parseAttributes(failureMatch[2] ?? "");
+        const innerText = failureMatch[3]?.trim();
+        errorMessage = attrs.message || innerText;
+      } else if (skippedMatch) {
+        const attrs = parseAttributes(skippedMatch[1] ?? "");
+        const innerText = skippedMatch[2]?.trim();
+        errorMessage = attrs.message || innerText;
+      }
+
       if (!errorMessage) {
-        if (isSkipped) {
-          errorMessage = "Test skipped";
-        } else {
-          errorMessage = "JUnit testcase failed";
-        }
+        errorMessage = isSkipped ? "Test skipped" : "JUnit testcase failed";
       }
     }
 

@@ -224,40 +224,41 @@ describe("adaptTraceToUiMessages", () => {
   });
 
   // --- Test 6: Deterministic synthetic IDs ---
-  it("produces identical output for identical input across calls", () => {
-    // Deep-clone because the adapter mutates input parts (sets toolCallId)
-    const makeTrace = (): TraceEnvelope =>
-      JSON.parse(
-        JSON.stringify({
-          messages: [
+  it("produces identical output for identical input across calls and does not mutate input", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
             {
-              role: "assistant",
-              content: [
-                {
-                  type: "tool-call",
-                  toolName: "stable_tool",
-                  input: { x: 1 },
-                },
-              ],
-            },
-            {
-              role: "tool",
-              content: [
-                {
-                  type: "tool-result",
-                  toolName: "stable_tool",
-                  output: "stable output",
-                },
-              ],
+              type: "tool-call",
+              toolName: "stable_tool",
+              input: { x: 1 },
             },
           ],
-        }),
-      );
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolName: "stable_tool",
+              output: "stable output",
+            },
+          ],
+        },
+      ],
+    };
 
-    const result1 = adaptTraceToUiMessages({ trace: makeTrace() });
-    const result2 = adaptTraceToUiMessages({ trace: makeTrace() });
+    const traceBefore = JSON.parse(JSON.stringify(trace));
+
+    const result1 = adaptTraceToUiMessages({ trace });
+    const result2 = adaptTraceToUiMessages({ trace });
 
     expect(result1).toEqual(result2);
+
+    // The original trace must not have been mutated
+    expect(trace).toEqual(traceBefore);
   });
 
   // --- Test 7: _meta / _serverId preservation ---

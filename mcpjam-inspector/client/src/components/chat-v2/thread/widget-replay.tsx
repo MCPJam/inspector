@@ -9,57 +9,8 @@ import {
   UIType,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getToolServerId, type ToolServerMap } from "@/lib/apis/mcp-tools-api";
+import { readToolResultMeta, readToolResultServerId } from "@/lib/tool-result-utils";
 import type { DisplayMode } from "@/stores/ui-playground-store";
-
-function readToolResultObject(
-  result: unknown,
-): Record<string, unknown> | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  return result as Record<string, unknown>;
-}
-
-function readToolResultMeta(
-  result: unknown,
-): Record<string, unknown> | undefined {
-  const direct = readToolResultObject(result);
-  if (
-    direct?._meta &&
-    typeof direct._meta === "object" &&
-    direct._meta !== null
-  ) {
-    return direct._meta as Record<string, unknown>;
-  }
-
-  const nested = readToolResultObject(direct?.value);
-  if (
-    nested?._meta &&
-    typeof nested._meta === "object" &&
-    nested._meta !== null
-  ) {
-    return nested._meta as Record<string, unknown>;
-  }
-
-  return undefined;
-}
-
-function readToolResultServerId(result: unknown): string | undefined {
-  const direct = readToolResultObject(result);
-  if (typeof direct?._serverId === "string") {
-    return direct._serverId;
-  }
-
-  const nested = readToolResultObject(direct?.value);
-  if (typeof nested?._serverId === "string") {
-    return nested._serverId;
-  }
-
-  const meta = readToolResultMeta(result);
-  if (typeof meta?._serverId === "string") {
-    return meta._serverId;
-  }
-
-  return undefined;
-}
 
 export interface WidgetReplayProps {
   toolName: string;

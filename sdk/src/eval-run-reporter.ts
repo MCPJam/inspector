@@ -204,49 +204,58 @@ class EvalRunReporterImpl implements EvalRunReporter {
     if (this.buffered.length === 0) {
       return;
     }
-    if (!this.runId) {
-      const started = await startEvalRun(this.runtimeConfig, {
-        suiteName: this.input.suiteName,
-        suiteDescription: this.input.suiteDescription,
-        serverNames: this.input.serverNames,
-        notes: this.input.notes,
-        passCriteria: this.input.passCriteria,
-        externalRunId: this.externalRunId,
-        ci: this.withoutCiProvider(this.input.ci),
-        expectedIterations: this.expectedIterations,
-      });
-      this.runId = started.runId;
-      if (
-        started.reused &&
-        started.status === "completed" &&
-        started.result &&
-        started.summary
-      ) {
-        this.completedResult = {
-          suiteId: started.suiteId,
-          runId: started.runId,
-          status: started.status as "completed" | "failed",
-          result: started.result as "passed" | "failed",
-          summary: started.summary,
-        };
-        this.finalized = true;
-        this.buffered = [];
+    try {
+      if (!this.runId) {
+        const started = await startEvalRun(this.runtimeConfig, {
+          suiteName: this.input.suiteName,
+          suiteDescription: this.input.suiteDescription,
+          serverNames: this.input.serverNames,
+          notes: this.input.notes,
+          passCriteria: this.input.passCriteria,
+          externalRunId: this.externalRunId,
+          ci: this.withoutCiProvider(this.input.ci),
+          expectedIterations: this.expectedIterations,
+        });
+        this.runId = started.runId;
+        if (
+          started.reused &&
+          started.status === "completed" &&
+          started.result &&
+          started.summary
+        ) {
+          this.completedResult = {
+            suiteId: started.suiteId,
+            runId: started.runId,
+            status: started.status as "completed" | "failed",
+            result: started.result as "passed" | "failed",
+            summary: started.summary,
+          };
+          this.finalized = true;
+          this.buffered = [];
+        }
       }
-    }
 
-    if (!this.runId || this.finalized) {
-      return;
-    }
+      if (!this.runId || this.finalized) {
+        return;
+      }
 
-    const uploadReady = this.withUniqueExternalIterationIds(this.buffered);
-    const chunks = chunkResultsForUpload(uploadReady);
-    for (const chunk of chunks) {
-      await appendEvalRunIterations(this.runtimeConfig, {
-        runId: this.runId,
-        results: chunk,
-      });
+      const uploadReady = this.withUniqueExternalIterationIds(this.buffered);
+      const chunks = chunkResultsForUpload(uploadReady);
+      for (const chunk of chunks) {
+        await appendEvalRunIterations(this.runtimeConfig, {
+          runId: this.runId,
+          results: chunk,
+        });
+      }
+      this.buffered = [];
+    } catch (error) {
+      if (this.input.strict) {
+        throw error;
+      }
+      this.completedResult = this.buildLocalFallbackResult();
+      this.finalized = true;
+      this.buffered = [];
     }
-    this.buffered = [];
   }
 
   async finalize(): Promise<ReportEvalResultsOutput> {
@@ -288,14 +297,27 @@ class EvalRunReporterImpl implements EvalRunReporter {
       return oneShotResult;
     }
 
-    await this.flush();
-    const result = await finalizeEvalRun(this.runtimeConfig, {
-      runId: this.runId,
-      externalRunId: this.externalRunId,
-    });
-    this.completedResult = result;
-    this.finalized = true;
-    return result;
+    try {
+      await this.flush();
+      if (this.completedResult) {
+        return this.completedResult;
+      }
+      const result = await finalizeEvalRun(this.runtimeConfig, {
+        runId: this.runId,
+        externalRunId: this.externalRunId,
+      });
+      this.completedResult = result;
+      this.finalized = true;
+      return result;
+    } catch (error) {
+      if (this.input.strict) {
+        throw error;
+      }
+      const localResult = this.buildLocalFallbackResult();
+      this.completedResult = localResult;
+      this.finalized = true;
+      return localResult;
+    }
   }
 
   getBufferedCount(): number {

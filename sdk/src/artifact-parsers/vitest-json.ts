@@ -38,8 +38,16 @@ function collectFromVitestTasks(
 ) {
   for (const task of tasks) {
     if (task.type === "test") {
+      const state = task.result?.state;
+      const isSkipped =
+        state === "skipped" ||
+        state === "todo" ||
+        task.mode === "skip" ||
+        task.mode === "todo";
+      if (isSkipped) {
+        continue;
+      }
       const caseTitle = task.fullName || task.name || "test";
-      const state = task.result?.state ?? "fail";
       const passed = state === "pass";
       const errors = Array.isArray(task.result?.errors)
         ? task.result?.errors
@@ -82,9 +90,16 @@ export function parseVitestJsonArtifact(
         ? suite.assertionResults
         : [];
       for (const assertion of assertions) {
+        const status = assertion.status ?? "failed";
+        const isSkipped =
+          status === "skipped" ||
+          status === "pending" ||
+          status === "todo";
+        if (isSkipped) {
+          continue;
+        }
         const caseTitle =
           assertion.fullName || assertion.title || suite.name || "test";
-        const status = assertion.status ?? "failed";
         const passed = status === "passed";
         const failureMessages = Array.isArray(assertion.failureMessages)
           ? assertion.failureMessages

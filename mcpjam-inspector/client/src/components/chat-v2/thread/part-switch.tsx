@@ -41,57 +41,9 @@ import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { WidgetReplay } from "./widget-replay";
 
+import { readToolResultMeta, readToolResultServerId } from "@/lib/tool-result-utils";
+
 const NOOP_SEND_FOLLOW_UP = () => {};
-
-function readToolResultObject(
-  result: unknown,
-): Record<string, unknown> | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  return result as Record<string, unknown>;
-}
-
-function readToolResultMeta(
-  result: unknown,
-): Record<string, unknown> | undefined {
-  const direct = readToolResultObject(result);
-  if (
-    direct?._meta &&
-    typeof direct._meta === "object" &&
-    direct._meta !== null
-  ) {
-    return direct._meta as Record<string, unknown>;
-  }
-
-  const nested = readToolResultObject(direct?.value);
-  if (
-    nested?._meta &&
-    typeof nested._meta === "object" &&
-    nested._meta !== null
-  ) {
-    return nested._meta as Record<string, unknown>;
-  }
-
-  return undefined;
-}
-
-function readToolResultServerId(result: unknown): string | undefined {
-  const direct = readToolResultObject(result);
-  if (typeof direct?._serverId === "string") {
-    return direct._serverId;
-  }
-
-  const nested = readToolResultObject(direct?.value);
-  if (typeof nested?._serverId === "string") {
-    return nested._serverId;
-  }
-
-  const meta = readToolResultMeta(result);
-  if (typeof meta?._serverId === "string") {
-    return meta._serverId;
-  }
-
-  return undefined;
-}
 
 export function PartSwitch({
   part,
