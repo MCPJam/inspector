@@ -47,8 +47,13 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
-import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
+import {
+  getAuthHeaders as getSessionAuthHeaders,
+  authFetch,
+} from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { isGuestMode } from "@/lib/apis/web/context";
+import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -217,7 +222,25 @@ export function useChatSession({
       customProviders,
     });
     if (HOSTED_MODE) {
-      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
+      const mcpjamModels = models.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      );
+      // Guest users only see the free guest models
+      if (!isAuthenticated && isGuestMode()) {
+        return mcpjamModels.filter((m) =>
+          GUEST_ALLOWED_MODEL_IDS.includes(String(m.id)),
+        );
+      }
+      return mcpjamModels;
+    }
+    // Non-hosted: filter out non-guest MCPJam models when unauthenticated
+    // (keep user-provided models + 3 free MCPJam models)
+    if (!isAuthenticated) {
+      return models.filter(
+        (m) =>
+          !isMCPJamProvidedModel(String(m.id)) ||
+          isGuestAllowedModel(String(m.id)),
+      );
     }
     return models;
   }, [
@@ -226,6 +249,7 @@ export function useChatSession({
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
+    isAuthenticated,
     customProviders,
   ]);
 
@@ -275,24 +299,36 @@ export function useChatSession({
 
     const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
 
+    // Build hosted body based on auth state
+    const buildHostedBody = () => {
+      if (isGuestMode()) {
+        // Guest path: no workspaceId, no selectedServerIds
+        // Server URL is not sent for plain chat — guest connects servers
+        // separately via the servers tab
+        return {};
+      }
+      // Authenticated path: include workspace context
+      return {
+        workspaceId: hostedWorkspaceId,
+        selectedServerIds: hostedSelectedServerIds,
+        accessScope: "chat_v2" as const,
+        ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
+        ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
+          ? { oauthTokens: hostedOAuthTokens }
+          : {}),
+      };
+    };
+
     return new DefaultChatTransport({
       api: chatApi,
+      // Use authFetch in hosted mode to inject guest bearer tokens automatically
+      ...(HOSTED_MODE ? { fetch: authFetch } : {}),
       body: () => ({
         model: selectedModel,
         ...(HOSTED_MODE ? {} : { apiKey }),
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
-        ...(HOSTED_MODE
-          ? {
-              workspaceId: hostedWorkspaceId,
-              selectedServerIds: hostedSelectedServerIds,
-              accessScope: "chat_v2" as const,
-              ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
-              ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
-                ? { oauthTokens: hostedOAuthTokens }
-                : {}),
-            }
-          : { selectedServers }),
+        ...(HOSTED_MODE ? buildHostedBody() : { selectedServers }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
@@ -555,14 +591,25 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  const requiresAuthForChat = HOSTED_MODE || isMcpJamModel;
+  const guestMode = HOSTED_MODE && isGuestMode();
+  // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
+  // In non-hosted mode: only require auth for non-guest MCPJam models
+  // (server injects production guest token for guest-allowed models).
+  const requiresAuthForChat = HOSTED_MODE
+    ? true
+    : isMcpJamModel &&
+      !isGuestAllowedModel(String(selectedModel?.id ?? ""));
   const isAuthReady =
-    !requiresAuthForChat || (isAuthenticated && !!authHeaders);
-  const disableForAuthentication = !isAuthenticated && requiresAuthForChat;
+    !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
+  // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
+  const disableForAuthentication =
+    !isAuthenticated && requiresAuthForChat && !guestMode;
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
+  // Guests don't need a workspace — skip hostedContextNotReady for them
   const hostedContextNotReady =
     HOSTED_MODE &&
+    !guestMode &&
     (!hostedWorkspaceId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

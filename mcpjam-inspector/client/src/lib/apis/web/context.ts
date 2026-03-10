@@ -47,7 +47,7 @@ export function isGuestMode(): boolean {
   return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
 }
 
-function buildGuestServerRequest(
+export function buildGuestServerRequest(
   config: unknown,
   oauthAccessToken?: string,
 ): Record<string, unknown> {

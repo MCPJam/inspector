@@ -183,8 +183,8 @@ try {
 // Generate session token for API authentication
 generateSessionToken();
 
-// Initialize guest token secret for hosted mode
-initGuestTokenSecret();
+// Guest token secret is initialized after dotenv.config() below (line ~231)
+// so that GUEST_JWT_PRIVATE_KEY / GUEST_JWT_PUBLIC_KEY are available.
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -229,6 +229,9 @@ if (
 }
 
 dotenv.config({ path: envPath });
+
+// Initialize guest token secret (must be after dotenv.config so env vars are available)
+initGuestTokenSecret();
 
 // Validate required env vars
 if (!process.env.CONVEX_HTTP_URL) {

@@ -20,6 +20,7 @@ web.use("/servers/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/chat-v2/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
 web.route("/servers", servers);
 web.route("/tools", tools);
