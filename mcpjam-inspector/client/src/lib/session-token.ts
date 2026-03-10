@@ -16,8 +16,9 @@ import { HOSTED_MODE } from "@/lib/config";
 import {
   getHostedAuthorizationHeader,
   isGuestMode,
+  resetTokenCache,
 } from "@/lib/apis/web/context";
-import { clearGuestSession, getGuestBearerToken } from "@/lib/guest-session";
+import { forceRefreshGuestSession } from "@/lib/guest-session";
 
 // Extend window type for the injected token
 declare global {
@@ -239,8 +240,10 @@ export async function authFetch(
     return response;
   }
 
-  clearGuestSession();
-  const refreshedGuestToken = await getGuestBearerToken();
+  // Clear both the 30s bearer cache and the stale guest token,
+  // then fetch a fresh guest token and retry once.
+  resetTokenCache();
+  const refreshedGuestToken = await forceRefreshGuestSession();
   if (!refreshedGuestToken) {
     return response;
   }
