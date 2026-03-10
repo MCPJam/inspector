@@ -77,6 +77,7 @@ export {
   isAuthError,
   isMCPAuthError,
 } from "./mcp-client-manager/index.js";
+export { EvalReportingError, SdkError } from "./errors.js";
 
 // EvalAgent interface (for deterministic testing without concrete TestAgent)
 export type { EvalAgent, PromptOptions } from "./EvalAgent.js";

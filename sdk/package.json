@@ -23,6 +23,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "sentry:sourcemaps": "sentry-cli sourcemaps inject ./dist && sentry-cli sourcemaps upload --release=@mcpjam/sdk@$(node -p \"require('./package.json').version\") --org=mcpjam-gh --project=mcpjam-sdk ./dist",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
@@ -46,6 +47,8 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^9.39.2",
+    "@sentry/cli": "^2.58.4",
+    "@sentry/node": "^8.55.0",
     "@types/jest": "^29.5.12",
     "@types/json-schema": "^7.0.15",
     "@types/node": "^20.11.0",
@@ -75,6 +78,14 @@
     "ollama-ai-provider-v2": "^1.5.2",
     "posthog-node": "^5.24.10",
     "zod": "^4.1.12"
+  },
+  "peerDependencies": {
+    "@sentry/node": "^8.55.0"
+  },
+  "peerDependenciesMeta": {
+    "@sentry/node": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=18.0.0"

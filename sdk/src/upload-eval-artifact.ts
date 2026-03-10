@@ -8,7 +8,8 @@ import {
   parseJUnitXmlArtifact,
   parseVitestJsonArtifact,
 } from "./artifact-parsers/index.js";
-import { reportEvalResults } from "./report-eval-results.js";
+import { reportEvalResultsInternal } from "./report-eval-results.js";
+import { captureEvalReportingFailure } from "./sentry.js";
 
 export type EvalArtifactFormat =
   | "junit-xml"
@@ -85,19 +86,31 @@ function parseArtifactResults(
 export async function uploadEvalArtifact(
   input: UploadEvalArtifactInput
 ): Promise<ReportEvalResultsOutput> {
-  const results = parseArtifactResults(input);
-  return await reportEvalResults({
-    suiteName: input.suiteName,
-    suiteDescription: input.suiteDescription,
-    serverNames: input.serverNames,
-    notes: input.notes,
-    passCriteria: input.passCriteria,
-    externalRunId: input.externalRunId,
-    framework: input.framework,
-    ci: input.ci,
-    apiKey: input.apiKey,
-    baseUrl: input.baseUrl,
-    strict: input.strict,
-    results,
-  });
+  try {
+    const results = parseArtifactResults(input);
+    return await reportEvalResultsInternal({
+      suiteName: input.suiteName,
+      suiteDescription: input.suiteDescription,
+      serverNames: input.serverNames,
+      notes: input.notes,
+      passCriteria: input.passCriteria,
+      externalRunId: input.externalRunId,
+      framework: input.framework,
+      ci: input.ci,
+      apiKey: input.apiKey,
+      baseUrl: input.baseUrl,
+      strict: input.strict,
+      results,
+    });
+  } catch (error) {
+    await captureEvalReportingFailure(error, {
+      apiKey: input.apiKey ?? process.env.MCPJAM_API_KEY,
+      artifactFormat: input.format,
+      baseUrl: input.baseUrl ?? process.env.MCPJAM_BASE_URL,
+      entrypoint: "uploadEvalArtifact",
+      framework: input.framework,
+      suiteName: input.suiteName,
+    });
+    throw error;
+  }
 }

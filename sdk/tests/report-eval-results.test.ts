@@ -1,7 +1,16 @@
+const mockAddBreadcrumb = jest.fn().mockResolvedValue(undefined);
+const mockCaptureEvalReportingFailure = jest.fn().mockResolvedValue(undefined);
+
+jest.mock("../src/sentry", () => ({
+  addBreadcrumb: mockAddBreadcrumb,
+  captureEvalReportingFailure: mockCaptureEvalReportingFailure,
+}));
+
 import {
   reportEvalResults,
   reportEvalResultsSafely,
 } from "../src/report-eval-results";
+import { EvalReportingError } from "../src/errors";
 
 const successSummary = {
   total: 1,
@@ -39,6 +48,8 @@ describe("reportEvalResults", () => {
     } else {
       process.env.MCPJAM_BASE_URL = originalMcpjamBaseUrl;
     }
+    mockAddBreadcrumb.mockClear();
+    mockCaptureEvalReportingFailure.mockClear();
     jest.restoreAllMocks();
   });
 
@@ -347,9 +358,48 @@ describe("reportEvalResults", () => {
 
     const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
     expect(requestBody.results[0].widgetSnapshots).toBeUndefined();
+    expect(mockAddBreadcrumb).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "eval-reporting.widget-upload",
+        level: "warning",
+      })
+    );
+    expect(mockCaptureEvalReportingFailure).not.toHaveBeenCalled();
   });
 
-  it("returns null in safe mode when strict is false", async () => {
+  it("wraps reporting failures in EvalReportingError and captures once", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(errorResponse(404, "Not Found"));
+    global.fetch = fetchMock as any;
+
+    await expect(
+      reportEvalResults({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        suiteName: "direct-failure",
+        results: [{ caseTitle: "case-1", passed: true }],
+      })
+    ).rejects.toMatchObject({
+      attemptCount: 1,
+      code: "EVAL_REPORTING_ERROR",
+      endpoint: "/sdk/v1/evals/report",
+      statusCode: 404,
+    });
+
+    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
+    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+      expect.any(EvalReportingError),
+      expect.objectContaining({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        entrypoint: "reportEvalResults",
+        framework: undefined,
+        resultCount: 1,
+        suiteName: "direct-failure",
+      })
+    );
+  });
+
+  it("returns null in safe mode when strict is false and captures once", async () => {
     const fetchMock = jest
       .fn()
       .mockResolvedValue(errorResponse(500, "backend down"));
@@ -366,5 +416,16 @@ describe("reportEvalResults", () => {
 
     expect(output).toBeNull();
     expect(warnSpy).toHaveBeenCalled();
+    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
+    expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+      expect.any(EvalReportingError),
+      expect.objectContaining({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        entrypoint: "reportEvalResultsSafely",
+        resultCount: 1,
+        suiteName: "safe-mode",
+      })
+    );
   });
 });

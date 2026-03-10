@@ -17,6 +17,7 @@ import {
 } from "./report-eval-results.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { EvalRunResult } from "./EvalTest.js";
+import { captureEvalReportingFailure } from "./sentry.js";
 import {
   runToEvalResults,
   suiteRunToEvalResults,
@@ -249,6 +250,15 @@ class EvalRunReporterImpl implements EvalRunReporter {
       }
       this.buffered = [];
     } catch (error) {
+      await captureEvalReportingFailure(error, {
+        apiKey: this.runtimeConfig.apiKey,
+        baseUrl: this.runtimeConfig.baseUrl,
+        bufferedCount: this.buffered.length,
+        entrypoint: "evalRunReporter.flush",
+        resultCount: this.buffered.length,
+        runId: this.runId,
+        suiteName: this.input.suiteName,
+      });
       if (this.input.strict) {
         throw error;
       }
@@ -310,6 +320,15 @@ class EvalRunReporterImpl implements EvalRunReporter {
       this.finalized = true;
       return result;
     } catch (error) {
+      await captureEvalReportingFailure(error, {
+        apiKey: this.runtimeConfig.apiKey,
+        baseUrl: this.runtimeConfig.baseUrl,
+        bufferedCount: this.buffered.length,
+        entrypoint: "evalRunReporter.finalize",
+        resultCount: this.buffered.length,
+        runId: this.runId,
+        suiteName: this.input.suiteName,
+      });
       if (this.input.strict) {
         throw error;
       }
