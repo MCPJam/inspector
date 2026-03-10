@@ -68,10 +68,6 @@ vi.mock("@/lib/session-token", () => ({
   getAuthHeaders: vi.fn(() => ({})),
 }));
 
-vi.mock("@/hooks/useSharedChatWidgetCapture", () => ({
-  useSharedChatWidgetCapture: vi.fn(),
-}));
-
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: vi.fn(async () => null),

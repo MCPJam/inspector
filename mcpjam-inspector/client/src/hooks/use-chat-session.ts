@@ -49,7 +49,6 @@ import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
-import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -144,38 +143,6 @@ export interface UseChatSessionReturn {
   inputDisabled: boolean;
 }
 
-function isTransientMessage(message: UIMessage): boolean {
-  if (
-    message.role === "system" &&
-    (message as { metadata?: { source?: string } }).metadata?.source ===
-      "server-instruction"
-  ) {
-    return true;
-  }
-
-  return message.id?.startsWith("widget-state-") ?? false;
-}
-
-function shouldForkChatSession(
-  previousMessages: UIMessage[],
-  nextMessages: UIMessage[],
-): boolean {
-  const previousPersistentIds = previousMessages
-    .filter((message) => !isTransientMessage(message))
-    .map((message) => message.id);
-  const nextPersistentIds = nextMessages
-    .filter((message) => !isTransientMessage(message))
-    .map((message) => message.id);
-
-  if (nextPersistentIds.length >= previousPersistentIds.length) {
-    return false;
-  }
-
-  return nextPersistentIds.every(
-    (messageId, index) => messageId === previousPersistentIds[index],
-  );
-}
-
 function isAuthDeniedError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const withStatus = error as { status?: unknown; message?: unknown };
@@ -238,7 +205,6 @@ export function useChatSession({
   const [requireToolApproval, setRequireToolApproval] = useState(false);
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
-  const skipNextForkDetectionRef = useRef(false);
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -319,7 +285,6 @@ export function useChatSession({
         ...(HOSTED_MODE
           ? {
               workspaceId: hostedWorkspaceId,
-              chatSessionId,
               selectedServerIds: hostedSelectedServerIds,
               accessScope: "chat_v2" as const,
               ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
@@ -346,7 +311,6 @@ export function useChatSession({
     systemPrompt,
     selectedServers,
     hostedWorkspaceId,
-    chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
@@ -360,7 +324,7 @@ export function useChatSession({
     stop,
     status,
     error,
-    setMessages: baseSetMessages,
+    setMessages,
     addToolApprovalResponse,
   } = useChat({
     id: chatSessionId,
@@ -369,38 +333,6 @@ export function useChatSession({
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
   });
-
-  useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && !!hostedShareToken && isAuthenticated,
-    chatSessionId,
-    hostedShareToken,
-    messages,
-  });
-
-  const setMessages = useCallback<
-    React.Dispatch<React.SetStateAction<UIMessage[]>>
-  >(
-    (updater) => {
-      baseSetMessages((previousMessages) => {
-        const nextMessages =
-          typeof updater === "function" ? updater(previousMessages) : updater;
-        const shouldSkipForkDetection = skipNextForkDetectionRef.current;
-        skipNextForkDetectionRef.current = false;
-
-        if (
-          !shouldSkipForkDetection &&
-          shouldForkChatSession(previousMessages, nextMessages)
-        ) {
-          queueMicrotask(() => {
-            setChatSessionId(generateId());
-          });
-        }
-
-        return nextMessages;
-      });
-    },
-    [baseSetMessages],
-  );
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -426,7 +358,6 @@ export function useChatSession({
 
   // Reset chat
   const resetChat = useCallback(() => {
-    skipNextForkDetectionRef.current = true;
     setChatSessionId(generateId());
     setMessages([]);
     onResetRef.current?.();
@@ -452,7 +383,6 @@ export function useChatSession({
       // Reset chat to force new session with updated auth headers
       // This ensures the transport is recreated with the correct headers
       if (active) {
-        skipNextForkDetectionRef.current = true;
         setChatSessionId(generateId());
         setMessages([]);
         onResetRef.current?.();
