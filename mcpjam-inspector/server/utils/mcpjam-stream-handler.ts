@@ -49,6 +49,9 @@ export interface MCPJamHandlerOptions {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  onConversationComplete?: (
+    fullHistory: ModelMessage[],
+  ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
 }
 
@@ -711,6 +714,7 @@ export async function handleMCPJamFreeChatModel(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    onConversationComplete,
     onStreamComplete,
   } = options;
 
@@ -784,6 +788,7 @@ export async function handleMCPJamFreeChatModel(
     },
     onFinish: async () => {
       try {
+        await onConversationComplete?.([...messageHistory]);
         await onStreamComplete?.();
       } catch (cleanupError) {
         logger.error(

@@ -66,6 +66,7 @@ export const hostedChatSchema = z
   .object({
     workspaceId: z.string().min(1),
     selectedServerIds: z.array(z.string().min(1)),
+    chatSessionId: z.string().min(1).optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
