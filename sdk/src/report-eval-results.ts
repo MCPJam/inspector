@@ -11,8 +11,7 @@ const CHUNK_SIZE_LIMIT = 200;
 const ONE_SHOT_RESULT_LIMIT = 200;
 const CHUNK_TARGET_BYTES = 1024 * 1024;
 
-export const DEFAULT_MCPJAM_BASE_URL =
-  process.env.MCPJAM_BASE_URL ?? "https://api.mcpjam.com";
+export const DEFAULT_MCPJAM_BASE_URL = "https://sdk.mcpjam.com";
 
 type RuntimeConfig = {
   apiKey: string;
@@ -126,7 +125,9 @@ function createRuntimeConfig(input: ReportEvalResultsInput): RuntimeConfig {
 
   return {
     apiKey,
-    baseUrl: trimTrailingSlash(input.baseUrl ?? DEFAULT_MCPJAM_BASE_URL),
+    baseUrl: trimTrailingSlash(
+      input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL
+    ),
     timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     retryDelaysMs: DEFAULT_RETRY_DELAYS_MS,
   };

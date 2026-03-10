@@ -30,10 +30,68 @@ function errorResponse(status: number, message: string): any {
 
 describe("reportEvalResults", () => {
   const originalFetch = global.fetch;
+  const originalMcpjamBaseUrl = process.env.MCPJAM_BASE_URL;
 
   afterEach(() => {
     global.fetch = originalFetch;
+    if (originalMcpjamBaseUrl === undefined) {
+      delete process.env.MCPJAM_BASE_URL;
+    } else {
+      process.env.MCPJAM_BASE_URL = originalMcpjamBaseUrl;
+    }
     jest.restoreAllMocks();
+  });
+
+  it("uses sdk.mcpjam.com when no baseUrl override is provided", async () => {
+    delete process.env.MCPJAM_BASE_URL;
+
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      suiteName: "SDK smoke",
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://sdk.mcpjam.com/sdk/v1/evals/report"
+    );
+  });
+
+  it("uses MCPJAM_BASE_URL when no baseUrl override is provided", async () => {
+    process.env.MCPJAM_BASE_URL = "https://tough-cassowary-291.convex.site";
+
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      suiteName: "SDK smoke",
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://tough-cassowary-291.convex.site/sdk/v1/evals/report"
+    );
   });
 
   it("uses one-shot /report for small payloads", async () => {
