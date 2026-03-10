@@ -523,7 +523,10 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                const requestHeaders = mergeHeadersForAuthServer(customHeaders, {});
+                const requestHeaders = mergeHeadersForAuthServer(
+                  customHeaders,
+                  {},
+                );
 
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
                 if (updatedHistoryForRetry.length > 0) {
@@ -548,8 +551,8 @@ export const createDebugOAuthStateMachine = (
                 const response = await proxyFetch(url, {
                   method: "GET",
                   headers: mergeHeadersForAuthServer(customHeaders, {
-                      "MCP-Protocol-Version": "2025-03-26",
-                    }),
+                    "MCP-Protocol-Version": "2025-03-26",
+                  }),
                 });
 
                 if (response.ok) {
@@ -774,8 +777,8 @@ export const createDebugOAuthStateMachine = (
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
                 headers: mergeHeadersForAuthServer(customHeaders, {
-                    "Content-Type": "application/json",
-                  }),
+                  "Content-Type": "application/json",
+                }),
                 body: clientMetadata,
               };
 
@@ -823,8 +826,8 @@ export const createDebugOAuthStateMachine = (
                 {
                   method: "POST",
                   headers: mergeHeadersForAuthServer(customHeaders, {
-                      "Content-Type": "application/json",
-                    }),
+                    "Content-Type": "application/json",
+                  }),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1153,8 +1156,8 @@ export const createDebugOAuthStateMachine = (
                 {
                   method: "POST",
                   headers: mergeHeadersForAuthServer(customHeaders, {
-                      "Content-Type": "application/x-www-form-urlencoded",
-                    }),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                  }),
                   body: tokenRequestBody.toString(),
                 },
               );

@@ -1002,7 +1002,10 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                const requestHeaders = mergeHeadersForAuthServer(customHeaders, {});
+                const requestHeaders = mergeHeadersForAuthServer(
+                  customHeaders,
+                  {},
+                );
 
                 // Update request URL as we try different endpoints
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
@@ -1264,8 +1267,8 @@ export const createDebugOAuthStateMachine = (
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
                 headers: mergeHeadersForAuthServer(customHeaders, {
-                    "Content-Type": "application/json",
-                  }),
+                  "Content-Type": "application/json",
+                }),
                 body: clientMetadata,
               };
 
@@ -1316,8 +1319,8 @@ export const createDebugOAuthStateMachine = (
                 {
                   method: "POST",
                   headers: mergeHeadersForAuthServer(customHeaders, {
-                      "Content-Type": "application/json",
-                    }),
+                    "Content-Type": "application/json",
+                  }),
                   body: JSON.stringify(state.lastRequest.body),
                 },
               );
@@ -1785,8 +1788,8 @@ export const createDebugOAuthStateMachine = (
                 {
                   method: "POST",
                   headers: mergeHeadersForAuthServer(customHeaders, {
-                      "Content-Type": "application/x-www-form-urlencoded",
-                    }),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                  }),
                   body: tokenRequestBody.toString(),
                 },
               );
