@@ -232,6 +232,7 @@ describe("ChatInput", () => {
         (btn) => btn.querySelector("svg.lucide-square") !== null,
       );
       expect(stopButton).toBeDefined();
+      expect(stopButton?.className).not.toContain("bg-destructive");
     });
 
     it("calls stop when stop button clicked", () => {
