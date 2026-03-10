@@ -467,6 +467,12 @@ describe("createEvalRunReporter", () => {
       const result = await reporter.finalize();
 
       expect(result.status).toBe("failed");
+      expect(result.summary).toEqual({
+        total: 1,
+        passed: 1,
+        failed: 0,
+        passRate: 1,
+      });
       expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
       expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
         expect.any(Error),
