@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  BarChart3,
   Clock,
   Copy,
   Globe,
@@ -46,6 +47,7 @@ import {
 } from "@/hooks/useServerShares";
 import { slugify } from "@/lib/shared-server-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { ShareUsageDialog } from "./share-usage/ShareUsageDialog";
 
 interface ShareServerDialogProps {
   isOpen: boolean;
@@ -82,12 +84,14 @@ export function ShareServerDialog({
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
+  const [view, setView] = useState<"settings" | "usage">("settings");
 
   useEffect(() => {
     if (!isOpen) {
       setEmail("");
       setIsLoading(false);
       setIsMutating(false);
+      setView("settings");
       return;
     }
 
@@ -223,7 +227,8 @@ export function ShareServerDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <>
+    <Dialog open={isOpen && view === "settings"} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[480px] gap-0">
         <DialogHeader>
           <DialogTitle>Share &ldquo;{serverName}&rdquo;</DialogTitle>
@@ -405,7 +410,7 @@ export function ShareServerDialog({
 
             <Separator className="mt-4 mb-3" />
 
-            {/* Footer: Copy link + Done */}
+            {/* Footer: Copy link + Usage + Done */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1">
                 <Button
@@ -437,13 +442,36 @@ export function ShareServerDialog({
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              <Button size="sm" onClick={onClose}>
-                Done
-              </Button>
+              <div className="flex items-center gap-2">
+                {settings?.shareId && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setView("usage")}
+                  >
+                    <BarChart3 className="size-3.5" />
+                    Usage
+                  </Button>
+                )}
+                <Button size="sm" onClick={onClose}>
+                  Done
+                </Button>
+              </div>
             </div>
           </>
         )}
       </DialogContent>
     </Dialog>
+    {settings?.shareId && (
+      <ShareUsageDialog
+        isOpen={isOpen && view === "usage"}
+        onClose={onClose}
+        onBackToSettings={() => setView("settings")}
+        shareId={settings.shareId}
+        serverName={serverName}
+      />
+    )}
+    </>
   );
 }
