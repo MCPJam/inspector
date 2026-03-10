@@ -323,7 +323,8 @@ export function useSharedChatWidgetCapture({
           if (existingTimer) {
             clearTimeout(existingTimer);
           }
-          const delay = Math.min(1000 * Math.pow(1.5, retries), 10000);
+          const baseDelay = Math.min(1000 * Math.pow(1.5, retries), 10000);
+          const delay = baseDelay + Math.random() * baseDelay * 0.5;
           const retryTimer = setTimeout(() => {
             pendingTimersRef.current.delete(toolCallId);
             void uploadAttemptRef.current(toolCallId);

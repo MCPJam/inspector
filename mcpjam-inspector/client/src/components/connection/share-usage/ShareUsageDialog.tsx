@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, MessageSquare } from "lucide-react";
 import {
   Dialog,
@@ -31,6 +31,10 @@ export function ShareUsageDialog({
   serverName,
 }: ShareUsageDialogProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedThreadId(null);
+  }, [shareId]);
 
   return (
     <Dialog
