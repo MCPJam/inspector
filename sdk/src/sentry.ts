@@ -10,6 +10,12 @@ const API_KEY_HASH_LENGTH = 16;
 const CAPTURED_ERROR_SYMBOL = Symbol.for("@mcpjam/sdk/captured-eval-error");
 
 type SentryModule = typeof import("@sentry/node");
+type SentryClient = InstanceType<SentryModule["NodeClient"]>;
+type SentryScope = InstanceType<SentryModule["Scope"]>;
+type LoadedSentry = {
+  client: SentryClient;
+  scope: SentryScope;
+};
 
 export type SdkSentryBreadcrumb = {
   category?: string;
@@ -38,7 +44,7 @@ export type EvalReportingFailureContext = {
   suiteName?: string;
 };
 
-let sentryModulePromise: Promise<SentryModule | null> | null = null;
+let sentryStatePromise: Promise<LoadedSentry | null> | null = null;
 let sdkSentryDsn = SDK_SENTRY_DSN;
 let sentryModuleLoader: () => Promise<SentryModule | null> = async () =>
   await import("@sentry/node");
@@ -123,28 +129,37 @@ function findEvalReportingError(error: unknown): EvalReportingError | null {
   return null;
 }
 
-async function loadSentry(): Promise<SentryModule | null> {
+async function loadSentry(): Promise<LoadedSentry | null> {
   if (isTelemetryDisabled() || !sdkSentryDsn) {
     return null;
   }
 
-  if (!sentryModulePromise) {
-    sentryModulePromise = sentryModuleLoader()
+  if (!sentryStatePromise) {
+    sentryStatePromise = sentryModuleLoader()
       .then((sentry) => {
         if (!sentry) {
           return null;
         }
 
-        sentry.init({
+        const client = new sentry.NodeClient({
           defaultIntegrations: false,
           dsn: sdkSentryDsn,
+          integrations: [],
           release: SDK_RELEASE,
           sendDefaultPii: false,
+          sendClientReports: false,
+          stackParser: sentry.defaultStackParser,
+          transport: sentry.makeNodeTransport,
         });
-        sentry.setTag("sdk.version", SDK_VERSION);
-        sentry.setTag("node.version", process.version);
-        sentry.setTag("platform", process.platform);
-        return sentry;
+        client.init();
+
+        const scope = new sentry.Scope();
+        scope.setClient(client);
+        scope.setTag("sdk.version", SDK_VERSION);
+        scope.setTag("node.version", process.version);
+        scope.setTag("platform", process.platform);
+
+        return { client, scope };
       })
       .catch((error) => {
         if (isMissingOptionalDependency(error)) {
@@ -154,46 +169,46 @@ async function loadSentry(): Promise<SentryModule | null> {
       });
   }
 
-  return await sentryModulePromise;
+  return await sentryStatePromise;
 }
 
 async function withScope(
   context: CaptureContext,
-  callback: (sentry: SentryModule) => void
+  callback: (scope: SentryScope) => void
 ): Promise<void> {
-  const sentry = await loadSentry();
-  if (!sentry) {
+  const state = await loadSentry();
+  if (!state) {
     return;
   }
 
   try {
-    sentry.withScope((scope) => {
-      if (context.tags) {
-        for (const [key, value] of Object.entries(context.tags)) {
-          if (value !== undefined) {
-            scope.setTag(key, value);
-          }
+    const scope = state.scope.clone();
+
+    if (context.tags) {
+      for (const [key, value] of Object.entries(context.tags)) {
+        if (value !== undefined) {
+          scope.setTag(key, value);
         }
       }
+    }
 
-      if (context.extra) {
-        for (const [key, value] of Object.entries(context.extra)) {
-          if (value !== undefined) {
-            scope.setExtra(key, value);
-          }
+    if (context.extra) {
+      for (const [key, value] of Object.entries(context.extra)) {
+        if (value !== undefined) {
+          scope.setExtra(key, value);
         }
       }
+    }
 
-      if (context.fingerprint) {
-        scope.setFingerprint(context.fingerprint);
-      }
+    if (context.fingerprint) {
+      scope.setFingerprint(context.fingerprint);
+    }
 
-      if (context.user) {
-        scope.setUser(context.user);
-      }
+    if (context.user) {
+      scope.setUser(context.user);
+    }
 
-      callback(sentry);
-    });
+    callback(scope);
   } catch {
     // Optional telemetry must never affect SDK behavior.
   }
@@ -204,8 +219,8 @@ export async function captureException(
   context: CaptureContext = {}
 ): Promise<void> {
   const exception = normalizeError(error);
-  await withScope(context, (sentry) => {
-    sentry.captureException(exception);
+  await withScope(context, (scope) => {
+    scope.captureException(exception);
   });
 }
 
@@ -213,21 +228,21 @@ export async function captureMessage(
   message: string,
   context: CaptureContext = {}
 ): Promise<void> {
-  await withScope(context, (sentry) => {
-    sentry.captureMessage(message);
+  await withScope(context, (scope) => {
+    scope.captureMessage(message);
   });
 }
 
 export async function addBreadcrumb(
   breadcrumb: SdkSentryBreadcrumb
 ): Promise<void> {
-  const sentry = await loadSentry();
-  if (!sentry) {
+  const state = await loadSentry();
+  if (!state) {
     return;
   }
 
   try {
-    sentry.addBreadcrumb(breadcrumb);
+    state.scope.addBreadcrumb(breadcrumb);
   } catch {
     // Optional telemetry must never affect SDK behavior.
   }
@@ -272,18 +287,18 @@ export async function captureEvalReportingFailure(
 
 export function __resetSentryForTests(): void {
   sdkSentryDsn = SDK_SENTRY_DSN;
-  sentryModulePromise = null;
+  sentryStatePromise = null;
   sentryModuleLoader = async () => await import("@sentry/node");
 }
 
 export function __setSentryModuleLoaderForTests(
   loader: () => Promise<SentryModule | null>
 ): void {
-  sentryModulePromise = null;
+  sentryStatePromise = null;
   sentryModuleLoader = loader;
 }
 
 export function __setSentryDsnForTests(dsn: string): void {
   sdkSentryDsn = dsn;
-  sentryModulePromise = null;
+  sentryStatePromise = null;
 }
