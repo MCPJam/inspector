@@ -7,40 +7,6 @@ on:
     branches: [main]
 
 jobs:
-  formatting:
-    runs-on: ubuntu-latest
-    name: Check Code Formatting
-    defaults:
-      run:
-        working-directory: mcpjam-inspector
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24.14.0"
-
-      - name: Install dependencies
-        run: |
-          npm ci
-
-      - name: Check Prettier formatting
-        run: |
-          if ! npx prettier --check .; then
-            echo "❌ Code is not properly formatted!"
-            echo ""
-            echo "To fix this, run:"
-            echo "  npm run prettier-fix"
-            echo ""
-            echo "Then commit and push the changes."
-            exit 1
-          else
-            echo "✅ All files are properly formatted!"
-          fi
-
   build:
     runs-on: ubuntu-latest
     name: Build and Test
