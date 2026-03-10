@@ -42,11 +42,7 @@ export function useSharedChatThreadList({
   return { threads };
 }
 
-export function useSharedChatThread({
-  threadId,
-}: {
-  threadId: string | null;
-}) {
+export function useSharedChatThread({ threadId }: { threadId: string | null }) {
   const thread = useQuery(
     "sharedChatThreads:getThread" as any,
     threadId ? ({ threadId } as any) : "skip",

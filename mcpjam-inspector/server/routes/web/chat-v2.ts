@@ -99,11 +99,7 @@ chatV2.post("/", async (c) => {
         throw error;
       }
 
-      const {
-        allTools,
-        enhancedSystemPrompt,
-        resolvedTemperature,
-      } = prepared;
+      const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
 
       if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
         if (!process.env.CONVEX_HTTP_URL) {

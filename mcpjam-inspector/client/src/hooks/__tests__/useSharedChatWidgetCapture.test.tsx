@@ -42,10 +42,13 @@ describe("useSharedChatWidgetCapture", () => {
 
     global.fetch = vi.fn(async () => {
       uploadCounter += 1;
-      return new Response(JSON.stringify({ storageId: `blob-${uploadCounter}` }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ storageId: `blob-${uploadCounter}` }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }) as typeof fetch;
   });
 
@@ -216,7 +219,8 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
 
     // Blobs were uploaded on the first attempt
-    const uploadsAfterFirstAttempt = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    const uploadsAfterFirstAttempt = (global.fetch as ReturnType<typeof vi.fn>)
+      .mock.calls.length;
     expect(uploadsAfterFirstAttempt).toBe(3);
 
     act(() => {

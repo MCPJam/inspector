@@ -2,10 +2,7 @@ import { useEffect, useRef } from "react";
 import { useMutation } from "convex/react";
 import type { UIMessage } from "@ai-sdk/react";
 import type { DisplayContext, WidgetCsp } from "./useViews";
-import {
-  detectUIType,
-  getUIResourceUri,
-} from "@/lib/mcp-ui/mcp-apps-utils";
+import { detectUIType, getUIResourceUri } from "@/lib/mcp-ui/mcp-apps-utils";
 import { readToolResultMeta } from "@/lib/tool-result-utils";
 import {
   useWidgetDebugStore,
@@ -34,9 +31,7 @@ function hashString(value: string): string {
   return `${hash >>> 0}`;
 }
 
-function isToolLikePart(
-  part: unknown,
-): part is {
+function isToolLikePart(part: unknown): part is {
   type: string;
   toolCallId?: string;
   toolName?: string;
@@ -64,7 +59,9 @@ function getToolNameFromPart(part: {
   return part.type.replace(/^tool-/, "") || "unknown";
 }
 
-function buildToolSourceMap(messages: UIMessage[]): Map<string, ToolSnapshotSource> {
+function buildToolSourceMap(
+  messages: UIMessage[],
+): Map<string, ToolSnapshotSource> {
   const toolSources = new Map<string, ToolSnapshotSource>();
 
   for (const message of messages) {
@@ -97,7 +94,8 @@ function toDisplayContext(
   }
 
   const deviceType = globals.userAgent?.device?.type;
-  const capabilities = globals.userAgent?.capabilities ?? globals.deviceCapabilities;
+  const capabilities =
+    globals.userAgent?.capabilities ?? globals.deviceCapabilities;
   const safeAreaInsets = globals.safeAreaInsets ?? globals.safeArea?.insets;
 
   return {
@@ -163,7 +161,9 @@ export function useSharedChatWidgetCapture({
 
   const uploadedHashesRef = useRef(new Map<string, string>());
   const inFlightRef = useRef(new Set<string>());
-  const pendingTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const pendingTimersRef = useRef(
+    new Map<string, ReturnType<typeof setTimeout>>(),
+  );
   const cachedBlobsRef = useRef(
     new Map<
       string,
@@ -265,13 +265,21 @@ export function useSharedChatWidgetCapture({
         const [widgetHtmlBlobId, toolInputBlobId, toolOutputBlobId] =
           await Promise.all([
             uploadBlob(widget.widgetHtml, "text/html"),
-            uploadBlob(JSON.stringify(toolSource.input ?? null), "application/json"),
+            uploadBlob(
+              JSON.stringify(toolSource.input ?? null),
+              "application/json",
+            ),
             uploadBlob(
               JSON.stringify(toolSource.rawOutput ?? null),
               "application/json",
             ),
           ]);
-        cached = { htmlHash, widgetHtmlBlobId, toolInputBlobId, toolOutputBlobId };
+        cached = {
+          htmlHash,
+          widgetHtmlBlobId,
+          toolInputBlobId,
+          toolOutputBlobId,
+        };
         cachedBlobsRef.current.set(toolCallId, cached);
       }
 
@@ -323,7 +331,10 @@ export function useSharedChatWidgetCapture({
           pendingTimersRef.current.set(toolCallId, retryTimer);
         }
       } else {
-        console.warn("[useSharedChatWidgetCapture] Failed to save snapshot:", error);
+        console.warn(
+          "[useSharedChatWidgetCapture] Failed to save snapshot:",
+          error,
+        );
       }
     } finally {
       inFlightRef.current.delete(toolCallId);

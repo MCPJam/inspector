@@ -377,13 +377,13 @@ export function useChatSession({
     messages,
   });
 
-  const setMessages = useCallback<React.Dispatch<React.SetStateAction<UIMessage[]>>>(
+  const setMessages = useCallback<
+    React.Dispatch<React.SetStateAction<UIMessage[]>>
+  >(
     (updater) => {
       baseSetMessages((previousMessages) => {
         const nextMessages =
-          typeof updater === "function"
-            ? updater(previousMessages)
-            : updater;
+          typeof updater === "function" ? updater(previousMessages) : updater;
         const shouldSkipForkDetection = skipNextForkDetectionRef.current;
         skipNextForkDetectionRef.current = false;
 

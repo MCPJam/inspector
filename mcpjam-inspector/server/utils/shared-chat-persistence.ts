@@ -1,5 +1,5 @@
-import type { ModelMessage } from '@ai-sdk/provider-utils';
-import { logger } from './logger';
+import type { ModelMessage } from "@ai-sdk/provider-utils";
+import { logger } from "./logger";
 
 const PREVIEW_MAX_LENGTH = 200;
 
@@ -13,33 +13,35 @@ interface SaveThreadToConvexOptions {
 }
 
 function extractTextPreview(content: unknown): string {
-  if (typeof content === 'string') {
+  if (typeof content === "string") {
     return content;
   }
   if (!Array.isArray(content)) {
-    return '';
+    return "";
   }
 
   return content
     .map((part) =>
       part &&
-      typeof part === 'object' &&
-      (part as { type?: unknown }).type === 'text' &&
-      typeof (part as { text?: unknown }).text === 'string'
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "text" &&
+      typeof (part as { text?: unknown }).text === "string"
         ? (part as { text: string }).text
-        : ''
+        : "",
     )
-    .join(' ')
+    .join(" ")
     .trim();
 }
 
 function getFirstMessagePreview(messages: ModelMessage[]): string {
   for (const message of messages) {
-    if (message.role !== 'user') {
+    if (message.role !== "user") {
       continue;
     }
 
-    const preview = extractTextPreview((message as { content?: unknown }).content)
+    const preview = extractTextPreview(
+      (message as { content?: unknown }).content,
+    )
       .trim()
       .slice(0, PREVIEW_MAX_LENGTH);
     if (preview.length > 0) {
@@ -47,7 +49,7 @@ function getFirstMessagePreview(messages: ModelMessage[]): string {
     }
   }
 
-  return '';
+  return "";
 }
 
 export async function saveThreadToConvex({
@@ -61,7 +63,7 @@ export async function saveThreadToConvex({
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     logger.error(
-      '[shared-chat-persistence] Missing CONVEX_HTTP_URL while saving thread',
+      "[shared-chat-persistence] Missing CONVEX_HTTP_URL while saving thread",
       undefined,
       { chatSessionId },
     );
@@ -70,9 +72,9 @@ export async function saveThreadToConvex({
 
   try {
     const response = await fetch(`${convexUrl}/shared-chat/save-thread`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'content-type': 'application/json',
+        "content-type": "application/json",
         authorization: `Bearer ${bearerToken}`,
       },
       body: JSON.stringify({
@@ -87,18 +89,18 @@ export async function saveThreadToConvex({
 
     if (!response.ok) {
       logger.error(
-        '[shared-chat-persistence] Failed to persist shared chat thread',
+        "[shared-chat-persistence] Failed to persist shared chat thread",
         undefined,
         {
           chatSessionId,
           status: response.status,
-          responseText: await response.text().catch(() => ''),
+          responseText: await response.text().catch(() => ""),
         },
       );
     }
   } catch (error) {
     logger.error(
-      '[shared-chat-persistence] Error while saving shared chat thread',
+      "[shared-chat-persistence] Error while saving shared chat thread",
       error,
       { chatSessionId },
     );
