@@ -2,6 +2,7 @@ import type { EvalAgent } from "./EvalAgent.js";
 import type { LatencyBreakdown } from "./types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import type {
+  EvalExpectedToolCall,
   EvalResultInput,
   MCPJamReportingConfig,
 } from "./eval-reporting-types.js";
@@ -195,7 +196,19 @@ export class EvalSuite {
   private buildEvalResultInputs(
     testResults: Map<string, EvalRunResult>
   ): EvalResultInput[] {
-    return suiteTestResultsToEvalResultInputs(testResults);
+    const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> = {};
+    for (const [name, test] of this.tests) {
+      const expected = test.getConfig().expectedToolCalls;
+      if (expected) {
+        expectedToolCallsByTest[name] = expected;
+      }
+    }
+    return suiteTestResultsToEvalResultInputs(
+      testResults,
+      Object.keys(expectedToolCallsByTest).length > 0
+        ? expectedToolCallsByTest
+        : undefined
+    );
   }
 
   private aggregateResults(

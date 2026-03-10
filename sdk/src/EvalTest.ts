@@ -2,6 +2,7 @@ import type { EvalAgent } from "./EvalAgent.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import type {
+  EvalExpectedToolCall,
   EvalResultInput,
   MCPJamReportingConfig,
 } from "./eval-reporting-types.js";
@@ -18,6 +19,7 @@ import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
 export interface EvalTestConfig {
   name: string;
   test: (agent: EvalAgent) => boolean | Promise<boolean>;
+  expectedToolCalls?: EvalExpectedToolCall[];
 }
 
 /**
@@ -308,7 +310,11 @@ export class EvalTest {
   private buildEvalResultInputs(
     iterations: IterationResult[]
   ): EvalResultInput[] {
-    return iterationsToEvalResultInputs(this.getName(), iterations);
+    return iterationsToEvalResultInputs(
+      this.getName(),
+      iterations,
+      this.config.expectedToolCalls
+    );
   }
 
   private aggregateResults(iterations: IterationResult[]): EvalRunResult {
