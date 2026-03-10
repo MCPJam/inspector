@@ -239,6 +239,8 @@ export function useChatSession({
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
   const skipNextForkDetectionRef = useRef(false);
+  const pendingForkSessionIdRef = useRef<string | null>(null);
+  const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -391,8 +393,13 @@ export function useChatSession({
           !shouldSkipForkDetection &&
           shouldForkChatSession(previousMessages, nextMessages)
         ) {
+          const nextSessionId = generateId();
+          pendingForkSessionIdRef.current = nextSessionId;
+          pendingForkMessagesRef.current = nextMessages;
           queueMicrotask(() => {
-            setChatSessionId(generateId());
+            if (pendingForkSessionIdRef.current === nextSessionId) {
+              setChatSessionId(nextSessionId);
+            }
           });
         }
 
@@ -401,6 +408,20 @@ export function useChatSession({
     },
     [baseSetMessages],
   );
+
+  useLayoutEffect(() => {
+    if (pendingForkSessionIdRef.current !== chatSessionId) {
+      return;
+    }
+
+    const pendingForkMessages = pendingForkMessagesRef.current;
+    pendingForkSessionIdRef.current = null;
+    pendingForkMessagesRef.current = null;
+
+    if (pendingForkMessages) {
+      baseSetMessages(pendingForkMessages);
+    }
+  }, [baseSetMessages, chatSessionId]);
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -427,6 +448,8 @@ export function useChatSession({
   // Reset chat
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
+    pendingForkSessionIdRef.current = null;
+    pendingForkMessagesRef.current = null;
     setChatSessionId(generateId());
     setMessages([]);
     onResetRef.current?.();
@@ -453,6 +476,8 @@ export function useChatSession({
       // This ensures the transport is recreated with the correct headers
       if (active) {
         skipNextForkDetectionRef.current = true;
+        pendingForkSessionIdRef.current = null;
+        pendingForkMessagesRef.current = null;
         setChatSessionId(generateId());
         setMessages([]);
         onResetRef.current?.();
