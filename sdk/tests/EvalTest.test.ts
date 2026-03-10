@@ -82,6 +82,33 @@ describe("EvalTest", () => {
       expect(test.getConfig()).toEqual(config);
     });
 
+    it("should store expectedToolCalls in config", () => {
+      const expected = [
+        { toolName: "add", arguments: { a: 1, b: 2 } },
+        { toolName: "format" },
+      ];
+      const test = new EvalTest({
+        name: "with-expected",
+        test: async (agent) => {
+          await agent.prompt("Test");
+          return true;
+        },
+        expectedToolCalls: expected,
+      });
+      expect(test.getConfig().expectedToolCalls).toEqual(expected);
+    });
+
+    it("should have undefined expectedToolCalls when not provided", () => {
+      const test = new EvalTest({
+        name: "without-expected",
+        test: async (agent) => {
+          await agent.prompt("Test");
+          return true;
+        },
+      });
+      expect(test.getConfig().expectedToolCalls).toBeUndefined();
+    });
+
     it("should throw if no test function provided", () => {
       expect(() => {
         new EvalTest({
