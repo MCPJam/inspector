@@ -1,3 +1,9 @@
+const mockCaptureEvalReportingFailure = jest.fn().mockResolvedValue(undefined);
+
+jest.mock("../src/sentry", () => ({
+  captureEvalReportingFailure: mockCaptureEvalReportingFailure,
+}));
+
 import { createEvalRunReporter } from "../src/eval-run-reporter";
 import { PromptResult } from "../src/PromptResult";
 import type { EvalRunResult, IterationResult } from "../src/EvalTest";
@@ -23,6 +29,7 @@ describe("createEvalRunReporter", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    mockCaptureEvalReportingFailure.mockClear();
     jest.restoreAllMocks();
   });
 
@@ -379,6 +386,106 @@ describe("createEvalRunReporter", () => {
       expect(reporter.getAddedCount()).toBe(200);
       // fetch should have been called (startEvalRun + appendIterations)
       expect(fetchMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("error capture", () => {
+    it("captures once when flush falls back after a chunked upload failure", async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce(
+          okResponse({
+            suiteId: "suite_1",
+            runId: "run_1",
+            status: "running",
+            result: "pending",
+          })
+        )
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          statusText: "Not Found",
+          json: async () => ({ ok: false, error: "Not Found" }),
+        });
+      global.fetch = fetchMock as any;
+
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        strict: false,
+        suiteName: "flush-error",
+      });
+
+      reporter.add({ caseTitle: "case-1", passed: true });
+      reporter.add({ caseTitle: "case-2", passed: false });
+
+      await reporter.flush();
+
+      expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
+      expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          apiKey: "mcpjam_test_key",
+          baseUrl: "https://example.com",
+          bufferedCount: 2,
+          entrypoint: "evalRunReporter.flush",
+          resultCount: 2,
+          suiteName: "flush-error",
+        })
+      );
+    });
+
+    it("captures once when finalize falls back after finalizeEvalRun fails", async () => {
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce(
+          okResponse({
+            suiteId: "suite_1",
+            runId: "run_1",
+            status: "running",
+            result: "pending",
+          })
+        )
+        .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 404,
+          statusText: "Not Found",
+          json: async () => ({ ok: false, error: "Not Found" }),
+        });
+      global.fetch = fetchMock as any;
+
+      const reporter = createEvalRunReporter({
+        apiKey: "mcpjam_test_key",
+        baseUrl: "https://example.com",
+        strict: false,
+        suiteName: "finalize-error",
+      });
+
+      reporter.add({ caseTitle: "case-1", passed: true });
+      await reporter.flush();
+      const result = await reporter.finalize();
+
+      expect(result.status).toBe("failed");
+      expect(result.summary).toEqual({
+        total: 1,
+        passed: 1,
+        failed: 0,
+        passRate: 1,
+      });
+      expect(mockCaptureEvalReportingFailure).toHaveBeenCalledTimes(1);
+      expect(mockCaptureEvalReportingFailure).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          apiKey: "mcpjam_test_key",
+          baseUrl: "https://example.com",
+          bufferedCount: 0,
+          entrypoint: "evalRunReporter.finalize",
+          resultCount: 0,
+          runId: "run_1",
+          suiteName: "finalize-error",
+        })
+      );
     });
   });
 });
