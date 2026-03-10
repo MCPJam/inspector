@@ -7,6 +7,7 @@ import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js"
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import { saveThreadToConvex } from "../../utils/shared-chat-persistence.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
@@ -98,12 +99,7 @@ chatV2.post("/", async (c) => {
         throw error;
       }
 
-      const {
-        allTools,
-        enhancedSystemPrompt,
-        resolvedTemperature,
-        scrubMessages,
-      } = prepared;
+      const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
 
       if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
         if (!process.env.CONVEX_HTTP_URL) {
@@ -123,7 +119,7 @@ chatV2.post("/", async (c) => {
 
       const modelMessages = await convertToModelMessages(messages);
       return handleMCPJamFreeChatModel({
-        messages: scrubMessages(modelMessages as ModelMessage[]),
+        messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
@@ -132,6 +128,19 @@ chatV2.post("/", async (c) => {
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
+        onConversationComplete:
+          shareToken && body.chatSessionId
+            ? async (fullHistory) => {
+                await saveThreadToConvex({
+                  chatSessionId: body.chatSessionId!,
+                  shareToken,
+                  bearerToken,
+                  messages: fullHistory,
+                  messageCount: fullHistory.length,
+                  modelId: String(modelDefinition.id),
+                });
+              }
+            : undefined,
         onStreamComplete: () => manager.disconnectAllServers(),
       });
     } catch (error) {
