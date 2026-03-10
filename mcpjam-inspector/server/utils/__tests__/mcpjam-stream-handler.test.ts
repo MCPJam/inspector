@@ -56,6 +56,12 @@ vi.mock("../mcpjam-tool-helpers", () => ({
   serializeToolsForConvex: vi.fn(() => []),
 }));
 
+vi.mock("../logger", () => ({
+  logger: {
+    error: vi.fn(),
+  },
+}));
+
 describe("mcpjam-stream-handler", () => {
   const originalFetch = global.fetch;
 
@@ -204,5 +210,55 @@ describe("mcpjam-stream-handler", () => {
         },
       ],
     });
+  });
+
+  it("runs teardown even when conversation persistence fails", async () => {
+    const onConversationComplete = vi
+      .fn()
+      .mockRejectedValue(new Error("persist failed"));
+    const onStreamComplete = vi.fn();
+
+    await handleMCPJamFreeChatModel({
+      messages: [] as any,
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onConversationComplete,
+      onStreamComplete,
+    });
+
+    await lastExecution;
+
+    expect(onConversationComplete).toHaveBeenCalledTimes(1);
+    expect(onStreamComplete).toHaveBeenCalledTimes(1);
+    expect(onStreamComplete.mock.invocationCallOrder[0]).toBeGreaterThan(
+      onConversationComplete.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("skips conversation persistence after stream errors but still runs teardown", async () => {
+    const onConversationComplete = vi.fn();
+    const onStreamComplete = vi.fn();
+    global.fetch = vi.fn().mockRejectedValue(new Error("stream failed"));
+
+    await handleMCPJamFreeChatModel({
+      messages: [] as any,
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onConversationComplete,
+      onStreamComplete,
+    });
+
+    await lastExecution;
+
+    expect(onConversationComplete).not.toHaveBeenCalled();
+    expect(onStreamComplete).toHaveBeenCalledTimes(1);
   });
 });
