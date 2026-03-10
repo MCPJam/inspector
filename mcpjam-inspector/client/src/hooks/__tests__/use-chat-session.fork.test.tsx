@@ -151,7 +151,8 @@ vi.mock("@ai-sdk/react", async () => {
       const setMessages = React.useCallback(
         (updater: any[] | ((messages: any[]) => any[])) => {
           const activeId = currentIdRef.current;
-          const previousMessages = mockState.sessionMessages.get(activeId) ?? [];
+          const previousMessages =
+            mockState.sessionMessages.get(activeId) ?? [];
           const nextMessages =
             typeof updater === "function" ? updater(previousMessages) : updater;
           mockState.sessionMessages.set(activeId, nextMessages);
