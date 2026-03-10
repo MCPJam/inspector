@@ -221,8 +221,9 @@ describe("useSharedChatWidgetCapture", () => {
       expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
 
       // Blobs were uploaded on the first attempt
-      const uploadsAfterFirstAttempt = (global.fetch as ReturnType<typeof vi.fn>)
-        .mock.calls.length;
+      const uploadsAfterFirstAttempt = (
+        global.fetch as ReturnType<typeof vi.fn>
+      ).mock.calls.length;
       expect(uploadsAfterFirstAttempt).toBe(3);
 
       act(() => {
