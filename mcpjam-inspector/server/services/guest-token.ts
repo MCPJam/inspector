@@ -29,19 +29,22 @@ let jwks: { keys: JsonWebKey[] };
 
 function warnAboutEphemeralKeys(reason: "missing" | "invalid"): void {
   if (process.env.NODE_ENV !== "production") {
-    return; // Ephemeral keys are fine in dev
+    return;
   }
 
   const baseMessage =
-    "Guest JWT: GUEST_JWT_PRIVATE_KEY and GUEST_JWT_PUBLIC_KEY must be set in production.";
+    "Guest JWT: using ephemeral signing keys in production. " +
+    "Guest sessions will be invalid after restart unless " +
+    "GUEST_JWT_PRIVATE_KEY and GUEST_JWT_PUBLIC_KEY are set.";
 
   if (reason === "invalid") {
-    throw new Error(
-      `${baseMessage} The configured key pair could not be parsed.`,
+    logger.warn(
+      `${baseMessage} Falling back because the configured key pair could not be parsed.`,
     );
+    return;
   }
 
-  throw new Error(`${baseMessage} Environment variables are missing.`);
+  logger.warn(`${baseMessage} Falling back because the env vars are missing.`);
 }
 
 function base64url(input: string | Buffer): string {
