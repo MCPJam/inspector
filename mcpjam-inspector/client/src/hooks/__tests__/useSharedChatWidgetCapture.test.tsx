@@ -163,103 +163,108 @@ describe("useSharedChatWidgetCapture", () => {
   });
 
   it("dedupes identical widget html and retries when the thread is not ready yet", async () => {
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
     mockCreateWidgetSnapshot
       .mockRejectedValueOnce(new Error("Thread not found for chat session"))
       .mockResolvedValueOnce("snapshot-1");
 
-    const { unmount } = renderHook(() =>
-      useSharedChatWidgetCapture({
-        enabled: true,
-        chatSessionId: "chat-session-1",
-        hostedShareToken: "share-token",
-        messages: [
-          {
-            id: "assistant-1",
-            role: "assistant",
-            parts: [
+    try {
+      const { unmount } = renderHook(() =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          chatSessionId: "chat-session-1",
+          hostedShareToken: "share-token",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-search",
+                  toolCallId: "call-1",
+                  input: { q: "hello" },
+                  output: { result: "world" },
+                },
+              ],
+            } as any,
+          ],
+        }),
+      );
+
+      act(() => {
+        useWidgetDebugStore.setState({
+          widgets: new Map([
+            [
+              "call-1",
               {
-                type: "tool-search",
                 toolCallId: "call-1",
-                input: { q: "hello" },
-                output: { result: "world" },
+                toolName: "search",
+                protocol: "mcp-apps",
+                widgetState: null,
+                globals: {
+                  theme: "dark",
+                  displayMode: "inline",
+                },
+                widgetHtml: "<div>Widget</div>",
+                updatedAt: Date.now(),
               },
             ],
-          } as any,
-        ],
-      }),
-    );
-
-    act(() => {
-      useWidgetDebugStore.setState({
-        widgets: new Map([
-          [
-            "call-1",
-            {
-              toolCallId: "call-1",
-              toolName: "search",
-              protocol: "mcp-apps",
-              widgetState: null,
-              globals: {
-                theme: "dark",
-                displayMode: "inline",
-              },
-              widgetHtml: "<div>Widget</div>",
-              updatedAt: Date.now(),
-            },
-          ],
-        ]),
+          ]),
+        });
       });
-    });
 
-    act(() => {
-      vi.advanceTimersByTime(500);
-    });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
 
-    await flushMicrotasks();
-    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+      await flushMicrotasks();
+      expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
 
-    // Blobs were uploaded on the first attempt
-    const uploadsAfterFirstAttempt = (global.fetch as ReturnType<typeof vi.fn>)
-      .mock.calls.length;
-    expect(uploadsAfterFirstAttempt).toBe(3);
+      // Blobs were uploaded on the first attempt
+      const uploadsAfterFirstAttempt = (global.fetch as ReturnType<typeof vi.fn>)
+        .mock.calls.length;
+      expect(uploadsAfterFirstAttempt).toBe(3);
 
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
 
-    await flushMicrotasks();
-    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(2);
+      await flushMicrotasks();
+      expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(2);
 
-    // Retry reuses cached blobs — no new uploads
-    expect(global.fetch).toHaveBeenCalledTimes(uploadsAfterFirstAttempt);
-    expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
+      // Retry reuses cached blobs — no new uploads
+      expect(global.fetch).toHaveBeenCalledTimes(uploadsAfterFirstAttempt);
+      expect(mockGenerateSnapshotUploadUrl).toHaveBeenCalledTimes(3);
 
-    // Same blob IDs should be passed on the retry
-    const firstCall = mockCreateWidgetSnapshot.mock.calls[0][0];
-    const retryCall = mockCreateWidgetSnapshot.mock.calls[1][0];
-    expect(retryCall.widgetHtmlBlobId).toBe(firstCall.widgetHtmlBlobId);
-    expect(retryCall.toolInputBlobId).toBe(firstCall.toolInputBlobId);
-    expect(retryCall.toolOutputBlobId).toBe(firstCall.toolOutputBlobId);
+      // Same blob IDs should be passed on the retry
+      const firstCall = mockCreateWidgetSnapshot.mock.calls[0][0];
+      const retryCall = mockCreateWidgetSnapshot.mock.calls[1][0];
+      expect(retryCall.widgetHtmlBlobId).toBe(firstCall.widgetHtmlBlobId);
+      expect(retryCall.toolInputBlobId).toBe(firstCall.toolInputBlobId);
+      expect(retryCall.toolOutputBlobId).toBe(firstCall.toolOutputBlobId);
 
-    act(() => {
-      useWidgetDebugStore.setState((state) => ({
-        widgets: new Map(state.widgets).set("call-1", {
-          ...state.widgets.get("call-1")!,
-          csp: {
-            mode: "permissive",
-            connectDomains: [],
-            resourceDomains: [],
-            violations: [],
-          },
-        }),
-      }));
-    });
+      act(() => {
+        useWidgetDebugStore.setState((state) => ({
+          widgets: new Map(state.widgets).set("call-1", {
+            ...state.widgets.get("call-1")!,
+            csp: {
+              mode: "permissive",
+              connectDomains: [],
+              resourceDomains: [],
+              violations: [],
+            },
+          }),
+        }));
+      });
 
-    act(() => {
-      vi.advanceTimersByTime(500);
-    });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
 
-    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(2);
-    unmount();
+      expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(2);
+      unmount();
+    } finally {
+      randomSpy.mockRestore();
+    }
   });
 });
