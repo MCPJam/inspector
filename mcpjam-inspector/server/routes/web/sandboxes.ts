@@ -34,9 +34,12 @@ sandboxes.post("/bootstrap", async (c) =>
     );
 
     let response: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       response = await fetch(`${convexUrl}/sandbox/bootstrap`, {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${bearerToken}`,
@@ -44,11 +47,20 @@ sandboxes.post("/bootstrap", async (c) =>
         body: JSON.stringify({ token: body.token }),
       });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new WebRouteError(
+          504,
+          ErrorCode.SERVER_UNREACHABLE,
+          "Sandbox bootstrap service timed out",
+        );
+      }
       throw new WebRouteError(
         502,
         ErrorCode.SERVER_UNREACHABLE,
         `Failed to reach sandbox bootstrap service: ${parseErrorMessage(error)}`,
       );
+    } finally {
+      clearTimeout(timeout);
     }
 
     const responseText = await response.text();
@@ -66,11 +78,9 @@ sandboxes.post("/bootstrap", async (c) =>
           ? payload.error
           : typeof payload?.message === "string"
             ? payload.message
-            : trimmedResponseText || `Sandbox bootstrap failed (${response.status})`;
-      if (
-        response.status === 404 &&
-        message === "No matching routes found"
-      ) {
+            : trimmedResponseText ||
+              `Sandbox bootstrap failed (${response.status})`;
+      if (response.status === 404 && message === "No matching routes found") {
         message =
           "Configured Convex deployment does not expose /sandbox/bootstrap. Check CONVEX_HTTP_URL and VITE_CONVEX_URL.";
       }

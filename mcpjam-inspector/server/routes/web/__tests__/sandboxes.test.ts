@@ -48,4 +48,36 @@ describe("web routes — sandboxes bootstrap", () => {
     expect(data.code).toBe("NOT_FOUND");
     expect(data.message).toContain("does not expose /sandbox/bootstrap");
   });
+
+  it("returns a timeout error when sandbox bootstrap aborts", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(
+      Object.assign(new Error("The operation was aborted"), {
+        name: "AbortError",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await postJson(
+      app,
+      "/api/web/sandboxes/bootstrap",
+      { token: "sandbox-link-token" },
+      token,
+    );
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
+
+    expect(status).toBe(504);
+    expect(data).toEqual({
+      code: "SERVER_UNREACHABLE",
+      message: "Sandbox bootstrap service timed out",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://test-deployment.convex.site/sandbox/bootstrap",
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
 });
