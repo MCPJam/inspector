@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import {
+  ExternalLink,
   Globe,
   Loader2,
   Lock,
+  MoreHorizontal,
   Pencil,
   Plus,
-  Share2,
   Trash2,
 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
@@ -13,7 +14,13 @@ import { toast } from "sonner";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ShareSandboxDialog } from "@/components/sandboxes/ShareSandboxDialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SandboxUsagePanel } from "@/components/sandboxes/SandboxUsagePanel";
 import { SandboxEditor } from "@/components/sandboxes/SandboxEditor";
 import {
@@ -23,6 +30,7 @@ import {
   type SandboxSettings,
 } from "@/hooks/useSandboxes";
 import { useWorkspaceServers } from "@/hooks/useViews";
+import { buildSandboxLink } from "@/lib/sandbox-session";
 
 interface SandboxesTabProps {
   workspaceId: string | null;
@@ -45,7 +53,6 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
   const [selectedSandboxId, setSelectedSandboxId] = useState<string | null>(
     null,
   );
-  const [isShareOpen, setIsShareOpen] = useState(false);
   const [rightPaneView, setRightPaneView] = useState<RightPaneView>("usage");
 
   useEffect(() => {
@@ -106,7 +113,6 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
   }
 
   return (
-    <>
       <ResizablePanelGroup direction="horizontal">
         <ResizablePanel defaultSize={30} minSize={22} maxSize={40}>
           <div className="flex h-full flex-col border-r">
@@ -144,74 +150,99 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
                   return (
                     <div
                       key={sandbox.sandboxId}
-                      className={`mb-2 rounded-lg border px-3 py-3 transition-colors ${
+                      className={`group mb-1 rounded-lg px-3 py-2.5 transition-colors cursor-pointer ${
                         isSelected
-                          ? "border-primary/50 bg-primary/5"
-                          : "border-transparent hover:bg-muted/50"
+                          ? "bg-muted/50"
+                          : "hover:bg-muted/40"
                       }`}
+                      onClick={() => handleSelectSandbox(sandbox.sandboxId)}
                     >
-                      <button
-                        type="button"
-                        onClick={() => handleSelectSandbox(sandbox.sandboxId)}
-                        className="w-full text-left"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">
-                              {sandbox.name}
-                            </p>
-                            {sandbox.description ? (
-                              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                                {sandbox.description}
-                              </p>
-                            ) : null}
-                          </div>
-                          {sandbox.mode === "any_signed_in_with_link" ? (
-                            <Globe className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                          ) : (
-                            <Lock className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                          )}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1">
+                      <div className="flex items-center gap-2">
+                        <p className="min-w-0 flex-1 truncate text-sm font-medium">
+                          {sandbox.name}
+                        </p>
+                        {sandbox.mode === "any_signed_in_with_link" ? (
+                          <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        ) : (
+                          <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={`h-6 shrink-0 gap-1 px-1.5 text-xs text-muted-foreground ${
+                            isSelected
+                              ? "opacity-100"
+                              : "opacity-0 group-hover:opacity-100"
+                          }`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isSelected && selectedSandbox?.link?.token) {
+                              window.open(buildSandboxLink(selectedSandbox.link.token, selectedSandbox.name), "_blank");
+                            } else {
+                              handleSelectSandbox(sandbox.sandboxId);
+                            }
+                          }}
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Try it
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className={`h-6 w-6 shrink-0 p-0 ${
+                                isSelected
+                                  ? "opacity-100"
+                                  : "opacity-0 group-hover:opacity-100"
+                              }`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectSandbox(sandbox.sandboxId);
+                                setRightPaneView("edit");
+                              }}
+                            >
+                              <Pencil className="mr-2 h-3.5 w-3.5" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectSandbox(sandbox.sandboxId);
+                                void handleDelete();
+                              }}
+                            >
+                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                      {sandbox.description ? (
+                        <p className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
+                          {sandbox.description}
+                        </p>
+                      ) : null}
+                      {sandbox.serverNames.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
                           {sandbox.serverNames.map((serverName) => (
                             <Badge
                               key={`${sandbox.sandboxId}-${serverName}`}
-                              variant="secondary"
+                              variant="outline"
+                              className="text-[11px] text-muted-foreground"
                             >
                               {serverName}
                             </Badge>
                           ))}
-                        </div>
-                      </button>
-                      {isSelected && (
-                        <div className="mt-2.5 flex items-center gap-1.5 border-t pt-2.5">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 gap-1.5 px-2 text-xs"
-                            onClick={() => setRightPaneView("edit")}
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Edit
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 gap-1.5 px-2 text-xs"
-                            onClick={() => setRightPaneView("edit")}
-                          >
-                            <Share2 className="h-3 w-3" />
-                            Share
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
-                            onClick={() => void handleDelete()}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            Delete
-                          </Button>
                         </div>
                       )}
                     </div>
@@ -266,17 +297,5 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
-
-      {selectedSandbox ? (
-        <ShareSandboxDialog
-          isOpen={isShareOpen}
-          onClose={() => setIsShareOpen(false)}
-          sandbox={selectedSandbox}
-          onUpdated={(sandbox) => {
-            setSelectedSandboxId(sandbox.sandboxId);
-          }}
-        />
-      ) : null}
-    </>
   );
 }

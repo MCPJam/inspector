@@ -11,6 +11,7 @@ import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
 import {
   clearSharedServerSession,
   extractSharedTokenFromPath,
+  getShareableAppOrigin,
   readSharedServerSession,
   slugify,
   SHARED_OAUTH_PENDING_KEY,
@@ -562,7 +563,7 @@ export function SharedServerChatPage({
       return;
     }
 
-    const shareUrl = `${window.location.origin}/shared/${slugify(session.payload.serverName)}/${encodeURIComponent(token)}`;
+    const shareUrl = `${getShareableAppOrigin()}/shared/${slugify(session.payload.serverName)}/${encodeURIComponent(token)}`;
     try {
       await navigator.clipboard.writeText(shareUrl);
       toast.success("Share link copied");

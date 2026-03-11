@@ -1,4 +1,4 @@
-import { slugify } from "@/lib/shared-server-session";
+import { getShareableAppOrigin, slugify } from "@/lib/shared-server-session";
 
 export type SandboxShareMode = "any_signed_in_with_link" | "invited_only";
 
@@ -169,5 +169,6 @@ export function clearSandboxSignInReturnPath(): void {
 }
 
 export function buildSandboxLink(token: string, sandboxName: string): string {
-  return `${window.location.origin}/sandbox/${slugify(sandboxName)}/${encodeURIComponent(token)}`;
+  const origin = getShareableAppOrigin();
+  return `${origin}/sandbox/${slugify(sandboxName)}/${encodeURIComponent(token)}`;
 }

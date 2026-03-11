@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildSandboxLink,
   clearSandboxSession,
   clearSandboxSignInReturnPath,
   extractSandboxTokenFromPath,
@@ -96,5 +97,11 @@ describe("sandbox-session", () => {
 
     localStorage.setItem(SANDBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY, "/servers");
     expect(readSandboxSignInReturnPath()).toBeNull();
+  });
+
+  it("builds sandbox links from the current browser origin", () => {
+    expect(buildSandboxLink("token 123", "Demo Sandbox")).toBe(
+      `${window.location.origin}/sandbox/demo-sandbox/token%20123`,
+    );
   });
 });

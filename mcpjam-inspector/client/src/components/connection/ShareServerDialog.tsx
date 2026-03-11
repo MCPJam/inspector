@@ -45,8 +45,10 @@ import {
   useServerShareMutations,
   useServerShareSettings,
 } from "@/hooks/useServerShares";
-import { slugify } from "@/lib/shared-server-session";
-import { HOSTED_MODE } from "@/lib/config";
+import {
+  getShareableAppOrigin,
+  slugify,
+} from "@/lib/shared-server-session";
 import { ShareUsageDialog } from "./share-usage/ShareUsageDialog";
 
 interface ShareServerDialogProps {
@@ -140,9 +142,7 @@ export function ShareServerDialog({
     if (!settings?.link?.token) return;
     try {
       const slug = slugify(serverName);
-      const origin = HOSTED_MODE
-        ? window.location.origin
-        : "https://app.mcpjam.com";
+      const origin = getShareableAppOrigin();
       const shareUrl = `${origin}/shared/${slug}/${encodeURIComponent(settings.link.token)}`;
       await navigator.clipboard.writeText(shareUrl);
       toast.success("Share link copied");

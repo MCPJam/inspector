@@ -1,5 +1,4 @@
 import { serve } from "@hono/node-server";
-import dotenv from "dotenv";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -8,10 +7,11 @@ import { bodyLimit } from "hono/body-limit";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { readFileSync, existsSync } from "fs";
-import { join, dirname, resolve } from "path";
+import { readFileSync } from "fs";
+import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@mcpjam/sdk";
+import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env";
 
 // Security imports
 import {
@@ -205,37 +205,8 @@ const strictModeResponse = (c: any, path: string) =>
   );
 
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
-const envFile =
-  process.env.NODE_ENV === "production"
-    ? ".env.production"
-    : ".env.development";
-
-// Determine where to look for .env file:
-// 1. Electron: Resources folder
-// 2. npm package: package root (two levels up from dist/server)
-// 3. Local dev: current working directory
-let envPath = envFile;
-if (
-  process.env.ELECTRON_APP === "true" &&
-  process.env.ELECTRON_RESOURCES_PATH
-) {
-  envPath = join(process.env.ELECTRON_RESOURCES_PATH, envFile);
-} else {
-  const packageRoot = resolve(__dirname, "..", "..");
-  const packageEnvPath = join(packageRoot, envFile);
-  if (existsSync(packageEnvPath)) {
-    envPath = packageEnvPath;
-  }
-}
-
-dotenv.config({ path: envPath });
-
-// Validate required env vars
-if (!process.env.CONVEX_HTTP_URL) {
-  throw new Error(
-    "CONVEX_HTTP_URL is required but not set. Please set it via environment variable or .env file.",
-  );
-}
+const loadedEnv = loadInspectorEnv(__dirname);
+warnOnConvexDevMisconfiguration(loadedEnv);
 
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
 const mcpClientManager = new MCPClientManager(

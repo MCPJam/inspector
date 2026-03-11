@@ -44,17 +44,21 @@ async function getHostedBearerHeader(
 }
 
 async function readRouteErrorMessage(response: Response): Promise<string> {
+  const bodyText = await response.text();
+  const trimmedBody = bodyText.trim();
+
   try {
-    const body = (await response.json()) as
+    const body = (trimmedBody ? JSON.parse(trimmedBody) : null) as
       | { message?: string; error?: string }
-      | undefined;
+      | null;
     return (
       body?.message ||
       body?.error ||
+      trimmedBody ||
       `Request failed with status ${response.status}`
     );
   } catch {
-    return `Request failed with status ${response.status}`;
+    return trimmedBody || `Request failed with status ${response.status}`;
   }
 }
 

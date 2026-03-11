@@ -51,18 +51,29 @@ sandboxes.post("/bootstrap", async (c) =>
       );
     }
 
+    const responseText = await response.text();
+    const trimmedResponseText = responseText.trim();
     let payload: any = null;
     try {
-      payload = await response.json();
+      payload = trimmedResponseText ? JSON.parse(trimmedResponseText) : null;
     } catch {
       // ignored
     }
 
     if (!response.ok) {
-      const message =
+      let message =
         typeof payload?.error === "string"
           ? payload.error
-          : `Sandbox bootstrap failed (${response.status})`;
+          : typeof payload?.message === "string"
+            ? payload.message
+            : trimmedResponseText || `Sandbox bootstrap failed (${response.status})`;
+      if (
+        response.status === 404 &&
+        message === "No matching routes found"
+      ) {
+        message =
+          "Configured Convex deployment does not expose /sandbox/bootstrap. Check CONVEX_HTTP_URL and VITE_CONVEX_URL.";
+      }
       const code =
         response.status === 401
           ? ErrorCode.UNAUTHORIZED
