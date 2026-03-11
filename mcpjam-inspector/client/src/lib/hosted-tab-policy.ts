@@ -15,6 +15,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "support",
   "settings",
   "oauth-flow",
+  "learning",
 ] as const;
 
 export const HOSTED_HASH_ALLOWED_TABS = [

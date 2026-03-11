@@ -14,6 +14,7 @@ import {
   SquareSlash,
   MessageCircleQuestionIcon,
   GitBranch,
+  GraduationCap,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
@@ -134,6 +135,12 @@ const navigationSections: NavSection[] = [
         icon: SquareSlash,
       },
       {
+        title: "Learning",
+        url: "#learning",
+        icon: GraduationCap,
+        featureFlag: "mcpjam-learning",
+      },
+      {
         title: "OAuth Debugger",
         url: "#oauth-flow",
         icon: Workflow,
@@ -217,6 +224,8 @@ export function MCPSidebar({
 }: MCPSidebarProps) {
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
+  const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
+  const learningEnabled = import.meta.env.DEV || learningFlagEnabled;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { updateReady, restartAndInstall } = useUpdateNotification();
   const [toolsDataMap, setToolsDataMap] = useState<
@@ -307,8 +316,11 @@ export function MCPSidebar({
       }
     : null;
   const featureFlags = useMemo(
-    () => ({ "ci-evals-enabled": !!ciEvalsEnabled }),
-    [ciEvalsEnabled],
+    () => ({
+      "ci-evals-enabled": !!ciEvalsEnabled,
+      "mcpjam-learning": !!learningEnabled,
+    }),
+    [ciEvalsEnabled, learningEnabled],
   );
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
