@@ -162,7 +162,8 @@ export function suiteRunToEvalResults(
  */
 export function iterationsToEvalResultInputs(
   testName: string,
-  iterations: IterationResult[]
+  iterations: IterationResult[],
+  expectedToolCalls?: EvalExpectedToolCall[]
 ): EvalResultInput[] {
   return iterations.map((iteration, index) => {
     const prompts = iteration.prompts ?? [];
@@ -191,6 +192,7 @@ export function iterationsToEvalResultInputs(
       query: prompts[0]?.getPrompt() ?? testName,
       passed: iteration.passed,
       durationMs: durationMs > 0 ? durationMs : undefined,
+      expectedToolCalls,
       actualToolCalls,
       tokens: {
         input: iteration.tokens.input,
@@ -217,10 +219,12 @@ export function iterationsToEvalResultInputs(
  * Convert suite test results for EvalSuite internal auto-save (preserves existing behavior).
  */
 export function suiteTestResultsToEvalResultInputs(
-  testResults: Map<string, EvalRunResult>
+  testResults: Map<string, EvalRunResult>,
+  expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
+    const expectedToolCalls = expectedToolCallsByTest?.[testName];
     for (let index = 0; index < testResult.iterationDetails.length; index++) {
       const iteration = testResult.iterationDetails[index];
       const prompts = iteration.prompts ?? [];
@@ -249,6 +253,7 @@ export function suiteTestResultsToEvalResultInputs(
         query: prompts[0]?.getPrompt() ?? testName,
         passed: iteration.passed,
         durationMs: durationMs > 0 ? durationMs : undefined,
+        expectedToolCalls,
         actualToolCalls,
         tokens: {
           input: iteration.tokens.input,

@@ -28,10 +28,27 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Inject Sentry debug IDs
+        run: npx @sentry/cli sourcemaps inject ./dist
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish --access public --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Upload source maps to Sentry
+        continue-on-error: true
+        run: |
+          version=$(node -p "require('./package.json').version")
+          npx @sentry/cli sourcemaps upload \
+            --release="@mcpjam/sdk@${version}" \
+            --org=mcpjam-gh \
+            --project=mcpjam-sdk \
+            ./dist
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Get published version
         id: version

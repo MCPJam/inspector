@@ -528,6 +528,7 @@ export function MCPAppsRenderer({
       toolName,
       protocol: "mcp-apps",
       widgetState: null, // MCP Apps don't have widget state in the same way
+      prefersBorder,
       globals: {
         theme: themeMode,
         displayMode: effectiveDisplayMode,
@@ -547,6 +548,7 @@ export function MCPAppsRenderer({
     timeZone,
     deviceCapabilities,
     safeAreaInsets,
+    prefersBorder,
   ]);
 
   // Update globals in debug store when they change

@@ -163,7 +163,7 @@ await manager.connectToServer("asana", {
   },
 });
 
-// Get tools for AI SDK integration
+// Get tools for TestAgent
 const tools = await manager.getToolsForAiSdk(["everything", "asana"]);
 
 // Direct MCP operations
@@ -187,6 +187,8 @@ await manager.disconnectServer("everything");
 Runs LLM prompts with MCP tool access.
 
 ```ts
+import { hasToolCall } from "@mcpjam/sdk";
+
 const agent = new TestAgent({
   tools: await manager.getToolsForAiSdk(),
   model: "openai/gpt-4o",        // provider/model format
@@ -202,7 +204,23 @@ const result = await agent.prompt("Add 2 and 3");
 // Multi-turn with context
 const r1 = await agent.prompt("Who am I?");
 const r2 = await agent.prompt("List my projects", { context: [r1] });
+
+// Stop the loop after the step where a tool is called
+const r3 = await agent.prompt("Search tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+r3.hasToolCall("search_tasks");          // true
+
+// Bound prompt runtime
+const r4 = await agent.prompt("Run a long workflow", {
+  timeout: { totalMs: 10_000, stepMs: 2_500 },
+});
+r4.hasError();                           // true if the prompt timed out
 ```
+
+`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+
+`timeout` bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` is accepted for parity but mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
 
 **Supported providers:** `openai`, `anthropic`, `azure`, `google`, `mistral`, `deepseek`, `ollama`, `openrouter`, `xai`
 
@@ -380,9 +398,7 @@ The SDK collects anonymous usage metrics (e.g., eval test run counts) to help im
 To disable telemetry, set either of these environment variables:
 
 ```bash
-# Community standard
 export DO_NOT_TRACK=1
-
-# Or project-specific
+# or
 export MCPJAM_TELEMETRY_DISABLED=1
 ```

@@ -3,7 +3,7 @@
  */
 
 import { generateText, stepCountIs, dynamicTool, jsonSchema } from "ai";
-import type { ToolSet, ModelMessage, UserModelMessage } from "ai";
+import type { StopCondition, ToolSet, ModelMessage, UserModelMessage } from "ai";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
@@ -318,6 +318,19 @@ export class TestAgent implements EvalAgent {
     return instrumented;
   }
 
+  private resolveStopWhen(
+    stopWhen?: PromptOptions["stopWhen"]
+  ): Array<StopCondition<ToolSet>> {
+    const base = [stepCountIs(this.maxSteps)];
+
+    if (stopWhen == null) {
+      return base;
+    }
+
+    const conditions = Array.isArray(stopWhen) ? stopWhen : [stopWhen];
+    return [...base, ...conditions];
+  }
+
   /**
    * Build an array of ModelMessages from previous PromptResult(s) for multi-turn context.
    * @param context - Single PromptResult or array of PromptResults to include as context
@@ -383,10 +396,13 @@ export class TestAgent implements EvalAgent {
       const model = createModelFromString(this.model, modelOptions);
 
       // Instrument tools to track MCP execution time
-      const instrumentedTools = this.createInstrumentedTools((ms) => {
-        totalMcpMs += ms;
-        stepMcpMs += ms; // Accumulate per-step for LLM calculation
-      }, widgetSnapshots);
+      const instrumentedTools = this.createInstrumentedTools(
+        (ms) => {
+          totalMcpMs += ms;
+          stepMcpMs += ms; // Accumulate per-step for LLM calculation
+        },
+        widgetSnapshots
+      );
 
       // Build messages array if context is provided for multi-turn
       const contextMessages = this.buildContextMessages(options?.context);
@@ -405,9 +421,12 @@ export class TestAgent implements EvalAgent {
         ...(this.temperature !== undefined && {
           temperature: this.temperature,
         }),
+        ...(options?.timeout !== undefined && {
+          timeout: options.timeout,
+        }),
         // Use stopWhen with stepCountIs for controlling max agentic steps
         // AI SDK v6+ uses this instead of maxSteps
-        stopWhen: stepCountIs(this.maxSteps),
+        stopWhen: this.resolveStopWhen(options?.stopWhen),
         onStepFinish: () => {
           const now = Date.now();
           const stepDuration = now - lastStepEndTime;

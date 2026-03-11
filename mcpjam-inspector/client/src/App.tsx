@@ -7,6 +7,7 @@ import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
+import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
@@ -577,6 +578,8 @@ export default function App() {
           )}
 
           {activeTab === "skills" && <SkillsTab />}
+
+          {activeTab === "learning" && <LearningTab />}
 
           <div
             className={

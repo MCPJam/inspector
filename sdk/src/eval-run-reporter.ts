@@ -17,6 +17,7 @@ import {
 } from "./report-eval-results.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { EvalRunResult } from "./EvalTest.js";
+import { captureEvalReportingFailure } from "./sentry.js";
 import {
   runToEvalResults,
   suiteRunToEvalResults,
@@ -110,6 +111,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
   private generatedIterationCount = 0;
   private expectedIterations: number | undefined;
   private addedCount = 0;
+  private passedCount = 0;
 
   constructor(input: CreateEvalRunReporterInput) {
     this.input = input;
@@ -122,14 +124,16 @@ class EvalRunReporterImpl implements EvalRunReporter {
     this.expectedIterations = input.expectedIterations;
     if (Array.isArray(input.results) && input.results.length > 0) {
       this.buffered.push(...input.results);
-      this.addedCount += input.results.length;
+      for (const result of input.results) {
+        this.recordAddedResult(result);
+      }
     }
   }
 
   add(result: EvalResultInput): void {
     this.ensureNotFinalized();
     this.buffered.push(result);
-    this.addedCount += 1;
+    this.recordAddedResult(result);
   }
 
   async record(result: EvalResultInput): Promise<void> {
@@ -249,6 +253,15 @@ class EvalRunReporterImpl implements EvalRunReporter {
       }
       this.buffered = [];
     } catch (error) {
+      await captureEvalReportingFailure(error, {
+        apiKey: this.runtimeConfig.apiKey,
+        baseUrl: this.runtimeConfig.baseUrl,
+        bufferedCount: this.buffered.length,
+        entrypoint: "evalRunReporter.flush",
+        resultCount: this.buffered.length,
+        runId: this.runId,
+        suiteName: this.input.suiteName,
+      });
       if (this.input.strict) {
         throw error;
       }
@@ -310,6 +323,15 @@ class EvalRunReporterImpl implements EvalRunReporter {
       this.finalized = true;
       return result;
     } catch (error) {
+      await captureEvalReportingFailure(error, {
+        apiKey: this.runtimeConfig.apiKey,
+        baseUrl: this.runtimeConfig.baseUrl,
+        bufferedCount: this.buffered.length,
+        entrypoint: "evalRunReporter.finalize",
+        resultCount: this.buffered.length,
+        runId: this.runId,
+        suiteName: this.input.suiteName,
+      });
       if (this.input.strict) {
         throw error;
       }
@@ -362,8 +384,8 @@ class EvalRunReporterImpl implements EvalRunReporter {
   }
 
   private buildLocalFallbackResult(): ReportEvalResultsOutput {
-    const total = this.buffered.length;
-    const passed = this.buffered.filter((result) => result.passed).length;
+    const total = this.addedCount;
+    const passed = this.passedCount;
     const failed = total - passed;
     const passRate = total > 0 ? passed / total : 0;
     const minimumPassRate = this.input.passCriteria?.minimumPassRate ?? 100;
@@ -381,6 +403,13 @@ class EvalRunReporterImpl implements EvalRunReporter {
         passRate,
       },
     };
+  }
+
+  private recordAddedResult(result: EvalResultInput): void {
+    this.addedCount += 1;
+    if (result.passed) {
+      this.passedCount += 1;
+    }
   }
 }
 

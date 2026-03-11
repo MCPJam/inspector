@@ -464,6 +464,26 @@ describe("iterationsToEvalResultInputs", () => {
     expect(results[0].error).toBe("timeout");
     expect(results[0].passed).toBe(false);
   });
+
+  it("forwards expectedToolCalls when provided", () => {
+    const iteration = makeIteration({ prompts: [makePrompt({})] });
+    const expected = [
+      { toolName: "tool_a", arguments: { x: 1 } },
+      { toolName: "tool_b" },
+    ];
+
+    const results = iterationsToEvalResultInputs("t", [iteration], expected);
+
+    expect(results[0].expectedToolCalls).toEqual(expected);
+  });
+
+  it("leaves expectedToolCalls undefined when omitted", () => {
+    const iteration = makeIteration({ prompts: [makePrompt({})] });
+
+    const results = iterationsToEvalResultInputs("t", [iteration]);
+
+    expect(results[0].expectedToolCalls).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -528,5 +548,59 @@ describe("suiteTestResultsToEvalResultInputs", () => {
       { toolName: "a", arguments: {} },
       { toolName: "b", arguments: {} },
     ]);
+  });
+
+  it("forwards per-test expectedToolCalls when provided", () => {
+    const testResults = new Map<string, EvalRunResult>();
+    testResults.set(
+      "test-a",
+      makeRunResult([makeIteration({ prompts: [makePrompt({})] })])
+    );
+    testResults.set(
+      "test-b",
+      makeRunResult([makeIteration({ prompts: [makePrompt({})] })])
+    );
+
+    const expectedByTest = {
+      "test-a": [{ toolName: "tool_x", arguments: { k: 1 } }],
+      "test-b": [{ toolName: "tool_y" }],
+    };
+
+    const results = suiteTestResultsToEvalResultInputs(
+      testResults,
+      expectedByTest
+    );
+
+    expect(results[0].expectedToolCalls).toEqual([
+      { toolName: "tool_x", arguments: { k: 1 } },
+    ]);
+    expect(results[1].expectedToolCalls).toEqual([{ toolName: "tool_y" }]);
+  });
+
+  it("leaves expectedToolCalls undefined for tests without them", () => {
+    const testResults = new Map<string, EvalRunResult>();
+    testResults.set(
+      "test-with",
+      makeRunResult([makeIteration({ prompts: [makePrompt({})] })])
+    );
+    testResults.set(
+      "test-without",
+      makeRunResult([makeIteration({ prompts: [makePrompt({})] })])
+    );
+
+    const expectedByTest = {
+      "test-with": [{ toolName: "tool_z" }],
+    };
+
+    const results = suiteTestResultsToEvalResultInputs(
+      testResults,
+      expectedByTest
+    );
+
+    const withResult = results.find((r) => r.caseTitle === "test-with");
+    const withoutResult = results.find((r) => r.caseTitle === "test-without");
+
+    expect(withResult?.expectedToolCalls).toEqual([{ toolName: "tool_z" }]);
+    expect(withoutResult?.expectedToolCalls).toBeUndefined();
   });
 });

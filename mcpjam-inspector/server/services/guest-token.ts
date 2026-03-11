@@ -87,7 +87,9 @@ function loadPersistedLocalDevKeyPair(): boolean {
     const privatePem = readFileSync(privatePath, "utf-8");
     const publicPem = readFileSync(publicPath, "utf-8");
     setKeyPair(createPrivateKey(privatePem), createPublicKey(publicPem));
-    logger.info(`Guest JWT: using local dev signing key pair from ${path.dirname(privatePath)}`);
+    logger.info(
+      `Guest JWT: using local dev signing key pair from ${path.dirname(privatePath)}`,
+    );
     return true;
   } catch (error) {
     logger.warn(
@@ -265,7 +267,9 @@ export function validateGuestToken(token: string): {
   guestId?: string;
 } {
   const result = validateGuestTokenDetailed(token);
-  return result.valid ? { valid: true, guestId: result.guestId } : { valid: false };
+  return result.valid
+    ? { valid: true, guestId: result.guestId }
+    : { valid: false };
 }
 
 export function validateGuestTokenDetailed(token: string): {

@@ -49,6 +49,9 @@ export interface MCPJamHandlerOptions {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  onConversationComplete?: (
+    fullHistory: ModelMessage[],
+  ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
 }
 
@@ -733,6 +736,7 @@ export async function handleMCPJamFreeChatModel(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    onConversationComplete,
     onStreamComplete,
   } = options;
 
@@ -740,6 +744,7 @@ export async function handleMCPJamFreeChatModel(
   const messageHistory = [...messages];
   const usedToolCallIds = collectUsedToolCallIds(messageHistory);
   let steps = 0;
+  let runSucceeded = false;
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
@@ -796,6 +801,8 @@ export async function handleMCPJamFreeChatModel(
             totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
           } as unknown as UIMessageChunk);
         }
+
+        runSucceeded = true;
       } catch (error) {
         logger.error("[mcpjam-stream-handler] Error in agentic loop", error);
         writer.write({
@@ -807,12 +814,25 @@ export async function handleMCPJamFreeChatModel(
     onFinish: async () => {
       try {
         logger.info("[mcpjam-stream-debug] stream_on_finish");
-        await onStreamComplete?.();
-      } catch (cleanupError) {
-        logger.error(
-          "[mcpjam-stream-handler] Error while running stream cleanup",
-          cleanupError,
-        );
+        if (runSucceeded) {
+          try {
+            await onConversationComplete?.([...messageHistory]);
+          } catch (persistenceError) {
+            logger.error(
+              "[mcpjam-stream-handler] Error while persisting conversation",
+              persistenceError,
+            );
+          }
+        }
+      } finally {
+        try {
+          await onStreamComplete?.();
+        } catch (cleanupError) {
+          logger.error(
+            "[mcpjam-stream-handler] Error while running stream cleanup",
+            cleanupError,
+          );
+        }
       }
     },
   });

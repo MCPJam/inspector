@@ -77,12 +77,12 @@ describe("guest-token service", () => {
       const { token } = issueGuestToken();
       const result = validateGuestToken(token);
       expect(result.valid).toBe(true);
-      expect(existsSync(path.join(testGuestKeyDir, "guest-jwt-private.pem"))).toBe(
-        true,
-      );
-      expect(existsSync(path.join(testGuestKeyDir, "guest-jwt-public.pem"))).toBe(
-        true,
-      );
+      expect(
+        existsSync(path.join(testGuestKeyDir, "guest-jwt-private.pem")),
+      ).toBe(true);
+      expect(
+        existsSync(path.join(testGuestKeyDir, "guest-jwt-public.pem")),
+      ).toBe(true);
     });
 
     it("tokens from different local key dirs are incompatible", () => {
@@ -91,7 +91,9 @@ describe("guest-token service", () => {
 
       // Re-initialize with a different persisted key pair
       rmSync(testGuestKeyDir, { recursive: true, force: true });
-      testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "guest-token-test-"));
+      testGuestKeyDir = mkdtempSync(
+        path.join(os.tmpdir(), "guest-token-test-"),
+      );
       process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
       initGuestTokenSecret();
       const result = validateGuestToken(token1);

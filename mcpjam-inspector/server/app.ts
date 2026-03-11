@@ -53,10 +53,7 @@ export function createHonoApp() {
   // 3. Local dev: current working directory
   let envPath = envFile;
 
-  if (
-    process.env.IS_PACKAGED === "true" &&
-    (process as any).resourcesPath
-  ) {
+  if (process.env.IS_PACKAGED === "true" && (process as any).resourcesPath) {
     // Electron packaged app - use process.resourcesPath directly
     envPath = join((process as any).resourcesPath, envFile);
   } else if (process.env.ELECTRON_APP === "true") {

@@ -54,6 +54,7 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
+import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -148,6 +149,38 @@ export interface UseChatSessionReturn {
   inputDisabled: boolean;
 }
 
+function isTransientMessage(message: UIMessage): boolean {
+  if (
+    message.role === "system" &&
+    (message as { metadata?: { source?: string } }).metadata?.source ===
+      "server-instruction"
+  ) {
+    return true;
+  }
+
+  return message.id?.startsWith("widget-state-") ?? false;
+}
+
+function shouldForkChatSession(
+  previousMessages: UIMessage[],
+  nextMessages: UIMessage[],
+): boolean {
+  const previousPersistentIds = previousMessages
+    .filter((message) => !isTransientMessage(message))
+    .map((message) => message.id);
+  const nextPersistentIds = nextMessages
+    .filter((message) => !isTransientMessage(message))
+    .map((message) => message.id);
+
+  if (nextPersistentIds.length >= previousPersistentIds.length) {
+    return false;
+  }
+
+  return nextPersistentIds.every(
+    (messageId, index) => messageId === previousPersistentIds[index],
+  );
+}
+
 function isAuthDeniedError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const withStatus = error as { status?: unknown; message?: unknown };
@@ -212,6 +245,9 @@ export function useChatSession({
   requireToolApprovalRef.current = requireToolApproval;
   const guestMode =
     HOSTED_MODE && !isAuthenticated && !isAuthLoading && !hostedWorkspaceId;
+  const skipNextForkDetectionRef = useRef(false);
+  const pendingForkSessionIdRef = useRef<string | null>(null);
+  const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -316,6 +352,7 @@ export function useChatSession({
       }
       return {
         workspaceId: hostedWorkspaceId,
+        chatSessionId,
         selectedServerIds: hostedSelectedServerIds,
         accessScope: "chat_v2" as const,
         ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
@@ -351,6 +388,7 @@ export function useChatSession({
     systemPrompt,
     selectedServers,
     hostedWorkspaceId,
+    chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
@@ -364,7 +402,7 @@ export function useChatSession({
     stop,
     status,
     error,
-    setMessages,
+    setMessages: baseSetMessages,
     addToolApprovalResponse,
   } = useChat({
     id: chatSessionId,
@@ -373,6 +411,57 @@ export function useChatSession({
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
   });
+
+  useSharedChatWidgetCapture({
+    enabled: HOSTED_MODE && !!hostedShareToken && isAuthenticated,
+    chatSessionId,
+    hostedShareToken,
+    messages,
+  });
+
+  const setMessages = useCallback<
+    React.Dispatch<React.SetStateAction<UIMessage[]>>
+  >(
+    (updater) => {
+      baseSetMessages((previousMessages) => {
+        const nextMessages =
+          typeof updater === "function" ? updater(previousMessages) : updater;
+        const shouldSkipForkDetection = skipNextForkDetectionRef.current;
+        skipNextForkDetectionRef.current = false;
+
+        if (
+          !shouldSkipForkDetection &&
+          shouldForkChatSession(previousMessages, nextMessages)
+        ) {
+          const nextSessionId = generateId();
+          pendingForkSessionIdRef.current = nextSessionId;
+          pendingForkMessagesRef.current = nextMessages;
+          queueMicrotask(() => {
+            if (pendingForkSessionIdRef.current === nextSessionId) {
+              setChatSessionId(nextSessionId);
+            }
+          });
+        }
+
+        return nextMessages;
+      });
+    },
+    [baseSetMessages],
+  );
+
+  useLayoutEffect(() => {
+    if (pendingForkSessionIdRef.current !== chatSessionId) {
+      return;
+    }
+
+    const pendingForkMessages = pendingForkMessagesRef.current;
+    pendingForkSessionIdRef.current = null;
+    pendingForkMessagesRef.current = null;
+
+    if (pendingForkMessages) {
+      baseSetMessages(pendingForkMessages);
+    }
+  }, [baseSetMessages, chatSessionId]);
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -398,6 +487,9 @@ export function useChatSession({
 
   // Reset chat
   const resetChat = useCallback(() => {
+    skipNextForkDetectionRef.current = true;
+    pendingForkSessionIdRef.current = null;
+    pendingForkMessagesRef.current = null;
     setChatSessionId(generateId());
     setMessages([]);
     onResetRef.current?.();
@@ -443,6 +535,9 @@ export function useChatSession({
 
       // Reset chat to force new session with updated auth headers
       if (active) {
+        skipNextForkDetectionRef.current = true;
+        pendingForkSessionIdRef.current = null;
+        pendingForkMessagesRef.current = null;
         setChatSessionId(generateId());
         setMessages([]);
         onResetRef.current?.();

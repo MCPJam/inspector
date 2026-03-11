@@ -155,7 +155,7 @@ chatV2.post("/", async (c) => {
       const modelMessages = await convertToModelMessages(messages);
 
       return handleMCPJamFreeChatModel({
-        messages: scrubMessages(modelMessages as ModelMessage[]),
+        messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,

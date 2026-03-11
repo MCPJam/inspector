@@ -271,7 +271,10 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
   if (shouldPreferGuestBearer()) {
     const guestToken = await getGuestBearerToken();
     if (guestToken) {
-      cachedBearerToken = { token: guestToken, expiresAt: now + TOKEN_CACHE_TTL_MS };
+      cachedBearerToken = {
+        token: guestToken,
+        expiresAt: now + TOKEN_CACHE_TTL_MS,
+      };
       return `Bearer ${guestToken}`;
     }
   }
@@ -293,7 +296,10 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
   // Fall back to guest token
   const guestToken = await getGuestBearerToken();
   if (guestToken) {
-    cachedBearerToken = { token: guestToken, expiresAt: now + TOKEN_CACHE_TTL_MS };
+    cachedBearerToken = {
+      token: guestToken,
+      expiresAt: now + TOKEN_CACHE_TTL_MS,
+    };
     return `Bearer ${guestToken}`;
   }
 

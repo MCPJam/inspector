@@ -4,6 +4,8 @@ import type {
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
+import { EvalReportingError } from "./errors.js";
+import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_DELAYS_MS = [250, 750, 1750];
@@ -43,6 +45,53 @@ type BackendEnvelope<T> = {
 type EvalArtifactUploadUrlResponse = {
   uploadUrl: string;
 };
+
+function resolveApiKey(input: Pick<ReportEvalResultsInput, "apiKey">): string | undefined {
+  return input.apiKey ?? process.env.MCPJAM_API_KEY;
+}
+
+function resolveBaseUrl(input: Pick<ReportEvalResultsInput, "baseUrl">): string {
+  return trimTrailingSlash(
+    input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL
+  );
+}
+
+function getResultCount(results: ReportEvalResultsInput["results"]): number | undefined {
+  return Array.isArray(results) ? results.length : undefined;
+}
+
+function buildFailureContext(
+  input: ReportEvalResultsInput,
+  entrypoint: string
+): Parameters<typeof captureEvalReportingFailure>[1] {
+  return {
+    apiKey: resolveApiKey(input),
+    baseUrl: resolveBaseUrl(input),
+    entrypoint,
+    framework: input.framework,
+    resultCount: getResultCount(input.results),
+    suiteName: input.suiteName,
+  };
+}
+
+function toEvalReportingError(
+  error: unknown,
+  endpoint: string,
+  attemptCount: number,
+  statusCode?: number
+): EvalReportingError {
+  if (error instanceof EvalReportingError) {
+    return error;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return new EvalReportingError(message, {
+    attemptCount,
+    cause: error,
+    endpoint,
+    statusCode,
+  });
+}
 
 function getByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
@@ -118,16 +167,14 @@ function chunkResultsForUpload(
 }
 
 function createRuntimeConfig(input: ReportEvalResultsInput): RuntimeConfig {
-  const apiKey = input.apiKey ?? process.env.MCPJAM_API_KEY;
+  const apiKey = resolveApiKey(input);
   if (!apiKey) {
     throw new Error("Missing MCPJAM API key");
   }
 
   return {
     apiKey,
-    baseUrl: trimTrailingSlash(
-      input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL
-    ),
+    baseUrl: resolveBaseUrl(input),
     timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
     retryDelaysMs: DEFAULT_RETRY_DELAYS_MS,
   };
@@ -185,16 +232,24 @@ async function requestWithRetry<T>(
         continue;
       }
 
-      throw new Error(message);
+      throw new EvalReportingError(message, {
+        attemptCount: attempt + 1,
+        endpoint: path,
+        statusCode: response.status,
+      });
     } catch (error) {
       clearTimeout(timeoutHandle);
       lastError = error;
 
       const isAbortError =
         error instanceof Error && error.name === "AbortError";
+      const errorStatusCode =
+        error instanceof EvalReportingError ? error.statusCode : undefined;
       const shouldRetry =
         isAbortError ||
         error instanceof TypeError ||
+        (typeof errorStatusCode === "number" &&
+          isRetryableStatus(errorStatusCode)) ||
         (error instanceof Error &&
           /network|fetch|timeout|429|5\d\d/i.test(error.message));
 
@@ -203,13 +258,15 @@ async function requestWithRetry<T>(
         continue;
       }
 
-      throw error;
+      throw toEvalReportingError(error, path, attempt + 1, errorStatusCode);
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Failed to send eval report");
+  throw toEvalReportingError(
+    lastError ?? new Error("Failed to send eval report"),
+    path,
+    config.retryDelaysMs.length + 1
+  );
 }
 
 async function startEvalRun(
@@ -377,6 +434,16 @@ async function uploadWidgetSnapshots(
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        await addBreadcrumb({
+          category: "eval-reporting.widget-upload",
+          data: {
+            baseUrl: config.baseUrl,
+            caseTitle: result.caseTitle,
+            toolName: snapshot.toolName,
+          },
+          level: "warning",
+          message: `Widget snapshot upload failed for "${snapshot.toolName}"`,
+        });
         console.warn(
           `[mcpjam/sdk] skipped widget snapshot upload for "${snapshot.toolName}": ${message}`
         );
@@ -415,7 +482,7 @@ function shouldUseOneShotUpload(
   return bytes <= CHUNK_TARGET_BYTES && config.baseUrl.length >= 0;
 }
 
-export async function reportEvalResults(
+async function reportEvalResultsInternal(
   input: ReportEvalResultsInput
 ): Promise<ReportEvalResultsOutput> {
   if (!input.suiteName || input.suiteName.trim().length === 0) {
@@ -498,12 +565,30 @@ export async function reportEvalResults(
   });
 }
 
+export async function reportEvalResults(
+  input: ReportEvalResultsInput
+): Promise<ReportEvalResultsOutput> {
+  try {
+    return await reportEvalResultsInternal(input);
+  } catch (error) {
+    await captureEvalReportingFailure(
+      error,
+      buildFailureContext(input, "reportEvalResults")
+    );
+    throw error;
+  }
+}
+
 export async function reportEvalResultsSafely(
   input: ReportEvalResultsInput
 ): Promise<ReportEvalResultsOutput | null> {
   try {
-    return await reportEvalResults(input);
+    return await reportEvalResultsInternal(input);
   } catch (error) {
+    await captureEvalReportingFailure(
+      error,
+      buildFailureContext(input, "reportEvalResultsSafely")
+    );
     if (input.strict) {
       throw error;
     }
@@ -525,6 +610,7 @@ export {
   createRuntimeConfig,
   finalizeEvalRun,
   generateExternalRunId,
+  reportEvalResultsInternal,
   startEvalRun,
   withExternalIterationIds,
 };
