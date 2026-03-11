@@ -75,9 +75,9 @@ export function SandboxChatPage({
   const [isResolving, setIsResolving] = useState(!!pathToken);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isCheckingOAuth, setIsCheckingOAuth] = useState(false);
-  const [oauthPreflightError, setOauthPreflightError] = useState<
-    string | null
-  >(null);
+  const [oauthPreflightError, setOauthPreflightError] = useState<string | null>(
+    null,
+  );
   const [oauthRequiredServerIds, setOauthRequiredServerIds] = useState<
     string[]
   >([]);
@@ -122,8 +122,8 @@ export function SandboxChatPage({
         const token = getStoredTokens(server.serverName)?.access_token;
         return token ? ([server.serverId, token] as const) : null;
       })
-      .filter(
-        (entry): entry is readonly [string, string] => Array.isArray(entry),
+      .filter((entry): entry is readonly [string, string] =>
+        Array.isArray(entry),
       );
 
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
@@ -162,7 +162,9 @@ export function SandboxChatPage({
         try {
           const authorization = await getHostedBearerHeader(getAccessToken);
           if (!authorization) {
-            throw new Error("Unable to create a hosted session for this sandbox.");
+            throw new Error(
+              "Unable to create a hosted session for this sandbox.",
+            );
           }
 
           const response = await fetch("/api/web/sandboxes/bootstrap", {
@@ -332,12 +334,17 @@ export function SandboxChatPage({
   const handleAuthorize = useCallback(
     async (server: SandboxBootstrapServer) => {
       if (!server.serverUrl) {
-        toast.error(`Sandbox server "${server.serverName}" is missing an OAuth URL.`);
+        toast.error(
+          `Sandbox server "${server.serverName}" is missing an OAuth URL.`,
+        );
         return;
       }
 
       localStorage.setItem(SANDBOX_OAUTH_PENDING_KEY, "true");
-      localStorage.setItem("mcp-oauth-return-hash", `#${slugify(server.serverName)}`);
+      localStorage.setItem(
+        "mcp-oauth-return-hash",
+        `#${slugify(server.serverName)}`,
+      );
 
       const result = await initiateOAuth({
         serverName: server.serverName,
@@ -471,14 +478,19 @@ export function SandboxChatPage({
                       OAuth required
                     </p>
                   </div>
-                  <Button size="sm" onClick={() => void handleAuthorize(server)}>
+                  <Button
+                    size="sm"
+                    onClick={() => void handleAuthorize(server)}
+                  >
                     Authorize
                   </Button>
                 </div>
               ))}
             </div>
             {oauthPreflightError ? (
-              <p className="mt-4 text-xs text-amber-700">{oauthPreflightError}</p>
+              <p className="mt-4 text-xs text-amber-700">
+                {oauthPreflightError}
+              </p>
             ) : null}
           </div>
         </div>

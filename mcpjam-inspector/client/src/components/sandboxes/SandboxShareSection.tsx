@@ -80,7 +80,9 @@ export function SandboxShareSection({
     }
 
     try {
-      await navigator.clipboard.writeText(buildSandboxLink(token, settings.name));
+      await navigator.clipboard.writeText(
+        buildSandboxLink(token, settings.name),
+      );
       toast.success("Sandbox link copied");
     } catch {
       toast.error("Failed to copy link");
@@ -97,7 +99,9 @@ export function SandboxShareSection({
       toast.success("Sandbox link rotated");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to rotate sandbox link",
+        error instanceof Error
+          ? error.message
+          : "Failed to rotate sandbox link",
       );
     } finally {
       setIsMutating(false);
@@ -116,7 +120,9 @@ export function SandboxShareSection({
       updateSettings(next);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to update sandbox mode",
+        error instanceof Error
+          ? error.message
+          : "Failed to update sandbox mode",
       );
     } finally {
       setIsMutating(false);
@@ -210,9 +216,7 @@ export function SandboxShareSection({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
                 <p className="truncate text-sm">{displayName}</p>
-                <span className="text-xs text-muted-foreground">
-                  (you)
-                </span>
+                <span className="text-xs text-muted-foreground">(you)</span>
               </div>
               <p className="truncate text-xs text-muted-foreground">
                 {user?.email}
@@ -239,10 +243,7 @@ export function SandboxShareSection({
                   className="group flex items-center gap-3 rounded-md px-1 py-1.5 hover:bg-muted/40"
                 >
                   <Avatar className="size-8 shrink-0">
-                    <AvatarImage
-                      src={member.user?.imageUrl}
-                      alt={name}
-                    />
+                    <AvatarImage src={member.user?.imageUrl} alt={name} />
                     <AvatarFallback className="text-xs">
                       {initials}
                     </AvatarFallback>
@@ -305,7 +306,9 @@ export function SandboxShareSection({
                   <button
                     type="button"
                     className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
-                    onClick={() => void handleModeChange("any_signed_in_with_link")}
+                    onClick={() =>
+                      void handleModeChange("any_signed_in_with_link")
+                    }
                   >
                     <span>Anyone with the link</span>
                     {settings.mode === "any_signed_in_with_link" && (

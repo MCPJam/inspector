@@ -150,20 +150,18 @@ export default function App() {
     sharedSession,
   ]);
   const isSharedChatRoute =
-    HOSTED_MODE &&
-    !exitedSharedChat &&
-    hostedRouteKind === "shared";
+    HOSTED_MODE && !exitedSharedChat && hostedRouteKind === "shared";
   const isSandboxChatRoute =
-    HOSTED_MODE &&
-    !exitedSandboxChat &&
-    hostedRouteKind === "sandbox";
+    HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
   const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
 
   // Handle hosted OAuth callback: detect code + hosted pending flag before normal rendering.
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
-    const hasSharedOAuthPending = !!localStorage.getItem(SHARED_OAUTH_PENDING_KEY);
+    const hasSharedOAuthPending = !!localStorage.getItem(
+      SHARED_OAUTH_PENDING_KEY,
+    );
     const hasSandboxOAuthPending = !!localStorage.getItem(
       SANDBOX_OAUTH_PENDING_KEY,
     );
@@ -752,9 +750,7 @@ export default function App() {
         <Toaster />
         <HostedShellGate
           state={
-            isHostedChatRoute
-              ? hostedChatShellGateState
-              : hostedShellGateState
+            isHostedChatRoute ? hostedChatShellGateState : hostedShellGateState
           }
           onSignIn={() => {
             if (sharedPathToken) {

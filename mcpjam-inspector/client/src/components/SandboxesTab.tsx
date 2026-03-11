@@ -11,7 +11,11 @@ import {
 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "sonner";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -62,7 +66,10 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
     }
 
     setSelectedSandboxId((current) => {
-      if (current && sandboxes.some((sandbox) => sandbox.sandboxId === current)) {
+      if (
+        current &&
+        sandboxes.some((sandbox) => sandbox.sandboxId === current)
+      ) {
         return current;
       }
       return sandboxes[0]?.sandboxId ?? null;

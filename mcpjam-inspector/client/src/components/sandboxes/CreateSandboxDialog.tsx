@@ -15,7 +15,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -62,7 +68,10 @@ export function CreateSandboxDialog({
     [workspaceServers],
   );
   const hostedModels = useMemo(
-    () => SUPPORTED_MODELS.filter((model) => isMCPJamProvidedModel(String(model.id))),
+    () =>
+      SUPPORTED_MODELS.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      ),
     [],
   );
 
@@ -74,11 +83,17 @@ export function CreateSandboxDialog({
     setName(sandbox?.name ?? "");
     setDescription(sandbox?.description ?? "");
     setSystemPrompt(sandbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT);
-    setModelId(sandbox?.modelId ?? hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini");
+    setModelId(
+      sandbox?.modelId ??
+        hostedModels[0]?.id?.toString() ??
+        "openai/gpt-5-mini",
+    );
     setTemperature(sandbox?.temperature ?? 0.7);
     setRequireToolApproval(sandbox?.requireToolApproval ?? false);
     setAllowGuestAccess(sandbox?.allowGuestAccess ?? false);
-    setSelectedServerIds(sandbox?.servers.map((server) => server.serverId) ?? []);
+    setSelectedServerIds(
+      sandbox?.servers.map((server) => server.serverId) ?? [],
+    );
   }, [hostedModels, isOpen, sandbox]);
 
   const handleToggleServer = (serverId: string, checked: boolean) => {
@@ -114,15 +129,17 @@ export function CreateSandboxDialog({
         serverIds: selectedServerIds,
       };
 
-      const next = (sandbox
-        ? await updateSandbox({
-            sandboxId: sandbox.sandboxId,
-            ...payload,
-          })
-        : await createSandbox({
-            workspaceId,
-            ...payload,
-          })) as SandboxSettings;
+      const next = (
+        sandbox
+          ? await updateSandbox({
+              sandboxId: sandbox.sandboxId,
+              ...payload,
+            })
+          : await createSandbox({
+              workspaceId,
+              ...payload,
+            })
+      ) as SandboxSettings;
 
       onSaved?.(next);
       toast.success(sandbox ? "Sandbox updated" : "Sandbox created");
@@ -140,7 +157,9 @@ export function CreateSandboxDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{sandbox ? "Edit Sandbox" : "Create Sandbox"}</DialogTitle>
+          <DialogTitle>
+            {sandbox ? "Edit Sandbox" : "Create Sandbox"}
+          </DialogTitle>
           <DialogDescription>
             Configure a hosted chat environment with a fixed model, prompt, and
             server set.

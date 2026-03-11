@@ -76,7 +76,9 @@ function buildMcpToolInventoryPrompt(
 
     const toolRecord = tool as Record<string, unknown>;
     const serverId =
-      typeof toolRecord._serverId === "string" ? toolRecord._serverId : undefined;
+      typeof toolRecord._serverId === "string"
+        ? toolRecord._serverId
+        : undefined;
     if (!serverId) continue;
 
     const existing = serverGroups.get(serverId) ?? [];

@@ -54,10 +54,9 @@ export function useSharedChatThreadList({
         ? ({ shareId: sourceId, limit: 50 } as any)
         : "skip";
 
-  const threads = useQuery(
-    queryName as any,
-    queryArgs,
-  ) as SharedChatThread[] | undefined;
+  const threads = useQuery(queryName as any, queryArgs) as
+    | SharedChatThread[]
+    | undefined;
 
   return { threads };
 }
