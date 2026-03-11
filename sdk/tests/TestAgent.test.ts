@@ -19,12 +19,13 @@ jest.mock("../src/model-factory", () => ({
   createModelFromString: jest.fn(() => ({})),
 }));
 
-import { generateText, jsonSchema } from "ai";
+import { generateText, jsonSchema, stepCountIs } from "ai";
 import { createModelFromString } from "../src/model-factory";
 
 const mockGenerateText = generateText as jest.MockedFunction<
   typeof generateText
 >;
+const mockStepCountIs = stepCountIs as jest.MockedFunction<typeof stepCountIs>;
 const mockCreateModel = createModelFromString as jest.MockedFunction<
   typeof createModelFromString
 >;
@@ -531,6 +532,9 @@ describe("TestAgent", () => {
     });
 
     it("should pass system prompt and temperature to generateText", async () => {
+      const guard = { kind: "max-step-guard" } as any;
+      mockStepCountIs.mockReturnValueOnce(guard);
+
       mockGenerateText.mockResolvedValueOnce({
         text: "OK",
         steps: [],
@@ -548,12 +552,13 @@ describe("TestAgent", () => {
 
       await agent.prompt("What is 2+2?");
 
+      expect(mockStepCountIs).toHaveBeenCalledWith(15);
       expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           system: "You are a math tutor.",
           prompt: "What is 2+2?",
           temperature: 0.3,
-          stopWhen: { type: "stepCount", value: 15 },
+          stopWhen: [guard],
         })
       );
 
@@ -897,6 +902,8 @@ describe("TestAgent", () => {
   describe("stopWhen", () => {
     it("should merge a single stop condition with maxSteps and still execute tools", async () => {
       const stopCondition = jest.fn(() => false);
+      const guard = { kind: "max-step-guard" } as any;
+      mockStepCountIs.mockReturnValueOnce(guard);
 
       mockGenerateText.mockImplementationOnce(async (params: any) => {
         const result = await params.tools.add.execute(
@@ -933,19 +940,19 @@ describe("TestAgent", () => {
         stopWhen: stopCondition as any,
       });
 
+      expect(mockStepCountIs).toHaveBeenCalledWith(10);
       expect(result.hasToolCall("add")).toBe(true);
       expect(result.getToolArguments("add")).toEqual({ a: 2, b: 3 });
 
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
-      expect(callArgs.stopWhen).toEqual([
-        { type: "stepCount", value: 10 },
-        stopCondition,
-      ]);
+      expect(callArgs.stopWhen).toEqual([guard, stopCondition]);
     });
 
     it("should merge multiple stop conditions with maxSteps", async () => {
       const stopA = jest.fn(() => false);
       const stopB = jest.fn(() => true);
+      const guard = { kind: "max-step-guard" } as any;
+      mockStepCountIs.mockReturnValueOnce(guard);
 
       mockGenerateText.mockResolvedValueOnce({
         text: "Done",
@@ -963,15 +970,15 @@ describe("TestAgent", () => {
         stopWhen: [stopA as any, stopB as any],
       });
 
+      expect(mockStepCountIs).toHaveBeenCalledWith(10);
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
-      expect(callArgs.stopWhen).toEqual([
-        { type: "stepCount", value: 10 },
-        stopA,
-        stopB,
-      ]);
+      expect(callArgs.stopWhen).toEqual([guard, stopA, stopB]);
     });
 
     it("should default to stepCountIs when stopWhen is not set", async () => {
+      const guard = { kind: "max-step-guard" } as any;
+      mockStepCountIs.mockReturnValueOnce(guard);
+
       mockGenerateText.mockResolvedValueOnce({
         text: "OK",
         steps: [],
@@ -986,8 +993,9 @@ describe("TestAgent", () => {
 
       await agent.prompt("Test");
 
+      expect(mockStepCountIs).toHaveBeenCalledWith(10);
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
-      expect(callArgs.stopWhen).toEqual({ type: "stepCount", value: 10 });
+      expect(callArgs.stopWhen).toEqual([guard]);
     });
   });
 

@@ -187,6 +187,8 @@ await manager.disconnectServer("everything");
 Runs LLM prompts with MCP tool access.
 
 ```ts
+import { hasToolCall } from "@mcpjam/sdk";
+
 const agent = new TestAgent({
   tools: await manager.getToolsForAiSdk(),
   model: "openai/gpt-4o",        // provider/model format
@@ -197,8 +199,6 @@ const agent = new TestAgent({
 });
 
 // Run a prompt
-import { hasToolCall } from "@mcpjam/sdk";
-
 const result = await agent.prompt("Add 2 and 3");
 
 // Multi-turn with context

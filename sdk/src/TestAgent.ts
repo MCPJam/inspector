@@ -320,13 +320,15 @@ export class TestAgent implements EvalAgent {
 
   private resolveStopWhen(
     stopWhen?: PromptOptions["stopWhen"]
-  ): StopCondition<ToolSet> | Array<StopCondition<ToolSet>> {
+  ): Array<StopCondition<ToolSet>> {
+    const base = [stepCountIs(this.maxSteps)];
+
     if (stopWhen == null) {
-      return stepCountIs(this.maxSteps);
+      return base;
     }
 
     const conditions = Array.isArray(stopWhen) ? stopWhen : [stopWhen];
-    return [stepCountIs(this.maxSteps), ...conditions];
+    return [...base, ...conditions];
   }
 
   /**

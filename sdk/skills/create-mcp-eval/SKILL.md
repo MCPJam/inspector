@@ -185,6 +185,7 @@ await manager.disconnectAllServers();
 
 ```typescript
 import { TestAgent } from "@mcpjam/sdk";
+import { hasToolCall } from "@mcpjam/sdk";
 
 const agent = new TestAgent({
   tools,                              // from manager.getToolsForAiSdk()
@@ -194,8 +195,6 @@ const agent = new TestAgent({
 });
 
 // Single prompt
-import { hasToolCall } from "@mcpjam/sdk";
-
 const result = await agent.prompt("List all projects");
 
 // Multi-turn with context
