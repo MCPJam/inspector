@@ -36,6 +36,7 @@ describe("sandbox-session", () => {
         workspaceId: "ws_1",
         sandboxId: "sbx_1",
         name: "Demo Sandbox",
+        hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
         viewerIsWorkspaceMember: true,
@@ -56,6 +57,7 @@ describe("sandbox-session", () => {
       sandboxId: "sbx_1",
       name: "Sandbox",
       description: "Hosted sandbox",
+      hostStyle: "chatgpt" as const,
       mode: "any_signed_in_with_link" as const,
       allowGuestAccess: true,
       viewerIsWorkspaceMember: false,
@@ -80,6 +82,46 @@ describe("sandbox-session", () => {
     expect(readSandboxSession()).toEqual({
       token: "sandbox-token",
       payload,
+    });
+  });
+
+  it("defaults missing hostStyle to claude for legacy sandbox sessions", () => {
+    sessionStorage.setItem(
+      "mcpjam_sandbox_session_v1",
+      JSON.stringify({
+        token: "sandbox-token",
+        payload: {
+          workspaceId: "ws_1",
+          sandboxId: "sbx_1",
+          name: "Legacy Sandbox",
+          mode: "invited_only",
+          allowGuestAccess: false,
+          viewerIsWorkspaceMember: true,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: true,
+          servers: [],
+        },
+      }),
+    );
+
+    expect(readSandboxSession()).toEqual({
+      token: "sandbox-token",
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Legacy Sandbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
     });
   });
 

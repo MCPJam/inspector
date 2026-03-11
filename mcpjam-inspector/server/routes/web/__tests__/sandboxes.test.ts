@@ -80,4 +80,58 @@ describe("web routes — sandboxes bootstrap", () => {
       }),
     );
   });
+
+  it("returns the sandbox bootstrap payload on success", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            payload: {
+              workspaceId: "ws_1",
+              sandboxId: "sbx_1",
+              name: "Host Styled Sandbox",
+              hostStyle: "chatgpt",
+              mode: "invited_only",
+              allowGuestAccess: false,
+              viewerIsWorkspaceMember: true,
+              systemPrompt: "You are helpful.",
+              modelId: "openai/gpt-5-mini",
+              temperature: 0.4,
+              requireToolApproval: true,
+              servers: [],
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        ),
+      ),
+    );
+
+    const response = await postJson(
+      app,
+      "/api/web/sandboxes/bootstrap",
+      { token: "sandbox-link-token" },
+      token,
+    );
+    const { status, data } = await expectJson<{
+      workspaceId: string;
+      sandboxId: string;
+      name: string;
+      hostStyle: string;
+    }>(response);
+
+    expect(status).toBe(200);
+    expect(data).toMatchObject({
+      workspaceId: "ws_1",
+      sandboxId: "sbx_1",
+      name: "Host Styled Sandbox",
+      hostStyle: "chatgpt",
+    });
+  });
 });

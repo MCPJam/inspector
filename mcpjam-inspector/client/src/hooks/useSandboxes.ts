@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 
 export type SandboxMode = "any_signed_in_with_link" | "invited_only";
 
@@ -35,6 +36,7 @@ export interface SandboxSettings {
   workspaceId: string;
   name: string;
   description?: string;
+  hostStyle: SandboxHostStyle;
   systemPrompt: string;
   modelId: string;
   temperature: number;
@@ -57,6 +59,7 @@ export interface SandboxListItem {
   workspaceId: string;
   name: string;
   description?: string;
+  hostStyle: SandboxHostStyle;
   mode: SandboxMode;
   allowGuestAccess: boolean;
   serverCount: number;

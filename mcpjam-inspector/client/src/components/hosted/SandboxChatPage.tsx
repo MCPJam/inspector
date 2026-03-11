@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedApiContext } from "@/hooks/hosted/use-hosted-api-context";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { getStoredTokens, initiateOAuth } from "@/lib/oauth/mcp-oauth";
 import {
@@ -21,6 +22,12 @@ import {
   writeSandboxSignInReturnPath,
 } from "@/lib/sandbox-session";
 import { slugify } from "@/lib/shared-server-session";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import {
+  getSandboxHostLabel,
+  getSandboxHostLogo,
+  getSandboxShellStyle,
+} from "@/lib/sandbox-host-style";
 
 interface SandboxChatPageProps {
   pathToken?: string | null;
@@ -69,6 +76,7 @@ export function SandboxChatPage({
 }: SandboxChatPageProps) {
   const { getAccessToken, signIn } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const themeMode = usePreferencesStore((s) => s.themeMode);
 
   const [session, setSession] = useState<SandboxSession | null>(() =>
     readSandboxSession(),
@@ -406,6 +414,11 @@ export function SandboxChatPage({
     signIn();
   }, [signIn]);
 
+  const hostStyle = session?.payload.hostStyle ?? "claude";
+  const hostBrandLabel = getSandboxHostLabel(hostStyle);
+  const hostBrandLogo = getSandboxHostLogo(hostStyle);
+  const shellStyle = getSandboxShellStyle(hostStyle, themeMode);
+
   const renderContent = () => {
     if (isResolving || isCheckingOAuth) {
       return (
@@ -530,44 +543,45 @@ export function SandboxChatPage({
   };
 
   return (
-    <div className="flex h-svh min-h-0 flex-col">
-      <header className="border-b border-border/50 bg-background/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
-          <h1 className="truncate text-sm font-semibold text-foreground min-w-0 flex-1">
-            {session?.payload.name || "\u00A0"}
-          </h1>
-          <button
-            onClick={handleOpenMcpJam}
-            className="cursor-pointer flex-shrink-0 bg-transparent border-none p-0"
-          >
-            <img
-              src="/mcp_jam_dark.png"
-              alt="MCPJam"
-              className="hidden dark:block h-4 w-auto"
-            />
-            <img
-              src="/mcp_jam_light.png"
-              alt="MCPJam"
-              className="block dark:hidden h-4 w-auto"
-            />
-          </button>
-          <div className="flex items-center gap-1.5 flex-1 justify-end">
-            {session ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-muted-foreground"
-                onClick={handleCopyLink}
-              >
-                Copy link
-              </Button>
-            ) : null}
+    <SandboxHostStyleProvider value={hostStyle}>
+      <div
+        className="sandbox-host-shell flex h-svh min-h-0 flex-col"
+        data-host-style={hostStyle}
+        style={shellStyle}
+      >
+        <header className="border-b border-border/50 bg-background/95 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-2.5">
+            <h1 className="truncate text-sm font-semibold text-foreground min-w-0 flex-1">
+              {session?.payload.name || "\u00A0"}
+            </h1>
+            <button
+              onClick={handleOpenMcpJam}
+              className="cursor-pointer flex-shrink-0 bg-transparent border-none p-0"
+            >
+              <img
+                src={hostBrandLogo}
+                alt={hostBrandLabel}
+                className="h-4 w-auto object-contain"
+              />
+            </button>
+            <div className="flex items-center gap-1.5 flex-1 justify-end">
+              {session ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground"
+                  onClick={handleCopyLink}
+                >
+                  Copy link
+                </Button>
+              ) : null}
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {renderContent()}
-    </div>
+        {renderContent()}
+      </div>
+    </SandboxHostStyleProvider>
   );
 }
 

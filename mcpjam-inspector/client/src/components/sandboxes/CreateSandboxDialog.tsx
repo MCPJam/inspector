@@ -124,6 +124,7 @@ export function CreateSandboxDialog({
         systemPrompt: systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
         modelId,
         temperature,
+        hostStyle: sandbox?.hostStyle ?? "claude",
         requireToolApproval,
         allowGuestAccess,
         serverIds: selectedServerIds,

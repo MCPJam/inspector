@@ -1,4 +1,5 @@
 import { getShareableAppOrigin, slugify } from "@/lib/shared-server-session";
+import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 
 export type SandboxShareMode = "any_signed_in_with_link" | "invited_only";
 
@@ -16,6 +17,7 @@ export interface SandboxBootstrapPayload {
   sandboxId: string;
   name: string;
   description?: string;
+  hostStyle: SandboxHostStyle;
   mode: SandboxShareMode;
   allowGuestAccess: boolean;
   viewerIsWorkspaceMember: boolean;
@@ -60,6 +62,12 @@ export function readSandboxSession(): SandboxSession | null {
     const token =
       typeof parsed.token === "string" ? parsed.token.trim() : undefined;
     const payload = parsed.payload;
+    const hostStyle =
+      payload?.hostStyle === "claude" || payload?.hostStyle === "chatgpt"
+        ? payload.hostStyle
+        : payload?.hostStyle == null
+          ? "claude"
+          : null;
 
     if (
       !token ||
@@ -67,6 +75,7 @@ export function readSandboxSession(): SandboxSession | null {
       typeof payload.workspaceId !== "string" ||
       typeof payload.sandboxId !== "string" ||
       typeof payload.name !== "string" ||
+      hostStyle === null ||
       typeof payload.modelId !== "string" ||
       typeof payload.systemPrompt !== "string" ||
       typeof payload.temperature !== "number" ||
@@ -88,6 +97,7 @@ export function readSandboxSession(): SandboxSession | null {
           typeof payload.description === "string"
             ? payload.description
             : undefined,
+        hostStyle,
         mode:
           payload.mode === "any_signed_in_with_link"
             ? payload.mode

@@ -49,6 +49,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  getSandboxHostLabel,
+  getSandboxHostLogo,
+  type SandboxHostStyle,
+} from "@/lib/sandbox-host-style";
 
 interface WorkspaceServerOption {
   _id: string;
@@ -76,6 +81,7 @@ interface SandboxEditorProps {
 }
 
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
+const HOST_STYLE_OPTIONS: SandboxHostStyle[] = ["claude", "chatgpt"];
 
 export function SandboxEditor({
   sandbox,
@@ -100,6 +106,9 @@ export function SandboxEditor({
 
   const [name, setName] = useState(sandbox?.name ?? "");
   const [description, setDescription] = useState(sandbox?.description ?? "");
+  const [hostStyle, setHostStyle] = useState<SandboxHostStyle>(
+    sandbox?.hostStyle ?? "claude",
+  );
   const [systemPrompt, setSystemPrompt] = useState(
     sandbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
   );
@@ -124,11 +133,26 @@ export function SandboxEditor({
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
-  // Reset form when sandbox changes (edit mode)
+  // Reset form when the selected sandbox changes or the editor switches modes.
   useEffect(() => {
-    if (!sandbox) return;
+    if (!sandbox) {
+      setName("");
+      setDescription("");
+      setHostStyle("claude");
+      setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
+      setModelId(hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini");
+      setTemperature(0.7);
+      setRequireToolApproval(false);
+      setAllowGuestAccess(true);
+      setMode("any_signed_in_with_link");
+      setSelectedServerIds([]);
+      setIsEditingTitle(true);
+      return;
+    }
+
     setName(sandbox.name);
     setDescription(sandbox.description ?? "");
+    setHostStyle(sandbox.hostStyle);
     setSystemPrompt(sandbox.systemPrompt);
     setModelId(sandbox.modelId);
     setTemperature(sandbox.temperature);
@@ -137,7 +161,7 @@ export function SandboxEditor({
     setMode(sandbox.mode);
     setSelectedServerIds(sandbox.servers.map((s) => s.serverId));
     setIsEditingTitle(false);
-  }, [sandbox]);
+  }, [hostedModels, sandbox]);
 
   const availableServers = useMemo(
     () => workspaceServers.filter((s) => s.transportType === "http"),
@@ -151,6 +175,7 @@ export function SandboxEditor({
     return (
       name !== sandbox!.name ||
       description !== (sandbox!.description ?? "") ||
+      hostStyle !== sandbox!.hostStyle ||
       systemPrompt !== sandbox!.systemPrompt ||
       modelId !== sandbox!.modelId ||
       temperature !== sandbox!.temperature ||
@@ -162,6 +187,7 @@ export function SandboxEditor({
     isCreateMode,
     name,
     description,
+    hostStyle,
     systemPrompt,
     modelId,
     temperature,
@@ -241,6 +267,7 @@ export function SandboxEditor({
       const payload = {
         name: trimmedName,
         description: description.trim() || undefined,
+        hostStyle,
         systemPrompt: systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
         modelId,
         temperature,
@@ -372,6 +399,42 @@ export function SandboxEditor({
 
       {/* Scrollable content */}
       <div className="flex-1 space-y-1 overflow-y-auto p-2">
+        <div className="px-1 pt-2">
+          <Label className="text-xs font-medium text-muted-foreground">
+            Host style
+          </Label>
+          <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+            {HOST_STYLE_OPTIONS.map((option) => {
+              const isSelected = hostStyle === option;
+              return (
+                <Button
+                  key={option}
+                  type="button"
+                  variant={isSelected ? "secondary" : "ghost"}
+                  className="h-auto justify-start gap-3 rounded-xl border border-border/50 px-3 py-3"
+                  onClick={() => setHostStyle(option)}
+                >
+                  <img
+                    src={getSandboxHostLogo(option)}
+                    alt={getSandboxHostLabel(option)}
+                    className="h-5 w-5 object-contain"
+                  />
+                  <div className="flex min-w-0 flex-col items-start">
+                    <span className="text-sm font-medium">
+                      {getSandboxHostLabel(option)}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {option === "chatgpt"
+                        ? "OpenAI-style sandbox chrome"
+                        : "Claude-style sandbox chrome"}
+                    </span>
+                  </div>
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Model + Servers side by side */}
         <div className="grid gap-4 px-1 pt-2 md:grid-cols-2">
           <div>

@@ -85,8 +85,10 @@ vi.mock("@/components/ui/sandboxed-iframe", () => ({
         value: { postMessage: mockSandboxPostMessage },
       });
       Object.defineProperty(el, "offsetHeight", { value: 400 });
-      (el as HTMLElement & { animate: ReturnType<typeof vi.fn> }).animate =
-        vi.fn();
+      const animatedEl = el as unknown as HTMLElement & {
+        animate: ReturnType<typeof vi.fn>;
+      };
+      animatedEl.animate = vi.fn();
       iframeElementRef.current = el;
     }
 
@@ -167,6 +169,7 @@ vi.mock("../mcp-apps-modal", () => ({
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
 import { authFetch } from "@/lib/session-token";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -248,6 +251,36 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
     expect(sandboxedIframePropsRef.current?.csp).toBeUndefined();
     expect(sandboxedIframePropsRef.current?.permissions).toBeUndefined();
+  });
+
+  it("uses sandbox host style for SEP-1865 host context outside the playground", async () => {
+    render(
+      <SandboxHostStyleProvider value="chatgpt">
+        <MCPAppsRenderer {...baseProps} />
+      </SandboxHostStyleProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform: "web",
+          styles: expect.objectContaining({
+            css: expect.objectContaining({
+              fonts: "",
+            }),
+          }),
+        }),
+      );
+    });
   });
 
   it("forces permissive replay for cached HTML even when strict replay metadata is stored", async () => {
