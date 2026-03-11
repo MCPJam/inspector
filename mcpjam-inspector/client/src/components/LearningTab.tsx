@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import {
+  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   Monitor,
@@ -14,6 +15,7 @@ import {
   buildMcpLifecycleScenario20250326,
   type McpTransport,
 } from "@/components/lifecycle/mcp-lifecycle-data";
+import { LearningLandingPage } from "@/components/LearningLandingPage";
 
 /**
  * Sentinel value used as `currentStep` when the walkthrough is at step 0.
@@ -23,7 +25,7 @@ import {
  */
 const WALKTHROUGH_START_SENTINEL = "__walkthrough_start__";
 
-export function LearningTab() {
+function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
   const [transport, setTransport] = useState<McpTransport>("stdio");
   const [stepIndex, setStepIndex] = useState(-1); // -1 = overview (all neutral)
 
@@ -36,20 +38,12 @@ export function LearningTab() {
   const isOverview = stepIndex === -1;
   const isLastStep = stepIndex === totalSteps - 1;
 
-  /**
-   * Map stepIndex to `currentStep` for the diagram renderer:
-   *
-   * - stepIndex = -1 → undefined → all edges get "neutral" status (static overview)
-   * - stepIndex = 0  → sentinel  → action[0] is "current" (blue pulsing)
-   * - stepIndex = K  → actions[K-1].id → actions[0..K-1] are "complete", action[K] is "current"
-   */
   const currentStep = useMemo(() => {
     if (stepIndex === -1) return undefined;
     if (stepIndex === 0) return WALKTHROUGH_START_SENTINEL;
     return scenario.actions[stepIndex - 1].id;
   }, [stepIndex, scenario.actions]);
 
-  /** The action being focused / learned about at the current walkthrough step */
   const focusedAction =
     stepIndex >= 0 && stepIndex < totalSteps
       ? scenario.actions[stepIndex]
@@ -70,7 +64,7 @@ export function LearningTab() {
   const handleTransportChange = useCallback((val: string) => {
     if (val) {
       setTransport(val as McpTransport);
-      setStepIndex(-1); // reset walkthrough on transport change
+      setStepIndex(-1);
     }
   }, []);
 
@@ -78,7 +72,17 @@ export function LearningTab() {
     <div className="flex h-full flex-col">
       {/* Header bar */}
       <div className="flex items-center justify-between border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">MCP Protocol Lifecycle</h2>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+            title="Back to Learning"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </Button>
+          <h2 className="text-sm font-semibold">MCP Protocol Lifecycle</h2>
+        </div>
         <div className="flex items-center gap-3">
           {/* Step navigation controls */}
           <div className="flex items-center gap-1.5">
@@ -167,4 +171,16 @@ export function LearningTab() {
       </div>
     </div>
   );
+}
+
+export function LearningTab() {
+  const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
+
+  if (selectedConcept === "mcp-lifecycle") {
+    return (
+      <McpLifecycleWalkthrough onBack={() => setSelectedConcept(null)} />
+    );
+  }
+
+  return <LearningLandingPage onSelect={setSelectedConcept} />;
 }
