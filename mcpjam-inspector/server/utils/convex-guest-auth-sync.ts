@@ -36,32 +36,40 @@ export function syncGuestAuthConfigToConvex(): void {
         CONVEX_DEPLOYMENT: `dev:${deploymentName}`,
       };
 
-      const setConvexEnv = (name: string, value: string) => {
-        const result = spawnSync(
-          npxCommand,
-          ["convex", "env", "set", name, "--", value],
-          {
-            env: convexEnv,
-            stdio: "pipe",
-            timeout: 15_000,
-          },
-        );
+      const { execFile } = await import("child_process");
 
-        if (result.status === 0) {
-          return;
-        }
+      const setConvexEnv = async (name: string, value: string) => {
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            npxCommand,
+            ["convex", "env", "set", name, "--", value],
+            {
+              env: convexEnv,
+              timeout: 15_000,
+              maxBuffer: 1024 * 1024,
+              windowsHide: true,
+            },
+            (error, stdout, stderr) => {
+              if (!error) {
+                resolve();
+                return;
+              }
 
-        const stderr = result.stderr?.toString().trim();
-        const stdout = result.stdout?.toString().trim();
-        throw new Error(
-          stderr ||
-            stdout ||
-            `convex env set ${name} failed with code ${result.status}`,
-        );
+              reject(
+                new Error(
+                  stderr?.trim() ||
+                    stdout?.trim() ||
+                    error.message ||
+                    `convex env set ${name} failed`,
+                ),
+              );
+            },
+          );
+        });
       };
 
-      setConvexEnv("GUEST_JWT_PUBLIC_KEY", pem);
-      setConvexEnv("GUEST_JWKS_URL", guestJwksUrl);
+      await setConvexEnv("GUEST_JWT_PUBLIC_KEY", pem);
+      await setConvexEnv("GUEST_JWKS_URL", guestJwksUrl);
       logger.info(
         `[guest-auth] Pushed guest key + JWKS URL to Convex (${deploymentName})`,
       );
