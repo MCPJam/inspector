@@ -106,6 +106,7 @@ export function useSandbox({
 
 export function useSandboxMutations() {
   const createSandbox = useMutation("sandboxes:createSandbox" as any);
+  const duplicateSandbox = useMutation("sandboxes:duplicateSandbox" as any);
   const updateSandbox = useMutation("sandboxes:updateSandbox" as any);
   const deleteSandbox = useMutation("sandboxes:deleteSandbox" as any);
   const setSandboxMode = useMutation("sandboxes:setSandboxMode" as any);
@@ -119,6 +120,7 @@ export function useSandboxMutations() {
 
   return {
     createSandbox,
+    duplicateSandbox,
     updateSandbox,
     deleteSandbox,
     setSandboxMode,

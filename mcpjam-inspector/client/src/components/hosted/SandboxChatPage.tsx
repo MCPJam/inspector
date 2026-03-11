@@ -34,6 +34,30 @@ interface SandboxChatPageProps {
   onExitSandboxChat?: () => void;
 }
 
+interface SandboxRouteError {
+  status: number;
+  code?: string;
+  message: string;
+  rawMessage: string;
+}
+
+type SandboxErrorKind =
+  | "access_denied"
+  | "guest_blocked"
+  | "invalid_link"
+  | "unexpected";
+
+interface SandboxDisplayError {
+  kind: SandboxErrorKind;
+  title: string;
+  message: string;
+}
+
+const INVALID_SANDBOX_LINK_MESSAGE =
+  "This sandbox link is invalid or expired. Ask the owner to share a new link if you still need access.";
+const UNEXPECTED_SANDBOX_ERROR_MESSAGE =
+  "We couldn't open this sandbox right now. Please try again or open MCPJam.";
+
 async function getHostedBearerHeader(
   getAccessToken: () => Promise<string | undefined | null>,
 ): Promise<string | null> {
@@ -50,24 +74,128 @@ async function getHostedBearerHeader(
   return guestToken ? `Bearer ${guestToken}` : null;
 }
 
-async function readRouteErrorMessage(response: Response): Promise<string> {
+function sanitizeSandboxRouteErrorMessage(message: string): string {
+  const normalized = message.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const withoutWrapper = normalized.replace(/^Uncaught Error:\s*/i, "");
+  return withoutWrapper
+    .replace(/\s+at\s+(?:async\s+)?[A-Za-z0-9_$./<>-]+(?:\s+\(|$).*/s, "")
+    .trim();
+}
+
+function createSandboxRouteError(
+  status: number,
+  message: string,
+  code?: string,
+): SandboxRouteError {
+  const fallbackMessage = `Request failed with status ${status}`;
+  const rawMessage = message.trim() || fallbackMessage;
+  const sanitizedMessage = sanitizeSandboxRouteErrorMessage(rawMessage);
+
+  return {
+    status,
+    code,
+    rawMessage,
+    message: sanitizedMessage || fallbackMessage,
+  };
+}
+
+async function readRouteError(response: Response): Promise<SandboxRouteError> {
   const bodyText = await response.text();
   const trimmedBody = bodyText.trim();
+  let code: string | undefined;
+  let message = trimmedBody;
 
   try {
     const body = (trimmedBody ? JSON.parse(trimmedBody) : null) as {
+      code?: string;
       message?: string;
       error?: string;
     } | null;
-    return (
+
+    code = typeof body?.code === "string" ? body.code : undefined;
+    message =
       body?.message ||
       body?.error ||
       trimmedBody ||
-      `Request failed with status ${response.status}`
-    );
+      `Request failed with status ${response.status}`;
   } catch {
-    return trimmedBody || `Request failed with status ${response.status}`;
+    message = trimmedBody || `Request failed with status ${response.status}`;
   }
+
+  return createSandboxRouteError(response.status, message, code);
+}
+
+function isSandboxRouteError(error: unknown): error is SandboxRouteError {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    "rawMessage" in error &&
+    typeof error.rawMessage === "string"
+  );
+}
+
+function getSandboxDisplayError(
+  error: SandboxRouteError | null,
+): SandboxDisplayError {
+  if (!error) {
+    return {
+      kind: "invalid_link",
+      title: "Sandbox Link Unavailable",
+      message: INVALID_SANDBOX_LINK_MESSAGE,
+    };
+  }
+
+  const normalizedMessage = error.message.toLowerCase();
+  const requiresSignIn = normalizedMessage.includes(
+    "sign in to access this sandbox",
+  );
+  const isAccessDenied = normalizedMessage.includes("don't have access");
+  const isGuestBlocked =
+    normalizedMessage.includes("guests cannot access") ||
+    normalizedMessage.includes("guest access");
+  const isInvalidLink =
+    error.status === 404 ||
+    error.code === "NOT_FOUND" ||
+    normalizedMessage.includes("invalid or has expired") ||
+    normalizedMessage.includes("invalid or expired");
+
+  if (requiresSignIn || isAccessDenied) {
+    return {
+      kind: "access_denied",
+      title: "Access Denied",
+      message: error.message,
+    };
+  }
+
+  if (isGuestBlocked) {
+    return {
+      kind: "guest_blocked",
+      title: "Access Denied",
+      message: error.message,
+    };
+  }
+
+  if (isInvalidLink) {
+    return {
+      kind: "invalid_link",
+      title: "Sandbox Link Unavailable",
+      message: INVALID_SANDBOX_LINK_MESSAGE,
+    };
+  }
+
+  return {
+    kind: "unexpected",
+    title: "Sandbox Link Unavailable",
+    message: UNEXPECTED_SANDBOX_ERROR_MESSAGE,
+  };
 }
 
 export function SandboxChatPage({
@@ -82,7 +210,7 @@ export function SandboxChatPage({
     readSandboxSession(),
   );
   const [isResolving, setIsResolving] = useState(!!pathToken);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [routeError, setRouteError] = useState<SandboxRouteError | null>(null);
   const [isCheckingOAuth, setIsCheckingOAuth] = useState(false);
   const [oauthPreflightError, setOauthPreflightError] = useState<string | null>(
     null,
@@ -167,7 +295,7 @@ export function SandboxChatPage({
 
       if (tokenFromPath) {
         setIsResolving(true);
-        setErrorMessage(null);
+        setRouteError(null);
         try {
           const authorization = await getHostedBearerHeader(getAccessToken);
           if (!authorization) {
@@ -186,7 +314,7 @@ export function SandboxChatPage({
           });
 
           if (!response.ok) {
-            throw new Error(await readRouteErrorMessage(response));
+            throw await readRouteError(response);
           }
 
           const payload = (await response.json()) as SandboxSession["payload"];
@@ -198,6 +326,7 @@ export function SandboxChatPage({
           };
           writeSandboxSession(nextSession);
           setSession(nextSession);
+          setRouteError(null);
 
           const nextSlug = slugify(nextSession.payload.name);
           if (window.location.hash !== `#${nextSlug}`) {
@@ -207,11 +336,27 @@ export function SandboxChatPage({
           if (cancelled) return;
           setSession(null);
           clearSandboxSession();
-          setErrorMessage(
-            error instanceof Error
-              ? error.message
-              : "This sandbox link is invalid or expired.",
-          );
+
+          const nextError = isSandboxRouteError(error)
+            ? error
+            : createSandboxRouteError(
+                500,
+                error instanceof Error
+                  ? error.message
+                  : "Unable to open this sandbox.",
+              );
+          const displayError = getSandboxDisplayError(nextError);
+
+          if (displayError.kind === "unexpected") {
+            console.error("[SandboxChatPage] Failed to bootstrap sandbox", {
+              status: nextError.status,
+              code: nextError.code,
+              message: nextError.message,
+              rawMessage: nextError.rawMessage,
+            });
+          }
+
+          setRouteError(nextError);
         } finally {
           if (!cancelled) {
             setIsResolving(false);
@@ -223,7 +368,7 @@ export function SandboxChatPage({
       const recovered = readSandboxSession();
       if (recovered) {
         setSession(recovered);
-        setErrorMessage(null);
+        setRouteError(null);
         const recoveredSlug = slugify(recovered.payload.name);
         if (window.location.hash !== `#${recoveredSlug}`) {
           window.history.replaceState({}, "", `/#${recoveredSlug}`);
@@ -232,7 +377,9 @@ export function SandboxChatPage({
       }
 
       setSession(null);
-      setErrorMessage("Invalid or expired sandbox link");
+      setRouteError(
+        createSandboxRouteError(404, "Invalid or expired sandbox link"),
+      );
     };
 
     void resolve();
@@ -418,6 +565,7 @@ export function SandboxChatPage({
   const hostBrandLabel = getSandboxHostLabel(hostStyle);
   const hostBrandLogo = getSandboxHostLogo(hostStyle);
   const shellStyle = getSandboxShellStyle(hostStyle, themeMode);
+  const displayError = getSandboxDisplayError(routeError);
 
   const renderContent = () => {
     if (isResolving || isCheckingOAuth) {
@@ -429,10 +577,8 @@ export function SandboxChatPage({
     }
 
     if (!session) {
-      const isAccessDenied = errorMessage?.includes("don't have access");
-      const guestBlocked =
-        errorMessage?.includes("Guests cannot access") ||
-        errorMessage?.includes("guest access");
+      const isAccessDenied = displayError.kind === "access_denied";
+      const guestBlocked = displayError.kind === "guest_blocked";
 
       return (
         <div className="flex flex-1 items-center justify-center px-4">
@@ -445,12 +591,10 @@ export function SandboxChatPage({
               )}
             </div>
             <h2 className="text-base font-semibold text-foreground">
-              {isAccessDenied || guestBlocked
-                ? "Access Denied"
-                : "Sandbox Link Unavailable"}
+              {displayError.title}
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              {errorMessage || "This sandbox link is invalid or expired."}
+              {displayError.message}
             </p>
             <div className="mt-4 flex items-center justify-center gap-2">
               {!isAuthenticated && (isAccessDenied || guestBlocked) ? (

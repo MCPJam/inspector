@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Copy,
   ExternalLink,
   Globe,
   Loader2,
@@ -31,6 +32,7 @@ import {
   useSandbox,
   useSandboxList,
   useSandboxMutations,
+  type SandboxListItem,
   type SandboxSettings,
 } from "@/hooks/useSandboxes";
 import { useWorkspaceServers } from "@/hooks/useViews";
@@ -41,6 +43,7 @@ interface SandboxesTabProps {
 }
 
 type RightPaneView = "usage" | "edit" | "create";
+type SandboxActionTarget = Pick<SandboxListItem, "sandboxId" | "name">;
 
 export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
   const { isAuthenticated } = useConvexAuth();
@@ -52,7 +55,7 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
     isAuthenticated,
     workspaceId,
   });
-  const { deleteSandbox } = useSandboxMutations();
+  const { deleteSandbox, duplicateSandbox } = useSandboxMutations();
 
   const [selectedSandboxId, setSelectedSandboxId] = useState<string | null>(
     null,
@@ -86,20 +89,36 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
     setRightPaneView("usage");
   };
 
-  const handleDelete = async () => {
-    if (!selectedSandbox) return;
+  const handleDelete = async (sandbox: SandboxActionTarget) => {
     const shouldDelete = window.confirm(
-      `Delete "${selectedSandbox.name}"? This will also delete persisted usage history.`,
+      `Delete "${sandbox.name}"? This will also delete persisted usage history.`,
     );
     if (!shouldDelete) return;
 
     try {
-      await deleteSandbox({ sandboxId: selectedSandbox.sandboxId });
+      await deleteSandbox({ sandboxId: sandbox.sandboxId });
       toast.success("Sandbox deleted");
-      setSelectedSandboxId(null);
+      if (sandbox.sandboxId === selectedSandboxId) {
+        setSelectedSandboxId(null);
+        setRightPaneView("usage");
+      }
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to delete sandbox",
+      );
+    }
+  };
+
+  const handleDuplicate = async (sandbox: SandboxActionTarget) => {
+    try {
+      const duplicatedSandbox = (await duplicateSandbox({
+        sandboxId: sandbox.sandboxId,
+      })) as SandboxSettings;
+      toast.success(`Sandbox duplicated as "${duplicatedSandbox.name}"`);
+      handleCreated(duplicatedSandbox);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to duplicate sandbox",
       );
     }
   };
@@ -223,13 +242,21 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
                             <Pencil className="mr-2 h-3.5 w-3.5" />
                             Edit
                           </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleDuplicate(sandbox);
+                            }}
+                          >
+                            <Copy className="mr-2 h-3.5 w-3.5" />
+                            Duplicate
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive focus:text-destructive"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleSelectSandbox(sandbox.sandboxId);
-                              void handleDelete();
+                              void handleDelete(sandbox);
                             }}
                           >
                             <Trash2 className="mr-2 h-3.5 w-3.5" />
