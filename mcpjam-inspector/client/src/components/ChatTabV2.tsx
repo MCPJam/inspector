@@ -1,8 +1,16 @@
-import { FormEvent, useMemo, useState, useEffect, useCallback } from "react";
+import {
+  FormEvent,
+  useMemo,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
 import { ArrowDown } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import { toast } from "sonner";
+
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
 import {
@@ -42,6 +50,11 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import { buildWidgetModelContextMessages } from "@/lib/mcp-ui/model-context-messages";
+import {
+  useWidgetStateSync,
+  type ModelContextItem,
+} from "@/hooks/use-widget-state-sync";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -98,18 +111,7 @@ export function ChatTabV2({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [widgetStateQueue, setWidgetStateQueue] = useState<
-    { toolCallId: string; state: unknown }[]
-  >([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    {
-      toolCallId: string;
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      };
-    }[]
-  >([]);
+  const resetWidgetSyncRef = useRef<() => void>(() => {});
   const [elicitation, setElicitation] = useState<DialogElicitation | null>(
     null,
   );
@@ -198,9 +200,19 @@ export function ChatTabV2({
     minimalMode,
     onReset: () => {
       setInput("");
-      setWidgetStateQueue([]);
+      resetWidgetSyncRef.current();
     },
   });
+
+  const {
+    enqueueWidgetStateSync,
+    setWidgetStateQueue,
+    widgetStateSyncRef,
+    modelContextQueueRef,
+    setModelContextQueue,
+    resetWidgetSync,
+  } = useWidgetStateSync({ status, setMessages });
+  resetWidgetSyncRef.current = resetWidgetSync;
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -264,94 +276,19 @@ export function ChatTabV2({
     onHasMessagesChange?.(!isThreadEmpty);
   }, [isThreadEmpty, onHasMessagesChange]);
 
-  // Widget state management
-  const applyWidgetStateUpdates = useCallback(
-    (
-      prevMessages: typeof messages,
-      updates: { toolCallId: string; state: unknown }[],
-    ) => {
-      let nextMessages = prevMessages;
-
-      for (const { toolCallId, state } of updates) {
-        const messageId = `widget-state-${toolCallId}`;
-
-        if (state === null) {
-          const filtered = nextMessages.filter((msg) => msg.id !== messageId);
-          nextMessages = filtered;
-          continue;
-        }
-
-        const stateText = `The state of widget ${toolCallId} is: ${JSON.stringify(state)}`;
-        const existingIndex = nextMessages.findIndex(
-          (msg) => msg.id === messageId,
-        );
-
-        if (existingIndex !== -1) {
-          const existingMessage = nextMessages[existingIndex];
-          const existingText =
-            existingMessage.parts?.[0]?.type === "text"
-              ? (existingMessage.parts[0] as { text?: string }).text
-              : null;
-
-          if (existingText === stateText) {
-            continue;
-          }
-
-          const updatedMessages = [...nextMessages];
-          updatedMessages[existingIndex] = {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          };
-          nextMessages = updatedMessages;
-          continue;
-        }
-
-        nextMessages = [
-          ...nextMessages,
-          {
-            id: messageId,
-            role: "assistant",
-            parts: [{ type: "text" as const, text: stateText }],
-          },
-        ];
-      }
-
-      return nextMessages;
-    },
-    [],
-  );
-
   const handleWidgetStateChange = useCallback(
     (toolCallId: string, state: unknown) => {
       if (status === "ready") {
-        setMessages((prevMessages) =>
-          applyWidgetStateUpdates(prevMessages, [{ toolCallId, state }]),
-        );
+        void enqueueWidgetStateSync([{ toolCallId, state }]);
       } else {
         setWidgetStateQueue((prev) => [...prev, { toolCallId, state }]);
       }
     },
-    [status, setMessages, applyWidgetStateUpdates],
+    [status, enqueueWidgetStateSync],
   );
 
-  useEffect(() => {
-    if (status !== "ready" || widgetStateQueue.length === 0) return;
-
-    setMessages((prevMessages) =>
-      applyWidgetStateUpdates(prevMessages, widgetStateQueue),
-    );
-    setWidgetStateQueue([]);
-  }, [status, widgetStateQueue, setMessages, applyWidgetStateUpdates]);
-
   const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
+    (toolCallId: string, context: ModelContextItem["context"]) => {
       // Queue model context to be included in next message
       setModelContextQueue((prev) => {
         // Remove any existing context from same widget (overwrite pattern per SEP-1865)
@@ -359,7 +296,7 @@ export function ChatTabV2({
         return [...filtered, { toolCallId, context }];
       });
     },
-    [],
+    [setModelContextQueue],
   );
 
   // Elicitation SSE listener
@@ -478,64 +415,62 @@ export function ChatTabV2({
       skillResults.length > 0 ||
       fileAttachments.length > 0;
     if (hasContent && status === "ready" && !submitBlocked) {
-      posthog.capture("send_message", {
-        location: "chat_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        model_id: selectedModel?.id ?? null,
-        model_name: selectedModel?.name ?? null,
-        model_provider: selectedModel?.provider ?? null,
-      });
+      try {
+        // Ensure any async widget-state -> message conversion is complete
+        // before submitting the next user turn.
+        await widgetStateSyncRef.current;
 
-      // Build messages from MCP prompts
-      const promptMessages = buildMcpPromptMessages(mcpPromptResults);
-      if (promptMessages.length > 0) {
-        setMessages((prev) => [...prev, ...(promptMessages as any[])]);
+        posthog.capture("send_message", {
+          location: "chat_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          model_id: selectedModel?.id ?? null,
+          model_name: selectedModel?.name ?? null,
+          model_provider: selectedModel?.provider ?? null,
+        });
+
+        // Build messages from MCP prompts
+        const promptMessages = buildMcpPromptMessages(mcpPromptResults);
+        if (promptMessages.length > 0) {
+          setMessages((prev) => [...prev, ...(promptMessages as any[])]);
+        }
+
+        // Build messages from skills
+        const skillMessages = buildSkillToolMessages(skillResults);
+        if (skillMessages.length > 0) {
+          setMessages((prev) => [...prev, ...(skillMessages as any[])]);
+        }
+
+        // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
+        // Sent as hidden user messages; preserve image/audio blocks as file parts.
+        const contextMessages = await buildWidgetModelContextMessages(
+          modelContextQueueRef.current,
+        );
+
+        if (contextMessages.length > 0) {
+          setMessages((prev) => [...prev, ...(contextMessages as any[])]);
+        }
+
+        // Convert file attachments to FileUIPart[] format for the AI SDK
+        const files =
+          fileAttachments.length > 0
+            ? await attachmentsToFileUIParts(fileAttachments)
+            : undefined;
+
+        sendMessage({ text: input, files });
+        setInput("");
+        setMcpPromptResults([]);
+        setSkillResults([]);
+        // Revoke object URLs and clear file attachments
+        revokeFileAttachmentUrls(fileAttachments);
+        setFileAttachments([]);
+        setModelContextQueue([]); // Clear after sending
+      } catch (err) {
+        console.error("[ChatTabV2] Submit failed:", err);
+        toast.error(
+          err instanceof Error ? err.message : "Failed to send message",
+        );
       }
-
-      // Build messages from skills
-      const skillMessages = buildSkillToolMessages(skillResults);
-      if (skillMessages.length > 0) {
-        setMessages((prev) => [...prev, ...(skillMessages as any[])]);
-      }
-
-      // Include any pending model context from widgets (SEP-1865 ui/update-model-context)
-      // Sent as "user" messages for compatibility with model provider APIs
-      const contextMessages = modelContextQueue.map(
-        ({ toolCallId, context }) => ({
-          id: `model-context-${toolCallId}-${Date.now()}`,
-          role: "user" as const,
-          parts: [
-            {
-              type: "text" as const,
-              text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
-            },
-          ],
-          metadata: {
-            source: "widget-model-context",
-            toolCallId,
-          },
-        }),
-      );
-
-      if (contextMessages.length > 0) {
-        setMessages((prev) => [...prev, ...(contextMessages as any[])]);
-      }
-
-      // Convert file attachments to FileUIPart[] format for the AI SDK
-      const files =
-        fileAttachments.length > 0
-          ? await attachmentsToFileUIParts(fileAttachments)
-          : undefined;
-
-      sendMessage({ text: input, files });
-      setInput("");
-      setMcpPromptResults([]);
-      setSkillResults([]);
-      // Revoke object URLs and clear file attachments
-      revokeFileAttachmentUrls(fileAttachments);
-      setFileAttachments([]);
-      setModelContextQueue([]); // Clear after sending
     }
   };
 
