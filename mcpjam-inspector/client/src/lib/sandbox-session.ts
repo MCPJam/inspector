@@ -85,7 +85,9 @@ export function readSandboxSession(): SandboxSession | null {
         sandboxId: payload.sandboxId,
         name: payload.name,
         description:
-          typeof payload.description === "string" ? payload.description : undefined,
+          typeof payload.description === "string"
+            ? payload.description
+            : undefined,
         mode:
           payload.mode === "any_signed_in_with_link"
             ? payload.mode
@@ -124,10 +126,7 @@ export function readSandboxSession(): SandboxSession | null {
 }
 
 export function writeSandboxSession(session: SandboxSession): void {
-  sessionStorage.setItem(
-    SANDBOX_SESSION_STORAGE_KEY,
-    JSON.stringify(session),
-  );
+  sessionStorage.setItem(SANDBOX_SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
 export function clearSandboxSession(): void {

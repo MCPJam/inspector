@@ -1,7 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, ChevronDown, ChevronRight, ChevronsUpDown, Globe, Loader2, Lock, Plus, Save, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
+  Globe,
+  Loader2,
+  Lock,
+  Plus,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
-import { isMCPJamProvidedModel, SUPPORTED_MODELS, type ServerFormData } from "@/shared/types";
+import {
+  isMCPJamProvidedModel,
+  SUPPORTED_MODELS,
+  type ServerFormData,
+} from "@/shared/types";
 import type { SandboxMode, SandboxSettings } from "@/hooks/useSandboxes";
 import { useSandboxMutations } from "@/hooks/useSandboxes";
 import { useServerMutations } from "@/hooks/useWorkspaces";
@@ -69,7 +85,8 @@ export function SandboxEditor({
   onSaved,
   onDeleted,
 }: SandboxEditorProps) {
-  const { createSandbox, updateSandbox, deleteSandbox, setSandboxMode } = useSandboxMutations();
+  const { createSandbox, updateSandbox, deleteSandbox, setSandboxMode } =
+    useSandboxMutations();
   const { createServer } = useServerMutations();
   const isCreateMode = !sandbox;
 
@@ -83,8 +100,12 @@ export function SandboxEditor({
 
   const [name, setName] = useState(sandbox?.name ?? "");
   const [description, setDescription] = useState(sandbox?.description ?? "");
-  const [systemPrompt, setSystemPrompt] = useState(sandbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT);
-  const [modelId, setModelId] = useState(sandbox?.modelId ?? hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini");
+  const [systemPrompt, setSystemPrompt] = useState(
+    sandbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+  );
+  const [modelId, setModelId] = useState(
+    sandbox?.modelId ?? hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini",
+  );
   const [temperature, setTemperature] = useState(sandbox?.temperature ?? 0.7);
   const [requireToolApproval, setRequireToolApproval] = useState(
     sandbox?.requireToolApproval ?? false,
@@ -239,7 +260,10 @@ export function SandboxEditor({
           });
         }
       } else {
-        result = await updateSandbox({ sandboxId: sandbox!.sandboxId, ...payload });
+        result = await updateSandbox({
+          sandboxId: sandbox!.sandboxId,
+          ...payload,
+        });
       }
 
       toast.success(isCreateMode ? "Sandbox created" : "Sandbox updated");
@@ -369,79 +393,97 @@ export function SandboxEditor({
           </div>
 
           <div>
-          <div className="flex items-center justify-between">
-            <Label className="text-xs font-medium text-muted-foreground">
-              Servers
-            </Label>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                onClick={() => setIsAddServerOpen(true)}
-              >
-                <Plus className="h-3 w-3" />
-                Add
-              </button>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-medium text-muted-foreground">
+                Servers
+              </Label>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                  onClick={() => setIsAddServerOpen(true)}
+                >
+                  <Plus className="h-3 w-3" />
+                  Add
+                </button>
+              </div>
             </div>
-          </div>
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                className="flex w-full items-center justify-between rounded-md border-0 bg-muted/50 px-3 py-2 text-sm transition-colors hover:bg-muted"
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-md border-0 bg-muted/50 px-3 py-2 text-sm transition-colors hover:bg-muted"
+                >
+                  {selectedServerIds.length === 0 ? (
+                    <span className="text-muted-foreground">
+                      Select servers…
+                    </span>
+                  ) : (
+                    <span className="flex flex-wrap gap-1">
+                      {selectedServerIds.map((id) => {
+                        const server = availableServers.find(
+                          (s) => s._id === id,
+                        );
+                        return (
+                          <Badge
+                            key={id}
+                            variant="secondary"
+                            className="text-xs"
+                          >
+                            {server?.name ?? id}
+                          </Badge>
+                        );
+                      })}
+                    </span>
+                  )}
+                  <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                className="w-[var(--radix-popover-trigger-width)] p-1"
+                align="start"
               >
-                {selectedServerIds.length === 0 ? (
-                  <span className="text-muted-foreground">Select servers…</span>
+                {availableServers.length === 0 ? (
+                  <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                    No HTTP servers available.
+                  </p>
                 ) : (
-                  <span className="flex flex-wrap gap-1">
-                    {selectedServerIds.map((id) => {
-                      const server = availableServers.find((s) => s._id === id);
+                  <div className="max-h-56 overflow-y-auto">
+                    {availableServers.map((server) => {
+                      const insecure = isInsecureUrl(server.url);
                       return (
-                        <Badge key={id} variant="secondary" className="text-xs">
-                          {server?.name ?? id}
-                        </Badge>
+                        <label
+                          key={server._id}
+                          className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
+                          title={
+                            insecure
+                              ? "Sandboxes require HTTPS server URLs"
+                              : undefined
+                          }
+                        >
+                          <Checkbox
+                            checked={
+                              !insecure &&
+                              selectedServerIds.includes(server._id)
+                            }
+                            onCheckedChange={(checked) =>
+                              handleToggleServer(server._id, checked === true)
+                            }
+                            disabled={insecure}
+                          />
+                          <span className="flex-1 text-sm">{server.name}</span>
+                          {insecure && (
+                            <span className="text-[10px] text-destructive">
+                              Requires HTTPS
+                            </span>
+                          )}
+                        </label>
                       );
                     })}
-                  </span>
+                  </div>
                 )}
-                <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
-              {availableServers.length === 0 ? (
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                  No HTTP servers available.
-                </p>
-              ) : (
-                <div className="max-h-56 overflow-y-auto">
-                  {availableServers.map((server) => {
-                    const insecure = isInsecureUrl(server.url);
-                    return (
-                      <label
-                        key={server._id}
-                        className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
-                        title={insecure ? "Sandboxes require HTTPS server URLs" : undefined}
-                      >
-                        <Checkbox
-                          checked={!insecure && selectedServerIds.includes(server._id)}
-                          onCheckedChange={(checked) =>
-                            handleToggleServer(server._id, checked === true)
-                          }
-                          disabled={insecure}
-                        />
-                        <span className="flex-1 text-sm">{server.name}</span>
-                        {insecure && (
-                          <span className="text-[10px] text-destructive">
-                            Requires HTTPS
-                          </span>
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-              )}
-            </PopoverContent>
-          </Popover>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
 
@@ -463,7 +505,8 @@ export function SandboxEditor({
                   System prompt
                 </Label>
                 <p className="mb-1.5 text-[10px] text-muted-foreground">
-                  Instructions given to the model at the start of each conversation.
+                  Instructions given to the model at the start of each
+                  conversation.
                 </p>
                 <Textarea
                   value={systemPrompt}
@@ -525,7 +568,6 @@ export function SandboxEditor({
                   </div>
                 </div>
               </div>
-
             </CollapsibleContent>
           </Collapsible>
         </div>
@@ -537,10 +579,7 @@ export function SandboxEditor({
             <Label className="text-xs font-medium text-muted-foreground">
               Sharing
             </Label>
-            <SandboxShareSection
-              sandbox={sandbox}
-              onUpdated={onSaved}
-            />
+            <SandboxShareSection sandbox={sandbox} onUpdated={onSaved} />
           </div>
         )}
 
@@ -626,7 +665,6 @@ export function SandboxEditor({
         initialData={{ type: "http" }}
         requireHttps
       />
-
     </div>
   );
 }

@@ -5,9 +5,8 @@ vi.mock("../skill-tools.js", () => ({
 }));
 
 vi.mock("@/shared/types", async () => {
-  const actual = await vi.importActual<typeof import("@/shared/types")>(
-    "@/shared/types",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/shared/types")>("@/shared/types");
   return {
     ...actual,
     isGPT5Model: vi.fn().mockReturnValue(false),

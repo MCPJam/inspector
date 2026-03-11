@@ -13,9 +13,7 @@ interface SandboxUsagePanelProps {
   sandbox: SandboxSettings;
 }
 
-export function SandboxUsagePanel({
-  sandbox,
-}: SandboxUsagePanelProps) {
+export function SandboxUsagePanel({ sandbox }: SandboxUsagePanelProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
 
   useEffect(() => {

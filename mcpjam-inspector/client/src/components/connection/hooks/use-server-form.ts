@@ -4,7 +4,10 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 
-export function useServerForm(server?: ServerWithName, options?: { requireHttps?: boolean }) {
+export function useServerForm(
+  server?: ServerWithName,
+  options?: { requireHttps?: boolean },
+) {
   const [name, setName] = useState("");
   const [type, setType] = useState<"stdio" | "http">("http");
   const [commandInput, setCommandInput] = useState("");
