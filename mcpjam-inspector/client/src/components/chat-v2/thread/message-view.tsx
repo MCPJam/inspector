@@ -17,6 +17,7 @@ import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { type ReasoningDisplayMode } from "./parts/reasoning-part";
 
 export function MessageView({
   message,
@@ -40,6 +41,7 @@ export function MessageView({
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
+  reasoningDisplayMode = "inline",
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -68,6 +70,7 @@ export function MessageView({
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  reasoningDisplayMode?: ReasoningDisplayMode;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
@@ -129,6 +132,7 @@ export function MessageView({
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
                 interactive={interactive}
+                reasoningDisplayMode={reasoningDisplayMode}
               />
             ))}
           </div>
@@ -161,6 +165,7 @@ export function MessageView({
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
                 interactive={interactive}
+                reasoningDisplayMode={reasoningDisplayMode}
               />
             ))}
           </UserMessageBubble>
@@ -216,6 +221,7 @@ export function MessageView({
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
                 interactive={interactive}
+                reasoningDisplayMode={reasoningDisplayMode}
               />
             ))}
           </div>

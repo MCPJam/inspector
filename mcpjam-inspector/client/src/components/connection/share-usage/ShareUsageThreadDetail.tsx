@@ -216,6 +216,7 @@ export function ShareUsageThreadDetail({
               showSaveViewButton={false}
               minimalMode={true}
               interactive={false}
+              reasoningDisplayMode="collapsed"
             />
           ))}
         </div>

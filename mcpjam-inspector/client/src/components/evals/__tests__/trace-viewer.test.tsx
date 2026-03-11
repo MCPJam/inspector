@@ -59,6 +59,25 @@ const simpleTextTrace = {
   ],
 };
 
+const reasoningTrace = {
+  messages: [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "reasoning",
+          text: "Thinking through the tool choice.",
+          state: "done",
+        },
+        {
+          type: "text",
+          text: "I should call the server listing tool.",
+        },
+      ],
+    },
+  ],
+};
+
 const toolTrace = {
   messages: [
     {
@@ -178,6 +197,16 @@ describe("TraceViewer", () => {
       expect.objectContaining({
         minimalMode: true,
         interactive: false,
+      }),
+    );
+  });
+
+  it("requests collapsed reasoning rendering in formatted trace mode", () => {
+    render(<TraceViewer trace={reasoningTrace} />);
+
+    expect(mockMessageView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasoningDisplayMode: "collapsed",
       }),
     );
   });
