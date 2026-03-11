@@ -36,6 +36,7 @@ chatV2.post("/", async (c) => {
       workspaceId: string;
       selectedServerIds: string[];
       shareToken?: string;
+      sandboxToken?: string;
       accessScope?: "workspace_member" | "chat_v2";
     };
 
@@ -47,6 +48,7 @@ chatV2.post("/", async (c) => {
       requireToolApproval,
       selectedServerIds,
       shareToken,
+      sandboxToken,
     } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -75,6 +77,7 @@ chatV2.post("/", async (c) => {
       {
         accessScope: "chat_v2",
         shareToken,
+        sandboxToken,
       },
     );
     oauthServerUrls = urls;
@@ -90,6 +93,7 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           customProviders: body.customProviders,
+          includeMcpToolInventory: true,
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -129,11 +133,12 @@ chatV2.post("/", async (c) => {
         selectedServers: selectedServerIds,
         requireToolApproval,
         onConversationComplete:
-          shareToken && body.chatSessionId
+          (shareToken || sandboxToken) && body.chatSessionId
             ? async (fullHistory) => {
                 await saveThreadToConvex({
                   chatSessionId: body.chatSessionId!,
                   shareToken,
+                  sandboxToken,
                   bearerToken,
                   messages: fullHistory,
                   messageCount: fullHistory.length,

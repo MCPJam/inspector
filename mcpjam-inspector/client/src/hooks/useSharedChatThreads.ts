@@ -1,10 +1,14 @@
 import { useQuery } from "convex/react";
 
+export type SharedChatSourceType = "serverShare" | "sandbox";
+
 export interface SharedChatThread {
   _id: string;
-  shareId: string;
+  sourceType: SharedChatSourceType;
+  shareId?: string;
+  sandboxId?: string;
   chatSessionId: string;
-  serverId: string;
+  serverId?: string;
   visitorUserId: string;
   visitorDisplayName: string;
   modelId: string;
@@ -20,6 +24,7 @@ export interface SharedChatWidgetSnapshot {
   threadId: string;
   toolCallId: string;
   toolName: string;
+  serverId: string;
   uiType: "mcp-apps" | "openai-apps";
   resourceUri?: string;
   widgetCsp: Record<string, unknown> | null;
@@ -30,13 +35,28 @@ export interface SharedChatWidgetSnapshot {
 }
 
 export function useSharedChatThreadList({
-  shareId,
+  sourceType,
+  sourceId,
 }: {
-  shareId: string | null;
+  sourceType: SharedChatSourceType;
+  sourceId: string | null;
 }) {
+  const queryName =
+    sourceType === "sandbox"
+      ? "sharedChatThreads:listBySandbox"
+      : "sharedChatThreads:listByShare";
+  const queryArgs =
+    sourceType === "sandbox"
+      ? sourceId
+        ? ({ sandboxId: sourceId, limit: 50 } as any)
+        : "skip"
+      : sourceId
+        ? ({ shareId: sourceId, limit: 50 } as any)
+        : "skip";
+
   const threads = useQuery(
-    "sharedChatThreads:listByShare" as any,
-    shareId ? ({ shareId, limit: 50 } as any) : "skip",
+    queryName as any,
+    queryArgs,
   ) as SharedChatThread[] | undefined;
 
   return { threads };

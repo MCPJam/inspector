@@ -15,6 +15,7 @@ import {
   MessageCircleQuestionIcon,
   GitBranch,
   GraduationCap,
+  Box,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
@@ -96,6 +97,11 @@ const navigationSections: NavSection[] = [
         title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
+      },
+      {
+        title: "Sandboxes",
+        url: "#sandboxes",
+        icon: Box,
       },
     ],
   },

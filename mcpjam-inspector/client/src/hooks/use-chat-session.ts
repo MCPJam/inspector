@@ -50,6 +50,7 @@ import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
+import { getHostedAuthorizationHeader } from "@/lib/apis/web/context";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -62,12 +63,18 @@ export interface UseChatSessionOptions {
   hostedOAuthTokens?: Record<string, string>;
   /** Optional server-share token for hosted shared chat sessions */
   hostedShareToken?: string;
+  /** Optional sandbox token for hosted sandbox sessions */
+  hostedSandboxToken?: string;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /** Fixed initial model for hosted sandbox sessions */
+  initialModelId?: string;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
   initialSystemPrompt?: string;
   /** Initial temperature (defaults to 0.7) */
   initialTemperature?: number;
+  /** Initial tool approval mode for hosted sandbox sessions */
+  initialRequireToolApproval?: boolean;
   /** Callback when chat is reset */
   onReset?: () => void;
 }
@@ -190,8 +197,11 @@ export function useChatSession({
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
   hostedShareToken,
+  hostedSandboxToken,
+  initialModelId,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
+  initialRequireToolApproval = false,
   onReset,
 }: UseChatSessionOptions): UseChatSessionReturn {
   const { getAccessToken } = useAuth();
@@ -235,7 +245,9 @@ export function useChatSession({
   >(null);
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
-  const [requireToolApproval, setRequireToolApproval] = useState(false);
+  const [requireToolApproval, setRequireToolApproval] = useState(
+    initialRequireToolApproval,
+  );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
   const skipNextForkDetectionRef = useRef(false);
@@ -269,16 +281,25 @@ export function useChatSession({
   const { selectedModelId, setSelectedModelId } = usePersistedModel();
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
+    if (initialModelId) {
+      return (
+        availableModels.find((model) => String(model.id) === initialModelId) ??
+        fallback
+      );
+    }
     if (!selectedModelId) return fallback;
     const found = availableModels.find((m) => String(m.id) === selectedModelId);
     return found ?? fallback;
-  }, [availableModels, selectedModelId]);
+  }, [availableModels, initialModelId, selectedModelId]);
 
   const setSelectedModel = useCallback(
     (model: ModelDefinition) => {
+      if (initialModelId) {
+        return;
+      }
       setSelectedModelId(String(model.id));
     },
-    [setSelectedModelId],
+    [initialModelId, setSelectedModelId],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -325,6 +346,9 @@ export function useChatSession({
               selectedServerIds: hostedSelectedServerIds,
               accessScope: "chat_v2" as const,
               ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
+              ...(hostedSandboxToken
+                ? { sandboxToken: hostedSandboxToken }
+                : {}),
               ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
                 ? { oauthTokens: hostedOAuthTokens }
                 : {}),
@@ -352,6 +376,7 @@ export function useChatSession({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
+    hostedSandboxToken,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -373,9 +398,13 @@ export function useChatSession({
   });
 
   useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && !!hostedShareToken && isAuthenticated,
+    enabled:
+      HOSTED_MODE &&
+      Boolean(hostedShareToken || hostedSandboxToken) &&
+      isAuthenticated,
     chatSessionId,
     hostedShareToken,
+    hostedSandboxToken,
     messages,
   });
 
@@ -460,12 +489,20 @@ export function useChatSession({
     let active = true;
     (async () => {
       try {
-        const token = await getAccessToken?.();
-        if (!active) return;
-        if (token) {
-          setAuthHeaders({ Authorization: `Bearer ${token}` });
+        if (HOSTED_MODE) {
+          const hostedHeader = await getHostedAuthorizationHeader();
+          if (!active) return;
+          setAuthHeaders(
+            hostedHeader ? { Authorization: hostedHeader } : undefined,
+          );
         } else {
-          setAuthHeaders(undefined);
+          const token = await getAccessToken?.();
+          if (!active) return;
+          if (token) {
+            setAuthHeaders({ Authorization: `Bearer ${token}` });
+          } else {
+            setAuthHeaders(undefined);
+          }
         }
       } catch (err) {
         console.error("[useChatSession] Failed to get access token:", err);
@@ -487,6 +524,18 @@ export function useChatSession({
       active = false;
     };
   }, [getAccessToken, setMessages]);
+
+  useEffect(() => {
+    setSystemPrompt(initialSystemPrompt);
+  }, [initialSystemPrompt]);
+
+  useEffect(() => {
+    setTemperature(initialTemperature);
+  }, [initialTemperature]);
+
+  useEffect(() => {
+    setRequireToolApproval(initialRequireToolApproval);
+  }, [initialRequireToolApproval]);
 
   // Ollama model detection
   useEffect(() => {
@@ -556,7 +605,7 @@ export function useChatSession({
             : null,
         );
       } catch (error) {
-        if (!(hostedShareToken && isAuthDeniedError(error))) {
+        if (!(Boolean(hostedShareToken || hostedSandboxToken) && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error,
@@ -571,7 +620,7 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel, hostedShareToken]);
+  }, [selectedServers, selectedModel, hostedShareToken, hostedSandboxToken]);
 
   // System prompt token count
   useEffect(() => {
@@ -590,7 +639,7 @@ export function useChatSession({
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (!(hostedShareToken && isAuthDeniedError(error))) {
+        if (!(Boolean(hostedShareToken || hostedSandboxToken) && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error,
@@ -603,7 +652,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedShareToken]);
+  }, [systemPrompt, selectedModel, hostedShareToken, hostedSandboxToken]);
 
   // Reset chat when selected servers change
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
@@ -651,11 +700,10 @@ export function useChatSession({
 
   // Computed state for UI
   const requiresAuthForChat = HOSTED_MODE || isMcpJamModel;
-  const isAuthReady =
-    !requiresAuthForChat || (isAuthenticated && !!authHeaders);
-  const disableForAuthentication = !isAuthenticated && requiresAuthForChat;
-  const authHeadersNotReady =
-    requiresAuthForChat && isAuthenticated && !authHeaders;
+  const isAuthReady = !requiresAuthForChat || !!authHeaders;
+  const disableForAuthentication =
+    !HOSTED_MODE && !isAuthenticated && requiresAuthForChat;
+  const authHeadersNotReady = requiresAuthForChat && !authHeaders;
   const hostedContextNotReady =
     HOSTED_MODE &&
     (!hostedWorkspaceId ||

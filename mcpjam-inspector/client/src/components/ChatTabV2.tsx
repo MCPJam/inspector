@@ -52,6 +52,11 @@ interface ChatTabProps {
   hostedSelectedServerIdsOverride?: string[];
   hostedOAuthTokensOverride?: Record<string, string>;
   hostedShareToken?: string;
+  hostedSandboxToken?: string;
+  initialModelId?: string;
+  initialSystemPrompt?: string;
+  initialTemperature?: number;
+  initialRequireToolApproval?: boolean;
   onOAuthRequired?: (serverUrl?: string) => void;
 }
 
@@ -82,6 +87,11 @@ export function ChatTabV2({
   hostedSelectedServerIdsOverride,
   hostedOAuthTokensOverride,
   hostedShareToken,
+  hostedSandboxToken,
+  initialModelId,
+  initialSystemPrompt,
+  initialTemperature,
+  initialRequireToolApproval,
   onOAuthRequired,
 }: ChatTabProps) {
   const { signUp } = useAuth();
@@ -195,6 +205,11 @@ export function ChatTabV2({
     hostedSelectedServerIds: effectiveHostedSelectedServerIds,
     hostedOAuthTokens: effectiveHostedOAuthTokens,
     hostedShareToken,
+    hostedSandboxToken,
+    initialModelId,
+    initialSystemPrompt,
+    initialTemperature,
+    initialRequireToolApproval,
     minimalMode,
     onReset: () => {
       setInput("");

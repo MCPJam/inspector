@@ -13,6 +13,7 @@ import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
+import { SandboxesTab } from "./components/SandboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
@@ -54,13 +55,23 @@ import {
   SharedServerChatPage,
   getSharedPathTokenFromLocation,
 } from "./components/hosted/SharedServerChatPage";
+import {
+  SandboxChatPage,
+  getSandboxPathTokenFromLocation,
+} from "./components/hosted/SandboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import { resolveHostedNavigation } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
+  clearSandboxSignInReturnPath,
+  readSandboxSession,
+  readSandboxSignInReturnPath,
+  SANDBOX_OAUTH_PENDING_KEY,
+  writeSandboxSignInReturnPath,
+} from "./lib/sandbox-session";
+import {
   clearSharedSignInReturnPath,
-  hasActiveSharedSession,
   readSharedServerSession,
   readSharedSignInReturnPath,
   slugify,
@@ -88,38 +99,108 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const [sharedOAuthHandling, setSharedOAuthHandling] = useState(false);
+  const [hostedOAuthHandling, setHostedOAuthHandling] = useState(false);
   const [exitedSharedChat, setExitedSharedChat] = useState(false);
+  const [exitedSandboxChat, setExitedSandboxChat] = useState(false);
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
+  const sandboxPathToken = HOSTED_MODE
+    ? getSandboxPathTokenFromLocation()
+    : null;
+  const sharedSession = HOSTED_MODE ? readSharedServerSession() : null;
+  const sandboxSession = HOSTED_MODE ? readSandboxSession() : null;
+  const currentHashSlug = window.location.hash
+    .replace(/^#/, "")
+    .replace(/^\/+/, "")
+    .split("/")[0];
+  const hostedRouteKind = useMemo(() => {
+    if (!HOSTED_MODE) {
+      return null;
+    }
+
+    if (sharedPathToken) {
+      return "shared" as const;
+    }
+    if (sandboxPathToken) {
+      return "sandbox" as const;
+    }
+
+    if (sharedSession && sandboxSession) {
+      if (currentHashSlug === slugify(sharedSession.payload.serverName)) {
+        return "shared" as const;
+      }
+      if (currentHashSlug === slugify(sandboxSession.payload.name)) {
+        return "sandbox" as const;
+      }
+      return null;
+    }
+
+    if (sharedSession) {
+      return "shared" as const;
+    }
+    if (sandboxSession) {
+      return "sandbox" as const;
+    }
+
+    return null;
+  }, [
+    currentHashSlug,
+    sandboxPathToken,
+    sandboxSession,
+    sharedPathToken,
+    sharedSession,
+  ]);
   const isSharedChatRoute =
     HOSTED_MODE &&
     !exitedSharedChat &&
-    (!!sharedPathToken || hasActiveSharedSession());
+    hostedRouteKind === "shared";
+  const isSandboxChatRoute =
+    HOSTED_MODE &&
+    !exitedSandboxChat &&
+    hostedRouteKind === "sandbox";
+  const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
 
-  // Handle shared OAuth callback: detect code + pending flag before normal rendering
+  // Handle hosted OAuth callback: detect code + hosted pending flag before normal rendering.
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
-    if (!code || !localStorage.getItem(SHARED_OAUTH_PENDING_KEY)) return;
+    const hasSharedOAuthPending = !!localStorage.getItem(SHARED_OAUTH_PENDING_KEY);
+    const hasSandboxOAuthPending = !!localStorage.getItem(
+      SANDBOX_OAUTH_PENDING_KEY,
+    );
+    if (!code || (!hasSharedOAuthPending && !hasSandboxOAuthPending)) return;
 
     let cancelled = false;
-    setSharedOAuthHandling(true);
+    setHostedOAuthHandling(true);
 
     const cleanupOAuth = () => {
       if (cancelled) return;
       localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
-      const storedSession = readSharedServerSession();
-      const sharedHash = storedSession
-        ? slugify(storedSession.payload.serverName)
-        : "shared";
-      window.history.replaceState({}, "", `/#${sharedHash}`);
+      localStorage.removeItem(SANDBOX_OAUTH_PENDING_KEY);
+
+      const sandboxSession = readSandboxSession();
+      if (hasSandboxOAuthPending && sandboxSession) {
+        window.history.replaceState(
+          {},
+          "",
+          `/#${slugify(sandboxSession.payload.name)}`,
+        );
+        return;
+      }
+
+      const sharedSession = readSharedServerSession();
+      const hostedHash = sharedSession
+        ? slugify(sharedSession.payload.serverName)
+        : hasSandboxOAuthPending
+          ? "sandbox"
+          : "shared";
+      window.history.replaceState({}, "", `/#${hostedHash}`);
     };
 
     handleOAuthCallback(code)
       .then(cleanupOAuth)
       .catch(cleanupOAuth)
       .finally(() => {
-        if (!cancelled) setSharedOAuthHandling(false);
+        if (!cancelled) setHostedOAuthHandling(false);
       });
 
     return () => {
@@ -167,9 +248,15 @@ export default function App() {
 
     // Let AuthKit + Convex auth settle before leaving /callback.
     if (!isAuthLoading && isAuthenticated) {
+      const sandboxReturnPath = readSandboxSignInReturnPath();
       const sharedReturnPath = readSharedSignInReturnPath();
+      clearSandboxSignInReturnPath();
       clearSharedSignInReturnPath();
-      window.history.replaceState({}, "", sharedReturnPath ?? "/");
+      window.history.replaceState(
+        {},
+        "",
+        sandboxReturnPath ?? sharedReturnPath ?? "/",
+      );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
       return;
@@ -212,7 +299,7 @@ export default function App() {
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
-    if (isSharedChatRoute) return;
+    if (isHostedChatRoute) return;
     if (isLoadingRemoteWorkspaces) return;
     if (isAuthLoading) return;
 
@@ -233,7 +320,7 @@ export default function App() {
       oauthScopes: pending.oauthScopes ?? undefined,
     });
   }, [
-    isSharedChatRoute,
+    isHostedChatRoute,
     isLoadingRemoteWorkspaces,
     isAuthLoading,
     workspaceServers,
@@ -306,7 +393,7 @@ export default function App() {
     guestOauthTokensByServerName,
     isAuthenticated,
     serverConfigs: guestServerConfigs,
-    enabled: !isSharedChatRoute,
+    enabled: !isHostedChatRoute,
   });
 
   // Compute the set of server names that have saved views
@@ -330,6 +417,17 @@ export default function App() {
         const storedSession = readSharedServerSession();
         if (storedSession) {
           const expectedHash = slugify(storedSession.payload.serverName);
+          if (window.location.hash !== `#${expectedHash}`) {
+            window.location.hash = expectedHash;
+          }
+        }
+        return;
+      }
+
+      if (isSandboxChatRoute) {
+        const storedSession = readSandboxSession();
+        if (storedSession) {
+          const expectedHash = slugify(storedSession.payload.name);
           if (window.location.hash !== `#${expectedHash}`) {
             window.location.hash = expectedHash;
           }
@@ -374,12 +472,16 @@ export default function App() {
       }
       setActiveTab(resolved.normalizedTab);
     },
-    [isSharedChatRoute, setSelectedMultipleServersToAllServers],
+    [
+      isSandboxChatRoute,
+      isSharedChatRoute,
+      setSelectedMultipleServersToAllServers,
+    ],
   );
 
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
-    if (isSharedChatRoute) {
+    if (isHostedChatRoute) {
       return;
     }
 
@@ -390,7 +492,7 @@ export default function App() {
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation, isSharedChatRoute]);
+  }, [applyNavigation, isHostedChatRoute]);
 
   // Redirect away from tabs hidden by the ci-evals feature flag.
   // Use strict equality to avoid redirecting while the flag is still loading (undefined).
@@ -410,7 +512,7 @@ export default function App() {
     return <OAuthDebugCallback />;
   }
 
-  if (sharedOAuthHandling) {
+  if (hostedOAuthHandling) {
     return <LoadingScreen />;
   }
 
@@ -447,7 +549,7 @@ export default function App() {
     return <CompletingSignInLoading />;
   }
 
-  if (isLoading && !isSharedChatRoute) {
+  if (isLoading && !isHostedChatRoute) {
     return <LoadingScreen />;
   }
 
@@ -459,7 +561,7 @@ export default function App() {
     hasWorkOsUser: !!workOsUser,
     isLoadingRemoteWorkspaces,
   });
-  const sharedHostedShellGateState = resolveHostedShellGateState({
+  const hostedChatShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
@@ -554,6 +656,9 @@ export default function App() {
               onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
+          {activeTab === "sandboxes" && (
+            <SandboxesTab workspaceId={convexWorkspaceId} />
+          )}
           {activeTab === "resources" && (
             <div className="h-full overflow-hidden">
               <ResourcesTab
@@ -647,13 +752,16 @@ export default function App() {
         <Toaster />
         <HostedShellGate
           state={
-            isSharedChatRoute
-              ? sharedHostedShellGateState
+            isHostedChatRoute
+              ? hostedChatShellGateState
               : hostedShellGateState
           }
           onSignIn={() => {
             if (sharedPathToken) {
               writeSharedSignInReturnPath(window.location.pathname);
+            }
+            if (sandboxPathToken) {
+              writeSandboxSignInReturnPath(window.location.pathname);
             }
             signIn();
           }}
@@ -662,6 +770,11 @@ export default function App() {
             <SharedServerChatPage
               pathToken={sharedPathToken}
               onExitSharedChat={() => setExitedSharedChat(true)}
+            />
+          ) : isSandboxChatRoute ? (
+            <SandboxChatPage
+              pathToken={sandboxPathToken}
+              onExitSandboxChat={() => setExitedSandboxChat(true)}
             />
           ) : (
             appContent

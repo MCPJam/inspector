@@ -471,8 +471,9 @@ export function ShareServerDialog({
           isOpen={isOpen && view === "usage"}
           onClose={onClose}
           onBackToSettings={() => setView("settings")}
-          shareId={settings.shareId}
-          serverName={serverName}
+          sourceType="serverShare"
+          sourceId={settings.shareId}
+          title={serverName}
         />
       )}
     </>

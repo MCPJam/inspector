@@ -89,7 +89,7 @@ export function ShareUsageThreadDetail({
         toolCallId: snap.toolCallId,
         toolName: snap.toolName,
         protocol: snap.uiType,
-        serverId: thread.serverId,
+        serverId: snap.serverId,
         resourceUri: snap.resourceUri ?? "",
         toolMetadata,
         widgetCsp: snap.widgetCsp,

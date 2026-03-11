@@ -268,4 +268,92 @@ describe("useSharedChatWidgetCapture", () => {
       randomSpy.mockRestore();
     }
   });
+
+  it("uploads sandbox widget snapshots with the originating server id", async () => {
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-2",
+        hostedSandboxToken: "sandbox-token",
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-2",
+                input: { q: "sandbox" },
+                output: {
+                  result: "ok",
+                  _meta: {
+                    "openai/outputTemplate": "ui://widget.html",
+                    _serverId: "srv_123",
+                  },
+                },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-2",
+            {
+              toolCallId: "call-2",
+              toolName: "search",
+              protocol: "openai-apps",
+              widgetState: null,
+              prefersBorder: true,
+              globals: {
+                theme: "dark",
+                displayMode: "inline",
+              },
+              widgetHtml: "<div>Sandbox widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
+      sandboxToken: "sandbox-token",
+      chatSessionId: "chat-session-2",
+      serverId: "srv_123",
+      toolCallId: "call-2",
+      toolName: "search",
+      widgetHtmlBlobId: expect.stringMatching(/^blob-/),
+      uiType: "openai-apps",
+      resourceUri: "ui://widget.html",
+      toolInputBlobId: expect.stringMatching(/^blob-/),
+      toolOutputBlobId: expect.stringMatching(/^blob-/),
+      widgetCsp: undefined,
+      widgetPermissions: undefined,
+      widgetPermissive: false,
+      prefersBorder: true,
+      displayContext: {
+        theme: "dark",
+        displayMode: "inline",
+        deviceType: undefined,
+        viewport: undefined,
+        locale: undefined,
+        timeZone: undefined,
+        capabilities: undefined,
+        safeAreaInsets: undefined,
+      },
+    });
+
+    unmount();
+  });
 });

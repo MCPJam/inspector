@@ -27,17 +27,20 @@ servers.post("/validate", async (c) =>
 
 servers.post("/check-oauth", async (c) =>
   handleRoute(c, async () => {
-    // Guests have no Convex server records — OAuth is never applicable
-    const guestId = c.get("guestId") as string | undefined;
-    if (guestId) {
+    const rawBody = await readJsonBody<unknown>(c);
+    const isDirectGuestRequest =
+      !!rawBody &&
+      typeof rawBody === "object" &&
+      typeof (rawBody as { serverUrl?: unknown }).serverUrl === "string" &&
+      !(rawBody as { workspaceId?: unknown }).workspaceId;
+
+    // Direct guest sessions connect without Convex server records.
+    if (isDirectGuestRequest) {
       return { useOAuth: false, serverUrl: null };
     }
 
     const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(
-      workspaceServerSchema,
-      await readJsonBody<unknown>(c),
-    );
+    const body = parseWithSchema(workspaceServerSchema, rawBody);
     const auth = await authorizeServer(
       bearerToken,
       body.workspaceId,
@@ -45,6 +48,7 @@ servers.post("/check-oauth", async (c) =>
       {
         accessScope: body.accessScope,
         shareToken: body.shareToken,
+        sandboxToken: body.sandboxToken,
       },
     );
     return {
