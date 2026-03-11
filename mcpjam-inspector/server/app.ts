@@ -34,10 +34,7 @@ import {
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
-import {
-  loadInspectorEnv,
-  warnOnConvexDevMisconfiguration,
-} from "./env.js";
+import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

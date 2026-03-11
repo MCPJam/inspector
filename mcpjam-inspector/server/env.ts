@@ -109,9 +109,11 @@ export function warnOnConvexDevMisconfiguration(env: LoadedInspectorEnv): void {
   if (
     env.mode === "production" ||
     process.env.NODE_ENV === "test" ||
-    (globalThis as typeof globalThis & {
-      __MCPJAM_CONVEX_DIAGNOSTICS_STARTED__?: boolean;
-    }).__MCPJAM_CONVEX_DIAGNOSTICS_STARTED__
+    (
+      globalThis as typeof globalThis & {
+        __MCPJAM_CONVEX_DIAGNOSTICS_STARTED__?: boolean;
+      }
+    ).__MCPJAM_CONVEX_DIAGNOSTICS_STARTED__
   ) {
     return;
   }

@@ -45,10 +45,7 @@ import {
   useServerShareMutations,
   useServerShareSettings,
 } from "@/hooks/useServerShares";
-import {
-  getShareableAppOrigin,
-  slugify,
-} from "@/lib/shared-server-session";
+import { getShareableAppOrigin, slugify } from "@/lib/shared-server-session";
 import { ShareUsageDialog } from "./share-usage/ShareUsageDialog";
 
 interface ShareServerDialogProps {

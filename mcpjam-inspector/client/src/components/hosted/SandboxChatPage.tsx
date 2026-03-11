@@ -48,9 +48,10 @@ async function readRouteErrorMessage(response: Response): Promise<string> {
   const trimmedBody = bodyText.trim();
 
   try {
-    const body = (trimmedBody ? JSON.parse(trimmedBody) : null) as
-      | { message?: string; error?: string }
-      | null;
+    const body = (trimmedBody ? JSON.parse(trimmedBody) : null) as {
+      message?: string;
+      error?: string;
+    } | null;
     return (
       body?.message ||
       body?.error ||
