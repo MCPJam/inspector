@@ -4,7 +4,7 @@ description: "API reference for TestAgent"
 icon: "book"
 ---
 
-The `TestAgent` class wraps LLM providers via the Vercel AI SDK, enabling you to run prompts with MCP tools. It handles the agentic loop and returns rich result objects.
+The `TestAgent` class runs prompts with MCP tools enabled. It handles the multi-step prompt loop and returns rich result objects.
 
 ## Import
 
@@ -76,7 +76,8 @@ prompt(
 | Property | Type | Description |
 |----------|------|-------------|
 | `context` | `PromptResult \| PromptResult[]` | Previous result(s) for multi-turn conversations |
-| `stopWhen` | `StopCondition<ToolSet> \| Array<StopCondition<ToolSet>>` | Additional AI SDK stop conditions for the multi-step loop. Tools still execute normally. `TestAgent` always applies `stepCountIs(maxSteps)` as a safety guard. |
+| `stopWhen` | `StopCondition<ToolSet> \| Array<StopCondition<ToolSet>>` | Additional conditions for the multi-step prompt loop. Tools still execute normally. `TestAgent` always applies `stepCountIs(maxSteps)` as a safety guard. |
+| `timeout` | `number \| { totalMs?: number; stepMs?: number; chunkMs?: number }` | Bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each generation step, and `chunkMs` is accepted for parity but is mainly relevant to streaming APIs. |
 
 #### Returns
 
@@ -102,11 +103,24 @@ const r4 = await agent.prompt("Search for tasks", {
   stopWhen: hasToolCall("search_tasks"),
 });
 console.log(r4.hasToolCall("search_tasks"));
+
+// Bound prompt runtime
+const r5 = await agent.prompt("Run a long workflow", {
+  timeout: { totalMs: 10_000, stepMs: 2_500 },
+});
+
+if (r5.hasError()) {
+  console.error(r5.getError());
+}
 ```
 
 <Note>
 `prompt()` never throws exceptions. Errors are captured in the `PromptResult`. Check `result.hasError()` to detect failures.
 </Note>
+
+<Info>
+`timeout` bounds prompt runtime. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`. If a tool ignores that signal, its underlying work may continue briefly after the prompt returns an error result.
+</Info>
 
 ---
 
@@ -244,8 +258,7 @@ Setting `maxSteps` too low may prevent complex tasks from completing. Setting it
 
 ## Control Multi-Step Loops with stopWhen
 
-Use `stopWhen` to pass raw AI SDK stop conditions into `TestAgent.prompt()`.
-This controls whether the agent starts another generation step after the current step completes.
+Use `stopWhen` to control whether the agent starts another step after the current step completes.
 
 ```typescript
 import { hasToolCall } from "@mcpjam/sdk";
@@ -264,7 +277,27 @@ const result2 = await agent.prompt("Do something", {
 ```
 
 <Info>
-`stopWhen` does not skip tool execution. AI SDK evaluates stop conditions after the current step completes and tool results are available. `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+</Info>
+
+---
+
+## Bound Prompt Runtime with timeout
+
+Use `timeout` when you want to bound how long `TestAgent.prompt()` can run:
+
+```typescript
+const result = await agent.prompt("Run a long workflow", {
+  timeout: 10_000,
+});
+
+const result2 = await agent.prompt("Run a long workflow", {
+  timeout: { totalMs: 10_000, stepMs: 2_500, chunkMs: 1_000 },
+});
+```
+
+<Info>
+`chunkMs` is accepted for parity, but it is mainly useful for streaming APIs. For `TestAgent.prompt()`, `number`, `totalMs`, and `stepMs` are the main settings to focus on.
 </Info>
 
 ---

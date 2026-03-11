@@ -991,6 +991,71 @@ describe("TestAgent", () => {
     });
   });
 
+  describe("timeout", () => {
+    it("should pass through a numeric timeout", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test", { timeout: 5000 });
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.timeout).toBe(5000);
+    });
+
+    it("should pass through an object timeout", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test", {
+        timeout: { totalMs: 5000, stepMs: 1000, chunkMs: 250 },
+      });
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.timeout).toEqual({
+        totalMs: 5000,
+        stepMs: 1000,
+        chunkMs: 250,
+      });
+    });
+
+    it("should omit timeout when it is not set", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs).not.toHaveProperty("timeout");
+    });
+  });
+
   describe("app-only tool filtering", () => {
     // Helper to create a mock Tool with visibility
     const createMockTool = (

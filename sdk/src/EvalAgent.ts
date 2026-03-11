@@ -1,4 +1,4 @@
-import type { StopCondition, ToolSet } from "ai";
+import type { StopCondition, TimeoutConfiguration, ToolSet } from "ai";
 import type { PromptResult } from "./PromptResult.js";
 
 /**
@@ -9,7 +9,7 @@ export interface PromptOptions {
   context?: PromptResult | PromptResult[];
 
   /**
-   * Additional AI SDK stop conditions for the agentic loop.
+   * Additional stop conditions for the agentic loop.
    * Evaluated after each step completes (tools execute normally).
    * `stepCountIs(maxSteps)` is always applied as a safety guard
    * in addition to any conditions provided here.
@@ -33,6 +33,19 @@ export interface PromptOptions {
    * ```
    */
   stopWhen?: StopCondition<ToolSet> | Array<StopCondition<ToolSet>>;
+
+  /**
+   * Timeout for the prompt runtime.
+   *
+   * - `number`: total timeout for the entire prompt call in milliseconds
+   * - `{ totalMs }`: total timeout across all steps
+   * - `{ stepMs }`: timeout for each generation step
+   * - `{ chunkMs }`: accepted for parity and primarily relevant to streaming APIs
+   *
+   * The runtime creates an internal abort signal. Tools can stop early if they
+   * respect the `abortSignal` passed to `execute()`.
+   */
+  timeout?: TimeoutConfiguration;
 }
 
 /**

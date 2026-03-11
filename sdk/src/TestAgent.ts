@@ -419,6 +419,9 @@ export class TestAgent implements EvalAgent {
         ...(this.temperature !== undefined && {
           temperature: this.temperature,
         }),
+        ...(options?.timeout !== undefined && {
+          timeout: options.timeout,
+        }),
         // Use stopWhen with stepCountIs for controlling max agentic steps
         // AI SDK v6+ uses this instead of maxSteps
         stopWhen: this.resolveStopWhen(options?.stopWhen),
