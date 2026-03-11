@@ -114,7 +114,7 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
               <div>
                 <h2 className="text-sm font-semibold">Sandboxes</h2>
                 <p className="text-xs text-muted-foreground">
-                  Hosted chat environments for demos and testing.
+                  Hosted chat environments
                 </p>
               </div>
               <Button size="sm" onClick={() => setRightPaneView("create")}>
@@ -198,7 +198,7 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
                             variant="ghost"
                             size="sm"
                             className="h-7 gap-1.5 px-2 text-xs"
-                            onClick={() => setIsShareOpen(true)}
+                            onClick={() => setRightPaneView("edit")}
                           >
                             <Share2 className="h-3 w-3" />
                             Share

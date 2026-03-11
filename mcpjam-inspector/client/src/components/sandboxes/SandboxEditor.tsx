@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ChevronsUpDown, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronRight, ChevronsUpDown, Globe, Loader2, Lock, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { isMCPJamProvidedModel, SUPPORTED_MODELS, type ServerFormData } from "@/shared/types";
-import type { SandboxSettings } from "@/hooks/useSandboxes";
+import type { SandboxMode, SandboxSettings } from "@/hooks/useSandboxes";
 import { useSandboxMutations } from "@/hooks/useSandboxes";
 import { useServerMutations } from "@/hooks/useWorkspaces";
 import { AddServerModal } from "@/components/connection/AddServerModal";
+import { SandboxShareSection } from "@/components/sandboxes/SandboxShareSection";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Select,
   SelectContent,
@@ -15,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -62,7 +69,7 @@ export function SandboxEditor({
   onSaved,
   onDeleted,
 }: SandboxEditorProps) {
-  const { createSandbox, updateSandbox, deleteSandbox } = useSandboxMutations();
+  const { createSandbox, updateSandbox, deleteSandbox, setSandboxMode } = useSandboxMutations();
   const { createServer } = useServerMutations();
   const isCreateMode = !sandbox;
 
@@ -83,7 +90,10 @@ export function SandboxEditor({
     sandbox?.requireToolApproval ?? false,
   );
   const [allowGuestAccess, setAllowGuestAccess] = useState(
-    sandbox?.allowGuestAccess ?? false,
+    sandbox?.allowGuestAccess ?? true,
+  );
+  const [mode, setMode] = useState<SandboxMode>(
+    sandbox?.mode ?? "any_signed_in_with_link",
   );
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>(
     sandbox?.servers.map((s) => s.serverId) ?? [],
@@ -91,6 +101,7 @@ export function SandboxEditor({
   const [isSaving, setIsSaving] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(isCreateMode);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
   // Reset form when sandbox changes (edit mode)
   useEffect(() => {
@@ -102,6 +113,7 @@ export function SandboxEditor({
     setTemperature(sandbox.temperature);
     setRequireToolApproval(sandbox.requireToolApproval);
     setAllowGuestAccess(sandbox.allowGuestAccess);
+    setMode(sandbox.mode);
     setSelectedServerIds(sandbox.servers.map((s) => s.serverId));
     setIsEditingTitle(false);
   }, [sandbox]);
@@ -216,9 +228,19 @@ export function SandboxEditor({
         serverIds: selectedServerIds,
       };
 
-      const result = isCreateMode
-        ? await createSandbox({ workspaceId, ...payload })
-        : await updateSandbox({ sandboxId: sandbox!.sandboxId, ...payload });
+      let result;
+      if (isCreateMode) {
+        result = await createSandbox({ workspaceId, ...payload });
+        // Backend defaults to 'invited_only', so set mode if different
+        if (mode !== "invited_only") {
+          result = await setSandboxMode({
+            sandboxId: (result as SandboxSettings).sandboxId,
+            mode,
+          });
+        }
+      } else {
+        result = await updateSandbox({ sandboxId: sandbox!.sandboxId, ...payload });
+      }
 
       toast.success(isCreateMode ? "Sandbox created" : "Sandbox updated");
       onSaved?.(result as SandboxSettings);
@@ -326,24 +348,8 @@ export function SandboxEditor({
 
       {/* Scrollable content */}
       <div className="flex-1 space-y-1 overflow-y-auto p-2">
-        {/* System prompt */}
-        <div className="px-1 pt-2">
-          <Label className="text-xs font-medium text-muted-foreground">
-            System prompt
-          </Label>
-          <p className="mb-1.5 text-[10px] text-muted-foreground">
-            Instructions given to the model at the start of each conversation.
-          </p>
-          <Textarea
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-            rows={6}
-            className="resize-none border-0 bg-muted/30 px-3 py-2 text-sm transition-colors focus-visible:bg-muted/50"
-          />
-        </div>
-
-        {/* Model + Temperature */}
-        <div className="grid gap-4 px-1 pt-3 md:grid-cols-2">
+        {/* Model + Servers side by side */}
+        <div className="grid gap-4 px-1 pt-2 md:grid-cols-2">
           <div>
             <Label className="text-xs font-medium text-muted-foreground">
               Model
@@ -363,27 +369,6 @@ export function SandboxEditor({
           </div>
 
           <div>
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium text-muted-foreground">
-                Temperature
-              </Label>
-              <span className="text-xs text-muted-foreground">
-                {temperature.toFixed(2)}
-              </span>
-            </div>
-            <Slider
-              min={0}
-              max={2}
-              step={0.05}
-              value={[temperature]}
-              onValueChange={(values) => setTemperature(values[0] ?? 0.7)}
-              className="mt-3"
-            />
-          </div>
-        </div>
-
-        {/* Servers */}
-        <div className="px-1 pt-3">
           <div className="flex items-center justify-between">
             <Label className="text-xs font-medium text-muted-foreground">
               Servers
@@ -399,9 +384,6 @@ export function SandboxEditor({
               </button>
             </div>
           </div>
-          <p className="mb-1.5 text-[10px] text-muted-foreground">
-            Select HTTPS servers or add a new one.
-          </p>
           <Popover>
             <PopoverTrigger asChild>
               <button
@@ -460,57 +442,178 @@ export function SandboxEditor({
               )}
             </PopoverContent>
           </Popover>
-        </div>
-
-        {/* Settings */}
-        <div className="px-1 pt-3">
-          <Label className="text-xs font-medium text-muted-foreground">
-            Settings
-          </Label>
-          <div className="mt-1.5 space-y-1 rounded-md bg-muted/30 p-3">
-            <div className="flex items-center justify-between gap-3 rounded-md px-1 py-1.5">
-              <div>
-                <p className="text-sm">Require tool approval</p>
-                <p className="text-[10px] text-muted-foreground">
-                  Visitors must approve tool calls before execution.
-                </p>
-              </div>
-              <Switch
-                checked={requireToolApproval}
-                onCheckedChange={setRequireToolApproval}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-md px-1 py-1.5">
-              <div>
-                <p className="text-sm">Allow guest access</p>
-                <p className="text-[10px] text-muted-foreground">
-                  Unauthenticated visitors can use the sandbox link.
-                </p>
-              </div>
-              <Switch
-                checked={allowGuestAccess}
-                onCheckedChange={setAllowGuestAccess}
-              />
-            </div>
           </div>
         </div>
 
-        {/* Danger zone - only in edit mode */}
-        {!isCreateMode && (
-          <div className="px-1 pb-4 pt-4">
-            <Label className="text-xs font-medium text-destructive">
-              Danger zone
+        {/* Advanced config (collapsible) */}
+        <div className="px-1 pt-3">
+          <Collapsible open={isAdvancedOpen} onOpenChange={setIsAdvancedOpen}>
+            <CollapsibleTrigger className="flex w-full items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
+              {isAdvancedOpen ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+              Advanced config
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-1 pt-2">
+              {/* System prompt */}
+              <div>
+                <Label className="text-xs font-medium text-muted-foreground">
+                  System prompt
+                </Label>
+                <p className="mb-1.5 text-[10px] text-muted-foreground">
+                  Instructions given to the model at the start of each conversation.
+                </p>
+                <Textarea
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  rows={6}
+                  className="resize-none border-0 bg-muted/30 px-3 py-2 text-sm transition-colors focus-visible:bg-muted/50"
+                />
+              </div>
+
+              {/* Temperature */}
+              <div className="pt-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium text-muted-foreground">
+                    Temperature
+                  </Label>
+                  <span className="text-xs text-muted-foreground">
+                    {temperature.toFixed(2)}
+                  </span>
+                </div>
+                <Slider
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  value={[temperature]}
+                  onValueChange={(values) => setTemperature(values[0] ?? 0.7)}
+                  className="mt-3"
+                />
+              </div>
+
+              {/* Settings */}
+              <div className="pt-3">
+                <Label className="text-xs font-medium text-muted-foreground">
+                  Settings
+                </Label>
+                <div className="mt-1.5 space-y-1 rounded-md bg-muted/30 p-3">
+                  <div className="flex items-center justify-between gap-3 rounded-md px-1 py-1.5">
+                    <div>
+                      <p className="text-sm">Require tool approval</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Visitors must approve tool calls before execution.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={requireToolApproval}
+                      onCheckedChange={setRequireToolApproval}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3 rounded-md px-1 py-1.5">
+                    <div>
+                      <p className="text-sm">Allow guest access</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Unauthenticated visitors can use the sandbox link.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={allowGuestAccess}
+                      onCheckedChange={setAllowGuestAccess}
+                    />
+                  </div>
+                </div>
+              </div>
+
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
+
+        {/* Inline share section - only in edit mode */}
+        {!isCreateMode && sandbox && (
+          <div className="px-1 pt-3 pb-4">
+            <Separator className="mb-4" />
+            <Label className="text-xs font-medium text-muted-foreground">
+              Sharing
             </Label>
-            <p className="mb-2 text-[10px] text-muted-foreground">
-              Delete the sandbox and all persisted hosted chat usage.
-            </p>
+            <SandboxShareSection
+              sandbox={sandbox}
+              onUpdated={onSaved}
+            />
+          </div>
+        )}
+
+        {/* Access mode picker - create mode only */}
+        {isCreateMode && (
+          <div className="px-1 pt-3 pb-4">
+            <Separator className="mb-4" />
+            <p className="text-sm font-medium">General access</p>
+            <div className="mt-2 flex items-start gap-3">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
+                {mode === "any_signed_in_with_link" ? (
+                  <Globe className="size-4 text-muted-foreground" />
+                ) : (
+                  <Lock className="size-4 text-muted-foreground" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 rounded-md px-1 py-0.5 text-sm font-medium hover:bg-muted/50 transition-colors"
+                    >
+                      {mode === "any_signed_in_with_link"
+                        ? "Anyone with the link"
+                        : "Invited users only"}
+                      <ChevronDown className="size-3.5 text-muted-foreground" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-56 p-1" align="start">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
+                      onClick={() => setMode("any_signed_in_with_link")}
+                    >
+                      <span>Anyone with the link</span>
+                      {mode === "any_signed_in_with_link" && (
+                        <Check className="size-3.5 text-muted-foreground" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
+                      onClick={() => setMode("invited_only")}
+                    >
+                      <span>Invited users only</span>
+                      {mode === "invited_only" && (
+                        <Check className="size-3.5 text-muted-foreground" />
+                      )}
+                    </button>
+                  </PopoverContent>
+                </Popover>
+                <p className="mt-0.5 px-1 text-xs text-muted-foreground">
+                  {mode === "any_signed_in_with_link"
+                    ? "Any signed-in user with the link can open this sandbox."
+                    : "Only people you've invited can access this sandbox."}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete - only in edit mode, pinned to bottom */}
+        {!isCreateMode && (
+          <div className="px-1 pb-4 pt-2">
             <Button
-              variant="destructive"
+              variant="ghost"
               size="sm"
+              className="h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
               onClick={() => void handleDelete()}
             >
-              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-              Delete sandbox
+              <Trash2 className="h-3 w-3" />
+              Delete
             </Button>
           </div>
         )}
