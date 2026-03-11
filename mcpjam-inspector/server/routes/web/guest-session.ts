@@ -4,6 +4,10 @@ import {
   issueGuestToken,
 } from "../../services/guest-token.js";
 import { logger } from "../../utils/logger.js";
+import {
+  fetchRemoteGuestSession,
+  shouldUseLocalGuestSigning,
+} from "../../utils/guest-session-source.js";
 import { ErrorCode } from "./errors.js";
 
 const guestSession = new Hono();
@@ -34,7 +38,9 @@ function getClientIp(c: any): string {
 /**
  * POST /api/web/guest-session
  *
- * Issues a new guest bearer token for unauthenticated visitors.
+ * Returns a guest bearer token for unauthenticated visitors.
+ * In local-signing mode the token is issued here; otherwise the request is
+ * proxied to the hosted guest-session endpoint.
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
@@ -65,6 +71,20 @@ guestSession.post("/", async (c) => {
     }
   } else {
     ipWindows.set(ip, { count: 1, windowStart: now });
+  }
+
+  if (!shouldUseLocalGuestSigning()) {
+    const session = await fetchRemoteGuestSession();
+    if (!session) {
+      return c.json(
+        {
+          code: ErrorCode.INTERNAL_ERROR,
+          message: "Unable to obtain a guest session right now. Please try again.",
+        },
+        503,
+      );
+    }
+    return c.json(session);
   }
 
   const { guestId, token, expiresAt } = issueGuestToken();

@@ -17,6 +17,7 @@ vi.mock("../../services/guest-token.js", () => ({
 describe("guest-auth", () => {
   const originalFetch = global.fetch;
   const originalNodeEnv = process.env.NODE_ENV;
+  const originalLocalSigning = process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
   const originalPrivateKey = process.env.GUEST_JWT_PRIVATE_KEY;
   const originalPublicKey = process.env.GUEST_JWT_PUBLIC_KEY;
   const originalRemoteUrl = process.env.MCPJAM_GUEST_SESSION_URL;
@@ -24,6 +25,7 @@ describe("guest-auth", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    delete process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
     delete process.env.GUEST_JWT_PRIVATE_KEY;
     delete process.env.GUEST_JWT_PUBLIC_KEY;
     delete process.env.MCPJAM_GUEST_SESSION_URL;
@@ -32,6 +34,11 @@ describe("guest-auth", () => {
 
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
+    if (originalLocalSigning === undefined) {
+      delete process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
+    } else {
+      process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = originalLocalSigning;
+    }
     if (originalPrivateKey === undefined) {
       delete process.env.GUEST_JWT_PRIVATE_KEY;
     } else {
@@ -50,8 +57,41 @@ describe("guest-auth", () => {
     global.fetch = originalFetch;
   });
 
-  it("issues a local guest token in non-production", async () => {
+  it("fetches a hosted guest session in development by default", async () => {
     process.env.NODE_ENV = "development";
+    process.env.MCPJAM_GUEST_SESSION_URL =
+      "https://app.mcpjam.com/api/web/guest-session";
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "guest-dev",
+          token: "remote-dev-token",
+          expiresAt: Date.now() + 60_000,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
+    const header = await getProductionGuestAuthHeader();
+
+    expect(header).toBe("Bearer remote-dev-token");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://app.mcpjam.com/api/web/guest-session",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    expect(mockIssueGuestToken).not.toHaveBeenCalled();
+  });
+
+  it("uses local guest signing in development when explicitly enabled", async () => {
+    process.env.NODE_ENV = "development";
+    process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "true";
     mockIssueGuestToken.mockReturnValue({
       token: "local-guest-token",
       expiresAt: Date.now() + 60_000,

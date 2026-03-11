@@ -8,12 +8,16 @@
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import guestSession from "../guest-session.js";
 import { initGuestTokenSecret } from "../../../services/guest-token.js";
 
+const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 const ORIGINAL_GUEST_JWT_KEY_DIR = process.env.GUEST_JWT_KEY_DIR;
+const ORIGINAL_REMOTE_URL = process.env.MCPJAM_GUEST_SESSION_URL;
+const ORIGINAL_LOCAL_SIGNING = process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
+const ORIGINAL_FETCH = global.fetch;
 
 function createTestApp(): Hono {
   const app = new Hono();
@@ -26,20 +30,36 @@ describe("POST /guest-session", () => {
   let testGuestKeyDir: string;
 
   beforeEach(() => {
+    vi.restoreAllMocks();
     testGuestKeyDir = mkdtempSync(
       path.join(os.tmpdir(), "guest-session-test-"),
     );
+    process.env.NODE_ENV = "test";
     process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
+    delete process.env.MCPJAM_GUEST_SESSION_URL;
+    delete process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
     initGuestTokenSecret();
     app = createTestApp();
   });
 
   afterEach(() => {
+    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     if (ORIGINAL_GUEST_JWT_KEY_DIR === undefined) {
       delete process.env.GUEST_JWT_KEY_DIR;
     } else {
       process.env.GUEST_JWT_KEY_DIR = ORIGINAL_GUEST_JWT_KEY_DIR;
     }
+    if (ORIGINAL_REMOTE_URL === undefined) {
+      delete process.env.MCPJAM_GUEST_SESSION_URL;
+    } else {
+      process.env.MCPJAM_GUEST_SESSION_URL = ORIGINAL_REMOTE_URL;
+    }
+    if (ORIGINAL_LOCAL_SIGNING === undefined) {
+      delete process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
+    } else {
+      process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = ORIGINAL_LOCAL_SIGNING;
+    }
+    global.fetch = ORIGINAL_FETCH;
     rmSync(testGuestKeyDir, { recursive: true, force: true });
   });
 
@@ -109,6 +129,44 @@ describe("POST /guest-session", () => {
     it("returns 404 for DELETE requests", async () => {
       const res = await app.request("/guest-session", { method: "DELETE" });
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("remote guest session mode", () => {
+    it("proxies the hosted guest session in development by default", async () => {
+      process.env.NODE_ENV = "development";
+      process.env.MCPJAM_GUEST_SESSION_URL =
+        "https://app.mcpjam.com/api/web/guest-session";
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            guestId: "guest-remote",
+            token: "remote-token",
+            expiresAt: 123456789,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ) as typeof fetch;
+
+      const res = await app.request("/guest-session", { method: "POST" });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({
+        guestId: "guest-remote",
+        token: "remote-token",
+        expiresAt: 123456789,
+      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://app.mcpjam.com/api/web/guest-session",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     });
   });
 

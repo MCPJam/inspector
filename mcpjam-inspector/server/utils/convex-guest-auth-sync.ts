@@ -1,14 +1,20 @@
 import { getGuestPublicKeyPem } from "../services/guest-token.js";
+import { shouldUseLocalGuestSigning } from "./guest-session-source.js";
 import { logger } from "./logger.js";
 
 let syncStarted = false;
 
 /**
- * In local dev runtimes, push the guest public key and Convex guest JWKS
- * override so Convex can verify JWTs signed by this local inspector process.
+ * When local guest signing is explicitly enabled in dev, push the guest public
+ * key and Convex guest JWKS override so Convex can verify JWTs signed by this
+ * local inspector process.
  */
 export function syncGuestAuthConfigToConvex(): void {
-  if (process.env.NODE_ENV === "production" || syncStarted) {
+  if (
+    process.env.NODE_ENV === "production" ||
+    !shouldUseLocalGuestSigning() ||
+    syncStarted
+  ) {
     return;
   }
 
@@ -29,7 +35,6 @@ export function syncGuestAuthConfigToConvex(): void {
         process.env.CONVEX_HTTP_URL ?? `https://${deploymentName}.convex.site`,
       ).toString();
 
-      const { spawnSync } = await import("child_process");
       const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
       const convexEnv = {
         ...process.env,
