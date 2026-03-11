@@ -18,10 +18,7 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
-import {
-  initGuestTokenSecret,
-  getGuestPublicKeyPem,
-} from "./services/guest-token";
+import { initGuestTokenSecret } from "./services/guest-token";
 import { isAllowedHost } from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
@@ -30,6 +27,7 @@ import {
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
+import { syncGuestAuthConfigToConvex } from "./utils/convex-guest-auth-sync";
 
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
@@ -235,64 +233,7 @@ dotenv.config({ path: envPath });
 
 // Initialize guest token secret (must be after dotenv.config so env vars are available)
 initGuestTokenSecret();
-
-// In dev mode, push the current guest public key and dev JWKS override to
-// Convex so it can verify guest JWTs signed by this local server.
-if (process.env.NODE_ENV !== "production") {
-  (async () => {
-    try {
-      const pem = getGuestPublicKeyPem();
-      const convexUrl = process.env.CONVEX_URL;
-      if (!convexUrl) return;
-
-      // Extract deployment name from URL (e.g. "exuberant-albatross-496" from https://exuberant-albatross-496.convex.cloud)
-      const match = convexUrl.match(/https:\/\/([^.]+)\.convex\.cloud/);
-      if (!match) return;
-      const deploymentName = match[1];
-      const guestJwksUrl = new URL(
-        "/guest/jwks",
-        process.env.CONVEX_HTTP_URL ?? `https://${deploymentName}.convex.site`,
-      ).toString();
-      const { spawnSync } = await import("child_process");
-      const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
-      const convexEnv = {
-        ...process.env,
-        CONVEX_DEPLOYMENT: `dev:${deploymentName}`,
-      };
-      const setConvexEnv = (name: string, value: string) => {
-        const result = spawnSync(
-          npxCommand,
-          ["convex", "env", "set", name, "--", value],
-          {
-            env: convexEnv,
-            stdio: "pipe",
-            timeout: 15_000,
-          },
-        );
-        if (result.status === 0) {
-          return;
-        }
-
-        const stderr = result.stderr?.toString().trim();
-        const stdout = result.stdout?.toString().trim();
-        throw new Error(
-          stderr || stdout || `convex env set ${name} failed with code ${result.status}`,
-        );
-      };
-
-      setConvexEnv("GUEST_JWT_PUBLIC_KEY", pem);
-      setConvexEnv("GUEST_JWKS_URL", guestJwksUrl);
-      console.log(
-        `[guest-auth] Pushed guest key + JWKS URL to Convex (${deploymentName})`,
-      );
-    } catch (err) {
-      console.warn(
-        "[guest-auth] Failed to push guest auth config to Convex:",
-        err instanceof Error ? err.message : err,
-      );
-    }
-  })();
-}
+syncGuestAuthConfigToConvex();
 
 // Validate required env vars
 if (!process.env.CONVEX_HTTP_URL) {

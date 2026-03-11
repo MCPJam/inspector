@@ -28,6 +28,7 @@ import {
   getSessionToken,
 } from "./services/session-token.js";
 import { initGuestTokenSecret } from "./services/guest-token.js";
+import { syncGuestAuthConfigToConvex } from "./utils/convex-guest-auth-sync.js";
 import { isAllowedHost } from "./utils/localhost-check.js";
 import {
   sessionAuthMiddleware,
@@ -42,7 +43,9 @@ const __dirname = dirname(__filename);
 export function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const envFile =
-    process.env.NODE_ENV === "production" ? ".env.production" : ".env.local";
+    process.env.NODE_ENV === "production"
+      ? ".env.production"
+      : ".env.development";
 
   // Determine where to look for .env file:
   // 1. Electron packaged: use process.resourcesPath directly
@@ -50,7 +53,10 @@ export function createHonoApp() {
   // 3. Local dev: current working directory
   let envPath = envFile;
 
-  if (process.env.IS_PACKAGED === "true" && (process as any).resourcesPath) {
+  if (
+    process.env.IS_PACKAGED === "true" &&
+    (process as any).resourcesPath
+  ) {
     // Electron packaged app - use process.resourcesPath directly
     envPath = join((process as any).resourcesPath, envFile);
   } else if (process.env.ELECTRON_APP === "true") {
@@ -87,6 +93,7 @@ export function createHonoApp() {
 
   // Initialize RS256 key pair for guest JWTs
   initGuestTokenSecret();
+  syncGuestAuthConfigToConvex();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>
