@@ -16,7 +16,7 @@ export const LEARNING_CONCEPTS: LearningConcept[] = [
     description:
       "Learn how MCP connections are established, used, and shut down — from initialization through operation to graceful shutdown.",
     icon: GitBranch,
-    totalSteps: 7,
+    totalSteps: 5,
     category: "Protocol",
   },
 ];

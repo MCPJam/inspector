@@ -1,20 +1,15 @@
-import { useState, useMemo, useCallback } from "react";
-import {
-  ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
-  Monitor,
-  Play,
-  RotateCcw,
-  Terminal,
-} from "lucide-react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { McpLifecycleDiagram } from "@/components/lifecycle/McpLifecycleDiagram";
+import { Badge } from "@/components/ui/badge";
 import {
-  buildMcpLifecycleScenario20250326,
-  type McpTransport,
-} from "@/components/lifecycle/mcp-lifecycle-data";
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
+import { McpLifecycleDiagram } from "@/components/lifecycle/McpLifecycleDiagram";
+import { McpLifecycleGuide } from "@/components/lifecycle/McpLifecycleGuide";
+import { buildMcpLifecycleScenario20250326 } from "@/components/lifecycle/mcp-lifecycle-data";
 import { LearningLandingPage } from "@/components/LearningLandingPage";
 
 /**
@@ -26,17 +21,18 @@ import { LearningLandingPage } from "@/components/LearningLandingPage";
 const WALKTHROUGH_START_SENTINEL = "__walkthrough_start__";
 
 function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
-  const [transport, setTransport] = useState<McpTransport>("stdio");
   const [stepIndex, setStepIndex] = useState(-1); // -1 = overview (all neutral)
+  const [focusedStepId, setFocusedStepId] = useState<string | undefined>(
+    undefined,
+  );
 
   const scenario = useMemo(
-    () => buildMcpLifecycleScenario20250326({ transport }),
-    [transport],
+    () => buildMcpLifecycleScenario20250326({ transport: "http" }),
+    [],
   );
 
   const totalSteps = scenario.actions.length;
   const isOverview = stepIndex === -1;
-  const isLastStep = stepIndex === totalSteps - 1;
 
   const currentStep = useMemo(() => {
     if (stepIndex === -1) return undefined;
@@ -48,6 +44,11 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
     stepIndex >= 0 && stepIndex < totalSteps
       ? scenario.actions[stepIndex]
       : null;
+
+  // Clear focusedStepId when stepIndex changes
+  useEffect(() => {
+    setFocusedStepId(undefined);
+  }, [stepIndex]);
 
   const handleNext = useCallback(() => {
     setStepIndex((prev) => Math.min(prev + 1, totalSteps - 1));
@@ -61,16 +62,13 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
     setStepIndex(-1);
   }, []);
 
-  const handleTransportChange = useCallback((val: string) => {
-    if (val) {
-      setTransport(val as McpTransport);
-      setStepIndex(-1);
-    }
+  const handleGoToStep = useCallback((index: number) => {
+    setStepIndex(index);
   }, []);
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header bar */}
+      {/* Minimal header bar */}
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex items-center gap-2">
           <Button
@@ -82,92 +80,40 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
             <ArrowLeft className="h-3.5 w-3.5" />
           </Button>
           <h2 className="text-sm font-semibold">MCP Protocol Lifecycle</h2>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Step navigation controls */}
-          <div className="flex items-center gap-1.5">
-            {isOverview ? (
-              <Button variant="outline" size="sm" onClick={handleNext}>
-                <Play className="mr-1 h-3.5 w-3.5" />
-                Start Walkthrough
-              </Button>
-            ) : (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handlePrev}
-                  disabled={isOverview}
-                  title="Previous step"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </Button>
-                <span className="min-w-[5.5rem] text-center text-xs text-muted-foreground tabular-nums">
-                  Step {stepIndex + 1} of {totalSteps}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleNext}
-                  disabled={isLastStep}
-                  title="Next step"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleReset}
-                  title="Back to overview"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            )}
-          </div>
-
-          {/* Transport toggle */}
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            value={transport}
-            onValueChange={handleTransportChange}
+          <Badge
+            variant="secondary"
+            className="text-[10px] h-4 px-1.5"
           >
-            <ToggleGroupItem value="stdio">
-              <Terminal className="mr-1.5 h-3.5 w-3.5" />
-              stdio
-            </ToggleGroupItem>
-            <ToggleGroupItem value="http">
-              <Monitor className="mr-1.5 h-3.5 w-3.5" />
-              HTTP
-            </ToggleGroupItem>
-          </ToggleGroup>
+            HTTP
+          </Badge>
         </div>
       </div>
 
-      {/* Step description bar — visible only during walkthrough */}
-      {focusedAction && (
-        <div className="border-b bg-muted/30 px-4 py-2">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono font-medium text-blue-600 dark:text-blue-400">
-              {focusedAction.label}
-            </span>
-            <span className="text-xs text-muted-foreground">—</span>
-            <span className="text-xs text-muted-foreground">
-              {focusedAction.description}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Diagram fills remaining space */}
+      {/* Split view: Diagram + Guide */}
       <div className="flex-1 min-h-0">
-        <McpLifecycleDiagram
-          transport={transport}
-          currentStep={currentStep}
-          focusedStep={focusedAction?.id}
-        />
+        <ResizablePanelGroup direction="horizontal" className="h-full">
+          <ResizablePanel defaultSize={50} minSize={30}>
+            <McpLifecycleDiagram
+              transport="http"
+              currentStep={currentStep}
+              focusedStep={focusedStepId ?? focusedAction?.id}
+            />
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          <ResizablePanel defaultSize={50} minSize={20} maxSize={70}>
+            <McpLifecycleGuide
+              stepIndex={stepIndex}
+              totalSteps={totalSteps}
+              onGoToStep={handleGoToStep}
+              onFocusStep={setFocusedStepId}
+              onNext={handleNext}
+              onPrev={handlePrev}
+              onReset={handleReset}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </div>
   );
