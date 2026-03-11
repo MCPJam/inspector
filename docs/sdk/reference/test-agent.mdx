@@ -76,6 +76,7 @@ prompt(
 | Property | Type | Description |
 |----------|------|-------------|
 | `context` | `PromptResult \| PromptResult[]` | Previous result(s) for multi-turn conversations |
+| `stopWhen` | `StopCondition<ToolSet> \| Array<StopCondition<ToolSet>>` | Additional AI SDK stop conditions for the multi-step loop. Tools still execute normally. `TestAgent` always applies `stepCountIs(maxSteps)` as a safety guard. |
 
 #### Returns
 
@@ -84,6 +85,8 @@ prompt(
 #### Example
 
 ```typescript
+import { hasToolCall } from "@mcpjam/sdk";
+
 // Simple prompt
 const result = await agent.prompt("Add 2 and 3");
 
@@ -93,6 +96,12 @@ const r2 = await agent.prompt("Mark it complete", { context: r1 });
 
 // Multiple context items
 const r3 = await agent.prompt("Show summary", { context: [r1, r2] });
+
+// Stop the loop after the step where a tool is called
+const r4 = await agent.prompt("Search for tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+console.log(r4.hasToolCall("search_tasks"));
 ```
 
 <Note>
@@ -230,6 +239,33 @@ maxSteps: 5  // Stop after 5 tool calls
 <Warning>
 Setting `maxSteps` too low may prevent complex tasks from completing. Setting it too high may allow runaway loops.
 </Warning>
+
+---
+
+## Control Multi-Step Loops with stopWhen
+
+Use `stopWhen` to pass raw AI SDK stop conditions into `TestAgent.prompt()`.
+This controls whether the agent starts another generation step after the current step completes.
+
+```typescript
+import { hasToolCall } from "@mcpjam/sdk";
+
+// Stop after the step where "search_tasks" is called
+const result = await agent.prompt("Find my open tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+
+expect(result.hasToolCall("search_tasks")).toBe(true);
+
+// Stop after any of multiple conditions
+const result2 = await agent.prompt("Do something", {
+  stopWhen: [hasToolCall("tool_a"), hasToolCall("tool_b")],
+});
+```
+
+<Info>
+`stopWhen` does not skip tool execution. AI SDK evaluates stop conditions after the current step completes and tool results are available. `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+</Info>
 
 ---
 

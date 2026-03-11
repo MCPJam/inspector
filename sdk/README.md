@@ -197,12 +197,22 @@ const agent = new TestAgent({
 });
 
 // Run a prompt
+import { hasToolCall } from "@mcpjam/sdk";
+
 const result = await agent.prompt("Add 2 and 3");
 
 // Multi-turn with context
 const r1 = await agent.prompt("Who am I?");
 const r2 = await agent.prompt("List my projects", { context: [r1] });
+
+// Stop the loop after the step where a tool is called
+const r3 = await agent.prompt("Search tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+r3.hasToolCall("search_tasks");          // true
 ```
+
+`stopWhen` does not skip tool execution. AI SDK evaluates stop conditions after the current step completes and tool results are available. `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
 
 **Supported providers:** `openai`, `anthropic`, `azure`, `google`, `mistral`, `deepseek`, `ollama`, `openrouter`, `xai`
 

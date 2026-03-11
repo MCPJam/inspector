@@ -894,6 +894,103 @@ describe("TestAgent", () => {
     });
   });
 
+  describe("stopWhen", () => {
+    it("should merge a single stop condition with maxSteps and still execute tools", async () => {
+      const stopCondition = jest.fn(() => false);
+
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        const result = await params.tools.add.execute(
+          { a: 2, b: 3 },
+          { abortSignal: { throwIfAborted: jest.fn() } }
+        );
+        expect(result).toBe(5);
+        params.onStepFinish?.();
+        return {
+          text: "Done",
+          steps: [
+            {
+              toolCalls: [
+                {
+                  type: "tool-call",
+                  toolCallId: "1",
+                  toolName: "add",
+                  input: { a: 2, b: 3 },
+                },
+              ],
+            },
+          ],
+          usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      const result = await agent.prompt("Add 2 and 3", {
+        stopWhen: stopCondition as any,
+      });
+
+      expect(result.hasToolCall("add")).toBe(true);
+      expect(result.getToolArguments("add")).toEqual({ a: 2, b: 3 });
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.stopWhen).toEqual([
+        { type: "stepCount", value: 10 },
+        stopCondition,
+      ]);
+    });
+
+    it("should merge multiple stop conditions with maxSteps", async () => {
+      const stopA = jest.fn(() => false);
+      const stopB = jest.fn(() => true);
+
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Done",
+        steps: [],
+        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Do math", {
+        stopWhen: [stopA as any, stopB as any],
+      });
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.stopWhen).toEqual([
+        { type: "stepCount", value: 10 },
+        stopA,
+        stopB,
+      ]);
+    });
+
+    it("should default to stepCountIs when stopWhen is not set", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.stopWhen).toEqual({ type: "stepCount", value: 10 });
+    });
+  });
+
   describe("app-only tool filtering", () => {
     // Helper to create a mock Tool with visibility
     const createMockTool = (

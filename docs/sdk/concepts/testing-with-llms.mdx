@@ -143,6 +143,25 @@ const agent = new TestAgent({
 });
 ```
 
+## Control Multi-Step Loops with stopWhen
+
+Use `stopWhen` to pass AI SDK stop conditions into `TestAgent.prompt()` when you want to stop the multi-step loop after a particular step completes:
+
+```typescript
+import { hasToolCall } from "@mcpjam/sdk";
+
+// Stop after the step where the tool is called
+const result = await agent.prompt("Search for open tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+
+expect(result.hasToolCall("search_tasks")).toBe(true);
+```
+
+<Tip>
+`stopWhen` does not skip tool execution. AI SDK evaluates stop conditions after the current step completes and tool results are available. `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+</Tip>
+
 ## Writing Assertions
 
 Use validators to assert tool call behavior:

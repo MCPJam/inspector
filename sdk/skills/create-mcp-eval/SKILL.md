@@ -194,11 +194,19 @@ const agent = new TestAgent({
 });
 
 // Single prompt
+import { hasToolCall } from "@mcpjam/sdk";
+
 const result = await agent.prompt("List all projects");
 
 // Multi-turn with context
 const r1 = await agent.prompt("Get my user profile");
 const r2 = await agent.prompt("List workspaces for that user", { context: r1 });
+
+// Stop the loop after the step where a tool is called
+const r3 = await agent.prompt("Search tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+r3.hasToolCall("search_tasks");          // true
 
 // Mock agent for deterministic tests (no LLM needed)
 const mockAgent = TestAgent.mock(async (message) =>
@@ -998,4 +1006,3 @@ it("selects search_tasks", async () => {
   expect(result.hasToolCall("search_tasks")).toBe(true);
 }, 90_000);
 ```
-
