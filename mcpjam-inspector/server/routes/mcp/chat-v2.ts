@@ -140,8 +140,7 @@ chatV2.post("/", async (c) => {
           );
         }
 
-        authHeader =
-          (await getProductionGuestAuthHeader()) ?? undefined;
+        authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
         if (!authHeader) {
           return c.json(
             {

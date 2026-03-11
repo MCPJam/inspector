@@ -11,6 +11,7 @@
 
 import { create } from "zustand";
 import { addTokenToUrl } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
 
@@ -78,6 +79,10 @@ let sseConnection: EventSource | null = null;
 let sseSubscriberCount = 0;
 
 export function subscribeToRpcStream(): () => void {
+  if (HOSTED_MODE) {
+    return () => {};
+  }
+
   sseSubscriberCount++;
 
   if (!sseConnection) {

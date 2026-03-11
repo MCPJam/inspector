@@ -15,6 +15,7 @@ interface GuestSession {
 }
 
 let inFlightRequest: Promise<GuestSession | null> | null = null;
+let forceRefreshInFlight: Promise<GuestSession | null> | null = null;
 
 function readFromStorage(): GuestSession | null {
   try {
@@ -87,6 +88,15 @@ export async function getGuestBearerToken(): Promise<string | null> {
 }
 
 /**
+ * Returns the currently persisted guest token without triggering a network
+ * request. Used by retry logic to detect whether a failing hosted request
+ * was sent with the guest bearer even if hosted context classification is stale.
+ */
+export function peekStoredGuestToken(): string | null {
+  return readFromStorage()?.token ?? null;
+}
+
+/**
  * Clear the guest session from localStorage.
  * Call this when the user logs in with WorkOS.
  */
@@ -99,10 +109,26 @@ export function clearGuestSession(): void {
  * and fetching a new one from the server. Used when the server
  * rejects a token that hasn't expired client-side (e.g., after
  * a server restart with new signing keys).
+ *
+ * Deduplicates concurrent force-refresh calls (e.g., when multiple
+ * parallel requests all get 401 and each triggers a retry).
  */
 export async function forceRefreshGuestSession(): Promise<string | null> {
+  // If a force-refresh is already in flight, piggyback on it
+  // instead of clearing its state and starting yet another request.
+  if (forceRefreshInFlight) {
+    const session = await forceRefreshInFlight;
+    return session?.token ?? null;
+  }
+
   clearGuestSession();
   inFlightRequest = null;
-  const session = await getOrCreateGuestSession();
-  return session?.token ?? null;
+
+  forceRefreshInFlight = getOrCreateGuestSession();
+  try {
+    const session = await forceRefreshInFlight;
+    return session?.token ?? null;
+  } finally {
+    forceRefreshInFlight = null;
+  }
 }

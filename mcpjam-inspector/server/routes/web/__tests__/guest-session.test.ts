@@ -5,10 +5,15 @@
  * Covers token issuance, response format, and IP-based rate limiting.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtempSync, rmSync } from "fs";
+import os from "os";
+import path from "path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import guestSession from "../guest-session.js";
 import { initGuestTokenSecret } from "../../../services/guest-token.js";
+
+const ORIGINAL_GUEST_JWT_KEY_DIR = process.env.GUEST_JWT_KEY_DIR;
 
 function createTestApp(): Hono {
   const app = new Hono();
@@ -18,10 +23,24 @@ function createTestApp(): Hono {
 
 describe("POST /guest-session", () => {
   let app: Hono;
+  let testGuestKeyDir: string;
 
   beforeEach(() => {
+    testGuestKeyDir = mkdtempSync(
+      path.join(os.tmpdir(), "guest-session-test-"),
+    );
+    process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
     initGuestTokenSecret();
     app = createTestApp();
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_GUEST_JWT_KEY_DIR === undefined) {
+      delete process.env.GUEST_JWT_KEY_DIR;
+    } else {
+      process.env.GUEST_JWT_KEY_DIR = ORIGINAL_GUEST_JWT_KEY_DIR;
+    }
+    rmSync(testGuestKeyDir, { recursive: true, force: true });
   });
 
   describe("token issuance", () => {

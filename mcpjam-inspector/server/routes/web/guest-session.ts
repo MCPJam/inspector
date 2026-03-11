@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import { issueGuestToken } from "../../services/guest-token.js";
+import {
+  getGuestTokenFingerprint,
+  issueGuestToken,
+} from "../../services/guest-token.js";
+import { logger } from "../../utils/logger.js";
 import { ErrorCode } from "./errors.js";
 
 const guestSession = new Hono();
@@ -42,6 +46,9 @@ guestSession.post("/", async (c) => {
   if (entry) {
     if (now - entry.windowStart < IP_WINDOW_MS) {
       if (entry.count >= IP_RATE_LIMIT) {
+        logger.warn(
+          `[guest-auth-debug] guest_session rate_limited ip=${ip} count=${entry.count}`,
+        );
         return c.json(
           {
             code: ErrorCode.RATE_LIMITED,
@@ -61,6 +68,9 @@ guestSession.post("/", async (c) => {
   }
 
   const { guestId, token, expiresAt } = issueGuestToken();
+  logger.info(
+    `[guest-auth-debug] guest_session issued guestId=${guestId} expiresAt=${new Date(expiresAt).toISOString()} token=${getGuestTokenFingerprint(token)} ip=${ip}`,
+  );
   return c.json({ guestId, token, expiresAt });
 });
 

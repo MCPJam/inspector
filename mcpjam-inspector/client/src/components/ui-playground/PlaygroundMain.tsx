@@ -61,6 +61,7 @@ import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
+import { resolveHostedWorkspaceId } from "@/lib/hosted-workspace";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 
 /** Custom device config - dimensions come from store */
@@ -228,7 +229,10 @@ export function PlaygroundMain({
 
   // Hosted mode context (workspaceId, serverIds, OAuth tokens)
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const convexWorkspaceId = resolveHostedWorkspaceId(
+    isConvexAuthenticated,
+    activeWorkspace?.sharedWorkspaceId,
+  );
   const { serversByName } = useWorkspaceServers({
     isAuthenticated: isConvexAuthenticated,
     workspaceId: convexWorkspaceId,

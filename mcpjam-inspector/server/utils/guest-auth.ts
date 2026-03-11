@@ -5,9 +5,9 @@
  * users in non-hosted mode (npx/electron/docker).
  *
  * The token is issued locally using the same key pair configured via
- * GUEST_JWT_PRIVATE_KEY / GUEST_JWT_PUBLIC_KEY env vars. Convex validates
- * these tokens against a JWKS endpoint served from its own HTTP routes
- * (see convex/http.ts /guest/jwks), using the matching public key.
+ * GUEST_JWT_PRIVATE_KEY / GUEST_JWT_PUBLIC_KEY env vars (or ephemeral keys).
+ * Convex validates these tokens against a JWKS endpoint — either the
+ * inspector's /api/web/guest-jwks or the Convex HTTP /guest/jwks fallback.
  */
 
 import { issueGuestToken } from "../services/guest-token.js";

@@ -620,6 +620,10 @@ async function processOneStep(
     stepIndex,
   );
 
+  logger.info(
+    `[mcpjam-stream-debug] convex_stream_request step=${stepIndex} model=${modelId} auth=${authHeader ? "present" : "missing"} selectedServers=${selectedServers?.length ?? 0} tools=${toolDefs.length}`,
+  );
+
   // Call Convex /stream endpoint
   const res = await fetch(`${process.env.CONVEX_HTTP_URL}/stream`, {
     method: "POST",
@@ -637,8 +641,15 @@ async function processOneStep(
     }),
   });
 
+  logger.info(
+    `[mcpjam-stream-debug] convex_stream_response step=${stepIndex} status=${res.status} contentType=${res.headers.get("content-type") ?? "unknown"}`,
+  );
+
   if (!res.ok || !res.body) {
     const errorText = await res.text().catch(() => "stream failed");
+    logger.warn(
+      `[mcpjam-stream-debug] convex_stream_failed step=${stepIndex} status=${res.status} hasBody=${res.body ? "yes" : "no"} error=${errorText.slice(0, 300)}`,
+    );
     writer.write({ type: "error", errorText });
     return { shouldContinue: false, didEmitFinish: false };
   }
@@ -651,6 +662,10 @@ async function processOneStep(
     requireToolApproval,
   );
 
+  logger.info(
+    `[mcpjam-stream-debug] convex_stream_parsed step=${stepIndex} contentParts=${contentParts.length} finish=${finishChunk ? "yes" : "no"}`,
+  );
+
   // Update message history with assistant response
   if (contentParts.length > 0) {
     messageHistory.push({
@@ -661,6 +676,9 @@ async function processOneStep(
 
   // Check for unresolved tool calls and execute them
   if (hasUnresolvedToolCalls(messageHistory)) {
+    logger.info(
+      `[mcpjam-stream-debug] unresolved_tool_calls step=${stepIndex} requireApproval=${requireToolApproval ? "yes" : "no"}`,
+    );
     // When approval is required, don't execute tools — pause and let the client
     // show the approval UI. The next request will carry approval responses.
     if (requireToolApproval) {
@@ -689,6 +707,10 @@ async function processOneStep(
   if (finishChunk) {
     writer.write(finishChunk);
   }
+
+  logger.info(
+    `[mcpjam-stream-debug] step_complete step=${stepIndex} didEmitFinish=${didEmitFinish ? "yes" : "no"}`,
+  );
 
   // We're done with this conversation turn
   return { shouldContinue: false, didEmitFinish };
@@ -784,6 +806,7 @@ export async function handleMCPJamFreeChatModel(
     },
     onFinish: async () => {
       try {
+        logger.info("[mcpjam-stream-debug] stream_on_finish");
         await onStreamComplete?.();
       } catch (cleanupError) {
         logger.error(

@@ -117,6 +117,45 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(result).toBe("Bearer guest-no-workos");
   });
 
+  it("prefers guest token in guest mode without calling getAccessToken", async () => {
+    const getAccessToken = vi
+      .fn()
+      .mockResolvedValue("workos-token-should-skip");
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      getAccessToken,
+    });
+
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-first");
+
+    const result = await getHostedAuthorizationHeader();
+
+    expect(result).toBe("Bearer guest-first");
+    expect(getAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("still prefers guest token when no workspace is loaded but AuthKit session exists", async () => {
+    const getAccessToken = vi
+      .fn()
+      .mockResolvedValue("workos-token-should-skip");
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      hasSession: true,
+      serverIdsByName: {},
+      getAccessToken,
+    });
+
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-despite-session");
+
+    const result = await getHostedAuthorizationHeader();
+
+    expect(result).toBe("Bearer guest-despite-session");
+    expect(getAccessToken).not.toHaveBeenCalled();
+  });
+
   it("returns null when both WorkOS and guest token fail", async () => {
     setHostedApiContext({
       workspaceId: "ws-1",
@@ -163,7 +202,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     const result1 = await getHostedAuthorizationHeader();
     expect(result1).toBe("Bearer guest-1");
 
-    // Guest tokens aren't cached in cachedBearerToken, so each call re-evaluates
+    vi.advanceTimersByTime(30_001);
     vi.mocked(getGuestBearerToken).mockResolvedValue("guest-2");
 
     const result2 = await getHostedAuthorizationHeader();

@@ -18,7 +18,10 @@ import {
   isGuestMode,
   resetTokenCache,
 } from "@/lib/apis/web/context";
-import { forceRefreshGuestSession } from "@/lib/guest-session";
+import {
+  forceRefreshGuestSession,
+  peekStoredGuestToken,
+} from "@/lib/guest-session";
 
 // Extend window type for the injected token
 declare global {
@@ -230,11 +233,14 @@ export async function authFetch(
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
   const mergedInit = buildAuthFetchInit(init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
+  const requestUsedStoredGuestToken =
+    !!hostedAuthHeader &&
+    hostedAuthHeader === `Bearer ${peekStoredGuestToken() ?? ""}`;
 
   if (
     response.status !== 401 ||
     !HOSTED_MODE ||
-    !isGuestMode() ||
+    (!isGuestMode() && !requestUsedStoredGuestToken) ||
     callerProvidedAuthorization
   ) {
     return response;
