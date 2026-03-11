@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  BarChart3,
   Copy,
   Globe,
   Link2,
@@ -38,8 +37,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SandboxUsageDialog } from "./SandboxUsageDialog";
-
 interface ShareSandboxDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -66,7 +63,6 @@ export function ShareSandboxDialog({
   const [settings, setSettings] = useState<SandboxSettings>(sandbox);
   const [email, setEmail] = useState("");
   const [isMutating, setIsMutating] = useState(false);
-  const [view, setView] = useState<"settings" | "usage">("settings");
 
   useEffect(() => {
     setSettings(sandbox);
@@ -76,7 +72,6 @@ export function ShareSandboxDialog({
     if (!isOpen) {
       setEmail("");
       setIsMutating(false);
-      setView("settings");
     }
   }, [isOpen]);
 
@@ -184,9 +179,8 @@ export function ShareSandboxDialog({
   };
 
   return (
-    <>
       <Dialog
-        open={isOpen && view === "settings"}
+        open={isOpen}
         onOpenChange={(open) => !open && onClose()}
       >
         <DialogContent className="sm:max-w-[520px] gap-0">
@@ -386,18 +380,7 @@ export function ShareSandboxDialog({
                 </div>
               </div>
 
-              <div className="flex justify-between gap-2 pt-5">
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={() => setView("usage")}
-                  >
-                    <BarChart3 className="size-3.5" />
-                    Usage
-                  </Button>
-                </div>
+              <div className="flex justify-end pt-5">
                 <Button size="sm" onClick={onClose}>
                   Done
                 </Button>
@@ -406,14 +389,5 @@ export function ShareSandboxDialog({
           )}
         </DialogContent>
       </Dialog>
-
-      <SandboxUsageDialog
-        isOpen={isOpen && view === "usage"}
-        onClose={onClose}
-        onBackToSettings={() => setView("settings")}
-        sandboxId={settings.sandboxId}
-        sandboxName={settings.name}
-      />
-    </>
   );
 }

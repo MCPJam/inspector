@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Globe,
   Loader2,
@@ -15,11 +15,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CreateSandboxDialog } from "@/components/sandboxes/CreateSandboxDialog";
 import { ShareSandboxDialog } from "@/components/sandboxes/ShareSandboxDialog";
+import { SandboxUsagePanel } from "@/components/sandboxes/SandboxUsagePanel";
+import { SandboxEditor } from "@/components/sandboxes/SandboxEditor";
 import {
   useSandbox,
   useSandboxList,
   useSandboxMutations,
-  type SandboxSettings,
 } from "@/hooks/useSandboxes";
 import { useWorkspaceServers } from "@/hooks/useViews";
 
@@ -44,9 +45,7 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
   );
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
-  const [editingSandbox, setEditingSandbox] = useState<SandboxSettings | null>(
-    null,
-  );
+  const [rightPaneView, setRightPaneView] = useState<"usage" | "edit">("usage");
 
   useEffect(() => {
     if (!sandboxes || sandboxes.length === 0) {
@@ -67,12 +66,12 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
     sandboxId: selectedSandboxId,
   });
 
-  const selectedServerNames = useMemo(
-    () => selectedSandbox?.servers.map((server) => server.serverName).join(", "),
-    [selectedSandbox],
-  );
+  const handleSelectSandbox = (sandboxId: string) => {
+    setSelectedSandboxId(sandboxId);
+    setRightPaneView("usage");
+  };
 
-  const handleDeleteSandbox = async () => {
+  const handleDelete = async () => {
     if (!selectedSandbox) return;
     const shouldDelete = window.confirm(
       `Delete "${selectedSandbox.name}"? This will also delete persisted usage history.`,
@@ -137,44 +136,79 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
                 sandboxes.map((sandbox) => {
                   const isSelected = sandbox.sandboxId === selectedSandboxId;
                   return (
-                    <button
+                    <div
                       key={sandbox.sandboxId}
-                      type="button"
-                      onClick={() => setSelectedSandboxId(sandbox.sandboxId)}
-                      className={`mb-2 w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                      className={`mb-2 rounded-lg border px-3 py-3 transition-colors ${
                         isSelected
                           ? "border-primary/50 bg-primary/5"
                           : "border-transparent hover:bg-muted/50"
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">
-                            {sandbox.name}
-                          </p>
-                          {sandbox.description ? (
-                            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                              {sandbox.description}
+                      <button
+                        type="button"
+                        onClick={() => handleSelectSandbox(sandbox.sandboxId)}
+                        className="w-full text-left"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">
+                              {sandbox.name}
                             </p>
-                          ) : null}
+                            {sandbox.description ? (
+                              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                                {sandbox.description}
+                              </p>
+                            ) : null}
+                          </div>
+                          {sandbox.mode === "any_signed_in_with_link" ? (
+                            <Globe className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <Lock className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                          )}
                         </div>
-                        {sandbox.mode === "any_signed_in_with_link" ? (
-                          <Globe className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <Lock className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                        )}
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {sandbox.serverNames.map((serverName) => (
-                          <Badge
-                            key={`${sandbox.sandboxId}-${serverName}`}
-                            variant="secondary"
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {sandbox.serverNames.map((serverName) => (
+                            <Badge
+                              key={`${sandbox.sandboxId}-${serverName}`}
+                              variant="secondary"
+                            >
+                              {serverName}
+                            </Badge>
+                          ))}
+                        </div>
+                      </button>
+                      {isSelected && (
+                        <div className="mt-2.5 flex items-center gap-1.5 border-t pt-2.5">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1.5 px-2 text-xs"
+                            onClick={() => setRightPaneView("edit")}
                           >
-                            {serverName}
-                          </Badge>
-                        ))}
-                      </div>
-                    </button>
+                            <Pencil className="h-3 w-3" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1.5 px-2 text-xs"
+                            onClick={() => setIsShareOpen(true)}
+                          >
+                            <Share2 className="h-3 w-3" />
+                            Share
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
+                            onClick={() => void handleDelete()}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            Delete
+                          </Button>
+                        </div>
+                      )}
+                    </div>
                   );
                 })
               )}
@@ -202,120 +236,18 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
                   Sandbox not found.
                 </p>
               </div>
+            ) : rightPaneView === "edit" && servers ? (
+              <SandboxEditor
+                sandbox={selectedSandbox}
+                workspaceServers={servers}
+                onBack={() => setRightPaneView("usage")}
+                onDeleted={() => {
+                  setSelectedSandboxId(null);
+                  setRightPaneView("usage");
+                }}
+              />
             ) : (
-              <>
-                <div className="flex items-start justify-between border-b px-6 py-5">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h2 className="truncate text-xl font-semibold">
-                        {selectedSandbox.name}
-                      </h2>
-                      <Badge variant="outline">
-                        {selectedSandbox.mode === "any_signed_in_with_link"
-                          ? "Link access"
-                          : "Invite only"}
-                      </Badge>
-                      {selectedSandbox.allowGuestAccess ? (
-                        <Badge variant="secondary">Guest access</Badge>
-                      ) : null}
-                    </div>
-                    {selectedSandbox.description ? (
-                      <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-                        {selectedSandbox.description}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setEditingSandbox(selectedSandbox)}
-                    >
-                      <Pencil className="mr-1.5 h-4 w-4" />
-                      Edit
-                    </Button>
-                    <Button onClick={() => setIsShareOpen(true)}>
-                      <Share2 className="mr-1.5 h-4 w-4" />
-                      Share
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid gap-6 overflow-y-auto px-6 py-5 lg:grid-cols-[1.2fr,0.8fr]">
-                  <section className="space-y-5">
-                    <div className="rounded-lg border p-4">
-                      <p className="text-sm font-medium">System prompt</p>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
-                        {selectedSandbox.systemPrompt}
-                      </p>
-                    </div>
-
-                    <div className="rounded-lg border p-4">
-                      <p className="text-sm font-medium">Servers</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {selectedServerNames}
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {selectedSandbox.servers.map((server) => (
-                          <Badge key={server.serverId} variant="secondary">
-                            {server.serverName}
-                            {server.useOAuth ? " · OAuth" : ""}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="space-y-4">
-                    <div className="rounded-lg border p-4">
-                      <p className="text-sm font-medium">Configuration</p>
-                      <dl className="mt-3 space-y-2 text-sm">
-                        <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Model</dt>
-                          <dd className="text-right">{selectedSandbox.modelId}</dd>
-                        </div>
-                        <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Temperature</dt>
-                          <dd>{selectedSandbox.temperature.toFixed(2)}</dd>
-                        </div>
-                        <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">
-                            Tool approval
-                          </dt>
-                          <dd>
-                            {selectedSandbox.requireToolApproval ? "Required" : "Off"}
-                          </dd>
-                        </div>
-                        <div className="flex justify-between gap-4">
-                          <dt className="text-muted-foreground">Members</dt>
-                          <dd>
-                            {
-                              selectedSandbox.members.filter((member) => !member.revokedAt)
-                                .length
-                            }
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-
-                    <div className="rounded-lg border border-destructive/20 p-4">
-                      <p className="text-sm font-medium text-destructive">
-                        Danger zone
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Delete the sandbox and all persisted hosted chat usage.
-                      </p>
-                      <Button
-                        variant="destructive"
-                        className="mt-3"
-                        onClick={() => void handleDeleteSandbox()}
-                      >
-                        <Trash2 className="mr-1.5 h-4 w-4" />
-                        Delete sandbox
-                      </Button>
-                    </div>
-                  </section>
-                </div>
-              </>
+              <SandboxUsagePanel sandbox={selectedSandbox} />
             )}
           </div>
         </ResizablePanel>
@@ -330,20 +262,6 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
           onSaved={(sandbox) => {
             setSelectedSandboxId(sandbox.sandboxId);
             setIsCreateOpen(false);
-          }}
-        />
-      ) : null}
-
-      {workspaceId && servers && editingSandbox ? (
-        <CreateSandboxDialog
-          isOpen={!!editingSandbox}
-          onClose={() => setEditingSandbox(null)}
-          workspaceId={workspaceId}
-          workspaceServers={servers}
-          sandbox={editingSandbox}
-          onSaved={(sandbox) => {
-            setEditingSandbox(null);
-            setSelectedSandboxId(sandbox.sandboxId);
           }}
         />
       ) : null}
