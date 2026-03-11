@@ -6,6 +6,10 @@ import type { Tool } from "../src/mcp-client-manager/types";
 // Mock the ai module
 jest.mock("ai", () => ({
   generateText: jest.fn(),
+  hasToolCall: jest.fn((name: string) => ({
+    type: "hasToolCall",
+    value: name,
+  })),
   stepCountIs: jest.fn((n: number) => ({ type: "stepCount", value: n })),
   dynamicTool: jest.fn((config: any) => ({
     ...config,
@@ -19,12 +23,13 @@ jest.mock("../src/model-factory", () => ({
   createModelFromString: jest.fn(() => ({})),
 }));
 
-import { generateText, jsonSchema, stepCountIs } from "ai";
+import { generateText, hasToolCall, jsonSchema, stepCountIs } from "ai";
 import { createModelFromString } from "../src/model-factory";
 
 const mockGenerateText = generateText as jest.MockedFunction<
   typeof generateText
 >;
+const mockHasToolCall = hasToolCall as jest.MockedFunction<typeof hasToolCall>;
 const mockStepCountIs = stepCountIs as jest.MockedFunction<typeof stepCountIs>;
 const mockCreateModel = createModelFromString as jest.MockedFunction<
   typeof createModelFromString
@@ -506,6 +511,86 @@ describe("TestAgent", () => {
 
       expect(result.hasError()).toBe(true);
       expect(result.getError()).toBe("String error");
+    });
+
+    it("should preserve partial tool calls and messages when aborted mid-tool", async () => {
+      let notifyExecuteStarted: (() => void) | undefined;
+      const executeStarted = new Promise<void>((resolve) => {
+        notifyExecuteStarted = resolve;
+      });
+      const abortableToolSet: ToolSet = {
+        add: {
+          description: "Add two numbers",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: {
+              a: { type: "number" },
+              b: { type: "number" },
+            },
+            required: ["a", "b"],
+          }),
+          execute: jest.fn(async (_args, options) => {
+            notifyExecuteStarted?.();
+            await new Promise((_, reject) => {
+              options?.abortSignal?.addEventListener(
+                "abort",
+                () => reject(new Error("tool execution aborted")),
+                { once: true }
+              );
+            });
+          }),
+        },
+      };
+
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        await params.tools.add.execute(
+          { a: 2, b: 3 },
+          {
+            toolCallId: "call-1",
+            abortSignal: params.abortSignal,
+          }
+        );
+
+        return {
+          text: "unreachable",
+          steps: [],
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools: abortableToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+      const abortController = new AbortController();
+      const promptPromise = agent.prompt("Add 2 and 3", {
+        abortSignal: abortController.signal,
+      });
+
+      await executeStarted;
+      abortController.abort(new Error("Prompt aborted"));
+
+      const result = await promptPromise;
+
+      expect(result.hasError()).toBe(true);
+      expect(result.getError()).toBe("Prompt aborted");
+      expect(result.hasToolCall("add")).toBe(true);
+      expect(result.getToolArguments("add")).toEqual({ a: 2, b: 3 });
+      expect(result.getMessages()).toEqual([
+        { role: "user", content: "Add 2 and 3" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "add",
+              input: { a: 2, b: 3 },
+            },
+          ],
+        },
+      ]);
     });
 
     it("should call createModelFromString with correct options", async () => {
@@ -999,6 +1084,179 @@ describe("TestAgent", () => {
     });
   });
 
+  describe("stopAfterToolCall", () => {
+    it("should append hasToolCall stop conditions for targeted tools", async () => {
+      const guard = { kind: "max-step-guard" } as any;
+      const stopOnAdd = { kind: "stop-on-add" } as any;
+      mockStepCountIs.mockReturnValueOnce(guard);
+      mockHasToolCall.mockReturnValueOnce(stopOnAdd);
+      mockGenerateText.mockResolvedValueOnce({
+        text: "Done",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Add 2 and 3", {
+        stopAfterToolCall: "add",
+      });
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.stopWhen).toEqual([guard, stopOnAdd]);
+      expect(mockHasToolCall).toHaveBeenCalledWith("add");
+    });
+
+    it("should short-circuit the targeted tool and preserve tool arguments", async () => {
+      const addExecute = jest.fn(
+        async (args: { a: number; b: number }) => args.a + args.b
+      );
+      const subtractExecute = jest.fn(
+        async (args: { a: number; b: number }) => args.a - args.b
+      );
+      const tools: ToolSet = {
+        add: {
+          description: "Add two numbers",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: {
+              a: { type: "number" },
+              b: { type: "number" },
+            },
+            required: ["a", "b"],
+          }),
+          execute: addExecute,
+        },
+        subtract: {
+          description: "Subtract two numbers",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: {
+              a: { type: "number" },
+              b: { type: "number" },
+            },
+            required: ["a", "b"],
+          }),
+          execute: subtractExecute,
+        },
+      };
+
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        const addResult = await params.tools.add.execute(
+          { a: 2, b: 3 },
+          {
+            toolCallId: "call-add",
+            abortSignal: { throwIfAborted: jest.fn() },
+          }
+        );
+        const subtractResult = await params.tools.subtract.execute(
+          { a: 5, b: 2 },
+          {
+            toolCallId: "call-subtract",
+            abortSignal: { throwIfAborted: jest.fn() },
+          }
+        );
+
+        expect(addResult).toEqual({
+          content: [{ type: "text", text: "[skipped by stopAfterToolCall]" }],
+        });
+        expect(subtractResult).toBe(3);
+
+        return {
+          text: "Done",
+          steps: [
+            {
+              toolCalls: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-add",
+                  toolName: "add",
+                  input: { a: 2, b: 3 },
+                },
+                {
+                  type: "tool-call",
+                  toolCallId: "call-subtract",
+                  toolName: "subtract",
+                  input: { a: 5, b: 2 },
+                },
+              ],
+            },
+          ],
+          usage: { inputTokens: 6, outputTokens: 4, totalTokens: 10 },
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+      const result = await agent.prompt("Do some math", {
+        stopAfterToolCall: "add",
+      });
+
+      expect(addExecute).not.toHaveBeenCalled();
+      expect(subtractExecute).toHaveBeenCalledTimes(1);
+      expect(result.hasToolCall("add")).toBe(true);
+      expect(result.getToolArguments("add")).toEqual({ a: 2, b: 3 });
+      expect(result.hasToolCall("subtract")).toBe(true);
+    });
+
+    it("should skip widget snapshot capture for short-circuited tools", async () => {
+      const tools = createMcpAppToolSet();
+      const createViewExecute = (tools.create_view as any).execute as jest.Mock;
+      const mockManager = {
+        getToolMetadata: jest.fn().mockReturnValue({
+          ui: { resourceUri: "ui://widget/create-view.html" },
+        }),
+        readResource: jest.fn(),
+      };
+
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        await params.tools.create_view.execute(
+          { title: "Flow 1" },
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
+        );
+
+        return {
+          text: "Done",
+          steps: [
+            {
+              toolCalls: [
+                {
+                  type: "tool-call",
+                  toolCallId: "call-1",
+                  toolName: "create_view",
+                  input: { title: "Flow 1" },
+                },
+              ],
+            },
+          ],
+          usage: { inputTokens: 4, outputTokens: 2, totalTokens: 6 },
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+        mcpClientManager: mockManager as any,
+      });
+      const result = await agent.prompt("Create a view", {
+        stopAfterToolCall: "create_view",
+      });
+
+      expect(result.getWidgetSnapshots()).toEqual([]);
+      expect(createViewExecute).not.toHaveBeenCalled();
+      expect(mockManager.getToolMetadata).not.toHaveBeenCalled();
+      expect(mockManager.readResource).not.toHaveBeenCalled();
+    });
+  });
+
   describe("timeout", () => {
     it("should pass through a numeric timeout", async () => {
       mockGenerateText.mockResolvedValueOnce({
@@ -1042,6 +1300,67 @@ describe("TestAgent", () => {
         stepMs: 1000,
         chunkMs: 250,
       });
+    });
+
+    it("should pass through timeoutMs as a numeric timeout", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test", { timeoutMs: 2500 });
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.timeout).toBe(2500);
+    });
+
+    it("should prefer timeout over timeoutMs when both are provided", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+
+      await agent.prompt("Test", {
+        timeout: { totalMs: 5000, stepMs: 1000 },
+        timeoutMs: 2500,
+      });
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.timeout).toEqual({ totalMs: 5000, stepMs: 1000 });
+    });
+
+    it("should pass through abortSignal", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+      });
+      const abortController = new AbortController();
+
+      await agent.prompt("Test", { abortSignal: abortController.signal });
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.abortSignal).toBe(abortController.signal);
     });
 
     it("should omit timeout when it is not set", async () => {
