@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   HTTP_STEP_ORDER,
   LIFECYCLE_GUIDE_METADATA,
+  LIFECYCLE_GUIDE_SLIM,
+  PHASE_ACCENT,
   getLifecycleStepGuide,
   getLifecycleStepIndex,
 } from "../mcp-lifecycle-guide-data";
@@ -95,5 +97,40 @@ describe("getLifecycleStepIndex", () => {
     expect(getLifecycleStepIndex("process_exit")).toBe(
       Number.MAX_SAFE_INTEGER,
     );
+  });
+});
+
+describe("LIFECYCLE_GUIDE_SLIM", () => {
+  it("has slim data for all 5 HTTP steps", () => {
+    for (const step of HTTP_STEP_ORDER) {
+      expect(LIFECYCLE_GUIDE_SLIM[step]).toBeDefined();
+    }
+  });
+
+  it("each slim step has concise content", () => {
+    for (const step of HTTP_STEP_ORDER) {
+      const slim = LIFECYCLE_GUIDE_SLIM[step];
+      expect(slim.title).toBeTruthy();
+      expect(slim.subtitle.length).toBeLessThan(80);
+      expect(slim.keyInsight.length).toBeLessThan(200);
+      expect(["initialization", "operation", "shutdown"]).toContain(slim.phase);
+      expect(["client-to-server", "server-to-client"]).toContain(
+        slim.direction,
+      );
+    }
+  });
+
+  it("all slim steps have code snippets", () => {
+    for (const step of HTTP_STEP_ORDER) {
+      expect(LIFECYCLE_GUIDE_SLIM[step].codeSnippet).toBeTruthy();
+    }
+  });
+});
+
+describe("PHASE_ACCENT", () => {
+  it("has colors for all three phases", () => {
+    expect(PHASE_ACCENT.initialization).toBeTruthy();
+    expect(PHASE_ACCENT.operation).toBeTruthy();
+    expect(PHASE_ACCENT.shutdown).toBeTruthy();
   });
 });

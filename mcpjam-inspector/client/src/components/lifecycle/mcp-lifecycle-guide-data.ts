@@ -227,3 +227,105 @@ export function getLifecycleStepIndex(
   const index = HTTP_STEP_ORDER.indexOf(step);
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }
+
+// ---------------------------------------------------------------------------
+// Slim data model — minimalist content for the animated guide wizard
+// ---------------------------------------------------------------------------
+
+export interface McpLifecycleStepSlim {
+  title: string;
+  subtitle: string;
+  phase: "initialization" | "operation" | "shutdown";
+  keyInsight: string;
+  codeSnippet?: string;
+  direction: "client-to-server" | "server-to-client";
+}
+
+export const PHASE_ACCENT = {
+  initialization: "#3b82f6",
+  operation: "#10b981",
+  shutdown: "#f59e0b",
+} as const;
+
+export const LIFECYCLE_GUIDE_SLIM: Record<
+  (typeof HTTP_STEP_ORDER)[number],
+  McpLifecycleStepSlim
+> = {
+  initialize_request: {
+    title: "Initialize Request",
+    subtitle: "Client sends its version and capabilities",
+    phase: "initialization",
+    direction: "client-to-server",
+    keyInsight:
+      "The client must send the latest protocol version it supports. The server will negotiate from there.",
+    codeSnippet: `{
+  method: "initialize",
+  params: {
+    protocolVersion: "2025-11-25",
+    capabilities: { roots: {}, sampling: {} },
+    clientInfo: { name: "MyClient", version: "1.0" }
+  }
+}`,
+  },
+
+  initialize_result: {
+    title: "Initialize Response",
+    subtitle: "Server responds with its own capabilities",
+    phase: "initialization",
+    direction: "server-to-client",
+    keyInsight:
+      "If the client can't work with the server's proposed version, it should disconnect gracefully.",
+    codeSnippet: `{
+  result: {
+    protocolVersion: "2025-11-25",
+    capabilities: { tools: {}, resources: {} },
+    serverInfo: { name: "MyServer" }
+  }
+}`,
+  },
+
+  initialized_notification: {
+    title: "Initialized",
+    subtitle: "Client confirms — the handshake is complete",
+    phase: "initialization",
+    direction: "client-to-server",
+    keyInsight:
+      "This is a notification, not a request. No id field, no response expected. After this, normal operations can begin.",
+    codeSnippet: `{
+  method: "notifications/initialized"
+}`,
+  },
+
+  operation_request: {
+    title: "Operation Request",
+    subtitle: "Client invokes tools, reads resources, or lists prompts",
+    phase: "operation",
+    direction: "client-to-server",
+    keyInsight:
+      "Only use capabilities that were negotiated during initialization. Each request gets a unique id for correlation.",
+    codeSnippet: `{
+  method: "tools/call",
+  params: {
+    name: "get_weather",
+    arguments: { location: "San Francisco" }
+  }
+}`,
+  },
+
+  operation_response: {
+    title: "Response & Shutdown",
+    subtitle: "Server returns results. Close connection to shut down.",
+    phase: "shutdown",
+    direction: "server-to-client",
+    keyInsight:
+      "For HTTP, there's no special shutdown message — just close the connection. Set timeouts to prevent hung requests.",
+    codeSnippet: `{
+  result: {
+    content: [{
+      type: "text",
+      text: "62°F, partly cloudy"
+    }]
+  }
+}`,
+  },
+};

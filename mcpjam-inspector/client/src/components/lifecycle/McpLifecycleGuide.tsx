@@ -1,21 +1,17 @@
-import { useEffect, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  ChevronLeft,
-  Circle,
-  Play,
-  RotateCcw,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, ArrowRight, RotateCcw } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   HTTP_STEP_ORDER,
-  getLifecycleStepGuide,
-  type McpLifecycleStepGuide,
+  LIFECYCLE_GUIDE_SLIM,
+  PHASE_ACCENT,
+  type McpLifecycleStepSlim,
 } from "./mcp-lifecycle-guide-data";
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
 
 interface McpLifecycleGuideProps {
   stepIndex: number; // -1 = overview, 0+ = step
@@ -27,371 +23,310 @@ interface McpLifecycleGuideProps {
   onReset: () => void;
 }
 
-type StepStatus = "complete" | "current" | "pending";
+// ---------------------------------------------------------------------------
+// Animation helpers
+// ---------------------------------------------------------------------------
 
-function getStepStatus(index: number, currentStepIndex: number): StepStatus {
-  if (currentStepIndex === -1) return "pending";
-  if (index < currentStepIndex) return "complete";
-  if (index === currentStepIndex) return "current";
-  return "pending";
+const EASE = [0.25, 0.1, 0.25, 1] as const;
+
+/** Per-child stagger — explicit delays are more reliable than variant propagation */
+const STAGGER_BASE = 0.12; // initial delay (wait for parent slide-in)
+const STAGGER_GAP = 0.07; // gap between each child
+
+function fadeUp(order: number) {
+  const delay = STAGGER_BASE + order * STAGGER_GAP;
+  return {
+    initial: { opacity: 0, y: 14 } as const,
+    animate: { opacity: 1, y: 0 } as const,
+    transition: { delay, duration: 0.38, ease: EASE },
+  };
 }
 
-const PHASE_COLORS: Record<string, string> = {
-  initialization:
-    "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800",
-  operation:
-    "bg-green-50 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-300 dark:border-green-800",
-  shutdown:
-    "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-800",
-};
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
 
-function StatusIcon({ status }: { status: StepStatus }) {
-  switch (status) {
-    case "complete":
-      return <CheckCircle2 className="h-4 w-4 text-green-500" />;
-    case "current":
-      return (
-        <Circle className="h-4 w-4 text-blue-500 fill-blue-100 dark:fill-blue-900" />
-      );
-    case "pending":
-      return <Circle className="h-4 w-4 text-muted-foreground/40" />;
-  }
-}
-
-function CodeBlock({ code }: { code: string }) {
-  return (
-    <div className="rounded-md border border-border bg-muted/20 overflow-auto">
-      <pre className="p-3 text-[11px] leading-relaxed font-mono text-foreground/80">
-        {code}
-      </pre>
-    </div>
-  );
-}
-
-function DataTable({
-  table,
+function ProgressDots({
+  total,
+  current,
+  onSelect,
 }: {
-  table: NonNullable<McpLifecycleStepGuide["table"]>;
+  total: number;
+  current: number;
+  onSelect: (i: number) => void;
 }) {
   return (
-    <div className="rounded-md border border-border overflow-hidden">
-      <div className="px-3 py-1.5 bg-muted/30 border-b border-border">
-        <p className="text-xs font-semibold text-muted-foreground">
-          {table.caption}
-        </p>
-      </div>
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-border bg-muted/10">
-            {table.headers.map((header) => (
-              <th
-                key={header}
-                className="text-left px-3 py-1.5 font-semibold text-muted-foreground"
-              >
-                {header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {table.rows.map((row, i) => (
-            <tr
-              key={i}
-              className={cn(
-                i < table.rows.length - 1 && "border-b border-border",
-              )}
-            >
-              {row.map((cell, j) => (
-                <td
-                  key={j}
-                  className={cn(
-                    "px-3 py-1.5 text-muted-foreground",
-                    j === 0 && "font-mono font-medium text-foreground/80",
-                  )}
-                >
-                  {cell}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="flex items-center justify-center gap-2.5">
+      {Array.from({ length: total }).map((_, i) => {
+        const step = LIFECYCLE_GUIDE_SLIM[HTTP_STEP_ORDER[i]];
+        const isActive = i === current;
+        const isVisited = current >= 0 && i <= current;
+        const color = step ? PHASE_ACCENT[step.phase] : "#94a3b8";
+
+        return (
+          <button
+            key={i}
+            onClick={() => onSelect(i)}
+            className="relative flex items-center justify-center p-1 -m-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+            aria-label={`Go to step ${i + 1}`}
+          >
+            <motion.div
+              className="rounded-full"
+              animate={{
+                scale: isActive ? 1.5 : 1,
+                backgroundColor: isVisited ? color : "var(--border)",
+              }}
+              transition={
+                isActive
+                  ? { type: "spring", stiffness: 300, damping: 20 }
+                  : { duration: 0.3, ease: EASE }
+              }
+              style={{ width: 7, height: 7 }}
+            />
+          </button>
+        );
+      })}
     </div>
   );
 }
+
+function DirectionIndicator({
+  direction,
+  order,
+}: {
+  direction: McpLifecycleStepSlim["direction"];
+  order: number;
+}) {
+  const isToServer = direction === "client-to-server";
+  return (
+    <motion.div
+      className="flex items-center gap-2 text-muted-foreground/60"
+      {...fadeUp(order)}
+    >
+      <span className="text-[11px] font-medium">
+        {isToServer ? "Client" : "Server"}
+      </span>
+      <ArrowRight className="h-3 w-3" />
+      <span className="text-[11px] font-medium">
+        {isToServer ? "Server" : "Client"}
+      </span>
+    </motion.div>
+  );
+}
+
+function OverviewView({ onStart }: { onStart: () => void }) {
+  return (
+    <motion.div
+      key="overview"
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.97 }}
+      transition={{ duration: 0.3, ease: EASE }}
+      className="flex flex-col items-center justify-center h-full px-8 text-center"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1, duration: 0.4 }}
+        className="space-y-4 max-w-xs"
+      >
+        <h3 className="text-lg font-semibold tracking-tight text-foreground">
+          MCP Lifecycle
+        </h3>
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          Walk through the five steps of an HTTP MCP connection — from the
+          initial handshake to normal operations.
+        </p>
+        <Button onClick={onStart} className="mt-2">
+          Begin
+          <ChevronRight className="ml-1 h-4 w-4" />
+        </Button>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function StepView({
+  step,
+}: {
+  step: McpLifecycleStepSlim;
+  index: number;
+}) {
+  const phaseColor = PHASE_ACCENT[step.phase];
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full px-8">
+      <div className="w-full max-w-sm space-y-6">
+        {/* Phase label */}
+        <motion.div className="flex items-center gap-2" {...fadeUp(0)}>
+          <span
+            className="block h-1.5 w-1.5 rounded-full"
+            style={{ backgroundColor: phaseColor }}
+          />
+          <span
+            className="text-[11px] font-medium uppercase tracking-wider"
+            style={{ color: phaseColor }}
+          >
+            {step.phase}
+          </span>
+        </motion.div>
+
+        {/* Title */}
+        <motion.h3
+          className="text-xl font-semibold tracking-tight text-foreground -mt-2"
+          {...fadeUp(1)}
+        >
+          {step.title}
+        </motion.h3>
+
+        {/* Subtitle */}
+        <motion.p
+          className="text-sm text-muted-foreground leading-relaxed -mt-3"
+          {...fadeUp(2)}
+        >
+          {step.subtitle}
+        </motion.p>
+
+        {/* Direction */}
+        <DirectionIndicator direction={step.direction} order={3} />
+
+        {/* Key insight */}
+        <motion.blockquote
+          className="border-l-2 pl-4 text-[13px] text-foreground/75 leading-relaxed italic"
+          style={{ borderColor: phaseColor }}
+          {...fadeUp(4)}
+        >
+          {step.keyInsight}
+        </motion.blockquote>
+
+        {/* Code snippet */}
+        {step.codeSnippet && (
+          <motion.div {...fadeUp(5)}>
+            <pre
+              className="rounded-lg border border-border bg-muted/30 p-4 text-[11px] leading-relaxed font-mono text-foreground/70 overflow-x-auto"
+              style={{ borderLeftWidth: 2, borderLeftColor: phaseColor }}
+            >
+              {step.codeSnippet}
+            </pre>
+          </motion.div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 export function McpLifecycleGuide({
   stepIndex,
   totalSteps,
   onGoToStep,
-  onFocusStep,
   onNext,
   onPrev,
   onReset,
 }: McpLifecycleGuideProps) {
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
+  const prevIndexRef = useRef(stepIndex);
+  const direction = stepIndex >= prevIndexRef.current ? 1 : -1;
+  // Update ref *after* computing direction
+  prevIndexRef.current = stepIndex;
 
   const isOverview = stepIndex === -1;
   const isLastStep = stepIndex === totalSteps - 1;
 
-  // Auto-expand current step when stepIndex changes
-  useEffect(() => {
-    if (stepIndex >= 0 && stepIndex < HTTP_STEP_ORDER.length) {
-      const stepId = HTTP_STEP_ORDER[stepIndex];
-      setExpandedSteps((prev) => {
-        const next = new Set(prev);
-        next.add(stepId);
-        return next;
-      });
-    }
-  }, [stepIndex]);
-
-  // Auto-scroll to current step
-  useEffect(() => {
-    if (stepIndex >= 0 && scrollRef.current) {
-      const stepEl = scrollRef.current.querySelector(
-        `[data-step-index="${stepIndex}"]`,
-      );
-      if (stepEl) {
-        stepEl.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }
-  }, [stepIndex]);
-
-  const toggleStep = (stepId: string) => {
-    setExpandedSteps((prev) => {
-      const next = new Set(prev);
-      if (next.has(stepId)) {
-        next.delete(stepId);
-      } else {
-        next.add(stepId);
-      }
-      return next;
-    });
-  };
+  const currentStepId =
+    stepIndex >= 0 ? HTTP_STEP_ORDER[stepIndex] : undefined;
+  const currentStep = currentStepId
+    ? LIFECYCLE_GUIDE_SLIM[currentStepId]
+    : undefined;
 
   return (
     <div className="flex h-full flex-col">
-      {/* Guide header */}
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold">Guide</h3>
-          {!isOverview && (
-            <span className="text-xs text-muted-foreground tabular-nums">
-              Step {stepIndex + 1} of {totalSteps}
-            </span>
-          )}
+      {/* Header */}
+      <div className="flex items-center justify-between border-b px-6 py-3">
+        <span className="text-xs font-medium text-muted-foreground">
+          {isOverview ? "Overview" : `Step ${stepIndex + 1} of ${totalSteps}`}
+        </span>
+        {!isOverview && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onReset}
+            className="h-7 px-2 text-xs text-muted-foreground"
+          >
+            <RotateCcw className="mr-1 h-3 w-3" />
+            Reset
+          </Button>
+        )}
+      </div>
+
+      {/* Progress dots */}
+      {!isOverview && (
+        <div className="py-4">
+          <ProgressDots
+            total={totalSteps}
+            current={stepIndex}
+            onSelect={onGoToStep}
+          />
         </div>
-        <div className="flex items-center gap-1.5">
+      )}
+
+      {/* Content area */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <AnimatePresence mode="wait" custom={direction}>
           {isOverview ? (
-            <Button variant="outline" size="sm" onClick={onNext}>
-              <Play className="mr-1 h-3.5 w-3.5" />
-              Start
+            <OverviewView key="overview" onStart={onNext} />
+          ) : currentStep ? (
+            <motion.div
+              key={currentStepId}
+              custom={direction}
+              initial={{ opacity: 0, x: direction * 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: direction * -40 }}
+              transition={{ duration: 0.35, ease: EASE }}
+              className="h-full"
+            >
+              <StepView step={currentStep} index={stepIndex} />
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
+
+      {/* Footer navigation */}
+      {!isOverview && (
+        <div className="flex items-center justify-between border-t px-6 py-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onPrev}
+            className="text-xs"
+          >
+            <ChevronLeft className="mr-1 h-3.5 w-3.5" />
+            Back
+          </Button>
+
+          <span className="text-[11px] text-muted-foreground tabular-nums">
+            {stepIndex + 1} / {totalSteps}
+          </span>
+
+          {!isLastStep ? (
+            <Button size="sm" onClick={onNext} className="text-xs">
+              Continue
+              <ChevronRight className="ml-1 h-3.5 w-3.5" />
             </Button>
           ) : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onPrev}
-                disabled={isOverview}
-                title="Previous step"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={onNext}
-                disabled={isLastStep}
-              >
-                Continue
-                <ChevronRight className="ml-1 h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onReset}
-                title="Reset to overview"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-              </Button>
-            </>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onReset}
+              className="text-xs"
+            >
+              Start Over
+            </Button>
           )}
         </div>
-      </div>
-
-      {/* Scrollable step cards */}
-      <div ref={scrollRef} className="flex-1 overflow-auto p-4">
-        {isOverview && (
-          <div className="mb-6 rounded-lg border border-border bg-muted/10 p-4">
-            <h4 className="text-sm font-semibold mb-2">
-              MCP Protocol Lifecycle
-            </h4>
-            <p className="text-xs text-muted-foreground leading-relaxed mb-3">
-              Walk through the complete HTTP lifecycle of an MCP connection step
-              by step. You'll learn how the client and server negotiate
-              capabilities, exchange messages during normal operation, and how
-              connections are shut down.
-            </p>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Click <strong>Start</strong> to begin, then use{" "}
-              <strong>Continue</strong> to advance through each step. The
-              sequence diagram on the left will highlight the current message.
-            </p>
-          </div>
-        )}
-
-        <div className="space-y-3">
-          {HTTP_STEP_ORDER.map((stepId, index) => {
-            const guide = getLifecycleStepGuide(stepId);
-            if (!guide) return null;
-
-            const status = getStepStatus(index, stepIndex);
-            const isActive = status === "current";
-            const isExpanded = expandedSteps.has(stepId);
-            const isLast = index === HTTP_STEP_ORDER.length - 1;
-
-            return (
-              <div
-                key={stepId}
-                className="relative"
-                data-step-index={index}
-              >
-                {/* Timeline connector line */}
-                {!isLast && (
-                  <div className="absolute left-[11px] top-[32px] bottom-0 w-[2px] bg-border" />
-                )}
-
-                {/* Step card */}
-                <div
-                  className={cn(
-                    "relative bg-background border rounded-lg transition-all",
-                    isActive
-                      ? "border-blue-400 shadow-md ring-1 ring-blue-400/20"
-                      : "border-border shadow-sm hover:shadow-md",
-                  )}
-                >
-                  {/* Step header - clickable */}
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => toggleStep(stepId)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        toggleStep(stepId);
-                      }
-                    }}
-                    className="w-full px-4 py-3 flex items-start gap-3 hover:bg-muted/30 transition-colors rounded-t-lg cursor-pointer"
-                  >
-                    {/* Status icon */}
-                    <div className="flex-shrink-0 mt-0.5">
-                      <StatusIcon status={status} />
-                    </div>
-
-                    {/* Step info */}
-                    <div className="flex-1 min-w-0 text-left">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-semibold text-foreground">
-                          {index + 1}. {guide.title}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={cn(
-                            "text-[10px] h-4 px-1.5",
-                            PHASE_COLORS[guide.phase],
-                          )}
-                        >
-                          {guide.phase}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground line-clamp-2">
-                        {guide.summary}
-                      </p>
-                    </div>
-
-                    {/* Right side actions */}
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onFocusStep(stepId);
-                          // Also navigate to this step if we're not there
-                          onGoToStep(index);
-                        }}
-                        className="h-7 px-2 text-xs"
-                      >
-                        Show in diagram
-                      </Button>
-
-                      {isExpanded ? (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Collapsible content */}
-                  {isExpanded && (
-                    <div className="px-4 pb-4 pt-2 space-y-3 border-t">
-                      {/* What to pay attention to */}
-                      {guide.teachableMoments.length > 0 && (
-                        <div className="rounded-md border border-border bg-muted/10 p-3">
-                          <p className="text-xs font-semibold text-muted-foreground mb-2">
-                            What to pay attention to
-                          </p>
-                          <ul className="list-disc pl-5 space-y-1">
-                            {guide.teachableMoments.map((item) => (
-                              <li
-                                key={item}
-                                className="text-xs text-muted-foreground"
-                              >
-                                {item}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      {/* Tips */}
-                      {guide.tips.length > 0 && (
-                        <div className="rounded-md border border-border bg-muted/10 p-3">
-                          <p className="text-xs font-semibold text-muted-foreground mb-2">
-                            Tips
-                          </p>
-                          <ul className="list-disc pl-5 space-y-1">
-                            {guide.tips.map((tip) => (
-                              <li
-                                key={tip}
-                                className="text-xs text-muted-foreground"
-                              >
-                                {tip}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      {/* Code example */}
-                      {guide.codeExample && (
-                        <CodeBlock code={guide.codeExample} />
-                      )}
-
-                      {/* Table */}
-                      {guide.table && <DataTable table={guide.table} />}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
