@@ -13,7 +13,6 @@ import { toast } from "sonner";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CreateSandboxDialog } from "@/components/sandboxes/CreateSandboxDialog";
 import { ShareSandboxDialog } from "@/components/sandboxes/ShareSandboxDialog";
 import { SandboxUsagePanel } from "@/components/sandboxes/SandboxUsagePanel";
 import { SandboxEditor } from "@/components/sandboxes/SandboxEditor";
@@ -21,12 +20,15 @@ import {
   useSandbox,
   useSandboxList,
   useSandboxMutations,
+  type SandboxSettings,
 } from "@/hooks/useSandboxes";
 import { useWorkspaceServers } from "@/hooks/useViews";
 
 interface SandboxesTabProps {
   workspaceId: string | null;
 }
+
+type RightPaneView = "usage" | "edit" | "create";
 
 export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
   const { isAuthenticated } = useConvexAuth();
@@ -43,9 +45,8 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
   const [selectedSandboxId, setSelectedSandboxId] = useState<string | null>(
     null,
   );
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);
-  const [rightPaneView, setRightPaneView] = useState<"usage" | "edit">("usage");
+  const [rightPaneView, setRightPaneView] = useState<RightPaneView>("usage");
 
   useEffect(() => {
     if (!sandboxes || sandboxes.length === 0) {
@@ -89,6 +90,11 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
     }
   };
 
+  const handleCreated = (sandbox: SandboxSettings) => {
+    setSelectedSandboxId(sandbox.sandboxId);
+    setRightPaneView("usage");
+  };
+
   if (!workspaceId) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -111,7 +117,7 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
                   Hosted chat environments for demos and testing.
                 </p>
               </div>
-              <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+              <Button size="sm" onClick={() => setRightPaneView("create")}>
                 <Plus className="mr-1.5 h-3.5 w-3.5" />
                 New
               </Button>
@@ -220,7 +226,14 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
 
         <ResizablePanel defaultSize={70}>
           <div className="flex h-full flex-col">
-            {!selectedSandboxId ? (
+            {rightPaneView === "create" && servers ? (
+              <SandboxEditor
+                workspaceId={workspaceId}
+                workspaceServers={servers}
+                onBack={() => setRightPaneView("usage")}
+                onSaved={handleCreated}
+              />
+            ) : !selectedSandboxId ? (
               <div className="flex h-full items-center justify-center">
                 <p className="text-sm text-muted-foreground">
                   Select a sandbox to view details.
@@ -239,6 +252,7 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
             ) : rightPaneView === "edit" && servers ? (
               <SandboxEditor
                 sandbox={selectedSandbox}
+                workspaceId={workspaceId}
                 workspaceServers={servers}
                 onBack={() => setRightPaneView("usage")}
                 onDeleted={() => {
@@ -252,19 +266,6 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
-
-      {workspaceId && servers ? (
-        <CreateSandboxDialog
-          isOpen={isCreateOpen}
-          onClose={() => setIsCreateOpen(false)}
-          workspaceId={workspaceId}
-          workspaceServers={servers}
-          onSaved={(sandbox) => {
-            setSelectedSandboxId(sandbox.sandboxId);
-            setIsCreateOpen(false);
-          }}
-        />
-      ) : null}
 
       {selectedSandbox ? (
         <ShareSandboxDialog

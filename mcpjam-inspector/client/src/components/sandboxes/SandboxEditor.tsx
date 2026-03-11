@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronsUpDown, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
+import { isMCPJamProvidedModel, SUPPORTED_MODELS, type ServerFormData } from "@/shared/types";
 import type { SandboxSettings } from "@/hooks/useSandboxes";
 import { useSandboxMutations } from "@/hooks/useSandboxes";
+import { useServerMutations } from "@/hooks/useWorkspaces";
+import { AddServerModal } from "@/components/connection/AddServerModal";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -17,47 +19,82 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface WorkspaceServerOption {
   _id: string;
   name: string;
   transportType: "stdio" | "http";
+  url?: string;
+}
+
+function isInsecureUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    return new URL(url).protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 interface SandboxEditorProps {
-  sandbox: SandboxSettings;
+  sandbox?: SandboxSettings | null;
+  workspaceId: string;
   workspaceServers: WorkspaceServerOption[];
   onBack: () => void;
-  onDeleted: () => void;
+  onSaved?: (sandbox: SandboxSettings) => void;
+  onDeleted?: () => void;
 }
+
+const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 
 export function SandboxEditor({
   sandbox,
+  workspaceId,
   workspaceServers,
   onBack,
+  onSaved,
   onDeleted,
 }: SandboxEditorProps) {
-  const { updateSandbox, deleteSandbox } = useSandboxMutations();
+  const { createSandbox, updateSandbox, deleteSandbox } = useSandboxMutations();
+  const { createServer } = useServerMutations();
+  const isCreateMode = !sandbox;
 
-  const [name, setName] = useState(sandbox.name);
-  const [description, setDescription] = useState(sandbox.description ?? "");
-  const [systemPrompt, setSystemPrompt] = useState(sandbox.systemPrompt);
-  const [modelId, setModelId] = useState(sandbox.modelId);
-  const [temperature, setTemperature] = useState(sandbox.temperature);
+  const hostedModels = useMemo(
+    () =>
+      SUPPORTED_MODELS.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      ),
+    [],
+  );
+
+  const [name, setName] = useState(sandbox?.name ?? "");
+  const [description, setDescription] = useState(sandbox?.description ?? "");
+  const [systemPrompt, setSystemPrompt] = useState(sandbox?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT);
+  const [modelId, setModelId] = useState(sandbox?.modelId ?? hostedModels[0]?.id?.toString() ?? "openai/gpt-5-mini");
+  const [temperature, setTemperature] = useState(sandbox?.temperature ?? 0.7);
   const [requireToolApproval, setRequireToolApproval] = useState(
-    sandbox.requireToolApproval,
+    sandbox?.requireToolApproval ?? false,
   );
   const [allowGuestAccess, setAllowGuestAccess] = useState(
-    sandbox.allowGuestAccess,
+    sandbox?.allowGuestAccess ?? false,
   );
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>(
-    sandbox.servers.map((s) => s.serverId),
+    sandbox?.servers.map((s) => s.serverId) ?? [],
   );
   const [isSaving, setIsSaving] = useState(false);
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(isCreateMode);
+  const [isAddServerOpen, setIsAddServerOpen] = useState(false);
 
-  // Reset form when sandbox changes
+  // Reset form when sandbox changes (edit mode)
   useEffect(() => {
+    if (!sandbox) return;
     setName(sandbox.name);
     setDescription(sandbox.description ?? "");
     setSystemPrompt(sandbox.systemPrompt);
@@ -74,28 +111,22 @@ export function SandboxEditor({
     [workspaceServers],
   );
 
-  const hostedModels = useMemo(
-    () =>
-      SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      ),
-    [],
-  );
-
   const hasUnsavedChanges = useMemo(() => {
-    const currentServerIds = sandbox.servers.map((s) => s.serverId).sort();
+    if (isCreateMode) return true;
+    const currentServerIds = sandbox!.servers.map((s) => s.serverId).sort();
     const formServerIds = [...selectedServerIds].sort();
     return (
-      name !== sandbox.name ||
-      description !== (sandbox.description ?? "") ||
-      systemPrompt !== sandbox.systemPrompt ||
-      modelId !== sandbox.modelId ||
-      temperature !== sandbox.temperature ||
-      requireToolApproval !== sandbox.requireToolApproval ||
-      allowGuestAccess !== sandbox.allowGuestAccess ||
+      name !== sandbox!.name ||
+      description !== (sandbox!.description ?? "") ||
+      systemPrompt !== sandbox!.systemPrompt ||
+      modelId !== sandbox!.modelId ||
+      temperature !== sandbox!.temperature ||
+      requireToolApproval !== sandbox!.requireToolApproval ||
+      allowGuestAccess !== sandbox!.allowGuestAccess ||
       JSON.stringify(formServerIds) !== JSON.stringify(currentServerIds)
     );
   }, [
+    isCreateMode,
     name,
     description,
     systemPrompt,
@@ -116,6 +147,43 @@ export function SandboxEditor({
     });
   };
 
+  const saveServerToWorkspace = async (formData: ServerFormData) => {
+    const serverId = (await createServer({
+      workspaceId,
+      name: formData.name,
+      enabled: true,
+      transportType: "http",
+      url: formData.url,
+      headers: formData.headers,
+      timeout: formData.requestTimeout,
+      useOAuth: formData.useOAuth,
+      oauthScopes: formData.oauthScopes,
+      clientId: formData.clientId,
+    })) as string;
+    return serverId;
+  };
+
+  const handleAddServer = async (formData: ServerFormData) => {
+    if (formData.type !== "http") {
+      toast.error("Only HTTP servers can be used in sandboxes");
+      return;
+    }
+    if (isInsecureUrl(formData.url)) {
+      toast.error("Only HTTPS servers can be used in sandboxes");
+      return;
+    }
+    try {
+      const serverId = await saveServerToWorkspace(formData);
+      setSelectedServerIds((current) => [...current, serverId]);
+      toast.success(`Server "${formData.name}" added`);
+      setIsAddServerOpen(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to add server",
+      );
+    }
+  };
+
   const handleSave = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -123,24 +191,37 @@ export function SandboxEditor({
       return;
     }
     if (selectedServerIds.length === 0) {
-      toast.error("Select at least one HTTP server");
+      toast.error("Select at least one HTTPS server");
+      return;
+    }
+    const hasInsecure = selectedServerIds.some((id) => {
+      const server = availableServers.find((s) => s._id === id);
+      return server && isInsecureUrl(server.url);
+    });
+    if (hasInsecure) {
+      toast.error("Only HTTPS servers can be used in sandboxes");
       return;
     }
 
     setIsSaving(true);
     try {
-      await updateSandbox({
-        sandboxId: sandbox.sandboxId,
+      const payload = {
         name: trimmedName,
         description: description.trim() || undefined,
-        systemPrompt: systemPrompt.trim() || "You are a helpful assistant.",
+        systemPrompt: systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT,
         modelId,
         temperature,
         requireToolApproval,
         allowGuestAccess,
         serverIds: selectedServerIds,
-      });
-      toast.success("Sandbox updated");
+      };
+
+      const result = isCreateMode
+        ? await createSandbox({ workspaceId, ...payload })
+        : await updateSandbox({ sandboxId: sandbox!.sandboxId, ...payload });
+
+      toast.success(isCreateMode ? "Sandbox created" : "Sandbox updated");
+      onSaved?.(result as SandboxSettings);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to save sandbox",
@@ -151,6 +232,7 @@ export function SandboxEditor({
   };
 
   const handleDelete = async () => {
+    if (!sandbox) return;
     const shouldDelete = window.confirm(
       `Delete "${sandbox.name}"? This will also delete persisted usage history.`,
     );
@@ -159,7 +241,7 @@ export function SandboxEditor({
     try {
       await deleteSandbox({ sandboxId: sandbox.sandboxId });
       toast.success("Sandbox deleted");
-      onDeleted();
+      onDeleted?.();
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to delete sandbox",
@@ -169,20 +251,14 @@ export function SandboxEditor({
 
   const handleTitleBlur = () => {
     setIsEditingTitle(false);
-    if (!name.trim()) {
-      setName(sandbox.name);
-    }
   };
 
   const handleTitleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       setIsEditingTitle(false);
-      if (!name.trim()) {
-        setName(sandbox.name);
-      }
     }
     if (e.key === "Escape") {
-      setName(sandbox.name);
+      if (sandbox) setName(sandbox.name);
       setIsEditingTitle(false);
     }
   };
@@ -209,14 +285,15 @@ export function SandboxEditor({
                 onBlur={handleTitleBlur}
                 onKeyDown={handleTitleKeyDown}
                 autoFocus
-                className="w-full border-none bg-transparent px-0 py-0 text-lg font-semibold focus:outline-none focus:ring-0"
+                placeholder="Sandbox name"
+                className="w-full border-none bg-transparent px-0 py-0 text-lg font-semibold placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0"
               />
             ) : (
               <h2
                 className="cursor-pointer truncate text-lg font-semibold transition-opacity hover:opacity-60"
                 onClick={() => setIsEditingTitle(true)}
               >
-                {name}
+                {name || "Untitled sandbox"}
               </h2>
             )}
             <input
@@ -241,7 +318,7 @@ export function SandboxEditor({
               ) : (
                 <Save className="mr-1.5 h-3.5 w-3.5" />
               )}
-              Save
+              {isCreateMode ? "Create" : "Save"}
             </Button>
           )}
         </div>
@@ -307,34 +384,82 @@ export function SandboxEditor({
 
         {/* Servers */}
         <div className="px-1 pt-3">
-          <Label className="text-xs font-medium text-muted-foreground">
-            Servers
-          </Label>
-          <p className="mb-1.5 text-[10px] text-muted-foreground">
-            Only HTTP servers can be used in sandboxes.
-          </p>
-          <div className="max-h-56 space-y-1 overflow-y-auto rounded-md bg-muted/30 p-2">
-            {availableServers.length === 0 ? (
-              <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                No HTTP servers are available in this workspace.
-              </p>
-            ) : (
-              availableServers.map((server) => (
-                <label
-                  key={server._id}
-                  className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50"
-                >
-                  <Checkbox
-                    checked={selectedServerIds.includes(server._id)}
-                    onCheckedChange={(checked) =>
-                      handleToggleServer(server._id, checked === true)
-                    }
-                  />
-                  <span className="text-sm">{server.name}</span>
-                </label>
-              ))
-            )}
+          <div className="flex items-center justify-between">
+            <Label className="text-xs font-medium text-muted-foreground">
+              Servers
+            </Label>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                onClick={() => setIsAddServerOpen(true)}
+              >
+                <Plus className="h-3 w-3" />
+                Add
+              </button>
+            </div>
           </div>
+          <p className="mb-1.5 text-[10px] text-muted-foreground">
+            Select HTTPS servers or add a new one.
+          </p>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between rounded-md border-0 bg-muted/50 px-3 py-2 text-sm transition-colors hover:bg-muted"
+              >
+                {selectedServerIds.length === 0 ? (
+                  <span className="text-muted-foreground">Select servers…</span>
+                ) : (
+                  <span className="flex flex-wrap gap-1">
+                    {selectedServerIds.map((id) => {
+                      const server = availableServers.find((s) => s._id === id);
+                      return (
+                        <Badge key={id} variant="secondary" className="text-xs">
+                          {server?.name ?? id}
+                        </Badge>
+                      );
+                    })}
+                  </span>
+                )}
+                <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-1" align="start">
+              {availableServers.length === 0 ? (
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                  No HTTP servers available.
+                </p>
+              ) : (
+                <div className="max-h-56 overflow-y-auto">
+                  {availableServers.map((server) => {
+                    const insecure = isInsecureUrl(server.url);
+                    return (
+                      <label
+                        key={server._id}
+                        className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
+                        title={insecure ? "Sandboxes require HTTPS server URLs" : undefined}
+                      >
+                        <Checkbox
+                          checked={!insecure && selectedServerIds.includes(server._id)}
+                          onCheckedChange={(checked) =>
+                            handleToggleServer(server._id, checked === true)
+                          }
+                          disabled={insecure}
+                        />
+                        <span className="flex-1 text-sm">{server.name}</span>
+                        {insecure && (
+                          <span className="text-[10px] text-destructive">
+                            Requires HTTPS
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
         </div>
 
         {/* Settings */}
@@ -370,24 +495,35 @@ export function SandboxEditor({
           </div>
         </div>
 
-        {/* Danger zone */}
-        <div className="px-1 pb-4 pt-4">
-          <Label className="text-xs font-medium text-destructive">
-            Danger zone
-          </Label>
-          <p className="mb-2 text-[10px] text-muted-foreground">
-            Delete the sandbox and all persisted hosted chat usage.
-          </p>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => void handleDelete()}
-          >
-            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-            Delete sandbox
-          </Button>
-        </div>
+        {/* Danger zone - only in edit mode */}
+        {!isCreateMode && (
+          <div className="px-1 pb-4 pt-4">
+            <Label className="text-xs font-medium text-destructive">
+              Danger zone
+            </Label>
+            <p className="mb-2 text-[10px] text-muted-foreground">
+              Delete the sandbox and all persisted hosted chat usage.
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => void handleDelete()}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+              Delete sandbox
+            </Button>
+          </div>
+        )}
       </div>
+
+      <AddServerModal
+        isOpen={isAddServerOpen}
+        onClose={() => setIsAddServerOpen(false)}
+        onSubmit={(formData) => void handleAddServer(formData)}
+        initialData={{ type: "http" }}
+        requireHttps
+      />
+
     </div>
   );
 }
