@@ -21,28 +21,16 @@ export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
 // Conditional PostHog key and options
-export const getPostHogKey = () =>
-  isPostHogDisabled ? "phdev" : VITE_PUBLIC_POSTHOG_KEY;
+// Always use the real PostHog key so feature flags evaluate properly via /decide
+export const getPostHogKey = () => VITE_PUBLIC_POSTHOG_KEY;
 export const getPostHogOptions = () =>
   isPostHogDisabled
     ? {
-        api_host: "https://internal-t.posthog.com",
+        api_host: VITE_PUBLIC_POSTHOG_HOST,
+        capture_pageview: false,
+        person_profiles: "always" as const,
+        // Disable event capture but keep /decide enabled for feature flag evaluation
         opt_out_capturing: true,
-        disable_external_dependency_loading: true,
-        advanced_disable_decide: true,
-        // Bootstrap all feature flags as enabled so PostHog considers flags "loaded"
-        // and useFeatureFlagEnabled() returns true for gated UI in dev mode
-        bootstrap: {
-          featureFlags: {
-            "ci-evals-enabled": true,
-            "mcpjam-learning": true,
-          },
-        },
-        loaded: (posthog: any) => {
-          // In dev mode, treat all feature flags as enabled
-          posthog.isFeatureEnabled = () => true;
-          posthog.getFeatureFlag = () => true;
-        },
       }
     : options;
 
