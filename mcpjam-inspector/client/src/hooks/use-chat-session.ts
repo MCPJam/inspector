@@ -243,8 +243,19 @@ export function useChatSession({
   const [requireToolApproval, setRequireToolApproval] = useState(false);
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
-  const guestMode =
-    HOSTED_MODE && !isAuthenticated && !isAuthLoading && !hostedWorkspaceId;
+  const directGuestMode =
+    HOSTED_MODE &&
+    !isAuthenticated &&
+    !isAuthLoading &&
+    !hostedWorkspaceId &&
+    !hostedShareToken;
+  const sharedGuestMode =
+    HOSTED_MODE &&
+    !isAuthenticated &&
+    !isAuthLoading &&
+    !!hostedWorkspaceId &&
+    !!hostedShareToken;
+  const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
   const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
@@ -512,12 +523,16 @@ export function useChatSession({
         // getAccessToken threw (e.g. LoginRequiredError) — not authenticated
       }
 
-      // Only fall back to guest token if user is NOT authenticated.
-      // If authenticated but getAccessToken failed/returned falsy, don't
-      // silently downgrade to a guest token — leave authHeaders undefined
-      // so the UI shows the auth-not-ready state instead of sending
-      // requests with a token that can't authorize workspace operations.
-      if (!resolved && active && !isAuthenticated) {
+      // Only fall back to a guest token for explicit guest surfaces:
+      // direct guest chat and shared-chat guests. A regular hosted workspace
+      // should never silently downgrade to guest auth.
+      if (
+        !resolved &&
+        active &&
+        !isAuthenticated &&
+        HOSTED_MODE &&
+        (!hostedWorkspaceId || !!hostedShareToken)
+      ) {
         if (HOSTED_MODE) {
           const guestToken = await getGuestBearerToken();
           if (!active) return;
@@ -546,7 +561,13 @@ export function useChatSession({
     return () => {
       active = false;
     };
-  }, [getAccessToken, isAuthenticated, setMessages]);
+  }, [
+    getAccessToken,
+    hostedShareToken,
+    hostedWorkspaceId,
+    isAuthenticated,
+    setMessages,
+  ]);
 
   // Ollama model detection
   useEffect(() => {
@@ -710,10 +731,9 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  // Compute guest mode from React state instead of the global isGuestMode().
-  // The global hostedApiContext is updated via useLayoutEffect in the parent,
-  // which can be stale during child renders — causing signed-in users to be
-  // misclassified as guests while auth is still loading.
+  // Compute guest access from React state instead of the global hostedApiContext.
+  // Shared chats are guest-capable even though they are scoped to a workspace,
+  // while direct guests have no workspace at all.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
   // In non-hosted mode: only require auth for non-guest MCPJam models
   // (server injects production guest token for guest-allowed models).
@@ -727,10 +747,10 @@ export function useChatSession({
     !isAuthenticated && requiresAuthForChat && !guestMode;
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
-  // Guests don't need a workspace — skip hostedContextNotReady for them
+  // Direct guests don't need a workspace; shared guests still do.
   const hostedContextNotReady =
     HOSTED_MODE &&
-    !guestMode &&
+    !directGuestMode &&
     (!hostedWorkspaceId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

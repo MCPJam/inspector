@@ -1,5 +1,6 @@
 import { createSign, generateKeyPairSync } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
 
 const {
   prepareChatV2Mock,
@@ -32,6 +33,10 @@ vi.mock("../../../utils/chat-v2-orchestration.js", () => ({
 
 vi.mock("../../../utils/mcpjam-stream-handler.js", () => ({
   handleMCPJamFreeChatModel: handleMCPJamFreeChatModelMock,
+}));
+
+vi.mock("../apps.js", () => ({
+  default: new Hono(),
 }));
 
 vi.mock("@/shared/types", async () => {
@@ -198,7 +203,8 @@ describe("web routes — chat-v2 guest mode", () => {
   it("accepts a hosted guest token in development when local signing is disabled", async () => {
     process.env.NODE_ENV = "development";
     process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "false";
-    process.env.MCPJAM_GUEST_JWKS_URL = "https://api.mcpjam.com/guest/jwks";
+    process.env.MCPJAM_GUEST_JWKS_URL =
+      "https://app.mcpjam.com/api/web/guest-jwks";
     const { token, jwks } = signHostedGuestToken();
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(jwks), {

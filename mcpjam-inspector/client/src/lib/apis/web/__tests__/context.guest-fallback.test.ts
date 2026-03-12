@@ -1,12 +1,4 @@
-/**
- * getHostedAuthorizationHeader Guest Fallback Tests
- *
- * Tests for the core behavior change: when WorkOS getAccessToken() is
- * unavailable or throws LoginRequiredError, the function falls back
- * to a guest bearer token instead of returning null.
- */
-
-import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -16,18 +8,17 @@ vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: vi.fn(),
 }));
 
-import { setHostedApiContext, getHostedAuthorizationHeader } from "../context";
-
 import { getGuestBearerToken } from "@/lib/guest-session";
+import { getHostedAuthorizationHeader, setHostedApiContext } from "../context";
 
 describe("getHostedAuthorizationHeader guest fallback", () => {
   beforeEach(() => {
-    // Reset context between tests to clear cachedBearerToken
     setHostedApiContext(null);
     vi.mocked(getGuestBearerToken).mockReset();
   });
 
   afterEach(() => {
+    setHostedApiContext(null);
     vi.restoreAllMocks();
   });
 
@@ -36,6 +27,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
       workspaceId: "ws-1",
       serverIdsByName: {},
       getAccessToken: () => Promise.resolve("workos-token-abc"),
+      isAuthenticated: true,
     });
 
     const result = await getHostedAuthorizationHeader();
@@ -44,80 +36,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getGuestBearerToken).not.toHaveBeenCalled();
   });
 
-  it("falls back to guest token when getAccessToken throws", async () => {
-    setHostedApiContext({
-      workspaceId: "ws-1",
-      serverIdsByName: {},
-      getAccessToken: () => {
-        throw new Error("LoginRequiredError");
-      },
-    });
-
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-token-xyz");
-
-    const result = await getHostedAuthorizationHeader();
-
-    expect(result).toBe("Bearer guest-token-xyz");
-    expect(getGuestBearerToken).toHaveBeenCalled();
-  });
-
-  it("falls back to guest token when getAccessToken rejects", async () => {
-    setHostedApiContext({
-      workspaceId: "ws-1",
-      serverIdsByName: {},
-      getAccessToken: () => Promise.reject(new Error("LoginRequiredError")),
-    });
-
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-token-abc");
-
-    const result = await getHostedAuthorizationHeader();
-
-    expect(result).toBe("Bearer guest-token-abc");
-  });
-
-  it("falls back to guest token when getAccessToken returns null", async () => {
-    setHostedApiContext({
-      workspaceId: "ws-1",
-      serverIdsByName: {},
-      getAccessToken: () => Promise.resolve(null),
-    });
-
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-fallback");
-
-    const result = await getHostedAuthorizationHeader();
-
-    expect(result).toBe("Bearer guest-fallback");
-  });
-
-  it("falls back to guest token when getAccessToken returns undefined", async () => {
-    setHostedApiContext({
-      workspaceId: "ws-1",
-      serverIdsByName: {},
-      getAccessToken: () => Promise.resolve(undefined),
-    });
-
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-undef");
-
-    const result = await getHostedAuthorizationHeader();
-
-    expect(result).toBe("Bearer guest-undef");
-  });
-
-  it("falls back to guest token when getAccessToken is not set", async () => {
-    setHostedApiContext({
-      workspaceId: "ws-1",
-      serverIdsByName: {},
-      // No getAccessToken — simulates no WorkOS provider
-    });
-
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-no-workos");
-
-    const result = await getHostedAuthorizationHeader();
-
-    expect(result).toBe("Bearer guest-no-workos");
-  });
-
-  it("prefers guest token in guest mode without calling getAccessToken", async () => {
+  it("prefers guest token for direct guest mode without calling WorkOS", async () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
@@ -128,11 +47,31 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
       getAccessToken,
     });
 
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-first");
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-direct");
 
     const result = await getHostedAuthorizationHeader();
 
-    expect(result).toBe("Bearer guest-first");
+    expect(result).toBe("Bearer guest-direct");
+    expect(getAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("prefers guest token for shared guests without calling WorkOS", async () => {
+    const getAccessToken = vi
+      .fn()
+      .mockResolvedValue("workos-token-should-skip");
+    setHostedApiContext({
+      workspaceId: "ws-shared",
+      isAuthenticated: false,
+      serverIdsByName: { bench: "srv-1" },
+      getAccessToken,
+      shareToken: "share_tok_123",
+    });
+
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-shared");
+
+    const result = await getHostedAuthorizationHeader();
+
+    expect(result).toBe("Bearer guest-shared");
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
@@ -156,18 +95,22 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("returns null when both WorkOS and guest token fail", async () => {
+  it("returns null for hosted workspace requests that do not allow guest access", async () => {
+    const getAccessToken = vi
+      .fn()
+      .mockRejectedValue(new Error("LoginRequired"));
     setHostedApiContext({
-      workspaceId: "ws-1",
-      serverIdsByName: {},
-      getAccessToken: () => Promise.reject(new Error("LoginRequiredError")),
+      workspaceId: "ws-member",
+      isAuthenticated: false,
+      serverIdsByName: { bench: "srv-1" },
+      getAccessToken,
     });
-
-    vi.mocked(getGuestBearerToken).mockResolvedValue(null);
 
     const result = await getHostedAuthorizationHeader();
 
     expect(result).toBeNull();
+    expect(getGuestBearerToken).not.toHaveBeenCalled();
+    expect(getAccessToken).toHaveBeenCalledTimes(1);
   });
 
   it("caches WorkOS token and does not call guest on subsequent calls", async () => {
@@ -176,6 +119,7 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
       workspaceId: "ws-1",
       serverIdsByName: {},
       getAccessToken,
+      isAuthenticated: true,
     });
 
     const result1 = await getHostedAuthorizationHeader();
@@ -183,27 +127,26 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
 
     expect(result1).toBe("Bearer cached-workos");
     expect(result2).toBe("Bearer cached-workos");
-    // getAccessToken called once, then cached for 30s
     expect(getAccessToken).toHaveBeenCalledTimes(1);
     expect(getGuestBearerToken).not.toHaveBeenCalled();
   });
 
-  it("re-evaluates after cache expires", async () => {
+  it("re-evaluates guest token after cache expiry", async () => {
     vi.useFakeTimers();
 
     setHostedApiContext({
-      workspaceId: "ws-1",
+      workspaceId: null,
+      isAuthenticated: false,
       serverIdsByName: {},
-      getAccessToken: () => Promise.reject(new Error("LoginRequiredError")),
     });
 
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-1");
+    vi.mocked(getGuestBearerToken).mockResolvedValueOnce("guest-1");
+    vi.mocked(getGuestBearerToken).mockResolvedValueOnce("guest-2");
 
     const result1 = await getHostedAuthorizationHeader();
     expect(result1).toBe("Bearer guest-1");
 
     vi.advanceTimersByTime(30_001);
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-2");
 
     const result2 = await getHostedAuthorizationHeader();
     expect(result2).toBe("Bearer guest-2");
