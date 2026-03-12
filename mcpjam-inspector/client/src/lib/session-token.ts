@@ -15,8 +15,8 @@
 import { HOSTED_MODE } from "@/lib/config";
 import {
   getHostedAuthorizationHeader,
-  isGuestMode,
   resetTokenCache,
+  shouldRetryHostedAuth401,
 } from "@/lib/apis/web/context";
 import { forceRefreshGuestSession } from "@/lib/guest-session";
 
@@ -234,7 +234,7 @@ export async function authFetch(
   if (
     response.status !== 401 ||
     !HOSTED_MODE ||
-    !isGuestMode() ||
+    !shouldRetryHostedAuth401() ||
     callerProvidedAuthorization
   ) {
     return response;

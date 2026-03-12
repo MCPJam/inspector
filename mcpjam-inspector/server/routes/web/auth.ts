@@ -16,13 +16,33 @@ import {
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
-export const workspaceServerSchema = z.object({
-  workspaceId: z.string().min(1),
-  serverId: z.string().min(1),
-  oauthAccessToken: z.string().optional(),
-  accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-  shareToken: z.string().min(1).optional(),
-});
+function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  return schema.superRefine((value, ctx) => {
+    const hostedValue = value as {
+      shareToken?: string;
+      sandboxToken?: string;
+    };
+
+    if (hostedValue.shareToken && hostedValue.sandboxToken) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sandboxToken"],
+        message: "shareToken and sandboxToken cannot both be provided",
+      });
+    }
+  });
+}
+
+export const workspaceServerSchema = refineHostedTokens(
+  z.object({
+    workspaceId: z.string().min(1),
+    serverId: z.string().min(1),
+    oauthAccessToken: z.string().optional(),
+    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+    shareToken: z.string().min(1).optional(),
+    sandboxToken: z.string().min(1).optional(),
+  }),
+);
 
 export const toolsListSchema = workspaceServerSchema.extend({
   modelId: z.string().optional(),
@@ -47,13 +67,16 @@ export const promptsListSchema = workspaceServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const promptsListMultiSchema = z.object({
-  workspaceId: z.string().min(1),
-  serverIds: z.array(z.string().min(1)).min(1),
-  oauthTokens: z.record(z.string(), z.string()).optional(),
-  accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-  shareToken: z.string().min(1).optional(),
-});
+export const promptsListMultiSchema = refineHostedTokens(
+  z.object({
+    workspaceId: z.string().min(1),
+    serverIds: z.array(z.string().min(1)).min(1),
+    oauthTokens: z.record(z.string(), z.string()).optional(),
+    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+    shareToken: z.string().min(1).optional(),
+    sandboxToken: z.string().min(1).optional(),
+  }),
+);
 
 export const promptsGetSchema = workspaceServerSchema.extend({
   promptName: z.string().min(1),
@@ -62,16 +85,19 @@ export const promptsGetSchema = workspaceServerSchema.extend({
     .optional(),
 });
 
-export const hostedChatSchema = z
-  .object({
-    workspaceId: z.string().min(1),
-    selectedServerIds: z.array(z.string().min(1)),
-    chatSessionId: z.string().min(1).optional(),
-    oauthTokens: z.record(z.string(), z.string()).optional(),
-    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-    shareToken: z.string().min(1).optional(),
-  })
-  .passthrough();
+export const hostedChatSchema = refineHostedTokens(
+  z
+    .object({
+      workspaceId: z.string().min(1),
+      selectedServerIds: z.array(z.string().min(1)),
+      chatSessionId: z.string().min(1).optional(),
+      oauthTokens: z.record(z.string(), z.string()).optional(),
+      accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+      shareToken: z.string().min(1).optional(),
+      sandboxToken: z.string().min(1).optional(),
+    })
+    .passthrough(),
+);
 
 // ── Guest Schema ─────────────────────────────────────────────────────
 
@@ -110,6 +136,7 @@ export async function authorizeServer(
   options?: {
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
+    sandboxToken?: string;
   },
 ): Promise<ConvexAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -123,6 +150,14 @@ export async function authorizeServer(
 
   let response: Response;
   try {
+    if (options?.shareToken && options?.sandboxToken) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "shareToken and sandboxToken cannot both be provided",
+      );
+    }
+
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
       headers: {
@@ -134,6 +169,9 @@ export async function authorizeServer(
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
+        ...(options?.sandboxToken
+          ? { sandboxToken: options.sandboxToken }
+          : {}),
       }),
     });
   } catch (error) {
@@ -225,6 +263,7 @@ export async function createAuthorizedManager(
   options?: {
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
+    sandboxToken?: string;
   },
 ): Promise<AuthorizedManagerResult> {
   const uniqueServerIds = Array.from(new Set(serverIds));
@@ -234,6 +273,7 @@ export async function createAuthorizedManager(
       const auth = await authorizeServer(bearerToken, workspaceId, serverId, {
         accessScope: options?.accessScope,
         shareToken: options?.shareToken,
+        sandboxToken: options?.sandboxToken,
       });
       const oauthToken = oauthTokens?.[serverId];
 
@@ -248,6 +288,7 @@ export async function createAuthorizedManager(
             `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
             {
               oauthRequired: true,
+              serverId,
               serverUrl: auth.serverConfig.url,
             },
           );
@@ -456,6 +497,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       typeof raw.shareToken === "string" && raw.shareToken.trim()
         ? raw.shareToken
         : undefined;
+    const sandboxToken =
+      typeof raw.sandboxToken === "string" && raw.sandboxToken.trim()
+        ? raw.sandboxToken
+        : undefined;
 
     return withManager(
       createAuthorizedManager(
@@ -467,6 +512,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         {
           accessScope,
           shareToken,
+          sandboxToken,
         },
       ),
       (manager) => fn(manager, body as z.infer<S>),

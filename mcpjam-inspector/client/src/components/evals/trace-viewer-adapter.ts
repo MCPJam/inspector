@@ -61,6 +61,9 @@ export interface AdaptedTraceResult {
   toolRenderOverrides: Record<string, ToolRenderOverride>;
 }
 
+type ToolResultDisplay = "sibling-text" | "attached-to-tool";
+type TraceDisplayMode = "markdown" | "json-markdown";
+
 interface TraceToolResultEntry {
   part: TraceContentPart;
   messageIndex: number;
@@ -361,6 +364,34 @@ function createReplayOverride(
   }).renderOverride;
 }
 
+function getTraceDisplayAttachment(params: {
+  displayedOutput: unknown;
+  adaptedOutput: unknown;
+  canReplayWidget: boolean;
+}): { text: string; mode: TraceDisplayMode } | null {
+  const extractedText = extractTextFromToolResult(params.displayedOutput);
+  if (extractedText) {
+    return {
+      text: extractedText,
+      mode: "markdown",
+    };
+  }
+
+  if (params.canReplayWidget) {
+    return null;
+  }
+
+  const jsonMarkdown = toMarkdownJson(params.adaptedOutput);
+  if (!jsonMarkdown) {
+    return null;
+  }
+
+  return {
+    text: jsonMarkdown,
+    mode: "json-markdown",
+  };
+}
+
 function buildToolParts(params: {
   toolCall: TraceContentPart;
   matchedResult?: TraceContentPart;
@@ -371,6 +402,7 @@ function buildToolParts(params: {
   toolServerMap: ToolServerMap;
   connectedServerIds: Set<string>;
   toolRenderOverrides: Record<string, ToolRenderOverride>;
+  toolResultDisplay: ToolResultDisplay;
 }): UIMessage["parts"] {
   const toolName = getToolName(params.toolCall);
   const toolInput = getToolInput(params.toolCall);
@@ -422,8 +454,20 @@ function buildToolParts(params: {
     };
   }
 
+  const traceDisplayAttachment =
+    !isError && params.matchedResult
+      ? getTraceDisplayAttachment({
+          displayedOutput,
+          adaptedOutput,
+          canReplayWidget,
+        })
+      : null;
+
   const parts: UIMessage["parts"] = [];
-  const toolPart: DynamicToolUIPart = isError
+  const toolPart: DynamicToolUIPart & {
+    traceDisplayText?: string;
+    traceDisplayMode?: TraceDisplayMode;
+  } = isError
     ? {
         type: "dynamic-tool",
         toolCallId,
@@ -448,6 +492,13 @@ function buildToolParts(params: {
           state: "input-available",
           input: toolInput,
         };
+  if (
+    params.toolResultDisplay === "attached-to-tool" &&
+    traceDisplayAttachment
+  ) {
+    toolPart.traceDisplayText = traceDisplayAttachment.text;
+    toolPart.traceDisplayMode = traceDisplayAttachment.mode;
+  }
   parts.push(toolPart);
 
   if (isError) {
@@ -462,23 +513,15 @@ function buildToolParts(params: {
     return parts;
   }
 
-  const extractedText = extractTextFromToolResult(displayedOutput);
-  if (extractedText) {
-    parts.push({
-      type: "text",
-      text: extractedText,
-    });
+  if (params.toolResultDisplay === "attached-to-tool") {
     return parts;
   }
 
-  if (!canReplayWidget) {
-    const jsonMarkdown = toMarkdownJson(adaptedOutput);
-    if (jsonMarkdown) {
-      parts.push({
-        type: "text",
-        text: jsonMarkdown,
-      });
-    }
+  if (traceDisplayAttachment) {
+    parts.push({
+      type: "text",
+      text: traceDisplayAttachment.text,
+    });
   }
 
   return parts;
@@ -507,6 +550,7 @@ function buildAssistantMessage(params: {
   toolServerMap: ToolServerMap;
   connectedServerIds: Set<string>;
   toolRenderOverrides: Record<string, ToolRenderOverride>;
+  toolResultDisplay: ToolResultDisplay;
 }): { message: UIMessage; extraMessages: UIMessage[] } {
   const assistantParts = normalizeMessageContent(params.message);
   const toolResultEntries = params.toolMessages.flatMap(
@@ -550,6 +594,7 @@ function buildAssistantMessage(params: {
           toolServerMap: params.toolServerMap,
           connectedServerIds: params.connectedServerIds,
           toolRenderOverrides: params.toolRenderOverrides,
+          toolResultDisplay: params.toolResultDisplay,
         }),
       );
       return;
@@ -595,6 +640,7 @@ function buildAssistantMessage(params: {
           toolServerMap: params.toolServerMap,
           connectedServerIds: params.connectedServerIds,
           toolRenderOverrides: params.toolRenderOverrides,
+          toolResultDisplay: params.toolResultDisplay,
         }),
       } satisfies UIMessage;
     },
@@ -633,6 +679,7 @@ function buildOrphanToolMessages(params: {
   toolServerMap: ToolServerMap;
   connectedServerIds: Set<string>;
   toolRenderOverrides: Record<string, ToolRenderOverride>;
+  toolResultDisplay: ToolResultDisplay;
 }) {
   return params.toolMessages.flatMap((message, messageOffset) =>
     normalizeMessageContent(message)
@@ -669,6 +716,7 @@ function buildOrphanToolMessages(params: {
             toolServerMap: params.toolServerMap,
             connectedServerIds: params.connectedServerIds,
             toolRenderOverrides: params.toolRenderOverrides,
+            toolResultDisplay: params.toolResultDisplay,
           }),
         } satisfies UIMessage;
       })
@@ -681,6 +729,7 @@ export function adaptTraceToUiMessages(params: {
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
   connectedServerIds?: string[];
+  toolResultDisplay?: ToolResultDisplay;
 }): AdaptedTraceResult {
   const { messages, widgetSnapshots } = resolveTraceMessages(params.trace);
   const widgetSnapshotMap = new Map(
@@ -691,6 +740,7 @@ export function adaptTraceToUiMessages(params: {
   const toolsMetadata = params.toolsMetadata ?? {};
   const toolServerMap = params.toolServerMap ?? {};
   const connectedServerIds = new Set(params.connectedServerIds ?? []);
+  const toolResultDisplay = params.toolResultDisplay ?? "sibling-text";
 
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
@@ -717,6 +767,7 @@ export function adaptTraceToUiMessages(params: {
         toolServerMap,
         connectedServerIds,
         toolRenderOverrides,
+        toolResultDisplay,
       });
       uiMessages.push(
         adaptedAssistant.message,
@@ -743,6 +794,7 @@ export function adaptTraceToUiMessages(params: {
           toolServerMap,
           connectedServerIds,
           toolRenderOverrides,
+          toolResultDisplay,
         }),
       );
       index = nextIndex - 1;

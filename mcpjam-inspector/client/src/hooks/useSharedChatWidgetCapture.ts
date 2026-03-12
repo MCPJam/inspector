@@ -3,7 +3,10 @@ import { useMutation } from "convex/react";
 import type { UIMessage } from "@ai-sdk/react";
 import type { DisplayContext, WidgetCsp } from "./useViews";
 import { detectUIType, getUIResourceUri } from "@/lib/mcp-ui/mcp-apps-utils";
-import { readToolResultMeta } from "@/lib/tool-result-utils";
+import {
+  readToolResultMeta,
+  readToolResultServerId,
+} from "@/lib/tool-result-utils";
 import {
   useWidgetDebugStore,
   type WidgetDebugInfo,
@@ -13,6 +16,7 @@ interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
   chatSessionId: string;
   hostedShareToken?: string;
+  hostedSandboxToken?: string;
   messages: UIMessage[];
 }
 
@@ -21,6 +25,7 @@ interface ToolSnapshotSource {
   input: unknown;
   rawOutput: unknown;
   resourceUri?: string;
+  serverId?: string;
 }
 
 function hashString(value: string): string {
@@ -79,6 +84,7 @@ function buildToolSourceMap(
         resourceUri:
           getUIResourceUri(detectUIType(toolMeta, rawOutput), toolMeta) ??
           undefined,
+        serverId: readToolResultServerId(rawOutput),
       });
     }
   }
@@ -149,6 +155,7 @@ export function useSharedChatWidgetCapture({
   enabled,
   chatSessionId,
   hostedShareToken,
+  hostedSandboxToken,
   messages,
 }: UseSharedChatWidgetCaptureOptions): void {
   const widgets = useWidgetDebugStore((state) => state.widgets);
@@ -180,6 +187,7 @@ export function useSharedChatWidgetCapture({
   const widgetsRef = useRef(widgets);
   const sessionIdRef = useRef(chatSessionId);
   const shareTokenRef = useRef(hostedShareToken);
+  const sandboxTokenRef = useRef(hostedSandboxToken);
   const uploadAttemptRef = useRef<(toolCallId: string) => Promise<void>>(
     async () => {},
   );
@@ -195,6 +203,7 @@ export function useSharedChatWidgetCapture({
   useEffect(() => {
     sessionIdRef.current = chatSessionId;
     shareTokenRef.current = hostedShareToken;
+    sandboxTokenRef.current = hostedSandboxToken;
     uploadedHashesRef.current.clear();
     cachedBlobsRef.current.clear();
     retryCountRef.current.clear();
@@ -204,7 +213,7 @@ export function useSharedChatWidgetCapture({
     }
     pendingTimersRef.current.clear();
     inFlightRef.current.clear();
-  }, [chatSessionId, hostedShareToken]);
+  }, [chatSessionId, hostedSandboxToken, hostedShareToken]);
 
   useEffect(() => {
     return () => {
@@ -218,7 +227,12 @@ export function useSharedChatWidgetCapture({
 
   uploadAttemptRef.current = async (toolCallId: string) => {
     const shareToken = shareTokenRef.current;
-    if (!enabled || !shareToken || inFlightRef.current.has(toolCallId)) {
+    const sandboxToken = sandboxTokenRef.current;
+    if (
+      !enabled ||
+      (!shareToken && !sandboxToken) ||
+      inFlightRef.current.has(toolCallId)
+    ) {
       return;
     }
 
@@ -226,6 +240,9 @@ export function useSharedChatWidgetCapture({
     const toolSource = toolSourcesRef.current.get(toolCallId);
 
     if (!widget?.widgetHtml || !toolSource) {
+      return;
+    }
+    if (sandboxToken && !toolSource.serverId) {
       return;
     }
 
@@ -240,7 +257,10 @@ export function useSharedChatWidgetCapture({
       content: BlobPart,
       contentType: string,
     ): Promise<string> => {
-      const uploadUrl = await generateSnapshotUploadUrl({ shareToken });
+      const uploadUrl = await generateSnapshotUploadUrl({
+        ...(shareToken ? { shareToken } : {}),
+        ...(sandboxToken ? { sandboxToken } : {}),
+      });
       const response = await fetch(uploadUrl, {
         method: "POST",
         body: new Blob([content], { type: contentType }),
@@ -284,8 +304,10 @@ export function useSharedChatWidgetCapture({
       }
 
       await createWidgetSnapshot({
-        shareToken,
+        ...(shareToken ? { shareToken } : {}),
+        ...(sandboxToken ? { sandboxToken } : {}),
         chatSessionId: sessionIdRef.current,
+        ...(toolSource.serverId ? { serverId: toolSource.serverId } : {}),
         toolCallId,
         toolName: toolSource.toolName,
         widgetHtmlBlobId: cached.widgetHtmlBlobId,
@@ -343,7 +365,7 @@ export function useSharedChatWidgetCapture({
   };
 
   useEffect(() => {
-    if (!enabled || !hostedShareToken) {
+    if (!enabled || (!hostedShareToken && !hostedSandboxToken)) {
       return;
     }
 
@@ -372,5 +394,5 @@ export function useSharedChatWidgetCapture({
 
       pendingTimersRef.current.set(toolCallId, timer);
     }
-  }, [enabled, hostedShareToken, widgets, messages]);
+  }, [enabled, hostedSandboxToken, hostedShareToken, widgets, messages]);
 }

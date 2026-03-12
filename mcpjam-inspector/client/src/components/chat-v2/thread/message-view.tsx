@@ -7,11 +7,13 @@ import { PartSwitch } from "./part-switch";
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
+import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { type ReasoningDisplayMode } from "./parts/reasoning-part";
+import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 
 export function MessageView({
   message,
@@ -35,6 +37,7 @@ export function MessageView({
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
+  reasoningDisplayMode = "inline",
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -63,9 +66,15 @@ export function MessageView({
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  reasoningDisplayMode?: ReasoningDisplayMode;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const logoSrc = getProviderLogoFromModel(model, themeMode);
+  const sandboxHostStyle = useSandboxHostStyle();
+  const assistantAvatar = getAssistantAvatarDescriptor({
+    model,
+    themeMode,
+    sandboxHostStyle,
+  });
   // Hide widget state messages (these are internal and sent to the model)
   if (message.id?.startsWith("widget-state-")) return null;
   // Hide model context messages (these are internal and sent to the model)
@@ -110,6 +119,7 @@ export function MessageView({
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
                 interactive={interactive}
+                reasoningDisplayMode={reasoningDisplayMode}
               />
             ))}
           </div>
@@ -142,6 +152,7 @@ export function MessageView({
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
                 interactive={interactive}
+                reasoningDisplayMode={reasoningDisplayMode}
               />
             ))}
           </UserMessageBubble>
@@ -153,15 +164,21 @@ export function MessageView({
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
   return (
     <article className="flex gap-4 w-full">
-      <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/40 bg-muted/40">
-        {logoSrc ? (
+      <div
+        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
+        aria-label={assistantAvatar.ariaLabel}
+      >
+        {assistantAvatar.logoSrc ? (
           <img
-            src={logoSrc}
-            alt={`${model.id} logo`}
+            src={assistantAvatar.logoSrc}
+            alt={assistantAvatar.logoAlt ?? ""}
             className="h-4 w-4 object-contain"
           />
         ) : (
-          <MessageCircle className="h-4 w-4 text-muted-foreground" />
+          <MessageCircle
+            className="h-4 w-4 text-muted-foreground"
+            aria-hidden
+          />
         )}
       </div>
 
@@ -195,6 +212,7 @@ export function MessageView({
                 showSaveViewButton={showSaveViewButton}
                 minimalMode={minimalMode}
                 interactive={interactive}
+                reasoningDisplayMode={reasoningDisplayMode}
               />
             ))}
           </div>

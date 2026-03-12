@@ -5,7 +5,8 @@ const PREVIEW_MAX_LENGTH = 200;
 
 interface SaveThreadToConvexOptions {
   chatSessionId: string;
-  shareToken: string;
+  shareToken?: string;
+  sandboxToken?: string;
   bearerToken: string;
   messages: ModelMessage[];
   messageCount: number;
@@ -55,11 +56,21 @@ function getFirstMessagePreview(messages: ModelMessage[]): string {
 export async function saveThreadToConvex({
   chatSessionId,
   shareToken,
+  sandboxToken,
   bearerToken,
   messages,
   messageCount,
   modelId,
 }: SaveThreadToConvexOptions): Promise<void> {
+  if (!!shareToken === !!sandboxToken) {
+    logger.error(
+      "[shared-chat-persistence] Exactly one hosted token is required while saving thread",
+      undefined,
+      { chatSessionId },
+    );
+    return;
+  }
+
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
     logger.error(
@@ -79,7 +90,8 @@ export async function saveThreadToConvex({
       },
       body: JSON.stringify({
         chatSessionId,
-        shareToken,
+        ...(shareToken ? { shareToken } : {}),
+        ...(sandboxToken ? { sandboxToken } : {}),
         messages,
         messageCount,
         firstMessagePreview: getFirstMessagePreview(messages),

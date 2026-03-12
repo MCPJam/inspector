@@ -9,6 +9,7 @@ interface UseHostedApiContextOptions {
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
+  sandboxToken?: string;
   isAuthenticated?: boolean;
   /** Maps server name → MCPServerConfig for guest mode (no Convex). */
   serverConfigs?: Record<string, unknown>;
@@ -22,6 +23,7 @@ export function useHostedApiContext({
   oauthTokensByServerId,
   guestOauthTokensByServerName,
   shareToken,
+  sandboxToken,
   isAuthenticated,
   serverConfigs,
   enabled = true,
@@ -48,6 +50,7 @@ export function useHostedApiContext({
       oauthTokensByServerId,
       guestOauthTokensByServerName,
       shareToken,
+      sandboxToken,
       isAuthenticated,
       serverConfigs,
     });
@@ -63,6 +66,7 @@ export function useHostedApiContext({
     oauthTokensByServerId,
     guestOauthTokensByServerName,
     shareToken,
+    sandboxToken,
     isAuthenticated,
     serverConfigs,
   ]);

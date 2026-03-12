@@ -147,4 +147,25 @@ describe("useChatSession hosted mode", () => {
     });
     unmount();
   });
+
+  it("includes sandbox token in the hosted transport body", async () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-2",
+        hostedSelectedServerIds: ["server-id-2"],
+        hostedSandboxToken: "sandbox-token",
+      }),
+    );
+
+    const body = lastTransportOptions.body();
+    expect(body).toMatchObject({
+      workspaceId: "workspace-2",
+      chatSessionId: "chat-session-id",
+      selectedServerIds: ["server-id-2"],
+      sandboxToken: "sandbox-token",
+      accessScope: "chat_v2",
+    });
+    unmount();
+  });
 });

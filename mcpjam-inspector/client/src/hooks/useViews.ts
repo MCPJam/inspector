@@ -201,6 +201,7 @@ export function useWorkspaceServers({
         name: string;
         workspaceId: string;
         transportType: "stdio" | "http";
+        url?: string;
       }>
     | undefined;
 

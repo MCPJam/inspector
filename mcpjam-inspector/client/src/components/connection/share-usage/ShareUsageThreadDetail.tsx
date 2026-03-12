@@ -89,7 +89,7 @@ export function ShareUsageThreadDetail({
         toolCallId: snap.toolCallId,
         toolName: snap.toolName,
         protocol: snap.uiType,
-        serverId: thread.serverId,
+        serverId: snap.serverId,
         resourceUri: snap.resourceUri ?? "",
         toolMetadata,
         widgetCsp: snap.widgetCsp,
@@ -106,8 +106,10 @@ export function ShareUsageThreadDetail({
     if (!messages) return null;
     return adaptTraceToUiMessages({
       trace: { messages: messages as any, widgetSnapshots },
+      toolResultDisplay:
+        thread?.sourceType === "sandbox" ? "attached-to-tool" : "sibling-text",
     });
-  }, [messages, widgetSnapshots]);
+  }, [messages, thread?.sourceType, widgetSnapshots]);
 
   const resolvedModel: ModelDefinition = useMemo(
     () => ({
@@ -161,6 +163,8 @@ export function ShareUsageThreadDetail({
         ? `${Math.round(duration / 1000)}s`
         : `${Math.round(duration / 60000)}m`
       : null;
+  const isSandboxThread = thread.sourceType === "sandbox";
+  const reasoningDisplayMode = isSandboxThread ? "collapsible" : "collapsed";
 
   return (
     <div className="flex h-full flex-col">
@@ -214,8 +218,9 @@ export function ShareUsageThreadDetail({
               onExitFullscreen={NOOP}
               toolRenderOverrides={adaptedTrace.toolRenderOverrides}
               showSaveViewButton={false}
-              minimalMode={true}
+              minimalMode={!isSandboxThread}
               interactive={false}
+              reasoningDisplayMode={reasoningDisplayMode}
             />
           ))}
         </div>

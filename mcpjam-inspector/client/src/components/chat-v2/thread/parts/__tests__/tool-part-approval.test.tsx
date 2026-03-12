@@ -67,6 +67,12 @@ vi.mock("@/components/ui/json-editor", () => ({
   ),
 }));
 
+vi.mock("../text-part", () => ({
+  TextPart: ({ text }: { text: string }) => (
+    <div data-testid="text-part">{text}</div>
+  ),
+}));
+
 const basePart = {
   type: "tool-invocation" as const,
   toolName: "test-tool",
@@ -198,5 +204,100 @@ describe("ToolPart approval expansion", () => {
       expect(onSaveView).toHaveBeenCalledTimes(2);
     });
     expect(window.location.hash).toBe("#chat-v2");
+  });
+
+  it("keeps attached readable output collapsed until the header is clicked", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            traceDisplayText: "# Excalidraw Element Format",
+            traceDisplayMode: "markdown",
+          } as any
+        }
+        uiType="mcp-apps"
+      />,
+    );
+
+    expect(screen.queryByTestId("text-part")).not.toBeInTheDocument();
+    expect(getHeaderButton()).toHaveAttribute("aria-expanded", "false");
+
+    const headerButton = getHeaderButton();
+    expect(headerButton).toBeTruthy();
+    if (headerButton) {
+      await user.click(headerButton);
+    }
+
+    expect(getHeaderButton()).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("text-part")).toHaveTextContent(
+      "# Excalidraw Element Format",
+    );
+
+    if (headerButton) {
+      await user.click(headerButton);
+    }
+
+    expect(getHeaderButton()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("text-part")).not.toBeInTheDocument();
+  });
+
+  it("reuses attached readable output instead of rendering a duplicate result json block", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            input: { prompt: "read me" },
+            output: { type: "json", value: { ignored: true } },
+            traceDisplayText: "Readable output",
+            traceDisplayMode: "markdown",
+          } as any
+        }
+        uiType="mcp-apps"
+      />,
+    );
+
+    const headerButton = getHeaderButton();
+    expect(headerButton).toBeTruthy();
+    if (headerButton) {
+      await user.click(headerButton);
+    }
+
+    expect(screen.getByTestId("text-part")).toHaveTextContent(
+      "Readable output",
+    );
+    expect(screen.getAllByTestId("json-editor")).toHaveLength(1);
+  });
+
+  it("does not expand attached readable output in minimal mode", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ToolPart
+        part={
+          {
+            ...basePart,
+            traceDisplayText: "Readable output",
+            traceDisplayMode: "markdown",
+          } as any
+        }
+        uiType="mcp-apps"
+        minimalMode
+      />,
+    );
+
+    const headerButton = getHeaderButton();
+    expect(headerButton).toBeTruthy();
+    if (headerButton) {
+      await user.click(headerButton);
+    }
+
+    expect(getHeaderButton()).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("text-part")).not.toBeInTheDocument();
   });
 });

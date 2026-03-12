@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 import type { ModelDefinition } from "@/shared/types";
 
 // Mock child components
@@ -143,9 +144,21 @@ describe("ChatInput", () => {
     it("renders submit button", () => {
       render(<ChatInput {...defaultProps} value="Hello" />);
 
-      // Submit button exists
-      const buttons = screen.getAllByRole("button");
-      expect(buttons.length).toBeGreaterThan(0);
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeInTheDocument();
+    });
+
+    it("uses ChatGPT submit styling inside ChatGPT sandboxes", () => {
+      render(
+        <SandboxHostStyleProvider value="chatgpt">
+          <ChatInput {...defaultProps} value="Hello" />
+        </SandboxHostStyleProvider>,
+      );
+
+      expect(screen.getByRole("button", { name: "Send message" })).toHaveClass(
+        "bg-[#1f1f1f]",
+      );
     });
   });
 

@@ -93,6 +93,98 @@ describe("adaptTraceToUiMessages", () => {
     expect(msg.parts[2]).toMatchObject({ type: "text" });
   });
 
+  it("attaches readable tool output to the tool part in attached-to-tool mode", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Let me do that." },
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "read_me",
+              input: { id: 42 },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "read_me",
+              output: { type: "json", value: { text: "result text" } },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      toolResultDisplay: "attached-to-tool",
+    });
+    expect(result.messages).toHaveLength(1);
+
+    const msg = result.messages[0];
+    expect(msg.parts).toHaveLength(2);
+    expect(msg.parts[1]).toMatchObject({
+      type: "dynamic-tool",
+      toolCallId: "call-1",
+      toolName: "read_me",
+      traceDisplayText: "result text",
+      traceDisplayMode: "markdown",
+    });
+    expect(
+      msg.parts.find((part) => part.type === "text" && part !== msg.parts[0]),
+    ).toBeUndefined();
+  });
+
+  it("attaches structured tool output as json markdown in attached-to-tool mode", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "read_me",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "read_me",
+              output: { hello: "world" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      toolResultDisplay: "attached-to-tool",
+    });
+
+    expect(result.messages[0].parts).toHaveLength(1);
+    expect(result.messages[0].parts[0]).toMatchObject({
+      type: "dynamic-tool",
+      traceDisplayMode: "json-markdown",
+    });
+    expect((result.messages[0].parts[0] as any).traceDisplayText).toContain(
+      '"hello": "world"',
+    );
+  });
+
   // --- Test 2: Multiple tool calls ---
   it("groups multiple tool-calls and results into a single assistant UIMessage", () => {
     const trace: TraceEnvelope = {
