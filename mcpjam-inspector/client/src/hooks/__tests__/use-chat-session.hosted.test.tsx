@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
 
 const mockState = vi.hoisted(() => ({
@@ -8,6 +8,7 @@ const mockState = vi.hoisted(() => ({
   setMessages: vi.fn(),
   addToolApprovalResponse: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
+  getGuestBearerToken: vi.fn(async () => "guest-token"),
   hasToken: vi.fn(() => false),
   getToken: vi.fn(() => ""),
   getOpenRouterSelectedModels: vi.fn(() => []),
@@ -16,6 +17,10 @@ const mockState = vi.hoisted(() => ({
   getCustomProviderByName: vi.fn(),
   setSelectedModelId: vi.fn(),
   useSharedChatWidgetCapture: vi.fn(),
+  convexAuth: {
+    isAuthenticated: true,
+    isLoading: false,
+  },
   detectOllamaModels: vi.fn(async () => ({
     isRunning: false,
     availableModels: [],
@@ -30,10 +35,15 @@ const mockState = vi.hoisted(() => ({
 }));
 let lastTransportOptions: any;
 
-const baseModel = {
-  id: "gpt-4.1-mini",
-  name: "GPT-4.1 Mini",
+const guestModel = {
+  id: "openai/gpt-5-mini",
+  name: "GPT-5 Mini",
   provider: "openai" as const,
+};
+const premiumModel = {
+  id: "anthropic/claude-sonnet-4.5",
+  name: "Claude Sonnet 4.5",
+  provider: "anthropic" as const,
 };
 
 vi.mock("@/lib/config", () => ({
@@ -41,8 +51,8 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: vi.fn(() => [baseModel]),
-  getDefaultModel: vi.fn(() => baseModel),
+  buildAvailableModels: vi.fn(() => [premiumModel, guestModel]),
+  getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
@@ -64,7 +74,7 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
-    selectedModelId: "gpt-4.1-mini",
+    selectedModelId: "openai/gpt-5-mini",
     setSelectedModelId: mockState.setSelectedModelId,
   }),
 }));
@@ -91,6 +101,10 @@ vi.mock("@/lib/session-token", () => ({
   getAuthHeaders: vi.fn(() => ({})),
 }));
 
+vi.mock("@/lib/guest-session", () => ({
+  getGuestBearerToken: mockState.getGuestBearerToken,
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockState.getAccessToken,
@@ -98,10 +112,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({
-    isAuthenticated: true,
-    isLoading: false,
-  }),
+  useConvexAuth: () => mockState.convexAuth,
 }));
 
 vi.mock("@ai-sdk/react", () => ({
@@ -127,6 +138,15 @@ vi.mock("ai", () => ({
 }));
 
 describe("useChatSession hosted mode", () => {
+  beforeEach(() => {
+    mockState.convexAuth.isAuthenticated = true;
+    mockState.convexAuth.isLoading = false;
+    mockState.getAccessToken.mockReset();
+    mockState.getAccessToken.mockResolvedValue("access-token");
+    mockState.getGuestBearerToken.mockReset();
+    mockState.getGuestBearerToken.mockResolvedValue("guest-token");
+  });
+
   it("includes chatSessionId in the hosted transport body", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
@@ -146,6 +166,30 @@ describe("useChatSession hosted mode", () => {
       shareToken: "share-token",
       accessScope: "chat_v2",
     });
+    unmount();
+  });
+
+  it("treats anonymous shared-chat viewers as guest users", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+    mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+        hostedShareToken: "share-token",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.disableForAuthentication).toBe(false);
+    });
+
+    expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "openai/gpt-5-mini",
+    ]);
+    expect(result.current.isAuthReady).toBe(true);
     unmount();
   });
 });

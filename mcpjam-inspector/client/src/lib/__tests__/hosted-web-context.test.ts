@@ -71,6 +71,26 @@ describe("hosted web context", () => {
     });
   });
 
+  it("keeps using direct guest requests when AuthKit still reports a session", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      hasSession: true,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      serverConfigs: {
+        myServer: {
+          url: "https://example.com/mcp",
+          requestInit: { headers: { "X-Api-Key": "key123" } },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+      serverHeaders: { "X-Api-Key": "key123" },
+    });
+  });
+
   it("includes the latest guest OAuth token separately from server headers", () => {
     setHostedApiContext({
       workspaceId: null,

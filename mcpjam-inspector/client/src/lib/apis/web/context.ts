@@ -63,27 +63,33 @@ function assertHostedMode() {
 }
 
 /**
- * True when running in hosted mode without an authenticated workspace.
- * Guest users store server configs in localStorage and connect directly
- * (no Convex involvement).
+ * True when running in hosted mode as a direct guest connection.
+ * Direct guests store server configs in localStorage and connect directly
+ * without Convex authorization.
  */
 export function isGuestMode(): boolean {
   if (!HOSTED_MODE) return false;
-  // A WorkOS session means the user signed in — don't treat them as a guest
-  // even if Convex auth hasn't settled yet.
-  if (hostedApiContext.hasSession) return false;
   return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
 }
 
 /**
- * Prefer the guest bearer whenever there is no authenticated hosted workspace.
- * This is intentionally looser than isGuestMode(): an AuthKit refresh cookie can
- * make `hasSession` temporarily truthy even when the user is effectively signed
- * out, and in that state WorkOS token bootstrap should not block free guest chat.
+ * Hosted guest access comes in 2 shapes:
+ * - direct guest: no workspace, direct serverUrl requests
+ * - shared guest: workspace-scoped share token, Convex-backed requests
+ */
+function hasHostedGuestAccess(): boolean {
+  if (!HOSTED_MODE) return false;
+  if (hostedApiContext.isAuthenticated) return false;
+  return !hostedApiContext.workspaceId || !!hostedApiContext.shareToken;
+}
+
+/**
+ * Prefer the guest bearer for both direct guests and shared guests.
+ * Shared guests still use Convex-backed requests; they only differ in how the
+ * bearer is obtained.
  */
 function shouldPreferGuestBearer(): boolean {
-  if (!HOSTED_MODE) return false;
-  return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
+  return hasHostedGuestAccess();
 }
 
 export function buildGuestServerRequest(
@@ -293,7 +299,11 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
     }
   }
 
-  // Fall back to guest token
+  if (!hasHostedGuestAccess()) {
+    return null;
+  }
+
+  // Fall back to guest token for explicit guest-capable surfaces only.
   const guestToken = await getGuestBearerToken();
   if (guestToken) {
     cachedBearerToken = {
