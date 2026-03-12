@@ -16,12 +16,15 @@ interface McpLifecycleDiagramProps {
    */
   currentStep?: string;
   focusedStep?: string;
+  /** Callback when user clicks an edge label in the diagram */
+  onStepClick?: (stepId: string) => void;
 }
 
 export function McpLifecycleDiagram({
   transport,
   currentStep,
   focusedStep,
+  onStepClick,
 }: McpLifecycleDiagramProps) {
   const scenario = useMemo(
     () => buildMcpLifecycleScenario20250326({ transport }),
@@ -40,6 +43,7 @@ export function McpLifecycleDiagram({
       actorXPositions={actorXPositions}
       currentStep={currentStep}
       focusedStep={focusedStep}
+      onStepClick={onStepClick}
     />
   );
 }

@@ -46,6 +46,7 @@ export const CustomActionEdge = memo(
             <div
               className={cn(
                 "px-3 py-1.5 rounded border text-xs shadow-sm backdrop-blur-sm",
+                "cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.02]",
                 statusColor,
               )}
             >

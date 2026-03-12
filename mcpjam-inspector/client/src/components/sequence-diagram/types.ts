@@ -51,6 +51,8 @@ export interface ActorNodeData extends Record<string, unknown> {
 
 // Edge data for action labels — same shape as OAuth's ActionEdgeData
 export interface ActionEdgeData extends Record<string, unknown> {
+  /** Step/action ID set by the diagram builder (e.g. "initialize_request") */
+  stepId?: string;
   label: string;
   description: string;
   status: NodeStatus;

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useCallback } from "react";
 import {
   Background,
   Controls,
@@ -27,6 +27,8 @@ interface DiagramLayoutProps {
   currentStep?: string;
   focusedStep?: string | null;
   zoomConfig?: DiagramZoomConfig;
+  /** Callback when user clicks an edge label in the diagram */
+  onStepClick?: (stepId: string) => void;
 }
 
 export const DiagramLayout = ({
@@ -35,8 +37,19 @@ export const DiagramLayout = ({
   currentStep,
   focusedStep,
   zoomConfig,
+  onStepClick,
 }: DiagramLayoutProps) => {
   const reactFlowInstance = useReactFlow();
+
+  const handleEdgeClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      const stepId = edge.data?.stepId as string | undefined;
+      if (stepId && onStepClick) {
+        onStepClick(stepId);
+      }
+    },
+    [onStepClick],
+  );
 
   // Auto-zoom to current step — skipped entirely when currentStep is undefined
   useEffect(() => {
@@ -121,6 +134,7 @@ export const DiagramLayout = ({
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
+        onEdgeClick={handleEdgeClick}
         panOnScroll={true}
         zoomOnScroll={true}
         zoomOnPinch={true}

@@ -1,26 +1,23 @@
-import { useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ArrowRight, RotateCcw } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useRef, useEffect, useCallback } from "react";
+import { ArrowRight, Lightbulb, Info } from "lucide-react";
+import { motion } from "framer-motion";
 import {
   HTTP_STEP_ORDER,
-  LIFECYCLE_GUIDE_SLIM,
+  LIFECYCLE_GUIDE_METADATA,
   PHASE_ACCENT,
-  type McpLifecycleStepSlim,
+  type McpLifecycleStepGuide,
 } from "./mcp-lifecycle-guide-data";
+import type { McpLifecycleStep20250326 } from "./mcp-lifecycle-data";
 
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
 interface McpLifecycleGuideProps {
-  stepIndex: number; // -1 = overview, 0+ = step
-  totalSteps: number;
-  onGoToStep: (index: number) => void;
-  onFocusStep: (stepId: string) => void;
-  onNext: () => void;
-  onPrev: () => void;
-  onReset: () => void;
+  activeStepId: string | undefined;
+  onActiveStepChange: (stepId: string) => void;
+  scrollToStepId: string | undefined;
+  onScrollComplete: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -29,79 +26,101 @@ interface McpLifecycleGuideProps {
 
 const EASE = [0.25, 0.1, 0.25, 1] as const;
 
-/** Per-child stagger — explicit delays are more reliable than variant propagation */
-const STAGGER_BASE = 0.12; // initial delay (wait for parent slide-in)
-const STAGGER_GAP = 0.07; // gap between each child
-
-function fadeUp(order: number) {
-  const delay = STAGGER_BASE + order * STAGGER_GAP;
+function sectionChild(order: number) {
   return {
-    initial: { opacity: 0, y: 14 } as const,
-    animate: { opacity: 1, y: 0 } as const,
-    transition: { delay, duration: 0.38, ease: EASE },
+    initial: { opacity: 0, y: 16 } as const,
+    whileInView: { opacity: 1, y: 0 } as const,
+    viewport: { once: true } as const,
+    transition: {
+      delay: order * 0.08,
+      duration: 0.4,
+      ease: EASE,
+    },
   };
+}
+
+// ---------------------------------------------------------------------------
+// useScrollSpy — IntersectionObserver-based scroll tracking
+// ---------------------------------------------------------------------------
+
+function useScrollSpy(
+  sectionIds: readonly string[],
+  scrollContainerRef: React.RefObject<HTMLElement | null>,
+  onActiveChange: (id: string) => void,
+  enabled: boolean,
+) {
+  const sectionRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const rafId = useRef(0);
+
+  const registerSection = useCallback(
+    (id: string, el: HTMLElement | null) => {
+      if (el) sectionRefs.current.set(id, el);
+      else sectionRefs.current.delete(id);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!enabled || !scrollContainerRef.current) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        cancelAnimationFrame(rafId.current);
+        rafId.current = requestAnimationFrame(() => {
+          let bestEntry: IntersectionObserverEntry | null = null;
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              if (
+                !bestEntry ||
+                entry.intersectionRatio > bestEntry.intersectionRatio
+              ) {
+                bestEntry = entry;
+              }
+            }
+          }
+          if (bestEntry) {
+            const id = bestEntry.target.getAttribute("data-step-id");
+            if (id) onActiveChange(id);
+          }
+        });
+      },
+      {
+        root: scrollContainerRef.current,
+        rootMargin: "-10% 0px -60% 0px",
+        threshold: [0, 0.25, 0.5, 0.75, 1],
+      },
+    );
+
+    for (const id of sectionIds) {
+      const el = sectionRefs.current.get(id);
+      if (el) observer.observe(el);
+    }
+
+    return () => {
+      cancelAnimationFrame(rafId.current);
+      observer.disconnect();
+    };
+  }, [sectionIds, enabled, onActiveChange, scrollContainerRef]);
+
+  return { registerSection };
 }
 
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function ProgressDots({
-  total,
-  current,
-  onSelect,
-}: {
-  total: number;
-  current: number;
-  onSelect: (i: number) => void;
-}) {
-  return (
-    <div className="flex items-center justify-center gap-2.5">
-      {Array.from({ length: total }).map((_, i) => {
-        const step = LIFECYCLE_GUIDE_SLIM[HTTP_STEP_ORDER[i]];
-        const isActive = i === current;
-        const isVisited = current >= 0 && i <= current;
-        const color = step ? PHASE_ACCENT[step.phase] : "#94a3b8";
-
-        return (
-          <button
-            key={i}
-            onClick={() => onSelect(i)}
-            className="relative flex items-center justify-center p-1 -m-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
-            aria-label={`Go to step ${i + 1}`}
-          >
-            <motion.div
-              className="rounded-full"
-              animate={{
-                scale: isActive ? 1.5 : 1,
-                backgroundColor: isVisited ? color : "var(--border)",
-              }}
-              transition={
-                isActive
-                  ? { type: "spring", stiffness: 300, damping: 20 }
-                  : { duration: 0.3, ease: EASE }
-              }
-              style={{ width: 7, height: 7 }}
-            />
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function DirectionIndicator({
   direction,
   order,
 }: {
-  direction: McpLifecycleStepSlim["direction"];
+  direction: "client-to-server" | "server-to-client";
   order: number;
 }) {
   const isToServer = direction === "client-to-server";
   return (
     <motion.div
       className="flex items-center gap-2 text-muted-foreground/60"
-      {...fadeUp(order)}
+      {...sectionChild(order)}
     >
       <span className="text-[11px] font-medium">
         {isToServer ? "Client" : "Server"}
@@ -114,104 +133,200 @@ function DirectionIndicator({
   );
 }
 
-function OverviewView({ onStart }: { onStart: () => void }) {
-  return (
-    <motion.div
-      key="overview"
-      initial={{ opacity: 0, scale: 0.97 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.97 }}
-      transition={{ duration: 0.3, ease: EASE }}
-      className="flex flex-col items-center justify-center h-full px-8 text-center"
-    >
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1, duration: 0.4 }}
-        className="space-y-4 max-w-xs"
-      >
-        <h3 className="text-lg font-semibold tracking-tight text-foreground">
-          MCP Lifecycle
-        </h3>
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          Walk through the five steps of an HTTP MCP connection — from the
-          initial handshake to normal operations.
-        </p>
-        <Button onClick={onStart} className="mt-2">
-          Begin
-          <ChevronRight className="ml-1 h-4 w-4" />
-        </Button>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-function StepView({
-  step,
+function StepSection({
+  stepId,
+  index,
+  isActive,
+  registerRef,
 }: {
-  step: McpLifecycleStepSlim;
+  stepId: McpLifecycleStep20250326;
   index: number;
+  isActive: boolean;
+  registerRef: (id: string, el: HTMLElement | null) => void;
 }) {
-  const phaseColor = PHASE_ACCENT[step.phase];
+  const guide = LIFECYCLE_GUIDE_METADATA[stepId] as
+    | McpLifecycleStepGuide
+    | undefined;
+  if (!guide) return null;
+
+  const phaseColor =
+    PHASE_ACCENT[guide.phase as keyof typeof PHASE_ACCENT] ?? "#94a3b8";
+  const direction =
+    stepId === "initialize_result" || stepId === "operation_response"
+      ? "server-to-client"
+      : "client-to-server";
 
   return (
-    <div className="flex flex-col items-center justify-center h-full px-8">
-      <div className="w-full max-w-sm space-y-6">
-        {/* Phase label */}
-        <motion.div className="flex items-center gap-2" {...fadeUp(0)}>
+    <motion.section
+      id={`section-${stepId}`}
+      ref={(el) => registerRef(stepId, el)}
+      data-step-id={stepId}
+      className="relative scroll-mt-8 py-12 first:pt-6"
+      initial={{ opacity: 0, y: 30 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.15 }}
+      transition={{ duration: 0.5, ease: EASE }}
+    >
+      {/* Active indicator — phase-colored left border */}
+      <motion.div
+        className="absolute left-0 top-4 bottom-4 w-[3px] rounded-full"
+        animate={{
+          backgroundColor: isActive ? phaseColor : "transparent",
+          scaleY: isActive ? 1 : 0.3,
+          opacity: isActive ? 1 : 0,
+        }}
+        transition={{ duration: 0.35 }}
+      />
+
+      <div className="pl-5 space-y-5">
+        {/* Phase badge + step number */}
+        <motion.div className="flex items-center gap-2" {...sectionChild(0)}>
           <span
-            className="block h-1.5 w-1.5 rounded-full"
+            className="block h-2 w-2 rounded-full"
             style={{ backgroundColor: phaseColor }}
           />
           <span
-            className="text-[11px] font-medium uppercase tracking-wider"
+            className="text-[11px] font-semibold uppercase tracking-wider"
             style={{ color: phaseColor }}
           >
-            {step.phase}
+            {guide.phase}
+          </span>
+          <span className="text-[10px] text-muted-foreground/50 font-mono">
+            Step {index + 1}
           </span>
         </motion.div>
 
         {/* Title */}
-        <motion.h3
-          className="text-xl font-semibold tracking-tight text-foreground -mt-2"
-          {...fadeUp(1)}
+        <motion.h2
+          className="text-xl font-semibold tracking-tight text-foreground -mt-1"
+          {...sectionChild(1)}
         >
-          {step.title}
-        </motion.h3>
+          {guide.title}
+        </motion.h2>
 
-        {/* Subtitle */}
+        {/* Summary */}
         <motion.p
-          className="text-sm text-muted-foreground leading-relaxed -mt-3"
-          {...fadeUp(2)}
+          className="text-sm text-muted-foreground leading-relaxed max-w-prose"
+          {...sectionChild(2)}
         >
-          {step.subtitle}
+          {guide.summary}
         </motion.p>
 
         {/* Direction */}
-        <DirectionIndicator direction={step.direction} order={3} />
+        <DirectionIndicator direction={direction} order={3} />
 
-        {/* Key insight */}
-        <motion.blockquote
-          className="border-l-2 pl-4 text-[13px] text-foreground/75 leading-relaxed italic"
-          style={{ borderColor: phaseColor }}
-          {...fadeUp(4)}
-        >
-          {step.keyInsight}
-        </motion.blockquote>
-
-        {/* Code snippet */}
-        {step.codeSnippet && (
-          <motion.div {...fadeUp(5)}>
+        {/* Code example */}
+        {guide.codeExample && (
+          <motion.div {...sectionChild(4)}>
             <pre
               className="rounded-lg border border-border bg-muted/30 p-4 text-[11px] leading-relaxed font-mono text-foreground/70 overflow-x-auto"
-              style={{ borderLeftWidth: 2, borderLeftColor: phaseColor }}
+              style={{ borderLeftWidth: 3, borderLeftColor: phaseColor }}
             >
-              {step.codeSnippet}
+              {guide.codeExample}
             </pre>
           </motion.div>
         )}
+
+        {/* Teachable moments */}
+        {guide.teachableMoments.length > 0 && (
+          <motion.div
+            className="rounded-lg border border-blue-200/50 dark:border-blue-800/30 bg-blue-50/40 dark:bg-blue-950/10 p-4"
+            {...sectionChild(5)}
+          >
+            <div className="flex items-center gap-2 mb-2.5">
+              <Info className="h-3.5 w-3.5 text-blue-500/70" />
+              <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+                Key details
+              </span>
+            </div>
+            <ul className="space-y-2">
+              {guide.teachableMoments.map((moment, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2 text-[13px] text-foreground/80 leading-relaxed"
+                >
+                  <span className="mt-1.5 block h-1 w-1 rounded-full bg-blue-400/60 shrink-0" />
+                  {moment}
+                </li>
+              ))}
+            </ul>
+          </motion.div>
+        )}
+
+        {/* Table */}
+        {guide.table && (
+          <motion.div {...sectionChild(6)}>
+            <div className="rounded-lg border border-border overflow-hidden">
+              <div className="bg-muted/40 px-4 py-2">
+                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  {guide.table.caption}
+                </span>
+              </div>
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="border-b border-border bg-muted/20">
+                    {guide.table.headers.map((h, i) => (
+                      <th
+                        key={i}
+                        className="text-left px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {guide.table.rows.map((row, i) => (
+                    <tr
+                      key={i}
+                      className="border-b border-border/50 last:border-b-0"
+                    >
+                      {row.map((cell, j) => (
+                        <td
+                          key={j}
+                          className={`px-4 py-2 ${j === 0 ? "font-mono text-[12px] text-foreground/80" : "text-muted-foreground"}`}
+                        >
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Tips */}
+        {guide.tips.length > 0 && (
+          <motion.div
+            className="rounded-lg border border-amber-200/50 dark:border-amber-800/30 bg-amber-50/40 dark:bg-amber-950/10 p-4"
+            {...sectionChild(7)}
+          >
+            <div className="flex items-center gap-2 mb-2.5">
+              <Lightbulb className="h-3.5 w-3.5 text-amber-500/70" />
+              <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+                Tips
+              </span>
+            </div>
+            <ul className="space-y-2">
+              {guide.tips.map((tip, i) => (
+                <li
+                  key={i}
+                  className="flex items-start gap-2 text-[13px] text-foreground/80 leading-relaxed"
+                >
+                  <span className="mt-1.5 block h-1 w-1 rounded-full bg-amber-400/60 shrink-0" />
+                  {tip}
+                </li>
+              ))}
+            </ul>
+          </motion.div>
+        )}
       </div>
-    </div>
+
+      {/* Section divider */}
+      <div className="mt-12 border-b border-border/30" />
+    </motion.section>
   );
 }
 
@@ -220,113 +335,95 @@ function StepView({
 // ---------------------------------------------------------------------------
 
 export function McpLifecycleGuide({
-  stepIndex,
-  totalSteps,
-  onGoToStep,
-  onNext,
-  onPrev,
-  onReset,
+  activeStepId,
+  onActiveStepChange,
+  scrollToStepId,
+  onScrollComplete,
 }: McpLifecycleGuideProps) {
-  const prevIndexRef = useRef(stepIndex);
-  const direction = stepIndex >= prevIndexRef.current ? 1 : -1;
-  // Update ref *after* computing direction
-  prevIndexRef.current = stepIndex;
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isProgrammaticScroll = useRef(false);
 
-  const isOverview = stepIndex === -1;
-  const isLastStep = stepIndex === totalSteps - 1;
+  // Scroll spy — tracks which section is in the viewport
+  const handleActiveChange = useCallback(
+    (id: string) => {
+      if (isProgrammaticScroll.current) return;
+      onActiveStepChange(id);
+    },
+    [onActiveStepChange],
+  );
 
-  const currentStepId =
-    stepIndex >= 0 ? HTTP_STEP_ORDER[stepIndex] : undefined;
-  const currentStep = currentStepId
-    ? LIFECYCLE_GUIDE_SLIM[currentStepId]
-    : undefined;
+  const { registerSection } = useScrollSpy(
+    HTTP_STEP_ORDER,
+    scrollContainerRef,
+    handleActiveChange,
+    true,
+  );
+
+  // Programmatic scroll — triggered by diagram click
+  useEffect(() => {
+    if (!scrollToStepId) return;
+    const el = document.getElementById(`section-${scrollToStepId}`);
+    if (el) {
+      isProgrammaticScroll.current = true;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      const timer = setTimeout(() => {
+        isProgrammaticScroll.current = false;
+        onScrollComplete();
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [scrollToStepId, onScrollComplete]);
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b px-6 py-3">
-        <span className="text-xs font-medium text-muted-foreground">
-          {isOverview ? "Overview" : `Step ${stepIndex + 1} of ${totalSteps}`}
-        </span>
-        {!isOverview && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onReset}
-            className="h-7 px-2 text-xs text-muted-foreground"
-          >
-            <RotateCcw className="mr-1 h-3 w-3" />
-            Reset
-          </Button>
-        )}
+    <div
+      ref={scrollContainerRef}
+      className="h-full overflow-y-auto scrollbar-thin"
+    >
+      {/* Hero */}
+      <div className="px-8 pt-8 pb-4">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: EASE }}
+          className="space-y-3"
+        >
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            HTTP Connection Lifecycle
+          </h1>
+          <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
+            Walk through the five steps of an HTTP-based MCP connection — from
+            the initial handshake to normal operations and shutdown. Scroll
+            through each step and watch the diagram follow along.
+          </p>
+        </motion.div>
       </div>
 
-      {/* Progress dots */}
-      {!isOverview && (
-        <div className="py-4">
-          <ProgressDots
-            total={totalSteps}
-            current={stepIndex}
-            onSelect={onGoToStep}
+      {/* Step sections */}
+      <div className="px-8 pb-16">
+        {HTTP_STEP_ORDER.map((stepId, index) => (
+          <StepSection
+            key={stepId}
+            stepId={stepId}
+            index={index}
+            isActive={activeStepId === stepId}
+            registerRef={registerSection}
           />
-        </div>
-      )}
+        ))}
 
-      {/* Content area */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <AnimatePresence mode="wait" custom={direction}>
-          {isOverview ? (
-            <OverviewView key="overview" onStart={onNext} />
-          ) : currentStep ? (
-            <motion.div
-              key={currentStepId}
-              custom={direction}
-              initial={{ opacity: 0, x: direction * 40 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: direction * -40 }}
-              transition={{ duration: 0.35, ease: EASE }}
-              className="h-full"
-            >
-              <StepView step={currentStep} index={stepIndex} />
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
+        {/* Outro */}
+        <motion.div
+          className="pt-8 pb-4 text-center"
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.5 }}
+        >
+          <p className="text-sm text-muted-foreground/60">
+            That&apos;s the complete HTTP MCP lifecycle. Click any step in the
+            diagram to jump back.
+          </p>
+        </motion.div>
       </div>
-
-      {/* Footer navigation */}
-      {!isOverview && (
-        <div className="flex items-center justify-between border-t px-6 py-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onPrev}
-            className="text-xs"
-          >
-            <ChevronLeft className="mr-1 h-3.5 w-3.5" />
-            Back
-          </Button>
-
-          <span className="text-[11px] text-muted-foreground tabular-nums">
-            {stepIndex + 1} / {totalSteps}
-          </span>
-
-          {!isLastStep ? (
-            <Button size="sm" onClick={onNext} className="text-xs">
-              Continue
-              <ChevronRight className="ml-1 h-3.5 w-3.5" />
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onReset}
-              className="text-xs"
-            >
-              Start Over
-            </Button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

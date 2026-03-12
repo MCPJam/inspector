@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import {
 import { McpLifecycleDiagram } from "@/components/lifecycle/McpLifecycleDiagram";
 import { McpLifecycleGuide } from "@/components/lifecycle/McpLifecycleGuide";
 import { buildMcpLifecycleScenario20250326 } from "@/components/lifecycle/mcp-lifecycle-data";
+import { HTTP_STEP_ORDER } from "@/components/lifecycle/mcp-lifecycle-guide-data";
 import { LearningLandingPage } from "@/components/LearningLandingPage";
 
 /**
@@ -21,49 +22,53 @@ import { LearningLandingPage } from "@/components/LearningLandingPage";
 const WALKTHROUGH_START_SENTINEL = "__walkthrough_start__";
 
 function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
-  const [stepIndex, setStepIndex] = useState(-1); // -1 = overview (all neutral)
-  const [focusedStepId, setFocusedStepId] = useState<string | undefined>(
+  // Active step — which section is currently visible in the scroll container
+  const [activeStepId, setActiveStepId] = useState<string | undefined>(
     undefined,
   );
+  // Target step to scroll to — set when user clicks a diagram edge
+  const [scrollTargetStepId, setScrollTargetStepId] = useState<
+    string | undefined
+  >(undefined);
+  // Guard to prevent feedback loops during programmatic scroll
+  const isProgrammaticScrollRef = useRef(false);
 
   const scenario = useMemo(
     () => buildMcpLifecycleScenario20250326({ transport: "http" }),
     [],
   );
 
-  const totalSteps = scenario.actions.length;
-  const isOverview = stepIndex === -1;
-
+  // Derive currentStep for the diagram:
+  // - active step gets "current" (blue) status
+  // - steps before it get "complete" (green) status
+  // - steps after get "pending" (gray) status
   const currentStep = useMemo(() => {
-    if (stepIndex === -1) return undefined;
-    if (stepIndex === 0) return WALKTHROUGH_START_SENTINEL;
-    return scenario.actions[stepIndex - 1].id;
-  }, [stepIndex, scenario.actions]);
+    if (!activeStepId) return undefined;
+    const idx = HTTP_STEP_ORDER.indexOf(
+      activeStepId as (typeof HTTP_STEP_ORDER)[number],
+    );
+    if (idx < 0) return undefined;
+    if (idx === 0) return WALKTHROUGH_START_SENTINEL;
+    return scenario.actions[idx - 1].id;
+  }, [activeStepId, scenario.actions]);
 
-  const focusedAction =
-    stepIndex >= 0 && stepIndex < totalSteps
-      ? scenario.actions[stepIndex]
-      : null;
-
-  // Clear focusedStepId when stepIndex changes
-  useEffect(() => {
-    setFocusedStepId(undefined);
-  }, [stepIndex]);
-
-  const handleNext = useCallback(() => {
-    setStepIndex((prev) => Math.min(prev + 1, totalSteps - 1));
-  }, [totalSteps]);
-
-  const handlePrev = useCallback(() => {
-    setStepIndex((prev) => Math.max(prev - 1, -1));
+  // Scroll → Diagram: IntersectionObserver detected a new section in view
+  const handleScrollStepChange = useCallback((stepId: string) => {
+    if (isProgrammaticScrollRef.current) return;
+    setActiveStepId(stepId);
   }, []);
 
-  const handleReset = useCallback(() => {
-    setStepIndex(-1);
+  // Diagram → Scroll: user clicked an edge label
+  const handleDiagramStepClick = useCallback((stepId: string) => {
+    isProgrammaticScrollRef.current = true;
+    setActiveStepId(stepId);
+    setScrollTargetStepId(stepId);
   }, []);
 
-  const handleGoToStep = useCallback((index: number) => {
-    setStepIndex(index);
+  // Called after programmatic scroll animation completes
+  const handleScrollComplete = useCallback(() => {
+    isProgrammaticScrollRef.current = false;
+    setScrollTargetStepId(undefined);
   }, []);
 
   return (
@@ -89,28 +94,26 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      {/* Split view: Diagram + Guide */}
+      {/* Split view: Content (left) + Diagram (right) */}
       <div className="flex-1 min-h-0">
         <ResizablePanelGroup direction="horizontal" className="h-full">
           <ResizablePanel defaultSize={50} minSize={30}>
-            <McpLifecycleDiagram
-              transport="http"
-              currentStep={currentStep}
-              focusedStep={focusedStepId ?? focusedAction?.id}
+            <McpLifecycleGuide
+              activeStepId={activeStepId}
+              onActiveStepChange={handleScrollStepChange}
+              scrollToStepId={scrollTargetStepId}
+              onScrollComplete={handleScrollComplete}
             />
           </ResizablePanel>
 
           <ResizableHandle withHandle />
 
           <ResizablePanel defaultSize={50} minSize={20} maxSize={70}>
-            <McpLifecycleGuide
-              stepIndex={stepIndex}
-              totalSteps={totalSteps}
-              onGoToStep={handleGoToStep}
-              onFocusStep={setFocusedStepId}
-              onNext={handleNext}
-              onPrev={handlePrev}
-              onReset={handleReset}
+            <McpLifecycleDiagram
+              transport="http"
+              currentStep={currentStep}
+              focusedStep={activeStepId}
+              onStepClick={handleDiagramStepClick}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

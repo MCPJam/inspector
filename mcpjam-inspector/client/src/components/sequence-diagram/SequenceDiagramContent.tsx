@@ -16,6 +16,8 @@ interface SequenceDiagramContentProps {
   currentStep?: string;
   focusedStep?: string;
   zoomConfig?: DiagramZoomConfig;
+  /** Callback when user clicks an edge label in the diagram */
+  onStepClick?: (stepId: string) => void;
 }
 
 const DiagramContent = memo(
@@ -26,6 +28,7 @@ const DiagramContent = memo(
     currentStep,
     focusedStep,
     zoomConfig,
+    onStepClick,
   }: SequenceDiagramContentProps) => {
     const { nodes, edges } = useMemo(
       () =>
@@ -45,6 +48,7 @@ const DiagramContent = memo(
         currentStep={currentStep}
         focusedStep={focusedStep}
         zoomConfig={zoomConfig}
+        onStepClick={onStepClick}
       />
     );
   },
