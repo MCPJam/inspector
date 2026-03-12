@@ -1,12 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SandboxChatPage } from "../SandboxChatPage";
 import {
   SANDBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
   clearSandboxSession,
   writeSandboxSession,
 } from "@/lib/sandbox-session";
+import {
+  clearHostedOAuthResumeMarker,
+  writeHostedOAuthResumeMarker,
+} from "@/lib/hosted-oauth-resume";
 
 const {
   mockConvexAuthState,
@@ -14,6 +18,7 @@ const {
   mockSignIn,
   mockGetStoredTokens,
   mockInitiateOAuth,
+  mockValidateHostedServer,
 } = vi.hoisted(() => ({
   mockConvexAuthState: {
     isAuthenticated: true,
@@ -23,6 +28,7 @@ const {
   mockSignIn: vi.fn(),
   mockGetStoredTokens: vi.fn(),
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
+  mockValidateHostedServer: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -40,13 +46,48 @@ vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
   useHostedApiContext: vi.fn(),
 }));
 
+vi.mock("@/lib/apis/web/servers-api", () => ({
+  validateHostedServer: mockValidateHostedServer,
+}));
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
     selector({ themeMode: "light" }),
 }));
 
 vi.mock("@/components/ChatTabV2", () => ({
-  ChatTabV2: () => <div data-testid="sandbox-chat-tab" />,
+  ChatTabV2: ({
+    onOAuthRequired,
+  }: {
+    onOAuthRequired?: (details?: {
+      serverUrl?: string | null;
+      serverId?: string | null;
+      serverName?: string | null;
+    }) => void;
+  }) => (
+    <div>
+      <div data-testid="sandbox-chat-tab" />
+      {onOAuthRequired ? (
+        <>
+          <button type="button" onClick={() => onOAuthRequired()}>
+            Trigger OAuth
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onOAuthRequired({
+                serverId: "srv_asana",
+                serverName: "asana",
+                serverUrl: "https://mcp.asana.com/sse",
+              })
+            }
+          >
+            Trigger targeted OAuth
+          </button>
+        </>
+      ) : null}
+    </div>
+  ),
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
@@ -82,7 +123,9 @@ describe("SandboxChatPage", () => {
   }
 
   beforeEach(() => {
+    vi.useRealTimers();
     clearSandboxSession();
+    clearHostedOAuthResumeMarker();
     localStorage.clear();
     sessionStorage.clear();
     window.history.replaceState({}, "", "/");
@@ -92,13 +135,20 @@ describe("SandboxChatPage", () => {
     mockSignIn.mockReset();
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
+    mockValidateHostedServer.mockReset();
 
     mockGetAccessToken.mockResolvedValue("workos-token");
     mockGetStoredTokens.mockReturnValue(null);
     mockInitiateOAuth.mockResolvedValue({ success: false });
+    mockValidateHostedServer.mockResolvedValue({
+      success: true,
+      status: "connected",
+      initInfo: null,
+    });
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -224,7 +274,9 @@ describe("SandboxChatPage", () => {
         "We couldn't open this sandbox right now. Please try again or open MCPJam.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/Internal database exploded/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Internal database exploded/),
+    ).not.toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "[SandboxChatPage] Failed to bootstrap sandbox",
       expect.objectContaining({
@@ -235,5 +287,178 @@ describe("SandboxChatPage", () => {
           "Uncaught Error: Internal database exploded at handler (../../convex/sandboxes.ts:1088:6)",
       }),
     );
+  });
+
+  it("auto-resumes sandbox OAuth after callback completion", async () => {
+    vi.useFakeTimers();
+    let hasToken = false;
+    mockGetStoredTokens.mockImplementation(() =>
+      hasToken ? { access_token: "sandbox-token" } : null,
+    );
+
+    writeSandboxSession({
+      token: "sandbox-token",
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Asana Sandbox",
+        description: "Hosted sandbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+    writeHostedOAuthResumeMarker({
+      surface: "sandbox",
+      serverName: "Asana Production",
+      serverUrl: "https://mcp.asana.com/sse",
+    });
+
+    render(<SandboxChatPage />);
+
+    expect(
+      screen.getByRole("heading", { name: "Finishing authorization" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Authorize" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      hasToken = true;
+      await vi.runAllTimersAsync();
+    });
+
+    expect(screen.getByTestId("sandbox-chat-tab")).toBeInTheDocument();
+    expect(mockValidateHostedServer).toHaveBeenCalledWith(
+      "srv_asana",
+      "sandbox-token",
+    );
+    expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-enters the sandbox OAuth gate when chat reports OAuth is required", async () => {
+    mockGetStoredTokens.mockReturnValue({ access_token: "sandbox-token" });
+
+    writeSandboxSession({
+      token: "sandbox-token",
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Asana Sandbox",
+        description: "Hosted sandbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+
+    render(<SandboxChatPage />);
+
+    expect(await screen.findByTestId("sandbox-chat-tab")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Trigger OAuth" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Authorization Required" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("You'll return here automatically after consent."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Authorize" })).toBeInTheDocument();
+  });
+
+  it("re-opens auth only for the matching sandbox server when chat includes server details", async () => {
+    mockGetStoredTokens.mockImplementation((serverName: string) => {
+      if (serverName === "asana") {
+        return { access_token: "asana-token" };
+      }
+      if (serverName === "linear") {
+        return { access_token: "linear-token" };
+      }
+      return null;
+    });
+
+    writeSandboxSession({
+      token: "sandbox-token",
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Asana Sandbox",
+        description: "Hosted sandbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+          {
+            serverId: "srv_linear",
+            serverName: "linear",
+            useOAuth: true,
+            serverUrl: "https://mcp.linear.app/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+
+    render(<SandboxChatPage />);
+
+    expect(await screen.findByTestId("sandbox-chat-tab")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Trigger targeted OAuth" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Authorization Required" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("asana")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Authorize again" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("linear")).not.toBeInTheDocument();
   });
 });

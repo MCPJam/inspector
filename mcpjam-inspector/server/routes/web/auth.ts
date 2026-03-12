@@ -18,7 +18,12 @@ import {
 
 function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
   return schema.superRefine((value, ctx) => {
-    if (value.shareToken && value.sandboxToken) {
+    const hostedValue = value as {
+      shareToken?: string;
+      sandboxToken?: string;
+    };
+
+    if (hostedValue.shareToken && hostedValue.sandboxToken) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["sandboxToken"],
@@ -283,6 +288,7 @@ export async function createAuthorizedManager(
             `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
             {
               oauthRequired: true,
+              serverId,
               serverUrl: auth.serverConfig.url,
             },
           );

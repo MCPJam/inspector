@@ -155,10 +155,12 @@ chatV2.post("/", async (c) => {
   } catch (error) {
     // Enrich MCPAuthError with OAuth server URL so the client can initiate OAuth
     if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
-      const firstUrl = Object.values(oauthServerUrls)[0];
+      const [firstServerId] = Object.keys(oauthServerUrls);
+      const firstUrl = firstServerId ? oauthServerUrls[firstServerId] : null;
       const msg = error instanceof Error ? error.message : String(error);
       return webError(c, 401, ErrorCode.UNAUTHORIZED, msg, {
         oauthRequired: true,
+        serverId: firstServerId,
         serverUrl: firstUrl,
       });
     }

@@ -64,10 +64,14 @@ import { HOSTED_MODE } from "./lib/config";
 import { resolveHostedNavigation } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
+  clearHostedOAuthPendingState,
+  getHostedOAuthCallbackContext,
+  resolveHostedOAuthReturnHash,
+} from "./lib/hosted-oauth-callback";
+import {
   clearSandboxSignInReturnPath,
   readSandboxSession,
   readSandboxSignInReturnPath,
-  SANDBOX_OAUTH_PENDING_KEY,
   writeSandboxSignInReturnPath,
 } from "./lib/sandbox-session";
 import {
@@ -75,12 +79,30 @@ import {
   readSharedServerSession,
   readSharedSignInReturnPath,
   slugify,
-  SHARED_OAUTH_PENDING_KEY,
   writeSharedSignInReturnPath,
   readPendingServerAdd,
   clearPendingServerAdd,
 } from "./lib/shared-server-session";
+import {
+  sanitizeHostedOAuthErrorMessage,
+  writeHostedOAuthResumeMarker,
+} from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+
+function getHostedOAuthCallbackErrorMessage(): string {
+  const params = new URLSearchParams(window.location.search);
+  const error = params.get("error");
+  const description = params.get("error_description");
+
+  if (error === "access_denied" && !description) {
+    return "Authorization was cancelled. Try again.";
+  }
+
+  return sanitizeHostedOAuthErrorMessage(
+    description || error,
+    "Authorization could not be completed. Try again.",
+  );
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
@@ -99,7 +121,9 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const [hostedOAuthHandling, setHostedOAuthHandling] = useState(false);
+  const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
+    HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,
+  );
   const [exitedSharedChat, setExitedSharedChat] = useState(false);
   const [exitedSandboxChat, setExitedSandboxChat] = useState(false);
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
@@ -155,48 +179,68 @@ export default function App() {
     HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
   const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
 
-  // Handle hosted OAuth callback: detect code + hosted pending flag before normal rendering.
+  // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
+    const callbackContext = getHostedOAuthCallbackContext();
+    if (!callbackContext) return;
+
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
-    const hasSharedOAuthPending = !!localStorage.getItem(
-      SHARED_OAUTH_PENDING_KEY,
-    );
-    const hasSandboxOAuthPending = !!localStorage.getItem(
-      SANDBOX_OAUTH_PENDING_KEY,
-    );
-    if (!code || (!hasSharedOAuthPending && !hasSandboxOAuthPending)) return;
+    const error = urlParams.get("error");
 
     let cancelled = false;
     setHostedOAuthHandling(true);
 
-    const cleanupOAuth = () => {
+    const finalizeHostedOAuth = (errorMessage?: string | null) => {
       if (cancelled) return;
-      localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
-      localStorage.removeItem(SANDBOX_OAUTH_PENDING_KEY);
-
-      const sandboxSession = readSandboxSession();
-      if (hasSandboxOAuthPending && sandboxSession) {
-        window.history.replaceState(
-          {},
-          "",
-          `/#${slugify(sandboxSession.payload.name)}`,
-        );
-        return;
+      if (callbackContext.serverName) {
+        writeHostedOAuthResumeMarker({
+          surface: callbackContext.surface,
+          serverName: callbackContext.serverName,
+          serverUrl: callbackContext.serverUrl,
+          errorMessage:
+            errorMessage && errorMessage.trim() ? errorMessage : null,
+        });
       }
 
-      const sharedSession = readSharedServerSession();
-      const hostedHash = sharedSession
-        ? slugify(sharedSession.payload.serverName)
-        : hasSandboxOAuthPending
-          ? "sandbox"
-          : "shared";
-      window.history.replaceState({}, "", `/#${hostedHash}`);
+      clearHostedOAuthPendingState();
+      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem("mcp-oauth-return-hash");
+      window.history.replaceState(
+        {},
+        "",
+        `/${resolveHostedOAuthReturnHash(callbackContext)}`,
+      );
     };
 
+    if (error || !code) {
+      finalizeHostedOAuth(getHostedOAuthCallbackErrorMessage());
+      setHostedOAuthHandling(false);
+      return;
+    }
+
     handleOAuthCallback(code)
-      .then(cleanupOAuth)
-      .catch(cleanupOAuth)
+      .then((result) => {
+        if (result.success) {
+          finalizeHostedOAuth(null);
+          return;
+        }
+
+        finalizeHostedOAuth(
+          sanitizeHostedOAuthErrorMessage(
+            result.error,
+            "Authorization could not be completed. Try again.",
+          ),
+        );
+      })
+      .catch((callbackError) => {
+        finalizeHostedOAuth(
+          sanitizeHostedOAuthErrorMessage(
+            callbackError,
+            "Authorization could not be completed. Try again.",
+          ),
+        );
+      })
       .finally(() => {
         if (!cancelled) setHostedOAuthHandling(false);
       });

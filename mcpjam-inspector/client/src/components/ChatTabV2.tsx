@@ -42,6 +42,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -57,7 +58,7 @@ interface ChatTabProps {
   initialSystemPrompt?: string;
   initialTemperature?: number;
   initialRequireToolApproval?: boolean;
-  onOAuthRequired?: (serverUrl?: string) => void;
+  onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
 }
 
 function ScrollToBottomButton() {
@@ -460,7 +461,20 @@ export function ChatTabV2({
     try {
       const parsed = JSON.parse(msg);
       if (parsed?.details?.oauthRequired) {
-        onOAuthRequired(parsed.details.serverUrl);
+        onOAuthRequired({
+          serverUrl:
+            typeof parsed.details.serverUrl === "string"
+              ? parsed.details.serverUrl
+              : null,
+          serverId:
+            typeof parsed.details.serverId === "string"
+              ? parsed.details.serverId
+              : null,
+          serverName:
+            typeof parsed.details.serverName === "string"
+              ? parsed.details.serverName
+              : null,
+        });
         return;
       }
     } catch {
