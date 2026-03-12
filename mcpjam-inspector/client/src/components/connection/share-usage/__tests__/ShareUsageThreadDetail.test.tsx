@@ -88,7 +88,7 @@ describe("ShareUsageThreadDetail", () => {
       );
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
-          reasoningDisplayMode: "collapsed",
+          reasoningDisplayMode: "collapsible",
           interactive: false,
           minimalMode: false,
         }),
@@ -113,6 +113,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockMessageView).toHaveBeenLastCalledWith(
         expect.objectContaining({
           minimalMode: true,
+          reasoningDisplayMode: "collapsed",
         }),
       );
     });
@@ -138,6 +139,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           minimalMode: true,
+          reasoningDisplayMode: "collapsed",
         }),
       );
     });

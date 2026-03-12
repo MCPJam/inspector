@@ -19,6 +19,7 @@ const {
   mockInitiateOAuth,
   mockCheckHostedServerOAuthRequirement,
   mockValidateHostedServer,
+  mockChatTabV2,
   toastSuccess,
   toastError,
 } = vi.hoisted(() => ({
@@ -29,6 +30,7 @@ const {
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockCheckHostedServerOAuthRequirement: vi.fn(),
   mockValidateHostedServer: vi.fn(),
+  mockChatTabV2: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -52,38 +54,41 @@ vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
 }));
 
 vi.mock("@/components/ChatTabV2", () => ({
-  ChatTabV2: ({
-    onOAuthRequired,
-  }: {
+  ChatTabV2: (props: {
     onOAuthRequired?: (details?: {
       serverUrl?: string | null;
       serverId?: string | null;
       serverName?: string | null;
     }) => void;
-  }) => (
-    <div>
-      <div data-testid="shared-chat-tab" />
-      {onOAuthRequired ? (
-        <>
-          <button type="button" onClick={() => onOAuthRequired()}>
-            Trigger OAuth
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              onOAuthRequired({
-                serverId: "srv_asana",
-                serverName: "Asana",
-                serverUrl: "https://mcp.asana.com/sse",
-              })
-            }
-          >
-            Trigger targeted OAuth
-          </button>
-        </>
-      ) : null}
-    </div>
-  ),
+    reasoningDisplayMode?: string;
+  }) => {
+    mockChatTabV2(props);
+    const { onOAuthRequired } = props;
+    return (
+      <div>
+        <div data-testid="shared-chat-tab" />
+        {onOAuthRequired ? (
+          <>
+            <button type="button" onClick={() => onOAuthRequired()}>
+              Trigger OAuth
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onOAuthRequired({
+                  serverId: "srv_asana",
+                  serverName: "Asana",
+                  serverUrl: "https://mcp.asana.com/sse",
+                })
+              }
+            >
+              Trigger targeted OAuth
+            </button>
+          </>
+        ) : null}
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
@@ -144,6 +149,7 @@ describe("SharedServerChatPage", () => {
     mockInitiateOAuth.mockReset();
     mockCheckHostedServerOAuthRequirement.mockReset();
     mockValidateHostedServer.mockReset();
+    mockChatTabV2.mockReset();
     toastSuccess.mockReset();
     toastError.mockReset();
 
@@ -192,6 +198,22 @@ describe("SharedServerChatPage", () => {
     });
     expect(toastSuccess).toHaveBeenCalledWith("Share link copied");
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("keeps shared server reasoning rendering unchanged", async () => {
+    writeSharedServerSession({
+      token: "token-1",
+      payload: createSharePayload(),
+    });
+
+    render(<SharedServerChatPage />);
+
+    expect(await screen.findByTestId("shared-chat-tab")).toBeInTheDocument();
+    expect(mockChatTabV2).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        reasoningDisplayMode: "hidden",
+      }),
+    );
   });
 
   it("auto-resumes hosted OAuth after callback completion", async () => {

@@ -14,6 +14,7 @@ import { ElicitationDialog } from "@/components/ElicitationDialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
+import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { usePostHog } from "posthog-js/react";
@@ -58,6 +59,7 @@ interface ChatTabProps {
   initialSystemPrompt?: string;
   initialTemperature?: number;
   initialRequireToolApproval?: boolean;
+  reasoningDisplayMode?: ReasoningDisplayMode;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
 }
 
@@ -93,6 +95,7 @@ export function ChatTabV2({
   initialSystemPrompt,
   initialTemperature,
   initialRequireToolApproval,
+  reasoningDisplayMode = "inline",
   onOAuthRequired,
 }: ChatTabProps) {
   const { signUp } = useAuth();
@@ -706,6 +709,7 @@ export function ChatTabV2({
                       fullscreenChatDisabled={inputDisabled}
                       onToolApprovalResponse={addToolApprovalResponse}
                       minimalMode={minimalMode}
+                      reasoningDisplayMode={reasoningDisplayMode}
                     />
                   </StickToBottom.Content>
                   <ScrollToBottomButton />

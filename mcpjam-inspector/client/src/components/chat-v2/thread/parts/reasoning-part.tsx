@@ -1,7 +1,11 @@
 import { useEffect, useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
-export type ReasoningDisplayMode = "inline" | "collapsed";
+export type ReasoningDisplayMode =
+  | "inline"
+  | "collapsible"
+  | "collapsed"
+  | "hidden";
 
 export function ReasoningPart({
   text,
@@ -12,16 +16,18 @@ export function ReasoningPart({
   state?: "streaming" | "done";
   displayMode?: ReasoningDisplayMode;
 }) {
-  const isHidden = !text || text.trim() === "[REDACTED]";
-  const isCollapsible = displayMode === "collapsed";
-  const [isExpanded, setIsExpanded] = useState(!isCollapsible);
+  const isRedacted = !text || text.trim() === "[REDACTED]";
+  const isHidden = displayMode === "hidden";
+  const isCollapsible =
+    displayMode === "collapsed" || displayMode === "collapsible";
+  const [isExpanded, setIsExpanded] = useState(displayMode !== "collapsed");
   const contentId = useId();
 
   useEffect(() => {
-    setIsExpanded(!isCollapsible);
-  }, [isCollapsible, text]);
+    setIsExpanded(displayMode !== "collapsed");
+  }, [displayMode, text]);
 
-  if (isHidden) return null;
+  if (isRedacted || isHidden) return null;
 
   if (!isCollapsible) {
     return (

@@ -19,6 +19,7 @@ const {
   mockGetStoredTokens,
   mockInitiateOAuth,
   mockValidateHostedServer,
+  mockChatTabV2,
 } = vi.hoisted(() => ({
   mockConvexAuthState: {
     isAuthenticated: true,
@@ -29,6 +30,7 @@ const {
   mockGetStoredTokens: vi.fn(),
   mockInitiateOAuth: vi.fn(async () => ({ success: false })),
   mockValidateHostedServer: vi.fn(),
+  mockChatTabV2: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -56,38 +58,41 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 }));
 
 vi.mock("@/components/ChatTabV2", () => ({
-  ChatTabV2: ({
-    onOAuthRequired,
-  }: {
+  ChatTabV2: (props: {
     onOAuthRequired?: (details?: {
       serverUrl?: string | null;
       serverId?: string | null;
       serverName?: string | null;
     }) => void;
-  }) => (
-    <div>
-      <div data-testid="sandbox-chat-tab" />
-      {onOAuthRequired ? (
-        <>
-          <button type="button" onClick={() => onOAuthRequired()}>
-            Trigger OAuth
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              onOAuthRequired({
-                serverId: "srv_asana",
-                serverName: "asana",
-                serverUrl: "https://mcp.asana.com/sse",
-              })
-            }
-          >
-            Trigger targeted OAuth
-          </button>
-        </>
-      ) : null}
-    </div>
-  ),
+    reasoningDisplayMode?: string;
+  }) => {
+    mockChatTabV2(props);
+    const { onOAuthRequired } = props;
+    return (
+      <div>
+        <div data-testid="sandbox-chat-tab" />
+        {onOAuthRequired ? (
+          <>
+            <button type="button" onClick={() => onOAuthRequired()}>
+              Trigger OAuth
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onOAuthRequired({
+                  serverId: "srv_asana",
+                  serverName: "asana",
+                  serverUrl: "https://mcp.asana.com/sse",
+                })
+              }
+            >
+              Trigger targeted OAuth
+            </button>
+          </>
+        ) : null}
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
@@ -136,6 +141,7 @@ describe("SandboxChatPage", () => {
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
     mockValidateHostedServer.mockReset();
+    mockChatTabV2.mockReset();
 
     mockGetAccessToken.mockResolvedValue("workos-token");
     mockGetStoredTokens.mockReturnValue(null);
@@ -180,6 +186,11 @@ describe("SandboxChatPage", () => {
       container.querySelector('[data-host-style="chatgpt"]'),
     ).toBeInTheDocument();
     expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+    expect(mockChatTabV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasoningDisplayMode: "hidden",
+      }),
+    );
   });
 
   it("shows curated copy for an invalid or expired sandbox link", async () => {

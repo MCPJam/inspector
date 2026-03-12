@@ -246,6 +246,23 @@ describe("PartSwitch", () => {
         "collapsed",
       );
     });
+
+    it("passes collapsible reasoning display mode to ReasoningPart", () => {
+      const part = { type: "reasoning", text: "Owner thread reasoning", state: "done" };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          reasoningDisplayMode="collapsible"
+        />,
+      );
+
+      expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
+        "data-display-mode",
+        "collapsible",
+      );
+    });
   });
 
   describe("file parts", () => {

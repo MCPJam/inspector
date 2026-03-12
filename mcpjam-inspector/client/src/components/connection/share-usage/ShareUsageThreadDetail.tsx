@@ -177,6 +177,10 @@ export function ShareUsageThreadDetail({
         : `${Math.round(duration / 60000)}m`
       : null;
   const showViewToggle = thread.sourceType === "sandbox";
+  const reasoningDisplayMode =
+    thread.sourceType === "sandbox" && viewMode === "chat"
+      ? "collapsible"
+      : "collapsed";
 
   return (
     <div className="flex h-full flex-col">
@@ -270,7 +274,7 @@ export function ShareUsageThreadDetail({
               showSaveViewButton={false}
               minimalMode={viewMode === "trace"}
               interactive={false}
-              reasoningDisplayMode="collapsed"
+              reasoningDisplayMode={reasoningDisplayMode}
             />
           ))}
         </div>

@@ -587,6 +587,7 @@ export function SandboxChatPage({
             (server) => server.serverName,
           )}
           minimalMode
+          reasoningDisplayMode="hidden"
           hostedWorkspaceIdOverride={session.payload.workspaceId}
           hostedSelectedServerIdsOverride={session.payload.servers.map(
             (server) => server.serverId,

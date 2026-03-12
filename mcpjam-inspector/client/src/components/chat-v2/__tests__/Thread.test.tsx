@@ -167,6 +167,20 @@ describe("Thread", () => {
       );
     });
 
+    it("forwards hidden reasoningDisplayMode to MessageView", () => {
+      const messages = [createMessage({ id: "msg-1" })];
+
+      render(
+        <Thread {...defaultProps} messages={messages} reasoningDisplayMode="hidden" />,
+      );
+
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reasoningDisplayMode: "hidden",
+        }),
+      );
+    });
+
     it("keeps interactive and reasoningDisplayMode defaults", () => {
       const messages = [createMessage({ id: "msg-1" })];
 
