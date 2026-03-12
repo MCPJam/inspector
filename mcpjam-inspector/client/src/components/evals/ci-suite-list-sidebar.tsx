@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
+import { BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteOverviewEntry } from "./types";
+import { TagBadges } from "./tag-editor";
 
 /** Force a re-render every `intervalMs` so relative timestamps stay fresh. */
 function useTick(intervalMs = 60_000) {
@@ -15,7 +17,12 @@ interface CiSuiteListSidebarProps {
   suites: EvalSuiteOverviewEntry[];
   selectedSuiteId: string | null;
   onSelectSuite: (suiteId: string) => void;
+  onSelectOverview: () => void;
+  isOverviewSelected: boolean;
   isLoading?: boolean;
+  filterTag?: string | null;
+  onFilterTagChange?: (tag: string | null) => void;
+  hasTags: boolean;
 }
 
 function getStatusDot(entry: EvalSuiteOverviewEntry): {
@@ -61,9 +68,17 @@ export function CiSuiteListSidebar({
   suites,
   selectedSuiteId,
   onSelectSuite,
+  onSelectOverview,
+  isOverviewSelected,
   isLoading = false,
+  filterTag,
+  hasTags,
 }: CiSuiteListSidebarProps) {
   useTick(); // keep "Xm ago" labels ticking
+
+  const filteredSuites = filterTag
+    ? suites.filter((e) => e.suite.tags?.includes(filterTag))
+    : suites;
 
   return (
     <div className="flex h-full flex-col">
@@ -72,17 +87,36 @@ export function CiSuiteListSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto">
+        {hasTags && (
+          <button
+            onClick={onSelectOverview}
+            className={cn(
+              "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50 border-b",
+              isOverviewSelected && "bg-accent",
+            )}
+          >
+            <div className="flex items-center gap-2.5">
+              <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">Overview</div>
+                <div className="text-[11px] text-muted-foreground">
+                  Compare suite groups
+                </div>
+              </div>
+            </div>
+          </button>
+        )}
         {isLoading ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
             Loading suites...
           </div>
-        ) : suites.length === 0 ? (
+        ) : filteredSuites.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
             No SDK suites found.
           </div>
         ) : (
           <div>
-            {suites.map((entry) => {
+            {filteredSuites.map((entry) => {
               const latestRun = entry.latestRun;
               const status = getStatusDot(entry);
               const trend = entry.passRateTrend
@@ -115,6 +149,12 @@ export function CiSuiteListSidebar({
                       <div className="truncate text-sm font-medium">
                         {entry.suite.name || "Untitled suite"}
                       </div>
+                      {entry.suite.tags && entry.suite.tags.length > 0 && (
+                        <TagBadges
+                          tags={entry.suite.tags}
+                          className="mt-0.5"
+                        />
+                      )}
                       <div className="text-[11px] text-muted-foreground">
                         {timestamp}
                       </div>
