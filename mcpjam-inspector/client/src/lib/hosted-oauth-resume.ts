@@ -115,8 +115,57 @@ export function sanitizeHostedOAuthErrorMessage(
     return fallback;
   }
 
-  return normalized
+  const sanitized = normalized
     .replace(/^Uncaught Error:\s*/i, "")
     .replace(/\s+at\s+(?:async\s+)?[A-Za-z0-9_$./<>-]+(?:\s+\(|$).*/s, "")
     .trim();
+
+  if (!sanitized) {
+    return fallback;
+  }
+
+  if (
+    /\b(cancelled|canceled)\b|user denied|denied the request|access_denied/i.test(
+      sanitized,
+    )
+  ) {
+    return "Authorization was cancelled. Try again.";
+  }
+
+  if (/missing its oauth url/i.test(sanitized)) {
+    return "This server needs additional setup before it can be authorized. Try again or contact the owner.";
+  }
+
+  if (/could not find the access token/i.test(sanitized)) {
+    return "We couldn't finish connecting this account. Authorize again.";
+  }
+
+  if (/could not verify access/i.test(sanitized)) {
+    return "We couldn't confirm access to this account. Authorize again.";
+  }
+
+  if (
+    /\b(401|403)\b|unauthorized|forbidden|authentication failed|invalid[_\s-]?token|expired token|token expired|non-200 status code|access denied/i.test(
+      sanitized,
+    )
+  ) {
+    return "Your authorization expired or was rejected. Authorize again to continue.";
+  }
+
+  if (
+    /sse error|failed to fetch|network ?error|timeout|timed out|socket hang up|econn/i.test(
+      sanitized,
+    )
+  ) {
+    return "We couldn't reach the authorization service. Try again.";
+  }
+
+  if (
+    /\boauth\b/i.test(sanitized) &&
+    /\b(error|failed|unable|could not)\b/i.test(sanitized)
+  ) {
+    return "Authorization could not be completed. Try again.";
+  }
+
+  return sanitized;
 }

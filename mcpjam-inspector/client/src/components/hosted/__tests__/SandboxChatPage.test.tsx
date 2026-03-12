@@ -362,6 +362,77 @@ describe("SandboxChatPage", () => {
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
   });
 
+  it("shows curated copy instead of transport details when sandbox OAuth validation fails", async () => {
+    vi.useFakeTimers();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
+    mockValidateHostedServer.mockRejectedValue(
+      new Error(
+        'Authentication failed for MCP server "mn70g96re2qn05cxjw7y4y26ah82jzgh": SSE error: SSE error: Non-200 status code (401)',
+      ),
+    );
+
+    writeSandboxSession({
+      token: "sandbox-token",
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Asana Sandbox",
+        description: "Hosted sandbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [
+          {
+            serverId: "srv_asana",
+            serverName: "asana",
+            useOAuth: true,
+            serverUrl: "https://mcp.asana.com/sse",
+            clientId: null,
+            oauthScopes: null,
+          },
+        ],
+      },
+    });
+
+    render(<SandboxChatPage />);
+
+    expect(
+      screen.getByRole("heading", { name: "Finishing authorization" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Authorization Required" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Your authorization expired or was rejected. Authorize again to continue.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/SSE error/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Non-200 status code/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Authorize again" }),
+    ).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[useHostedOAuthGate] OAuth validation failed",
+      expect.objectContaining({
+        surface: "sandbox",
+        serverId: "srv_asana",
+        serverName: "asana",
+      }),
+    );
+  });
+
   it("re-enters the sandbox OAuth gate when chat reports OAuth is required", async () => {
     mockGetStoredTokens.mockReturnValue({ access_token: "sandbox-token" });
 

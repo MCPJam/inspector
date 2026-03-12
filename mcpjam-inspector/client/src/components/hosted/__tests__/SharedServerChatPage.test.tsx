@@ -327,8 +327,13 @@ describe("SharedServerChatPage", () => {
       screen.getByRole("heading", { name: "Authorization Required" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("invalid_token from hosted validation"),
+      screen.getByText(
+        "Your authorization expired or was rejected. Authorize again to continue.",
+      ),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("invalid_token from hosted validation"),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Authorize again" }),
     ).toBeInTheDocument();
