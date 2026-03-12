@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 import type {
   Skill,
   SkillListItem,
@@ -23,6 +24,10 @@ export interface UploadSkillResponse {
  * List all available skills from .mcpjam/skills/
  */
 export async function listSkills(): Promise<SkillListItem[]> {
+  if (HOSTED_MODE) {
+    return [];
+  }
+
   const res = await authFetch("/api/mcp/skills/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

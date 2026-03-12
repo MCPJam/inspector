@@ -75,7 +75,7 @@ export const hostedChatSchema = z
 
 // ── Guest Schema ─────────────────────────────────────────────────────
 
-const guestServerInputSchema = z.object({
+export const guestServerInputSchema = z.object({
   serverUrl: z.string().min(1),
   serverHeaders: z.record(z.string(), z.string()).optional(),
 });

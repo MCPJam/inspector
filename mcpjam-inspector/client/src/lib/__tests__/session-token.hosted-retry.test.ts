@@ -14,6 +14,7 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: vi.fn(),
   forceRefreshGuestSession: vi.fn(),
+  peekStoredGuestToken: vi.fn(),
 }));
 
 vi.mock("@/lib/apis/web/context", async () => {
@@ -29,7 +30,10 @@ vi.mock("@/lib/apis/web/context", async () => {
 });
 
 import { authFetch } from "../session-token";
-import { forceRefreshGuestSession } from "@/lib/guest-session";
+import {
+  forceRefreshGuestSession,
+  peekStoredGuestToken,
+} from "@/lib/guest-session";
 import {
   getHostedAuthorizationHeader,
   resetTokenCache,
@@ -41,7 +45,9 @@ describe("authFetch hosted 401 retry", () => {
     vi.mocked(getHostedAuthorizationHeader).mockReset();
     vi.mocked(resetTokenCache).mockReset();
     vi.mocked(forceRefreshGuestSession).mockReset();
+    vi.mocked(peekStoredGuestToken).mockReset();
     vi.mocked(isGuestMode).mockReturnValue(true);
+    vi.mocked(peekStoredGuestToken).mockReturnValue("stale-token");
     vi.mocked(global.fetch).mockReset();
   });
 
@@ -140,6 +146,7 @@ describe("authFetch hosted 401 retry", () => {
 
   it("does not retry when not in guest mode", async () => {
     vi.mocked(isGuestMode).mockReturnValue(false);
+    vi.mocked(peekStoredGuestToken).mockReturnValue(null);
     vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
       "Bearer workos-token",
     );
@@ -155,6 +162,34 @@ describe("authFetch hosted 401 retry", () => {
     expect(resetTokenCache).not.toHaveBeenCalled();
     expect(forceRefreshGuestSession).not.toHaveBeenCalled();
     expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries when the failing request used the persisted guest token", async () => {
+    vi.mocked(isGuestMode).mockReturnValue(false);
+    vi.mocked(peekStoredGuestToken).mockReturnValue("stale-token");
+    vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
+      "Bearer stale-token",
+    );
+    vi.mocked(forceRefreshGuestSession).mockResolvedValue("fresh-token");
+
+    vi.mocked(global.fetch)
+      .mockResolvedValueOnce({ status: 401, ok: false } as Response)
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        json: () => Promise.resolve({ success: true }),
+      } as Response);
+
+    const response = await authFetch("/api/web/chat-v2", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    expect(resetTokenCache).toHaveBeenCalledTimes(1);
+    expect(forceRefreshGuestSession).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   it("returns original 401 when forceRefresh returns null", async () => {

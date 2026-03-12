@@ -1,6 +1,6 @@
 import type { Context, Next } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
-import { validateGuestToken } from "../services/guest-token.js";
+import { validateGuestTokenDetailedAsync } from "../services/guest-token.js";
 
 /**
  * Reusable Hono middleware that:
@@ -25,7 +25,7 @@ export async function bearerAuthMiddleware(
 
   // Try validating as a guest token
   try {
-    const result = validateGuestToken(token);
+    const result = await validateGuestTokenDetailedAsync(token);
     if (result.valid && result.guestId) {
       c.set("guestId", result.guestId);
       return next();

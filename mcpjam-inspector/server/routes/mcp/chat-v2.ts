@@ -7,8 +7,9 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
+import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -124,6 +125,33 @@ chatV2.post("/", async (c) => {
         );
       }
 
+      // Resolve auth header: use client-provided token (WorkOS) if present,
+      // otherwise fetch a production guest token for guest-allowed models.
+      let authHeader = c.req.header("authorization");
+
+      if (!authHeader) {
+        if (!isGuestAllowedModel(String(modelDefinition.id))) {
+          return c.json(
+            {
+              error:
+                "Sign in to use this model. Guest users can use: claude-haiku-4.5, gpt-5-mini, gemini-2.5-flash.",
+            },
+            403,
+          );
+        }
+
+        authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
+        if (!authHeader) {
+          return c.json(
+            {
+              error:
+                "Unable to authenticate with MCPJam servers. Please try again or sign in.",
+            },
+            503,
+          );
+        }
+      }
+
       const modelMessages = await convertToModelMessages(messages);
 
       return handleMCPJamFreeChatModel({
@@ -132,7 +160,7 @@ chatV2.post("/", async (c) => {
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
-        authHeader: c.req.header("authorization"),
+        authHeader,
         mcpClientManager,
         selectedServers,
         requireToolApproval,

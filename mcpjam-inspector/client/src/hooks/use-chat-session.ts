@@ -47,8 +47,13 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
-import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
+import {
+  authFetch,
+  getAuthHeaders as getSessionAuthHeaders,
+} from "@/lib/session-token";
+import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 
 export interface UseChatSessionOptions {
@@ -238,6 +243,8 @@ export function useChatSession({
   const [requireToolApproval, setRequireToolApproval] = useState(false);
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  const guestMode =
+    HOSTED_MODE && !isAuthenticated && !isAuthLoading && !hostedWorkspaceId;
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
   const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
@@ -253,7 +260,25 @@ export function useChatSession({
       customProviders,
     });
     if (HOSTED_MODE) {
-      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
+      const mcpjamModels = models.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      );
+      // Guest users only see the free guest models
+      if (guestMode) {
+        return mcpjamModels.filter((m) =>
+          GUEST_ALLOWED_MODEL_IDS.includes(String(m.id)),
+        );
+      }
+      return mcpjamModels;
+    }
+    // Non-hosted: filter out non-guest MCPJam models when unauthenticated
+    // (keep user-provided models + 3 free MCPJam models)
+    if (!isAuthenticated) {
+      return models.filter(
+        (m) =>
+          !isMCPJamProvidedModel(String(m.id)) ||
+          isGuestAllowedModel(String(m.id)),
+      );
     }
     return models;
   }, [
@@ -262,6 +287,8 @@ export function useChatSession({
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
+    guestMode,
+    isAuthenticated,
     customProviders,
   ]);
 
@@ -308,35 +335,48 @@ export function useChatSession({
       string,
       string
     >;
+    const transportHeaders = HOSTED_MODE
+      ? undefined
+      : Object.keys(mergedHeaders).length > 0
+        ? mergedHeaders
+        : undefined;
 
     const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
 
+    // Build hosted body based on whether we have a workspace.
+    // Signed-in users are blocked from submitting until hostedWorkspaceId loads
+    // (via hostedContextNotReady), so this branch only runs for guests.
+    const buildHostedBody = () => {
+      if (!hostedWorkspaceId) {
+        return {};
+      }
+      return {
+        workspaceId: hostedWorkspaceId,
+        chatSessionId,
+        selectedServerIds: hostedSelectedServerIds,
+        accessScope: "chat_v2" as const,
+        ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
+        ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
+          ? { oauthTokens: hostedOAuthTokens }
+          : {}),
+      };
+    };
+
     return new DefaultChatTransport({
       api: chatApi,
+      fetch: HOSTED_MODE ? authFetch : undefined,
       body: () => ({
         model: selectedModel,
         ...(HOSTED_MODE ? {} : { apiKey }),
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
-        ...(HOSTED_MODE
-          ? {
-              workspaceId: hostedWorkspaceId,
-              chatSessionId,
-              selectedServerIds: hostedSelectedServerIds,
-              accessScope: "chat_v2" as const,
-              ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
-              ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
-                ? { oauthTokens: hostedOAuthTokens }
-                : {}),
-            }
-          : { selectedServers }),
+        ...(HOSTED_MODE ? buildHostedBody() : { selectedServers }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
           : {}),
       }),
-      headers:
-        Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
+      headers: transportHeaders,
     });
   }, [
     selectedModel,
@@ -459,21 +499,41 @@ export function useChatSession({
   useEffect(() => {
     let active = true;
     (async () => {
+      let resolved = false;
+
       try {
         const token = await getAccessToken?.();
         if (!active) return;
         if (token) {
           setAuthHeaders({ Authorization: `Bearer ${token}` });
+          resolved = true;
+        }
+      } catch {
+        // getAccessToken threw (e.g. LoginRequiredError) — not authenticated
+      }
+
+      // Only fall back to guest token if user is NOT authenticated.
+      // If authenticated but getAccessToken failed/returned falsy, don't
+      // silently downgrade to a guest token — leave authHeaders undefined
+      // so the UI shows the auth-not-ready state instead of sending
+      // requests with a token that can't authorize workspace operations.
+      if (!resolved && active && !isAuthenticated) {
+        if (HOSTED_MODE) {
+          const guestToken = await getGuestBearerToken();
+          if (!active) return;
+          if (guestToken) {
+            setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
+          } else {
+            setAuthHeaders(undefined);
+          }
         } else {
           setAuthHeaders(undefined);
         }
-      } catch (err) {
-        console.error("[useChatSession] Failed to get access token:", err);
-        if (!active) return;
+      } else if (!resolved && active) {
         setAuthHeaders(undefined);
       }
+
       // Reset chat to force new session with updated auth headers
-      // This ensures the transport is recreated with the correct headers
       if (active) {
         skipNextForkDetectionRef.current = true;
         pendingForkSessionIdRef.current = null;
@@ -486,7 +546,7 @@ export function useChatSession({
     return () => {
       active = false;
     };
-  }, [getAccessToken, setMessages]);
+  }, [getAccessToken, isAuthenticated, setMessages]);
 
   // Ollama model detection
   useEffect(() => {
@@ -650,14 +710,27 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  const requiresAuthForChat = HOSTED_MODE || isMcpJamModel;
+  // Compute guest mode from React state instead of the global isGuestMode().
+  // The global hostedApiContext is updated via useLayoutEffect in the parent,
+  // which can be stale during child renders — causing signed-in users to be
+  // misclassified as guests while auth is still loading.
+  // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
+  // In non-hosted mode: only require auth for non-guest MCPJam models
+  // (server injects production guest token for guest-allowed models).
+  const requiresAuthForChat = HOSTED_MODE
+    ? true
+    : isMcpJamModel && !isGuestAllowedModel(String(selectedModel?.id ?? ""));
   const isAuthReady =
-    !requiresAuthForChat || (isAuthenticated && !!authHeaders);
-  const disableForAuthentication = !isAuthenticated && requiresAuthForChat;
+    !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
+  // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
+  const disableForAuthentication =
+    !isAuthenticated && requiresAuthForChat && !guestMode;
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
+  // Guests don't need a workspace — skip hostedContextNotReady for them
   const hostedContextNotReady =
     HOSTED_MODE &&
+    !guestMode &&
     (!hostedWorkspaceId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

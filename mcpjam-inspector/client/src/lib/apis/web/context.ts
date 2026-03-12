@@ -11,6 +11,8 @@ export interface HostedApiContext {
   guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
   isAuthenticated?: boolean;
+  /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
+  hasSession?: boolean;
   /** Maps server name → MCPServerConfig for guest mode (no Convex). */
   serverConfigs?: Record<string, unknown>;
 }
@@ -31,6 +33,29 @@ export function resetTokenCache() {
   cachedBearerToken = null;
 }
 
+function readStoredGuestOAuthAccessToken(
+  serverName: string,
+): string | undefined {
+  if (typeof window === "undefined") return undefined;
+
+  try {
+    const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
+    if (!raw) return undefined;
+
+    const parsed = JSON.parse(raw) as { access_token?: unknown };
+    if (
+      typeof parsed.access_token === "string" &&
+      parsed.access_token.trim().length > 0
+    ) {
+      return parsed.access_token;
+    }
+  } catch {
+    // Ignore malformed localStorage data and fall back to in-memory context.
+  }
+
+  return undefined;
+}
+
 function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
@@ -44,10 +69,24 @@ function assertHostedMode() {
  */
 export function isGuestMode(): boolean {
   if (!HOSTED_MODE) return false;
+  // A WorkOS session means the user signed in — don't treat them as a guest
+  // even if Convex auth hasn't settled yet.
+  if (hostedApiContext.hasSession) return false;
   return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
 }
 
-function buildGuestServerRequest(
+/**
+ * Prefer the guest bearer whenever there is no authenticated hosted workspace.
+ * This is intentionally looser than isGuestMode(): an AuthKit refresh cookie can
+ * make `hasSession` temporarily truthy even when the user is effectively signed
+ * out, and in that state WorkOS token bootstrap should not block free guest chat.
+ */
+function shouldPreferGuestBearer(): boolean {
+  if (!HOSTED_MODE) return false;
+  return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
+}
+
+export function buildGuestServerRequest(
   config: unknown,
   oauthAccessToken?: string,
 ): Record<string, unknown> {
@@ -164,10 +203,13 @@ export function buildHostedServerRequest(
           "The server may not be loaded yet.",
       );
     }
-    return buildGuestServerRequest(
-      config,
-      hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId],
-    );
+    // Prefer persisted OAuth tokens so guest requests can keep working even if
+    // React state has not yet synchronized token updates.
+    const oauthToken =
+      readStoredGuestOAuthAccessToken(serverNameOrId) ??
+      hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId];
+
+    return buildGuestServerRequest(config, oauthToken);
   }
 
   // Authenticated path: resolve via Convex server mappings
@@ -223,6 +265,20 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
     return `Bearer ${cachedBearerToken.token}`;
   }
 
+  // In guest mode, bypass WorkOS token bootstrap entirely and use a guest
+  // bearer token directly. This avoids stale/invalid WorkOS tokens from
+  // masking valid guest sessions.
+  if (shouldPreferGuestBearer()) {
+    const guestToken = await getGuestBearerToken();
+    if (guestToken) {
+      cachedBearerToken = {
+        token: guestToken,
+        expiresAt: now + TOKEN_CACHE_TTL_MS,
+      };
+      return `Bearer ${guestToken}`;
+    }
+  }
+
   // Try WorkOS (logged-in user)
   const getAccessToken = hostedApiContext.getAccessToken;
   if (getAccessToken) {
@@ -239,7 +295,13 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
 
   // Fall back to guest token
   const guestToken = await getGuestBearerToken();
-  if (guestToken) return `Bearer ${guestToken}`;
+  if (guestToken) {
+    cachedBearerToken = {
+      token: guestToken,
+      expiresAt: now + TOKEN_CACHE_TTL_MS,
+    };
+    return `Bearer ${guestToken}`;
+  }
 
   return null;
 }

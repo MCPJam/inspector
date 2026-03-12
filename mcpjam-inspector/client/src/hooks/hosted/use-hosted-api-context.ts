@@ -10,6 +10,8 @@ interface UseHostedApiContextOptions {
   guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
   isAuthenticated?: boolean;
+  /** True when a WorkOS session exists, even if the token hasn't resolved yet. */
+  hasSession?: boolean;
   /** Maps server name → MCPServerConfig for guest mode (no Convex). */
   serverConfigs?: Record<string, unknown>;
   enabled?: boolean;
@@ -23,6 +25,7 @@ export function useHostedApiContext({
   guestOauthTokensByServerName,
   shareToken,
   isAuthenticated,
+  hasSession,
   serverConfigs,
   enabled = true,
 }: UseHostedApiContextOptions): void {
@@ -49,6 +52,7 @@ export function useHostedApiContext({
       guestOauthTokensByServerName,
       shareToken,
       isAuthenticated,
+      hasSession,
       serverConfigs,
     });
 
@@ -64,6 +68,7 @@ export function useHostedApiContext({
     guestOauthTokensByServerName,
     shareToken,
     isAuthenticated,
+    hasSession,
     serverConfigs,
   ]);
 }
