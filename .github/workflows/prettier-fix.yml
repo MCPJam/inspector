@@ -1,4 +1,4 @@
-name: Auto Prettier Fix
+name: Formatting
 
 on:
   push:
@@ -7,13 +7,37 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  prettier-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    name: Check Code Formatting
+    defaults:
+      run:
+        working-directory: mcpjam-inspector
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npx prettier --check .
+
   prettier-fix:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     name: Auto-fix Formatting
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: mcpjam-inspector
