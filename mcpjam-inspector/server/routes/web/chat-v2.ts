@@ -5,7 +5,7 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError, MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
@@ -82,6 +82,13 @@ chatV2.post("/", async (c) => {
       }
 
       if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
+        if (!isGuestAllowedModel(String(modelDefinition.id))) {
+          throw new WebRouteError(
+            403,
+            ErrorCode.UNAUTHORIZED,
+            "Sign in to use this model. Guest users can use: claude-haiku-4.5, gpt-5-mini, gemini-2.5-flash.",
+          );
+        }
         if (!process.env.CONVEX_HTTP_URL) {
           throw new WebRouteError(
             500,

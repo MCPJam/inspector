@@ -16,6 +16,7 @@ interface GuestSession {
 
 let inFlightRequest: Promise<GuestSession | null> | null = null;
 let forceRefreshInFlight: Promise<GuestSession | null> | null = null;
+let sessionGeneration = 0;
 
 function readFromStorage(): GuestSession | null {
   try {
@@ -49,6 +50,7 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
     return inFlightRequest;
   }
 
+  const generation = sessionGeneration;
   inFlightRequest = (async () => {
     try {
       const response = await fetch("/api/web/guest-session", {
@@ -66,7 +68,10 @@ export async function getOrCreateGuestSession(): Promise<GuestSession | null> {
       }
 
       const session: GuestSession = await response.json();
-      writeToStorage(session);
+      // Only write if no force-refresh has invalidated this generation
+      if (sessionGeneration === generation) {
+        writeToStorage(session);
+      }
       return session;
     } catch (error) {
       console.error("Failed to create guest session:", error);
@@ -122,6 +127,7 @@ export async function forceRefreshGuestSession(): Promise<string | null> {
   }
 
   clearGuestSession();
+  sessionGeneration++;
   inFlightRequest = null;
 
   forceRefreshInFlight = getOrCreateGuestSession();

@@ -204,7 +204,7 @@ function parseGuestToken(token: string):
     }
 
     const nowSeconds = Math.floor(Date.now() / 1000);
-    if (nowSeconds > payload.exp) {
+    if (nowSeconds >= payload.exp) {
       return { reason: "expired" };
     }
 
@@ -225,20 +225,10 @@ function parseGuestToken(token: string):
   }
 }
 
-async function getHostedGuestVerificationKey(
+async function fetchAndCacheHostedGuestKeys(
   kid: string | undefined,
 ): Promise<KeyObject | null> {
   const now = Date.now();
-  if (
-    hostedGuestPublicKeysCache &&
-    now - hostedGuestPublicKeysCache.fetchedAt < HOSTED_GUEST_JWKS_CACHE_MS
-  ) {
-    if (kid && hostedGuestPublicKeysCache.keysByKid.has(kid)) {
-      return hostedGuestPublicKeysCache.keysByKid.get(kid) ?? null;
-    }
-    return hostedGuestPublicKeysCache.fallbackKey;
-  }
-
   try {
     const response = await fetch(getHostedGuestJwksUrl(), {
       method: "GET",
@@ -249,7 +239,8 @@ async function getHostedGuestVerificationKey(
       logger.warn(
         `[guest-auth] Failed to fetch hosted guest JWKS: ${response.status} ${response.statusText}`,
       );
-      return null;
+      // Keep serving stale cache on fetch failure
+      return resolveKeyFromCache(kid);
     }
 
     const body = (await response.json()) as {
@@ -292,8 +283,41 @@ async function getHostedGuestVerificationKey(
         error instanceof Error ? error.message : String(error)
       }`,
     );
-    return null;
+    // Keep serving stale cache on network failure
+    return resolveKeyFromCache(kid);
   }
+}
+
+function resolveKeyFromCache(kid: string | undefined): KeyObject | null {
+  if (!hostedGuestPublicKeysCache) return null;
+  if (kid && hostedGuestPublicKeysCache.keysByKid.has(kid)) {
+    return hostedGuestPublicKeysCache.keysByKid.get(kid) ?? null;
+  }
+  return hostedGuestPublicKeysCache.fallbackKey;
+}
+
+async function getHostedGuestVerificationKey(
+  kid: string | undefined,
+): Promise<KeyObject | null> {
+  const now = Date.now();
+  const cacheIsValid =
+    hostedGuestPublicKeysCache &&
+    now - hostedGuestPublicKeysCache.fetchedAt < HOSTED_GUEST_JWKS_CACHE_MS;
+
+  if (cacheIsValid) {
+    // Cache hit with matching kid — use it
+    if (kid && hostedGuestPublicKeysCache!.keysByKid.has(kid)) {
+      return hostedGuestPublicKeysCache!.keysByKid.get(kid) ?? null;
+    }
+    // Cache hit but kid not found — try a refresh (key rotation)
+    if (kid) {
+      return fetchAndCacheHostedGuestKeys(kid);
+    }
+    return hostedGuestPublicKeysCache!.fallbackKey;
+  }
+
+  // Cache expired or empty — fetch fresh keys
+  return fetchAndCacheHostedGuestKeys(kid);
 }
 
 /**

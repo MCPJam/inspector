@@ -60,4 +60,57 @@ describe("GET /api/web/guest-jwks", () => {
       ],
     });
   });
+
+  it("returns a valid RSA public key with required JWK fields", async () => {
+    const response = await app.request("/api/web/guest-jwks");
+    const body = await response.json();
+    const key = body.keys[0];
+
+    // RSA public keys must have kty, n (modulus), and e (exponent)
+    expect(key.kty).toBe("RSA");
+    expect(key.n).toEqual(expect.any(String));
+    expect(key.e).toEqual(expect.any(String));
+    // n should be a base64url-encoded RSA modulus (at least 100 chars for 2048-bit)
+    expect(key.n.length).toBeGreaterThan(100);
+  });
+
+  it("returns exactly one key", async () => {
+    const response = await app.request("/api/web/guest-jwks");
+    const body = await response.json();
+
+    expect(body.keys).toHaveLength(1);
+  });
+});
+
+describe("GET /api/web/guest-jwks (uninitialized)", () => {
+  it("returns 500 when initGuestTokenSecret() was not called", async () => {
+    // Simulate the crash that happens when getGuestJwks() is called before
+    // initGuestTokenSecret(). We can't un-initialize the module-level keys,
+    // so we build a minimal Hono app that throws the same error and uses
+    // the same onError handler as the real web routes.
+    const { mapRuntimeError, webError } = await import("../errors.js");
+
+    const errorApp = new Hono();
+    errorApp.get("/api/web/guest-jwks", () => {
+      throw new Error(
+        "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
+      );
+    });
+    errorApp.onError((error, c) => {
+      const routeError = mapRuntimeError(error);
+      return webError(
+        c,
+        routeError.status,
+        routeError.code,
+        routeError.message,
+      );
+    });
+
+    const response = await errorApp.request("/api/web/guest-jwks");
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.code).toBe("INTERNAL_ERROR");
+    expect(body.message).toContain("not initialized");
+  });
 });
