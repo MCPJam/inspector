@@ -533,14 +533,10 @@ export function useChatSession({
         HOSTED_MODE &&
         (!hostedWorkspaceId || !!hostedShareToken)
       ) {
-        if (HOSTED_MODE) {
-          const guestToken = await getGuestBearerToken();
-          if (!active) return;
-          if (guestToken) {
-            setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
-          } else {
-            setAuthHeaders(undefined);
-          }
+        const guestToken = await getGuestBearerToken();
+        if (!active) return;
+        if (guestToken) {
+          setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
         } else {
           setAuthHeaders(undefined);
         }

@@ -1,4 +1,7 @@
 import { createSign, generateKeyPairSync } from "crypto";
+import { mkdtempSync, rmSync } from "fs";
+import os from "os";
+import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
@@ -59,7 +62,9 @@ describe("web routes — chat-v2 guest mode", () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalHostedGuestJwksUrl = process.env.MCPJAM_GUEST_JWKS_URL;
   const originalLocalSigning = process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
+  const originalGuestJwtKeyDir = process.env.GUEST_JWT_KEY_DIR;
   const originalFetch = global.fetch;
+  let testGuestKeyDir: string;
 
   const signHostedGuestToken = () => {
     const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -99,6 +104,8 @@ describe("web routes — chat-v2 guest mode", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "chat-v2-guest-test-"));
+    process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
     initGuestTokenSecret();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     prepareChatV2Mock.mockResolvedValue({
@@ -134,6 +141,12 @@ describe("web routes — chat-v2 guest mode", () => {
     } else {
       process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = originalLocalSigning;
     }
+    if (originalGuestJwtKeyDir === undefined) {
+      delete process.env.GUEST_JWT_KEY_DIR;
+    } else {
+      process.env.GUEST_JWT_KEY_DIR = originalGuestJwtKeyDir;
+    }
+    rmSync(testGuestKeyDir, { recursive: true, force: true });
     global.fetch = originalFetch;
   });
 
