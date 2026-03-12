@@ -1,26 +1,43 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
 
 const mockGetToolsMetadata = vi.fn();
 const mockCountTextTokens = vi.fn();
 const mockSetMessages = vi.fn();
-const mockSendMessage = vi.fn();
 const mockStop = vi.fn();
 const mockAddToolApprovalResponse = vi.fn();
+const mockAuthFetch = vi.fn();
+const mockGetAccessToken = vi.fn(async () => null);
+const mockTransportInstances: Array<{ options: any; sendMessages: ReturnType<typeof vi.fn> }> = [];
 
 const baseModel = {
   id: "gpt-4",
   name: "GPT-4",
   provider: "openai" as const,
 };
+const mcpJamModel = {
+  id: "openai/gpt-5-mini",
+  name: "GPT-5 Mini",
+  provider: "openai" as const,
+};
+const mockModelState = {
+  availableModels: [baseModel],
+  selectedModelId: "gpt-4",
+};
+
+async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
+  return typeof value === "function"
+    ? await (value as () => T | Promise<T>)()
+    : value;
+}
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: vi.fn(() => [baseModel]),
+  buildAvailableModels: vi.fn(() => mockModelState.availableModels),
   getDefaultModel: vi.fn(() => baseModel),
 }));
 
@@ -43,7 +60,7 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
-    selectedModelId: "gpt-4",
+    selectedModelId: mockModelState.selectedModelId,
     setSelectedModelId: vi.fn(),
   }),
 }));
@@ -65,7 +82,7 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 }));
 
 vi.mock("@/lib/session-token", () => ({
-  getAuthHeaders: vi.fn(() => ({})),
+  authFetch: (...args: unknown[]) => mockAuthFetch(...args),
 }));
 
 vi.mock("@/hooks/useSharedChatWidgetCapture", () => ({
@@ -74,7 +91,7 @@ vi.mock("@/hooks/useSharedChatWidgetCapture", () => ({
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
-    getAccessToken: vi.fn(async () => null),
+    getAccessToken: mockGetAccessToken,
   }),
 }));
 
@@ -85,21 +102,88 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-vi.mock("@ai-sdk/react", () => ({
-  useChat: vi.fn(() => ({
-    messages: [],
-    sendMessage: mockSendMessage,
-    stop: mockStop,
-    status: "ready",
-    error: undefined,
-    setMessages: mockSetMessages,
-    addToolApprovalResponse: mockAddToolApprovalResponse,
-  })),
-}));
+vi.mock("@ai-sdk/react", async () => {
+  const React = await import("react");
+
+  return {
+    useChat: vi.fn(
+      ({
+        id,
+        transport,
+      }: {
+        id: string;
+        transport: {
+          sendMessages: (options: any) => Promise<unknown>;
+        };
+      }) => {
+        const latchedIdRef = React.useRef(id);
+        const latchedTransportRef = React.useRef(transport);
+
+        if (latchedIdRef.current !== id) {
+          latchedIdRef.current = id;
+          latchedTransportRef.current = transport;
+        }
+
+        return {
+          messages: [],
+          sendMessage: async (message: any) => {
+            await latchedTransportRef.current.sendMessages({
+              chatId: latchedIdRef.current,
+              messages: [
+                {
+                  id: "user-1",
+                  role: "user",
+                  parts:
+                    "text" in message
+                      ? [{ type: "text", text: message.text }]
+                      : [],
+                },
+              ],
+              abortSignal: new AbortController().signal,
+              metadata: undefined,
+              headers: undefined,
+              body: undefined,
+              trigger: "submit-message",
+              messageId: undefined,
+            });
+          },
+          stop: mockStop,
+          status: "ready",
+          error: undefined,
+          setMessages: mockSetMessages,
+          addToolApprovalResponse: mockAddToolApprovalResponse,
+        };
+      },
+    ),
+  };
+});
 
 vi.mock("ai", () => ({
   DefaultChatTransport: class MockTransport {
-    constructor(_: unknown) {}
+    options: any;
+    sendMessages: ReturnType<typeof vi.fn>;
+
+    constructor(options: any) {
+      this.options = options;
+      this.sendMessages = vi.fn(async (requestOptions: any) => {
+        const resolvedBody = await resolveConfig(this.options.body);
+        const resolvedHeaders = await resolveConfig(this.options.headers);
+        const requestBody = {
+          ...resolvedBody,
+          id: requestOptions.chatId,
+          messages: requestOptions.messages,
+          trigger: requestOptions.trigger,
+          messageId: requestOptions.messageId,
+        };
+        await this.options.fetch?.(this.options.api, {
+          method: "POST",
+          headers: resolvedHeaders,
+          body: JSON.stringify(requestBody),
+        });
+        return new ReadableStream();
+      });
+      mockTransportInstances.push(this);
+    }
   },
   generateId: vi.fn(() => "chat-session-id"),
   lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
@@ -108,6 +192,11 @@ vi.mock("ai", () => ({
 describe("useChatSession minimal mode parity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockModelState.availableModels = [baseModel];
+    mockModelState.selectedModelId = "gpt-4";
+    mockGetAccessToken.mockResolvedValue(null);
+    mockAuthFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    mockTransportInstances.length = 0;
     mockGetToolsMetadata.mockResolvedValue({
       metadata: { create_view: { title: "Create view" } },
       toolServerMap: { create_view: "server-1" },
@@ -117,9 +206,10 @@ describe("useChatSession minimal mode parity", () => {
   });
 
   it("still prefetches tools metadata when minimalMode is true", async () => {
+    const selectedServers = ["server-1"];
     renderHook(() =>
       useChatSession({
-        selectedServers: ["server-1"],
+        selectedServers,
         minimalMode: true,
         initialSystemPrompt: "You are a helpful assistant.",
       }),
@@ -135,9 +225,10 @@ describe("useChatSession minimal mode parity", () => {
   });
 
   it("still counts system prompt tokens when minimalMode is true", async () => {
+    const selectedServers = ["server-1"];
     renderHook(() =>
       useChatSession({
-        selectedServers: ["server-1"],
+        selectedServers,
         minimalMode: true,
         initialSystemPrompt: "Custom prompt",
       }),
@@ -157,10 +248,11 @@ describe("useChatSession minimal mode parity", () => {
       message: "Forbidden",
     });
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const selectedServers = ["server-1"];
 
     const { result } = renderHook(() =>
       useChatSession({
-        selectedServers: ["server-1"],
+        selectedServers,
         minimalMode: true,
         hostedShareToken: "share-token",
         initialSystemPrompt: "Prompt",
@@ -179,5 +271,64 @@ describe("useChatSession minimal mode parity", () => {
     expect(result.current.mcpToolsTokenCount).toBeNull();
     expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  it("routes non-hosted chat through authFetch without transport session headers", async () => {
+    const selectedServers = ["server-1"];
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers,
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+      }),
+    );
+
+    expect(mockTransportInstances).toHaveLength(1);
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [api, init] = mockAuthFetch.mock.calls[0];
+    expect(api).toBe("/api/mcp/chat-v2");
+    expect(init.headers).toBeUndefined();
+  });
+
+  it("adds explicit Authorization only for the non-hosted MCPJam model path", async () => {
+    mockModelState.availableModels = [mcpJamModel];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockGetAccessToken.mockResolvedValue("convex-token");
+    const selectedServers = ["server-1"];
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers,
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [api, init] = mockAuthFetch.mock.calls[0];
+    expect(api).toBe("/api/mcp/chat-v2");
+    expect(init.headers).toEqual({
+      Authorization: "Bearer convex-token",
+    });
+    expect(init.headers).not.toHaveProperty("X-MCP-Session-Auth");
   });
 });

@@ -1,9 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 const mockState = vi.hoisted(() => ({
-  sendMessage: vi.fn(),
   stop: vi.fn(),
   setMessages: vi.fn(),
   addToolApprovalResponse: vi.fn(),
@@ -27,14 +36,24 @@ const mockState = vi.hoisted(() => ({
     tokenCounts: null,
   })),
   countTextTokens: vi.fn(async () => null),
+  authFetch: vi.fn(async () => new Response(null, { status: 200 })),
+  getHostedAuthorizationHeader: vi.fn(async () => "Bearer hosted-token"),
+  transportInstances: [] as Array<{ options: any; sendMessages: ReturnType<typeof vi.fn> }>,
+  renderTransports: [] as any[],
+  sendCalls: [] as Array<{ id: string; transport: any; message: any }>,
 }));
-let lastTransportOptions: any;
 
 const baseModel = {
-  id: "gpt-4.1-mini",
-  name: "GPT-4.1 Mini",
+  id: "openai/gpt-5-mini",
+  name: "GPT-5 Mini",
   provider: "openai" as const,
 };
+
+async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
+  return typeof value === "function"
+    ? await (value as () => T | Promise<T>)()
+    : value;
+}
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -64,7 +83,7 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
-    selectedModelId: "gpt-4.1-mini",
+    selectedModelId: "openai/gpt-5-mini",
     setSelectedModelId: mockState.setSelectedModelId,
   }),
 }));
@@ -87,7 +106,11 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 }));
 
 vi.mock("@/lib/session-token", () => ({
-  getAuthHeaders: vi.fn(() => ({})),
+  authFetch: mockState.authFetch,
+}));
+
+vi.mock("@/lib/apis/web/context", () => ({
+  getHostedAuthorizationHeader: mockState.getHostedAuthorizationHeader,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -103,22 +126,94 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-vi.mock("@ai-sdk/react", () => ({
-  useChat: vi.fn(() => ({
-    messages: [],
-    sendMessage: mockState.sendMessage,
-    stop: mockState.stop,
-    status: "ready",
-    error: undefined,
-    setMessages: mockState.setMessages,
-    addToolApprovalResponse: mockState.addToolApprovalResponse,
-  })),
-}));
+vi.mock("@ai-sdk/react", async () => {
+  const React = await import("react");
+
+  return {
+    useChat: vi.fn(
+      ({
+        id,
+        transport,
+      }: {
+        id: string;
+        transport: {
+          sendMessages: (options: any) => Promise<unknown>;
+        };
+      }) => {
+        const latchedIdRef = React.useRef(id);
+        const latchedTransportRef = React.useRef(transport);
+
+        if (latchedIdRef.current !== id) {
+          latchedIdRef.current = id;
+          latchedTransportRef.current = transport;
+        }
+
+        mockState.renderTransports.push({ id, transport });
+
+        return {
+          messages: [],
+          sendMessage: async (message: any) => {
+            mockState.sendCalls.push({
+              id: latchedIdRef.current,
+              transport: latchedTransportRef.current,
+              message,
+            });
+            await latchedTransportRef.current.sendMessages({
+              chatId: latchedIdRef.current,
+              messages: [
+                {
+                  id: "user-1",
+                  role: "user",
+                  parts:
+                    "text" in message
+                      ? [{ type: "text", text: message.text }]
+                      : [],
+                },
+              ],
+              abortSignal: new AbortController().signal,
+              metadata: undefined,
+              headers: undefined,
+              body: undefined,
+              trigger: "submit-message",
+              messageId: undefined,
+            });
+          },
+          stop: mockState.stop,
+          status: "ready",
+          error: undefined,
+          setMessages: mockState.setMessages,
+          addToolApprovalResponse: mockState.addToolApprovalResponse,
+        };
+      },
+    ),
+  };
+});
 
 vi.mock("ai", () => ({
   DefaultChatTransport: class MockTransport {
-    constructor(options: unknown) {
-      lastTransportOptions = options;
+    options: any;
+    sendMessages: ReturnType<typeof vi.fn>;
+
+    constructor(options: any) {
+      this.options = options;
+      this.sendMessages = vi.fn(async (requestOptions: any) => {
+        const resolvedBody = await resolveConfig(this.options.body);
+        const resolvedHeaders = await resolveConfig(this.options.headers);
+        const requestBody = {
+          ...resolvedBody,
+          id: requestOptions.chatId,
+          messages: requestOptions.messages,
+          trigger: requestOptions.trigger,
+          messageId: requestOptions.messageId,
+        };
+        await this.options.fetch?.(this.options.api, {
+          method: "POST",
+          headers: resolvedHeaders,
+          body: JSON.stringify(requestBody),
+        });
+        return new ReadableStream();
+      });
+      mockState.transportInstances.push(this);
     }
   },
   generateId: vi.fn(() => "chat-session-id"),
@@ -126,39 +221,85 @@ vi.mock("ai", () => ({
 }));
 
 describe("useChatSession hosted mode", () => {
-  it("includes chatSessionId in the hosted transport body", async () => {
-    const { result, unmount } = renderHook(() =>
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockState.authFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    mockState.getHostedAuthorizationHeader.mockResolvedValue("Bearer hosted-token");
+    mockState.transportInstances = [];
+    mockState.renderTransports = [];
+    mockState.sendCalls = [];
+  });
+
+  it("keeps the initial transport latched and resolves hosted auth at request time", async () => {
+    const authBootstrap = createDeferred<string | null>();
+    mockState.getHostedAuthorizationHeader.mockImplementationOnce(
+      () => authBootstrap.promise,
+    );
+    const selectedServers = ["server-1"];
+    const hostedSelectedServerIds = ["server-id-1"];
+
+    const { result } = renderHook(() =>
       useChatSession({
-        selectedServers: ["server-1"],
+        selectedServers,
         hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: ["server-id-1"],
+        hostedSelectedServerIds,
         hostedShareToken: "share-token",
       }),
     );
 
-    const body = lastTransportOptions.body();
+    expect(mockState.transportInstances).toHaveLength(1);
+    const initialTransport = mockState.transportInstances[0];
+
+    authBootstrap.resolve("Bearer hosted-token");
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+
+    expect(mockState.transportInstances).toHaveLength(1);
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(initialTransport.sendMessages).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+    });
+
+    const [api, init] = mockState.authFetch.mock.calls[0];
+    expect(api).toBe("/api/web/chat-v2");
+    expect(init.headers).toBeUndefined();
+
+    const requestBody = JSON.parse(String(init.body));
     expect(result.current.chatSessionId).toBe("chat-session-id");
-    expect(body).toMatchObject({
+    expect(requestBody).toMatchObject({
       workspaceId: "workspace-1",
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       shareToken: "share-token",
       accessScope: "chat_v2",
     });
-    unmount();
+    expect(mockState.sendCalls[0]?.transport).toBe(initialTransport);
   });
 
-  it("includes sandbox token in the hosted transport body", async () => {
-    const { unmount } = renderHook(() =>
+  it("includes sandbox token in the hosted transport body", () => {
+    const selectedServers = ["server-1"];
+    const hostedSelectedServerIds = ["server-id-2"];
+
+    renderHook(() =>
       useChatSession({
-        selectedServers: ["server-1"],
+        selectedServers,
         hostedWorkspaceId: "workspace-2",
-        hostedSelectedServerIds: ["server-id-2"],
+        hostedSelectedServerIds,
         hostedSandboxToken: "sandbox-token",
       }),
     );
 
-    const body = lastTransportOptions.body();
+    expect(mockState.transportInstances).toHaveLength(1);
+    const body = mockState.transportInstances[0].options.body();
     expect(body).toMatchObject({
       workspaceId: "workspace-2",
       chatSessionId: "chat-session-id",
@@ -166,6 +307,5 @@ describe("useChatSession hosted mode", () => {
       sandboxToken: "sandbox-token",
       accessScope: "chat_v2",
     });
-    unmount();
   });
 });
