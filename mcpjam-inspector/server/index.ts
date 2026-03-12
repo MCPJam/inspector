@@ -8,7 +8,7 @@ import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { readFileSync } from "fs";
-import { dirname } from "path";
+import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env";
