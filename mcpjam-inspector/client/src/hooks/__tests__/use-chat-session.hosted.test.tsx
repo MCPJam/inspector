@@ -38,7 +38,10 @@ const mockState = vi.hoisted(() => ({
   countTextTokens: vi.fn(async () => null),
   authFetch: vi.fn(async () => new Response(null, { status: 200 })),
   getHostedAuthorizationHeader: vi.fn(async () => "Bearer hosted-token"),
-  transportInstances: [] as Array<{ options: any; sendMessages: ReturnType<typeof vi.fn> }>,
+  transportInstances: [] as Array<{
+    options: any;
+    sendMessages: ReturnType<typeof vi.fn>;
+  }>,
   renderTransports: [] as any[],
   sendCalls: [] as Array<{ id: string; transport: any; message: any }>,
 }));
@@ -224,7 +227,9 @@ describe("useChatSession hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockState.authFetch.mockResolvedValue(new Response(null, { status: 200 }));
-    mockState.getHostedAuthorizationHeader.mockResolvedValue("Bearer hosted-token");
+    mockState.getHostedAuthorizationHeader.mockResolvedValue(
+      "Bearer hosted-token",
+    );
     mockState.transportInstances = [];
     mockState.renderTransports = [];
     mockState.sendCalls = [];

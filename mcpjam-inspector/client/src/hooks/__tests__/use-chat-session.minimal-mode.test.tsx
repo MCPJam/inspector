@@ -9,7 +9,10 @@ const mockStop = vi.fn();
 const mockAddToolApprovalResponse = vi.fn();
 const mockAuthFetch = vi.fn();
 const mockGetAccessToken = vi.fn(async () => null);
-const mockTransportInstances: Array<{ options: any; sendMessages: ReturnType<typeof vi.fn> }> = [];
+const mockTransportInstances: Array<{
+  options: any;
+  sendMessages: ReturnType<typeof vi.fn>;
+}> = [];
 
 const baseModel = {
   id: "gpt-4",

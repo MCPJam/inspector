@@ -213,10 +213,7 @@ function resolveModelApiKey({
   >["getCustomProviderByName"];
   getToken: ReturnType<typeof useAiProviderKeys>["getToken"];
 }): string {
-  if (
-    selectedModel.provider === "custom" &&
-    selectedModel.customProviderName
-  ) {
+  if (selectedModel.provider === "custom" && selectedModel.customProviderName) {
     // For custom providers, the API key is embedded in the provider config.
     const customProvider = getCustomProviderByName(
       selectedModel.customProviderName,
