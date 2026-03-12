@@ -47,7 +47,7 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
-import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
+import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { getHostedAuthorizationHeader } from "@/lib/apis/web/context";
@@ -202,6 +202,28 @@ function getAuthHeadersSignature(
     .join("|");
 }
 
+function resolveModelApiKey({
+  selectedModel,
+  getCustomProviderByName,
+  getToken,
+}: {
+  selectedModel: ModelDefinition;
+  getCustomProviderByName: ReturnType<
+    typeof useCustomProviders
+  >["getCustomProviderByName"];
+  getToken: ReturnType<typeof useAiProviderKeys>["getToken"];
+}): string {
+  if (selectedModel.provider === "custom" && selectedModel.customProviderName) {
+    // For custom providers, the API key is embedded in the provider config.
+    const customProvider = getCustomProviderByName(
+      selectedModel.customProviderName,
+    );
+    return customProvider?.apiKey || "";
+  }
+
+  return getToken(selectedModel.provider as keyof ProviderTokens);
+}
+
 export function useChatSession({
   selectedServers,
   hostedWorkspaceId,
@@ -321,77 +343,101 @@ export function useChatSession({
       : false;
   }, [selectedModel]);
 
-  // Create transport
-  const transport = useMemo(() => {
-    let apiKey: string;
-    if (
-      selectedModel.provider === "custom" &&
-      selectedModel.customProviderName
-    ) {
-      // For custom providers, the API key is embedded in the provider config
-      const cp = getCustomProviderByName(selectedModel.customProviderName);
-      apiKey = cp?.apiKey || "";
-    } else {
-      apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
-    }
-    const isGpt5 = isGPT5Model(selectedModel.id);
-
-    // Merge session auth headers with workos auth headers
-    const sessionHeaders = getSessionAuthHeaders();
-    const mergedHeaders = { ...sessionHeaders, ...authHeaders } as Record<
-      string,
-      string
-    >;
-
-    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
-
-    return new DefaultChatTransport({
-      api: chatApi,
-      body: () => ({
-        model: selectedModel,
-        ...(HOSTED_MODE ? {} : { apiKey }),
-        ...(isGpt5 ? {} : { temperature }),
-        systemPrompt,
-        ...(HOSTED_MODE
-          ? {
-              workspaceId: hostedWorkspaceId,
-              chatSessionId,
-              selectedServerIds: hostedSelectedServerIds,
-              accessScope: "chat_v2" as const,
-              ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
-              ...(hostedSandboxToken
-                ? { sandboxToken: hostedSandboxToken }
-                : {}),
-              ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
-                ? { oauthTokens: hostedOAuthTokens }
-                : {}),
-            }
-          : { selectedServers }),
-        requireToolApproval: requireToolApprovalRef.current,
-        ...(!HOSTED_MODE && customProviders.length > 0
-          ? { customProviders }
-          : {}),
-      }),
-      headers:
-        Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
-    });
-  }, [
+  const transportConfigRef = useRef<{
+    selectedModel: ModelDefinition;
+    apiKey: string;
+    temperature: number;
+    systemPrompt: string;
+    selectedServers: string[];
+    hostedWorkspaceId?: string | null;
+    hostedSelectedServerIds: string[];
+    hostedOAuthTokens?: Record<string, string>;
+    hostedShareToken?: string;
+    hostedSandboxToken?: string;
+    chatSessionId: string;
+    requireToolApproval: boolean;
+    customProviders: typeof customProviders;
+    localAuthorizationHeader?: string;
+  } | null>(null);
+  const currentApiKey = resolveModelApiKey({
     selectedModel,
-    getToken,
     getCustomProviderByName,
-    customProviders,
-    authHeaders,
+    getToken,
+  });
+  transportConfigRef.current = {
+    selectedModel,
+    apiKey: currentApiKey,
     temperature,
     systemPrompt,
     selectedServers,
     hostedWorkspaceId,
-    chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
     hostedSandboxToken,
-    // requireToolApproval read from ref at request time
-  ]);
+    chatSessionId,
+    requireToolApproval: requireToolApprovalRef.current,
+    customProviders,
+    localAuthorizationHeader:
+      !HOSTED_MODE && isMcpJamModel ? authHeaders?.Authorization : undefined,
+  };
+
+  const transportRef = useRef<DefaultChatTransport<UIMessage> | null>(null);
+  if (!transportRef.current) {
+    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
+
+    // AI SDK useChat latches the transport instance until the chat id changes,
+    // so request-time config must be read from refs instead of render closures.
+    transportRef.current = new DefaultChatTransport({
+      api: chatApi,
+      fetch: authFetch,
+      body: () => {
+        const config = transportConfigRef.current!;
+        const isGpt5 = isGPT5Model(config.selectedModel.id);
+
+        return {
+          model: config.selectedModel,
+          ...(HOSTED_MODE ? {} : { apiKey: config.apiKey }),
+          ...(isGpt5 ? {} : { temperature: config.temperature }),
+          systemPrompt: config.systemPrompt,
+          ...(HOSTED_MODE
+            ? {
+                workspaceId: config.hostedWorkspaceId,
+                chatSessionId: config.chatSessionId,
+                selectedServerIds: config.hostedSelectedServerIds,
+                accessScope: "chat_v2" as const,
+                ...(config.hostedShareToken
+                  ? { shareToken: config.hostedShareToken }
+                  : {}),
+                ...(config.hostedSandboxToken
+                  ? { sandboxToken: config.hostedSandboxToken }
+                  : {}),
+                ...(config.hostedOAuthTokens &&
+                Object.keys(config.hostedOAuthTokens).length > 0
+                  ? { oauthTokens: config.hostedOAuthTokens }
+                  : {}),
+              }
+            : { selectedServers: config.selectedServers }),
+          requireToolApproval: config.requireToolApproval,
+          ...(!HOSTED_MODE && config.customProviders.length > 0
+            ? { customProviders: config.customProviders }
+            : {}),
+        };
+      },
+      headers: () => {
+        if (HOSTED_MODE) {
+          return undefined;
+        }
+
+        const localAuthorizationHeader =
+          transportConfigRef.current?.localAuthorizationHeader;
+        return localAuthorizationHeader
+          ? { Authorization: localAuthorizationHeader }
+          : undefined;
+      },
+    });
+  }
+  const transport = transportRef.current;
 
   // useChat hook
   const {
@@ -404,7 +450,7 @@ export function useChatSession({
     addToolApprovalResponse,
   } = useChat({
     id: chatSessionId,
-    transport: transport!,
+    transport,
     sendAutomaticallyWhen: requireToolApproval
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
@@ -497,7 +543,7 @@ export function useChatSession({
     onResetRef.current?.();
   }, [setMessages]);
 
-  // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
+  // Resolve auth state for submit gating and reset when the auth identity changes.
   useEffect(() => {
     let active = true;
     (async () => {
