@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
 
@@ -79,8 +79,12 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Trace" })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Chat" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Trace" }),
+      ).not.toBeInTheDocument();
       expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
         expect.objectContaining({
           toolResultDisplay: "attached-to-tool",
@@ -96,24 +100,14 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("switches sandbox threads to trace mode", async () => {
+  it("keeps sandbox threads in chat mode without a toggle", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           minimalMode: false,
-        }),
-      );
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Trace" }));
-
-    await waitFor(() => {
-      expect(mockMessageView).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          minimalMode: true,
-          reasoningDisplayMode: "collapsed",
+          reasoningDisplayMode: "collapsible",
         }),
       );
     });

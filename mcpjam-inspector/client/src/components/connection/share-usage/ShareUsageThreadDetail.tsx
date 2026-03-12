@@ -1,6 +1,6 @@
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Code2, Loader2, MessageSquare } from "lucide-react";
+import { Loader2, MessageSquare } from "lucide-react";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import { MessageView } from "@/components/chat-v2/thread/message-view";
 import {
@@ -13,7 +13,6 @@ import {
 } from "@/hooks/useSharedChatThreads";
 
 const NOOP = (..._args: unknown[]) => {};
-type ViewMode = "chat" | "trace";
 
 interface ShareUsageThreadDetailProps {
   threadId: string;
@@ -27,7 +26,6 @@ export function ShareUsageThreadDetail({
   const [messages, setMessages] = useState<unknown[] | null>(null);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("trace");
 
   // Fetch messages from blob URL
   useEffect(() => {
@@ -124,15 +122,6 @@ export function ShareUsageThreadDetail({
     [thread?.modelId],
   );
 
-  useEffect(() => {
-    if (!thread?.sourceType) return;
-    const defaultViewMode: ViewMode =
-      thread.sourceType === "sandbox" ? "chat" : "trace";
-    setViewMode((currentMode) =>
-      currentMode === defaultViewMode ? currentMode : defaultViewMode,
-    );
-  }, [thread?.sourceType, threadId]);
-
   // Loading state: thread query or messages fetch
   if (thread === undefined || isLoadingMessages) {
     return (
@@ -176,11 +165,8 @@ export function ShareUsageThreadDetail({
         ? `${Math.round(duration / 1000)}s`
         : `${Math.round(duration / 60000)}m`
       : null;
-  const showViewToggle = thread.sourceType === "sandbox";
-  const reasoningDisplayMode =
-    thread.sourceType === "sandbox" && viewMode === "chat"
-      ? "collapsible"
-      : "collapsed";
+  const isSandboxThread = thread.sourceType === "sandbox";
+  const reasoningDisplayMode = isSandboxThread ? "collapsible" : "collapsed";
 
   return (
     <div className="flex h-full flex-col">
@@ -212,44 +198,6 @@ export function ShareUsageThreadDetail({
               </span>
             </div>
           </div>
-          {showViewToggle && (
-            <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
-              <button
-                type="button"
-                onClick={() => {
-                  startTransition(() => {
-                    setViewMode("chat");
-                  });
-                }}
-                className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                  viewMode === "chat"
-                    ? "bg-primary/10 text-foreground font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                aria-pressed={viewMode === "chat"}
-              >
-                <MessageSquare className="h-3 w-3" />
-                Chat
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  startTransition(() => {
-                    setViewMode("trace");
-                  });
-                }}
-                className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                  viewMode === "trace"
-                    ? "bg-primary/10 text-foreground font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                aria-pressed={viewMode === "trace"}
-              >
-                <Code2 className="h-3 w-3" />
-                Trace
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -272,7 +220,7 @@ export function ShareUsageThreadDetail({
               onExitFullscreen={NOOP}
               toolRenderOverrides={adaptedTrace.toolRenderOverrides}
               showSaveViewButton={false}
-              minimalMode={viewMode === "trace"}
+              minimalMode={!isSandboxThread}
               interactive={false}
               reasoningDisplayMode={reasoningDisplayMode}
             />
