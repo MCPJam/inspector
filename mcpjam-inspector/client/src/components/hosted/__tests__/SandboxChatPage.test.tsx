@@ -153,7 +153,7 @@ describe("SandboxChatPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("applies sandbox host style data attributes and branding", async () => {
+  it("applies sandbox host style data attributes while keeping MCPJam branding", async () => {
     writeSandboxSession({
       token: "sandbox-token",
       payload: {
@@ -179,7 +179,7 @@ describe("SandboxChatPage", () => {
     expect(
       container.querySelector('[data-host-style="chatgpt"]'),
     ).toBeInTheDocument();
-    expect(screen.getByAltText("ChatGPT")).toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
   });
 
   it("shows curated copy for an invalid or expired sandbox link", async () => {

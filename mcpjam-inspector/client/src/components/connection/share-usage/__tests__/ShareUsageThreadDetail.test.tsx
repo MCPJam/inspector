@@ -1,15 +1,23 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
 
-const { mockMessageView, mockAdaptTraceToUiMessages } = vi.hoisted(() => ({
+const {
+  mockMessageView,
+  mockAdaptTraceToUiMessages,
+  mockThreadState,
+} = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
   mockAdaptTraceToUiMessages: vi.fn(),
+  mockThreadState: {
+    sourceType: "sandbox",
+  },
 }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatThread: () => ({
     thread: {
+      sourceType: mockThreadState.sourceType,
       messagesBlobUrl: "https://storage.example.com/thread.json",
       modelId: "openai/gpt-oss-120b",
       visitorDisplayName: "Marcelo Jimenez",
@@ -40,6 +48,7 @@ describe("ShareUsageThreadDetail", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockThreadState.sourceType = "sandbox";
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [{ role: "assistant", content: [] }],
@@ -70,10 +79,64 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Trace" })).toBeInTheDocument();
+      expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolResultDisplay: "attached-to-tool",
+        }),
+      );
       expect(mockMessageView).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsed",
           interactive: false,
+          minimalMode: false,
+        }),
+      );
+    });
+  });
+
+  it("switches sandbox threads to trace mode", async () => {
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => {
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          minimalMode: false,
+        }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Trace" }));
+
+    await waitFor(() => {
+      expect(mockMessageView).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          minimalMode: true,
+        }),
+      );
+    });
+  });
+
+  it("keeps server share threads in trace mode without a toggle", async () => {
+    mockThreadState.sourceType = "serverShare";
+
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Chat" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Trace" }),
+      ).not.toBeInTheDocument();
+      expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolResultDisplay: "sibling-text",
+        }),
+      );
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
           minimalMode: true,
         }),
       );

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 export type ReasoningDisplayMode = "inline" | "collapsed";
 
@@ -40,19 +40,19 @@ export function ReasoningPart({
         aria-expanded={isExpanded}
         aria-controls={contentId}
       >
+        <span>Reasoning</span>
         <span className="flex items-center gap-2">
-          {isExpanded ? (
-            <ChevronDown className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5" />
-          )}
-          Reasoning
+          {state === "streaming" ? (
+            <span className="text-[10px] normal-case tracking-normal text-muted-foreground/70">
+              Streaming
+            </span>
+          ) : null}
+          <ChevronDown
+            className={`h-3.5 w-3.5 transition-transform duration-150 ${
+              isExpanded ? "rotate-180" : ""
+            }`}
+          />
         </span>
-        {state === "streaming" ? (
-          <span className="text-[10px] normal-case tracking-normal text-muted-foreground/70">
-            Streaming
-          </span>
-        ) : null}
       </button>
       {isExpanded ? (
         <pre

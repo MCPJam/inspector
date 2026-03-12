@@ -26,8 +26,6 @@ import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { slugify } from "@/lib/shared-server-session";
 import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 import {
-  getSandboxHostLabel,
-  getSandboxHostLogo,
   getSandboxShellStyle,
 } from "@/lib/sandbox-host-style";
 
@@ -482,8 +480,6 @@ export function SandboxChatPage({
   );
 
   const hostStyle = session?.payload.hostStyle ?? "claude";
-  const hostBrandLabel = getSandboxHostLabel(hostStyle);
-  const hostBrandLogo = getSandboxHostLogo(hostStyle);
   const shellStyle = getSandboxShellStyle(hostStyle, themeMode);
   const displayError = getSandboxDisplayError(routeError);
   const isFinishingOAuth =
@@ -624,8 +620,12 @@ export function SandboxChatPage({
               className="cursor-pointer flex-shrink-0 border-none bg-transparent p-0"
             >
               <img
-                src={hostBrandLogo}
-                alt={hostBrandLabel}
+                src={
+                  themeMode === "dark"
+                    ? "/mcp_jam_dark.png"
+                    : "/mcp_jam_light.png"
+                }
+                alt="MCPJam"
                 className="h-4 w-auto object-contain"
               />
             </button>
