@@ -7,17 +7,13 @@ import { PartSwitch } from "./part-switch";
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
 import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
-import {
-  getSandboxHostLabel,
-  getSandboxHostLogo,
-} from "@/lib/sandbox-host-style";
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
+import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 
 export function MessageView({
   message,
@@ -74,20 +70,11 @@ export function MessageView({
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
-  const logoSrc =
-    sandboxHostStyle !== null
-      ? getSandboxHostLogo(sandboxHostStyle)
-      : getProviderLogoFromModel(model, themeMode);
-  const logoAlt =
-    sandboxHostStyle !== null
-      ? `${getSandboxHostLabel(sandboxHostStyle)} logo`
-      : `${model.id} logo`;
-  const avatarClasses =
-    sandboxHostStyle === "chatgpt"
-      ? "sandbox-host-assistant-avatar border-black/10 bg-white dark:border-white/10 dark:bg-[#202020]"
-      : sandboxHostStyle === "claude"
-        ? "sandbox-host-assistant-avatar border-[#d7cfbf] bg-[#f7f3eb] dark:border-[#4b463d] dark:bg-[#32312d]"
-        : "border-border/40 bg-muted/40";
+  const assistantAvatar = getAssistantAvatarDescriptor({
+    model,
+    themeMode,
+    sandboxHostStyle,
+  });
   // Hide widget state messages (these are internal and sent to the model)
   if (message.id?.startsWith("widget-state-")) return null;
   // Hide model context messages (these are internal and sent to the model)
@@ -178,16 +165,17 @@ export function MessageView({
   return (
     <article className="flex gap-4 w-full">
       <div
-        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${avatarClasses}`}
+        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
+        aria-label={assistantAvatar.ariaLabel}
       >
-        {logoSrc ? (
+        {assistantAvatar.logoSrc ? (
           <img
-            src={logoSrc}
-            alt={logoAlt}
+            src={assistantAvatar.logoSrc}
+            alt={assistantAvatar.logoAlt ?? ""}
             className="h-4 w-4 object-contain"
           />
         ) : (
-          <MessageCircle className="h-4 w-4 text-muted-foreground" />
+          <MessageCircle className="h-4 w-4 text-muted-foreground" aria-hidden />
         )}
       </div>
 
