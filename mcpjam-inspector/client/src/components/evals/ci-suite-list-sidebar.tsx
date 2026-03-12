@@ -150,10 +150,7 @@ export function CiSuiteListSidebar({
                         {entry.suite.name || "Untitled suite"}
                       </div>
                       {entry.suite.tags && entry.suite.tags.length > 0 && (
-                        <TagBadges
-                          tags={entry.suite.tags}
-                          className="mt-0.5"
-                        />
+                        <TagBadges tags={entry.suite.tags} className="mt-0.5" />
                       )}
                       <div className="text-[11px] text-muted-foreground">
                         {timestamp}
