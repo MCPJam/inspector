@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -36,6 +36,8 @@ describe("env loader", () => {
     delete process.env.MCPJAM_ENV_PRIORITY_TEST;
 
     const tempRoot = mkdtempSync(join(tmpdir(), "mcpjam-env-"));
+    const resolvedTempRoot = realpathSync(tempRoot);
+    const originalCwd = process.cwd();
     const serverDir = join(tempRoot, "server", "dist");
     mkdirSync(serverDir, { recursive: true });
 
@@ -55,6 +57,7 @@ describe("env loader", () => {
     );
 
     try {
+      process.chdir(tempRoot);
       const loadedEnv = loadInspectorEnv(serverDir);
 
       expect(process.env.CONVEX_HTTP_URL).toBe(
@@ -62,10 +65,11 @@ describe("env loader", () => {
       );
       expect(process.env.MCPJAM_ENV_PRIORITY_TEST).toBe("local");
       expect(loadedEnv.loadedFiles).toEqual([
-        join(tempRoot, ".env.local"),
-        join(tempRoot, ".env.development"),
+        join(resolvedTempRoot, ".env.local"),
+        join(resolvedTempRoot, ".env.development"),
       ]);
     } finally {
+      process.chdir(originalCwd);
       rmSync(tempRoot, { force: true, recursive: true });
     }
   });

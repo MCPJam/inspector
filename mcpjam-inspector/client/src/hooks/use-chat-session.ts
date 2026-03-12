@@ -191,6 +191,17 @@ function isAuthDeniedError(error: unknown): boolean {
   return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
 }
 
+function getAuthHeadersSignature(
+  headers: Record<string, string> | undefined,
+): string {
+  if (!headers) return "";
+
+  return Object.entries(headers)
+    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .map(([key, value]) => `${key}:${value}`)
+    .join("|");
+}
+
 export function useChatSession({
   selectedServers,
   hostedWorkspaceId,
@@ -253,6 +264,8 @@ export function useChatSession({
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
   const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
+  const hasResolvedAuthHeadersRef = useRef(false);
+  const authHeadersSignatureRef = useRef("");
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -488,37 +501,52 @@ export function useChatSession({
   useEffect(() => {
     let active = true;
     (async () => {
+      let nextAuthHeaders: Record<string, string> | undefined;
+
       try {
         if (HOSTED_MODE) {
           const hostedHeader = await getHostedAuthorizationHeader();
           if (!active) return;
-          setAuthHeaders(
-            hostedHeader ? { Authorization: hostedHeader } : undefined,
-          );
+          nextAuthHeaders = hostedHeader
+            ? { Authorization: hostedHeader }
+            : undefined;
         } else {
           const token = await getAccessToken?.();
           if (!active) return;
           if (token) {
-            setAuthHeaders({ Authorization: `Bearer ${token}` });
+            nextAuthHeaders = { Authorization: `Bearer ${token}` };
           } else {
-            setAuthHeaders(undefined);
+            nextAuthHeaders = undefined;
           }
         }
       } catch (err) {
         console.error("[useChatSession] Failed to get access token:", err);
         if (!active) return;
-        setAuthHeaders(undefined);
+        nextAuthHeaders = undefined;
       }
-      // Reset chat to force new session with updated auth headers
-      // This ensures the transport is recreated with the correct headers
-      if (active) {
-        skipNextForkDetectionRef.current = true;
-        pendingForkSessionIdRef.current = null;
-        pendingForkMessagesRef.current = null;
-        setChatSessionId(generateId());
-        setMessages([]);
-        onResetRef.current?.();
+
+      if (!active) return;
+
+      setAuthHeaders(nextAuthHeaders);
+
+      const nextAuthHeadersSignature = getAuthHeadersSignature(nextAuthHeaders);
+      if (!hasResolvedAuthHeadersRef.current) {
+        hasResolvedAuthHeadersRef.current = true;
+        authHeadersSignatureRef.current = nextAuthHeadersSignature;
+        return;
       }
+
+      if (authHeadersSignatureRef.current === nextAuthHeadersSignature) {
+        return;
+      }
+
+      authHeadersSignatureRef.current = nextAuthHeadersSignature;
+      skipNextForkDetectionRef.current = true;
+      pendingForkSessionIdRef.current = null;
+      pendingForkMessagesRef.current = null;
+      setChatSessionId(generateId());
+      setMessages([]);
+      onResetRef.current?.();
     })();
     return () => {
       active = false;
