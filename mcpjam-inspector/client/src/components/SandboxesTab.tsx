@@ -2,9 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Copy,
   ExternalLink,
-  Globe,
   Loader2,
-  Lock,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -36,6 +34,7 @@ import {
   type SandboxSettings,
 } from "@/hooks/useSandboxes";
 import { useWorkspaceServers } from "@/hooks/useViews";
+import { copyToClipboard } from "@/lib/clipboard";
 import { buildSandboxLink } from "@/lib/sandbox-session";
 
 interface SandboxesTabProps {
@@ -128,6 +127,46 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
     setRightPaneView("usage");
   };
 
+  const resolveSandboxLink = (sandbox: SandboxActionTarget) => {
+    if (sandbox.sandboxId !== selectedSandboxId) {
+      handleSelectSandbox(sandbox.sandboxId);
+      return null;
+    }
+
+    const token = selectedSandbox?.link?.token?.trim();
+    return token ? buildSandboxLink(token, sandbox.name) : null;
+  };
+
+  const handleOpenSandbox = (sandbox: SandboxActionTarget) => {
+    const shareLink = resolveSandboxLink(sandbox);
+    if (!shareLink) {
+      if (sandbox.sandboxId === selectedSandboxId) {
+        toast.error("Sandbox link unavailable");
+      }
+      return;
+    }
+
+    window.open(shareLink, "_blank");
+  };
+
+  const handleCopySandboxLink = async (sandbox: SandboxActionTarget) => {
+    const shareLink = resolveSandboxLink(sandbox);
+    if (!shareLink) {
+      if (sandbox.sandboxId === selectedSandboxId) {
+        toast.error("Sandbox link unavailable");
+      }
+      return;
+    }
+
+    const didCopy = await copyToClipboard(shareLink);
+    if (didCopy) {
+      toast.success("Sandbox link copied");
+      return;
+    }
+
+    toast.error("Failed to copy link");
+  };
+
   if (!workspaceId) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -176,7 +215,7 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
                 return (
                   <div
                     key={sandbox.sandboxId}
-                    className={`group mb-1 rounded-lg px-3 py-2.5 transition-colors cursor-pointer ${
+                    className={`mb-1 cursor-pointer rounded-lg px-3 py-2.5 transition-colors ${
                       isSelected ? "bg-muted/50" : "hover:bg-muted/40"
                     }`}
                     onClick={() => handleSelectSandbox(sandbox.sandboxId)}
@@ -185,47 +224,39 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
                       <p className="min-w-0 flex-1 truncate text-sm font-medium">
                         {sandbox.name}
                       </p>
-                      {sandbox.mode === "any_signed_in_with_link" ? (
-                        <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={`h-6 shrink-0 gap-1 px-1.5 text-xs text-muted-foreground ${
-                          isSelected
-                            ? "opacity-100"
-                            : "opacity-0 group-hover:opacity-100"
-                        }`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (isSelected && selectedSandbox?.link?.token) {
-                            window.open(
-                              buildSandboxLink(
-                                selectedSandbox.link.token,
-                                selectedSandbox.name,
-                              ),
-                              "_blank",
-                            );
-                          } else {
-                            handleSelectSandbox(sandbox.sandboxId);
-                          }
-                        }}
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        Try it
-                      </Button>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 text-muted-foreground"
+                          aria-label="Copy sandbox link"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleCopySandboxLink(sandbox);
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 text-muted-foreground"
+                          aria-label="Open sandbox"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenSandbox(sandbox);
+                          }}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
                             variant="ghost"
                             size="sm"
-                            className={`h-6 w-6 shrink-0 p-0 ${
-                              isSelected
-                                ? "opacity-100"
-                                : "opacity-0 group-hover:opacity-100"
-                            }`}
+                            className="h-6 w-6 shrink-0 p-0 text-muted-foreground"
+                            aria-label="Sandbox actions"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <MoreHorizontal className="h-4 w-4" />

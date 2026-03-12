@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SandboxesTab } from "../SandboxesTab";
+import { buildSandboxLink } from "@/lib/sandbox-session";
 
 const mockDeleteSandbox = vi.fn();
 const mockDuplicateSandbox = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
+const mockClipboard = {
+  writeText: vi.fn().mockResolvedValue(undefined),
+};
+
+Object.assign(navigator, { clipboard: mockClipboard });
 
 const sandboxList = [
   {
@@ -202,6 +208,7 @@ describe("SandboxesTab", () => {
     mockDuplicateSandbox.mockResolvedValue(sandboxDetails["sbx-3"]);
     mockDeleteSandbox.mockResolvedValue({ deleted: true });
     vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window, "open").mockImplementation(() => null);
   });
 
   it("duplicates the clicked sandbox instead of the currently selected one", async () => {
@@ -232,5 +239,53 @@ describe("SandboxesTab", () => {
     expect(window.confirm).toHaveBeenCalledWith(
       'Delete "Beta"? This will also delete persisted usage history.',
     );
+  });
+
+  it("opens the selected sandbox from the icon action", () => {
+    render(<SandboxesTab workspaceId="ws-1" />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Open sandbox" })[0]!);
+
+    expect(window.open).toHaveBeenCalledWith(
+      buildSandboxLink("alpha-token", "Alpha"),
+      "_blank",
+    );
+  });
+
+  it("copies the selected sandbox link from the icon action", async () => {
+    render(<SandboxesTab workspaceId="ws-1" />);
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Copy sandbox link" })[0]!,
+    );
+
+    await waitFor(() => {
+      expect(mockClipboard.writeText).toHaveBeenCalledWith(
+        buildSandboxLink("alpha-token", "Alpha"),
+      );
+    });
+    expect(mockToastSuccess).toHaveBeenCalledWith("Sandbox link copied");
+  });
+
+  it("keeps the row action icons visible without hover-only classes", () => {
+    render(<SandboxesTab workspaceId="ws-1" />);
+
+    for (const button of screen.getAllByRole("button", {
+      name: "Copy sandbox link",
+    })) {
+      expect(button).not.toHaveClass("opacity-0");
+    }
+
+    for (const button of screen.getAllByRole("button", {
+      name: "Open sandbox",
+    })) {
+      expect(button).not.toHaveClass("opacity-0");
+    }
+
+    for (const button of screen.getAllByRole("button", {
+      name: "Sandbox actions",
+    })) {
+      expect(button).not.toHaveClass("opacity-0");
+    }
   });
 });
