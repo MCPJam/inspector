@@ -21,7 +21,9 @@ if (!fs.existsSync(localSdkLink)) {
 }
 
 if (!fs.existsSync(expectedSdkDir)) {
-  fail(`Expected sibling SDK checkout at ${expectedSdkDir}, but it does not exist.`);
+  fail(
+    `Expected sibling SDK checkout at ${expectedSdkDir}, but it does not exist.`,
+  );
 }
 
 const linkStats = fs.lstatSync(localSdkLink);
@@ -42,7 +44,9 @@ if (normalizePath(resolvedLinkedSdk) !== normalizePath(resolvedExpectedSdk)) {
 
 const sdkPackageJsonPath = path.join(resolvedLinkedSdk, "package.json");
 if (!fs.existsSync(sdkPackageJsonPath)) {
-  fail(`Expected SDK package manifest at ${sdkPackageJsonPath}, but it does not exist.`);
+  fail(
+    `Expected SDK package manifest at ${sdkPackageJsonPath}, but it does not exist.`,
+  );
 }
 
 const sdkPackage = JSON.parse(fs.readFileSync(sdkPackageJsonPath, "utf8"));
@@ -52,4 +56,6 @@ if (sdkPackage.name !== "@mcpjam/sdk") {
   );
 }
 
-console.log(`Verified repo-local SDK link: ${localSdkLink} -> ${resolvedLinkedSdk}`);
+console.log(
+  `Verified repo-local SDK link: ${localSdkLink} -> ${resolvedLinkedSdk}`,
+);

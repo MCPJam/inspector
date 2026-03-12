@@ -15,10 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import {
-  ChartContainer,
-  ChartTooltip,
-} from "@/components/ui/chart";
+import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import {
   Collapsible,
   CollapsibleContent,
@@ -45,9 +42,7 @@ function computeGroupTrend(entries: EvalSuiteOverviewEntry[]): number[] {
     const vals = entries
       .filter((e) => e.passRateTrend.length > i)
       .map((e) => e.passRateTrend[i]);
-    return vals.length > 0
-      ? vals.reduce((a, b) => a + b, 0) / vals.length
-      : 0;
+    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   }).slice(-12);
 }
 
@@ -119,8 +114,8 @@ export function TagAggregationPanel({
   onFilterTagChange,
   onSelectSuite,
 }: TagAggregationPanelProps) {
-  const [expandedTags, setExpandedTags] = useState<Set<string>>(
-    () => (filterTag ? new Set([filterTag]) : new Set()),
+  const [expandedTags, setExpandedTags] = useState<Set<string>>(() =>
+    filterTag ? new Set([filterTag]) : new Set(),
   );
 
   // Auto-expand when filterTag changes
@@ -131,16 +126,15 @@ export function TagAggregationPanel({
   }, [filterTag]);
 
   const visibleGroups = useMemo(
-    () => (filterTag ? tagGroups.filter((g) => g.tag === filterTag) : tagGroups),
+    () =>
+      filterTag ? tagGroups.filter((g) => g.tag === filterTag) : tagGroups,
     [tagGroups, filterTag],
   );
 
   // Pre-compute group trends
   const groupTrends = useMemo(
     () =>
-      new Map(
-        visibleGroups.map((g) => [g.tag, computeGroupTrend(g.entries)]),
-      ),
+      new Map(visibleGroups.map((g) => [g.tag, computeGroupTrend(g.entries)])),
     [visibleGroups],
   );
 
@@ -236,9 +230,7 @@ export function TagAggregationPanel({
         {allTags.map((tag) => (
           <button
             key={tag}
-            onClick={() =>
-              onFilterTagChange(filterTag === tag ? null : tag)
-            }
+            onClick={() => onFilterTagChange(filterTag === tag ? null : tag)}
             className={cn(
               "text-xs px-3 py-1 rounded-full border transition-colors",
               filterTag === tag
@@ -303,7 +295,7 @@ export function TagAggregationPanel({
                 )}
               </div>
 
-              {(group.totals.passed + group.totals.failed) > 0 && (
+              {group.totals.passed + group.totals.failed > 0 && (
                 <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                   <div
                     className="h-full rounded-full bg-primary/70"
@@ -357,7 +349,19 @@ export function TagAggregationPanel({
                 />
                 <ChartTooltip
                   cursor={false}
-                  content={({ active, payload, label }: { active?: boolean; payload?: Array<{ dataKey: string; value: number; color: string }>; label?: string }) => {
+                  content={({
+                    active,
+                    payload,
+                    label,
+                  }: {
+                    active?: boolean;
+                    payload?: Array<{
+                      dataKey: string;
+                      value: number;
+                      color: string;
+                    }>;
+                    label?: string;
+                  }) => {
                     if (!active || !payload || payload.length === 0)
                       return null;
                     return (
@@ -444,7 +448,15 @@ export function TagAggregationPanel({
                 />
                 <ChartTooltip
                   cursor={false}
-                  content={({ active, payload }: { active?: boolean; payload?: Array<{ payload: typeof passRateBarData[number] }> }) => {
+                  content={({
+                    active,
+                    payload,
+                  }: {
+                    active?: boolean;
+                    payload?: Array<{
+                      payload: (typeof passRateBarData)[number];
+                    }>;
+                  }) => {
                     if (!active || !payload || payload.length === 0)
                       return null;
                     const data = payload[0].payload;
@@ -525,10 +537,7 @@ export function TagAggregationPanel({
                   </div>
                   <div className="flex items-center gap-4">
                     {trend.length >= 2 && (
-                      <Sparkline
-                        data={trend}
-                        className="h-5 shrink-0"
-                      />
+                      <Sparkline data={trend} className="h-5 shrink-0" />
                     )}
                     <span className="text-xs text-muted-foreground">
                       <span className="text-emerald-600">
@@ -539,9 +548,7 @@ export function TagAggregationPanel({
                         {group.totals.failed} failed
                       </span>
                     </span>
-                    <span className="text-sm font-bold">
-                      {group.passRate}%
-                    </span>
+                    <span className="text-sm font-bold">{group.passRate}%</span>
                   </div>
                 </CollapsibleTrigger>
 
@@ -557,13 +564,10 @@ export function TagAggregationPanel({
 
                   <div className="divide-y">
                     {sortedEntries.map((entry) => {
-                      const total =
-                        entry.totals.passed + entry.totals.failed;
+                      const total = entry.totals.passed + entry.totals.failed;
                       const suitePassRate =
                         total > 0
-                          ? Math.round(
-                              (entry.totals.passed / total) * 100,
-                            )
+                          ? Math.round((entry.totals.passed / total) * 100)
                           : 0;
                       const status = getStatusDot(entry);
                       const suiteTrend = entry.passRateTrend.slice(-8);
