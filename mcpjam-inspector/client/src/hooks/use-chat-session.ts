@@ -47,10 +47,14 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
-import { authFetch } from "@/lib/session-token";
+import {
+  authFetch,
+  getAuthHeaders as getSessionAuthHeaders,
+} from "@/lib/session-token";
+import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
-import { getHostedAuthorizationHeader } from "@/lib/apis/web/context";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -63,18 +67,12 @@ export interface UseChatSessionOptions {
   hostedOAuthTokens?: Record<string, string>;
   /** Optional server-share token for hosted shared chat sessions */
   hostedShareToken?: string;
-  /** Optional sandbox token for hosted sandbox sessions */
-  hostedSandboxToken?: string;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
-  /** Fixed initial model for hosted sandbox sessions */
-  initialModelId?: string;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
   initialSystemPrompt?: string;
   /** Initial temperature (defaults to 0.7) */
   initialTemperature?: number;
-  /** Initial tool approval mode for hosted sandbox sessions */
-  initialRequireToolApproval?: boolean;
   /** Callback when chat is reset */
   onReset?: () => void;
 }
@@ -191,50 +189,14 @@ function isAuthDeniedError(error: unknown): boolean {
   return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
 }
 
-function getAuthHeadersSignature(
-  headers: Record<string, string> | undefined,
-): string {
-  if (!headers) return "";
-
-  return Object.entries(headers)
-    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
-    .map(([key, value]) => `${key}:${value}`)
-    .join("|");
-}
-
-function resolveModelApiKey({
-  selectedModel,
-  getCustomProviderByName,
-  getToken,
-}: {
-  selectedModel: ModelDefinition;
-  getCustomProviderByName: ReturnType<
-    typeof useCustomProviders
-  >["getCustomProviderByName"];
-  getToken: ReturnType<typeof useAiProviderKeys>["getToken"];
-}): string {
-  if (selectedModel.provider === "custom" && selectedModel.customProviderName) {
-    // For custom providers, the API key is embedded in the provider config.
-    const customProvider = getCustomProviderByName(
-      selectedModel.customProviderName,
-    );
-    return customProvider?.apiKey || "";
-  }
-
-  return getToken(selectedModel.provider as keyof ProviderTokens);
-}
-
 export function useChatSession({
   selectedServers,
   hostedWorkspaceId,
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
   hostedShareToken,
-  hostedSandboxToken,
-  initialModelId,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
-  initialRequireToolApproval = false,
   onReset,
 }: UseChatSessionOptions): UseChatSessionReturn {
   const { getAccessToken } = useAuth();
@@ -278,16 +240,25 @@ export function useChatSession({
   >(null);
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
-  const [requireToolApproval, setRequireToolApproval] = useState(
-    initialRequireToolApproval,
-  );
+  const [requireToolApproval, setRequireToolApproval] = useState(false);
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  const directGuestMode =
+    HOSTED_MODE &&
+    !isAuthenticated &&
+    !isAuthLoading &&
+    !hostedWorkspaceId &&
+    !hostedShareToken;
+  const sharedGuestMode =
+    HOSTED_MODE &&
+    !isAuthenticated &&
+    !isAuthLoading &&
+    !!hostedWorkspaceId &&
+    !!hostedShareToken;
+  const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
   const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
-  const hasResolvedAuthHeadersRef = useRef(false);
-  const authHeadersSignatureRef = useRef("");
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -300,7 +271,25 @@ export function useChatSession({
       customProviders,
     });
     if (HOSTED_MODE) {
-      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
+      const mcpjamModels = models.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      );
+      // Guest users only see the free guest models
+      if (guestMode) {
+        return mcpjamModels.filter((m) =>
+          GUEST_ALLOWED_MODEL_IDS.includes(String(m.id)),
+        );
+      }
+      return mcpjamModels;
+    }
+    // Non-hosted: filter out non-guest MCPJam models when unauthenticated
+    // (keep user-provided models + 3 free MCPJam models)
+    if (!isAuthenticated) {
+      return models.filter(
+        (m) =>
+          !isMCPJamProvidedModel(String(m.id)) ||
+          isGuestAllowedModel(String(m.id)),
+      );
     }
     return models;
   }, [
@@ -309,6 +298,8 @@ export function useChatSession({
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
+    guestMode,
+    isAuthenticated,
     customProviders,
   ]);
 
@@ -316,25 +307,16 @@ export function useChatSession({
   const { selectedModelId, setSelectedModelId } = usePersistedModel();
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
-    if (initialModelId) {
-      return (
-        availableModels.find((model) => String(model.id) === initialModelId) ??
-        fallback
-      );
-    }
     if (!selectedModelId) return fallback;
     const found = availableModels.find((m) => String(m.id) === selectedModelId);
     return found ?? fallback;
-  }, [availableModels, initialModelId, selectedModelId]);
+  }, [availableModels, selectedModelId]);
 
   const setSelectedModel = useCallback(
     (model: ModelDefinition) => {
-      if (initialModelId) {
-        return;
-      }
       setSelectedModelId(String(model.id));
     },
-    [initialModelId, setSelectedModelId],
+    [setSelectedModelId],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -343,101 +325,86 @@ export function useChatSession({
       : false;
   }, [selectedModel]);
 
-  const transportConfigRef = useRef<{
-    selectedModel: ModelDefinition;
-    apiKey: string;
-    temperature: number;
-    systemPrompt: string;
-    selectedServers: string[];
-    hostedWorkspaceId?: string | null;
-    hostedSelectedServerIds: string[];
-    hostedOAuthTokens?: Record<string, string>;
-    hostedShareToken?: string;
-    hostedSandboxToken?: string;
-    chatSessionId: string;
-    requireToolApproval: boolean;
-    customProviders: typeof customProviders;
-    localAuthorizationHeader?: string;
-  } | null>(null);
-  const currentApiKey = resolveModelApiKey({
+  // Create transport
+  const transport = useMemo(() => {
+    let apiKey: string;
+    if (
+      selectedModel.provider === "custom" &&
+      selectedModel.customProviderName
+    ) {
+      // For custom providers, the API key is embedded in the provider config
+      const cp = getCustomProviderByName(selectedModel.customProviderName);
+      apiKey = cp?.apiKey || "";
+    } else {
+      apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
+    }
+    const isGpt5 = isGPT5Model(selectedModel.id);
+
+    // Merge session auth headers with workos auth headers
+    const sessionHeaders = getSessionAuthHeaders();
+    const mergedHeaders = { ...sessionHeaders, ...authHeaders } as Record<
+      string,
+      string
+    >;
+    const transportHeaders = HOSTED_MODE
+      ? undefined
+      : Object.keys(mergedHeaders).length > 0
+        ? mergedHeaders
+        : undefined;
+
+    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
+
+    // Build hosted body based on whether we have a workspace.
+    // Signed-in users are blocked from submitting until hostedWorkspaceId loads
+    // (via hostedContextNotReady), so this branch only runs for guests.
+    const buildHostedBody = () => {
+      if (!hostedWorkspaceId) {
+        return {};
+      }
+      return {
+        workspaceId: hostedWorkspaceId,
+        chatSessionId,
+        selectedServerIds: hostedSelectedServerIds,
+        accessScope: "chat_v2" as const,
+        ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
+        ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
+          ? { oauthTokens: hostedOAuthTokens }
+          : {}),
+      };
+    };
+
+    return new DefaultChatTransport({
+      api: chatApi,
+      fetch: HOSTED_MODE ? authFetch : undefined,
+      body: () => ({
+        model: selectedModel,
+        ...(HOSTED_MODE ? {} : { apiKey }),
+        ...(isGpt5 ? {} : { temperature }),
+        systemPrompt,
+        ...(HOSTED_MODE ? buildHostedBody() : { selectedServers }),
+        requireToolApproval: requireToolApprovalRef.current,
+        ...(!HOSTED_MODE && customProviders.length > 0
+          ? { customProviders }
+          : {}),
+      }),
+      headers: transportHeaders,
+    });
+  }, [
     selectedModel,
-    getCustomProviderByName,
     getToken,
-  });
-  transportConfigRef.current = {
-    selectedModel,
-    apiKey: currentApiKey,
+    getCustomProviderByName,
+    customProviders,
+    authHeaders,
     temperature,
     systemPrompt,
     selectedServers,
     hostedWorkspaceId,
+    chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
-    hostedSandboxToken,
-    chatSessionId,
-    requireToolApproval: requireToolApprovalRef.current,
-    customProviders,
-    localAuthorizationHeader:
-      !HOSTED_MODE && isMcpJamModel ? authHeaders?.Authorization : undefined,
-  };
-
-  const transportRef = useRef<DefaultChatTransport<UIMessage> | null>(null);
-  if (!transportRef.current) {
-    const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
-
-    // AI SDK useChat latches the transport instance until the chat id changes,
-    // so request-time config must be read from refs instead of render closures.
-    transportRef.current = new DefaultChatTransport({
-      api: chatApi,
-      fetch: authFetch,
-      body: () => {
-        const config = transportConfigRef.current!;
-        const isGpt5 = isGPT5Model(config.selectedModel.id);
-
-        return {
-          model: config.selectedModel,
-          ...(HOSTED_MODE ? {} : { apiKey: config.apiKey }),
-          ...(isGpt5 ? {} : { temperature: config.temperature }),
-          systemPrompt: config.systemPrompt,
-          ...(HOSTED_MODE
-            ? {
-                workspaceId: config.hostedWorkspaceId,
-                chatSessionId: config.chatSessionId,
-                selectedServerIds: config.hostedSelectedServerIds,
-                accessScope: "chat_v2" as const,
-                ...(config.hostedShareToken
-                  ? { shareToken: config.hostedShareToken }
-                  : {}),
-                ...(config.hostedSandboxToken
-                  ? { sandboxToken: config.hostedSandboxToken }
-                  : {}),
-                ...(config.hostedOAuthTokens &&
-                Object.keys(config.hostedOAuthTokens).length > 0
-                  ? { oauthTokens: config.hostedOAuthTokens }
-                  : {}),
-              }
-            : { selectedServers: config.selectedServers }),
-          requireToolApproval: config.requireToolApproval,
-          ...(!HOSTED_MODE && config.customProviders.length > 0
-            ? { customProviders: config.customProviders }
-            : {}),
-        };
-      },
-      headers: () => {
-        if (HOSTED_MODE) {
-          return undefined;
-        }
-
-        const localAuthorizationHeader =
-          transportConfigRef.current?.localAuthorizationHeader;
-        return localAuthorizationHeader
-          ? { Authorization: localAuthorizationHeader }
-          : undefined;
-      },
-    });
-  }
-  const transport = transportRef.current;
+    // requireToolApproval read from ref at request time
+  ]);
 
   // useChat hook
   const {
@@ -450,20 +417,16 @@ export function useChatSession({
     addToolApprovalResponse,
   } = useChat({
     id: chatSessionId,
-    transport,
+    transport: transport!,
     sendAutomaticallyWhen: requireToolApproval
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
   });
 
   useSharedChatWidgetCapture({
-    enabled:
-      HOSTED_MODE &&
-      Boolean(hostedShareToken || hostedSandboxToken) &&
-      isAuthenticated,
+    enabled: HOSTED_MODE && !!hostedShareToken && isAuthenticated,
     chatSessionId,
     hostedShareToken,
-    hostedSandboxToken,
     messages,
   });
 
@@ -543,73 +506,64 @@ export function useChatSession({
     onResetRef.current?.();
   }, [setMessages]);
 
-  // Resolve auth state for submit gating and reset when the auth identity changes.
+  // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
     let active = true;
     (async () => {
-      let nextAuthHeaders: Record<string, string> | undefined;
+      let resolved = false;
 
       try {
-        if (HOSTED_MODE) {
-          const hostedHeader = await getHostedAuthorizationHeader();
-          if (!active) return;
-          nextAuthHeaders = hostedHeader
-            ? { Authorization: hostedHeader }
-            : undefined;
-        } else {
-          const token = await getAccessToken?.();
-          if (!active) return;
-          if (token) {
-            nextAuthHeaders = { Authorization: `Bearer ${token}` };
-          } else {
-            nextAuthHeaders = undefined;
-          }
-        }
-      } catch (err) {
-        console.error("[useChatSession] Failed to get access token:", err);
+        const token = await getAccessToken?.();
         if (!active) return;
-        nextAuthHeaders = undefined;
+        if (token) {
+          setAuthHeaders({ Authorization: `Bearer ${token}` });
+          resolved = true;
+        }
+      } catch {
+        // getAccessToken threw (e.g. LoginRequiredError) — not authenticated
       }
 
-      if (!active) return;
-
-      setAuthHeaders(nextAuthHeaders);
-
-      const nextAuthHeadersSignature = getAuthHeadersSignature(nextAuthHeaders);
-      if (!hasResolvedAuthHeadersRef.current) {
-        hasResolvedAuthHeadersRef.current = true;
-        authHeadersSignatureRef.current = nextAuthHeadersSignature;
-        return;
+      // Only fall back to a guest token for explicit guest surfaces:
+      // direct guest chat and shared-chat guests. A regular hosted workspace
+      // should never silently downgrade to guest auth.
+      if (
+        !resolved &&
+        active &&
+        !isAuthenticated &&
+        HOSTED_MODE &&
+        (!hostedWorkspaceId || !!hostedShareToken)
+      ) {
+        const guestToken = await getGuestBearerToken();
+        if (!active) return;
+        if (guestToken) {
+          setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
+        } else {
+          setAuthHeaders(undefined);
+        }
+      } else if (!resolved && active) {
+        setAuthHeaders(undefined);
       }
 
-      if (authHeadersSignatureRef.current === nextAuthHeadersSignature) {
-        return;
+      // Reset chat to force new session with updated auth headers
+      if (active) {
+        skipNextForkDetectionRef.current = true;
+        pendingForkSessionIdRef.current = null;
+        pendingForkMessagesRef.current = null;
+        setChatSessionId(generateId());
+        setMessages([]);
+        onResetRef.current?.();
       }
-
-      authHeadersSignatureRef.current = nextAuthHeadersSignature;
-      skipNextForkDetectionRef.current = true;
-      pendingForkSessionIdRef.current = null;
-      pendingForkMessagesRef.current = null;
-      setChatSessionId(generateId());
-      setMessages([]);
-      onResetRef.current?.();
     })();
     return () => {
       active = false;
     };
-  }, [getAccessToken, setMessages]);
-
-  useEffect(() => {
-    setSystemPrompt(initialSystemPrompt);
-  }, [initialSystemPrompt]);
-
-  useEffect(() => {
-    setTemperature(initialTemperature);
-  }, [initialTemperature]);
-
-  useEffect(() => {
-    setRequireToolApproval(initialRequireToolApproval);
-  }, [initialRequireToolApproval]);
+  }, [
+    getAccessToken,
+    hostedShareToken,
+    hostedWorkspaceId,
+    isAuthenticated,
+    setMessages,
+  ]);
 
   // Ollama model detection
   useEffect(() => {
@@ -679,12 +633,7 @@ export function useChatSession({
             : null,
         );
       } catch (error) {
-        if (
-          !(
-            Boolean(hostedShareToken || hostedSandboxToken) &&
-            isAuthDeniedError(error)
-          )
-        ) {
+        if (!(hostedShareToken && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error,
@@ -699,7 +648,7 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel, hostedShareToken, hostedSandboxToken]);
+  }, [selectedServers, selectedModel, hostedShareToken]);
 
   // System prompt token count
   useEffect(() => {
@@ -718,12 +667,7 @@ export function useChatSession({
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (
-          !(
-            Boolean(hostedShareToken || hostedSandboxToken) &&
-            isAuthDeniedError(error)
-          )
-        ) {
+        if (!(hostedShareToken && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error,
@@ -736,7 +680,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedShareToken, hostedSandboxToken]);
+  }, [systemPrompt, selectedModel, hostedShareToken]);
 
   // Reset chat when selected servers change
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
@@ -783,13 +727,26 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  const requiresAuthForChat = HOSTED_MODE || isMcpJamModel;
-  const isAuthReady = !requiresAuthForChat || !!authHeaders;
+  // Compute guest access from React state instead of the global hostedApiContext.
+  // Shared chats are guest-capable even though they are scoped to a workspace,
+  // while direct guests have no workspace at all.
+  // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
+  // In non-hosted mode: only require auth for non-guest MCPJam models
+  // (server injects production guest token for guest-allowed models).
+  const requiresAuthForChat = HOSTED_MODE
+    ? true
+    : isMcpJamModel && !isGuestAllowedModel(String(selectedModel?.id ?? ""));
+  const isAuthReady =
+    !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
+  // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
   const disableForAuthentication =
-    !HOSTED_MODE && !isAuthenticated && requiresAuthForChat;
-  const authHeadersNotReady = requiresAuthForChat && !authHeaders;
+    !isAuthenticated && requiresAuthForChat && !guestMode;
+  const authHeadersNotReady =
+    requiresAuthForChat && isAuthenticated && !authHeaders;
+  // Direct guests don't need a workspace; shared guests still do.
   const hostedContextNotReady =
     HOSTED_MODE &&
+    !directGuestMode &&
     (!hostedWorkspaceId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));
