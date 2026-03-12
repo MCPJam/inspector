@@ -26,18 +26,19 @@ new EvalTest(options: EvalTestConfig)
 
 ### EvalTestConfig
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `name` | `string` | Yes | Unique identifier for the test |
-| `test` | `TestFunction` | Yes | The test function to run |
+| Property | Type           | Required | Description                    |
+| -------- | -------------- | -------- | ------------------------------ |
+| `name`   | `string`       | Yes      | Unique identifier for the test |
+| `test`   | `TestFunction` | Yes      | The test function to run       |
 
 ### TestFunction Type
 
 ```typescript
-type TestFunction = (agent: EvalAgent) => boolean | Promise<boolean>
+type TestFunction = (agent: EvalAgent) => boolean | Promise<boolean>;
 ```
 
 The test function receives an [`EvalAgent`](/sdk/reference/test-agent) and must return a `boolean`:
+
 - `true` = test passed
 - `false` = test failed
 
@@ -69,31 +70,33 @@ run(agent: EvalAgent, options: EvalTestRunOptions): Promise<EvalRunResult>
 
 #### Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `agent` | `EvalAgent` | The agent to test with (`TestAgent` or mock) |
-| `options` | `EvalTestRunOptions` | Run configuration |
+| Parameter | Type                 | Description                                  |
+| --------- | -------------------- | -------------------------------------------- |
+| `agent`   | `EvalAgent`          | The agent to test with (`TestAgent` or mock) |
+| `options` | `EvalTestRunOptions` | Run configuration                            |
 
 #### EvalTestRunOptions
 
-| Property | Type | Required | Default | Description |
-|----------|------|----------|---------|-------------|
-| `iterations` | `number` | Yes | - | Number of test runs |
-| `concurrency` | `number` | No | `5` | Parallel test runs |
-| `retries` | `number` | No | `0` | Retry failed tests |
-| `timeoutMs` | `number` | No | `30000` | Timeout per test (ms) |
-| `onProgress` | `ProgressCallback` | No | - | Progress callback |
-| `onFailure` | `(report: string) => void` | No | - | Called with a failure report if any iterations fail |
-| `mcpjam` | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No | - | Auto-save results to MCPJam |
+| Property      | Type                                                     | Required | Default | Description                                                                                                                                                                                        |
+| ------------- | -------------------------------------------------------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `iterations`  | `number`                                                 | Yes      | -       | Number of test runs                                                                                                                                                                                |
+| `concurrency` | `number`                                                 | No       | `5`     | Parallel test runs                                                                                                                                                                                 |
+| `retries`     | `number`                                                 | No       | `0`     | Retry failed tests                                                                                                                                                                                 |
+| `timeoutMs`   | `number`                                                 | No       | `30000` | Per-iteration wall-clock timeout in ms. The active prompt is aborted at this deadline, then given a 1 second grace period to settle so partial tool calls and trace history can still be captured. |
+| `onProgress`  | `ProgressCallback`                                       | No       | -       | Progress callback                                                                                                                                                                                  |
+| `onFailure`   | `(report: string) => void`                               | No       | -       | Called with a failure report if any iterations fail                                                                                                                                                |
+| `mcpjam`      | [`MCPJamReportingConfig`](/sdk/reference/eval-reporting) | No       | -       | Auto-save results to MCPJam                                                                                                                                                                        |
 
 <Note>
-Results are automatically saved to MCPJam after the run completes when an API key is available via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment variable. Set `mcpjam.enabled: false` to disable.
+  Results are automatically saved to MCPJam after the run completes when an API
+  key is available via `mcpjam.apiKey` or the `MCPJAM_API_KEY` environment
+  variable. Set `mcpjam.enabled: false` to disable.
 </Note>
 
 #### ProgressCallback Type
 
 ```typescript
-type ProgressCallback = (completed: number, total: number) => void
+type ProgressCallback = (completed: number, total: number) => void;
 ```
 
 #### Example
@@ -226,26 +229,26 @@ getResults(): EvalRunResult | null
 
 #### EvalRunResult Type
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `iterations` | `number` | Total iterations run |
-| `successes` | `number` | Number that passed |
-| `failures` | `number` | Number that failed |
-| `results` | `boolean[]` | Pass/fail per iteration |
-| `iterationDetails` | `IterationResult[]` | Detailed per-iteration results |
-| `tokenUsage` | `object` | Aggregate and per-iteration token usage |
-| `latency` | `object` | Latency stats (e2e, llm, mcp) with p50/p95 |
+| Property           | Type                | Description                                |
+| ------------------ | ------------------- | ------------------------------------------ |
+| `iterations`       | `number`            | Total iterations run                       |
+| `successes`        | `number`            | Number that passed                         |
+| `failures`         | `number`            | Number that failed                         |
+| `results`          | `boolean[]`         | Pass/fail per iteration                    |
+| `iterationDetails` | `IterationResult[]` | Detailed per-iteration results             |
+| `tokenUsage`       | `object`            | Aggregate and per-iteration token usage    |
+| `latency`          | `object`            | Latency stats (e2e, llm, mcp) with p50/p95 |
 
 #### IterationResult Type
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `passed` | `boolean` | Whether this iteration passed |
-| `latencies` | `LatencyBreakdown[]` | Latency per prompt in this iteration |
-| `tokens` | `{ total, input, output }` | Token usage |
-| `error` | `string \| undefined` | Error message if failed |
-| `retryCount` | `number \| undefined` | Number of retries attempted |
-| `prompts` | `PromptResult[] \| undefined` | Prompt results from this iteration |
+| Property     | Type                          | Description                          |
+| ------------ | ----------------------------- | ------------------------------------ |
+| `passed`     | `boolean`                     | Whether this iteration passed        |
+| `latencies`  | `LatencyBreakdown[]`          | Latency per prompt in this iteration |
+| `tokens`     | `{ total, input, output }`    | Token usage                          |
+| `error`      | `string \| undefined`         | Error message if failed              |
+| `retryCount` | `number \| undefined`         | Number of retries attempted          |
+| `prompts`    | `PromptResult[] \| undefined` | Prompt results from this iteration   |
 
 ---
 
@@ -337,7 +340,7 @@ if (test.accuracy() < 0.9) {
 The test's identifier (via `getName()`).
 
 ```typescript
-test.getName() // "addition-accuracy"
+test.getName(); // "addition-accuracy"
 ```
 
 ---
@@ -350,7 +353,7 @@ test.getName() // "addition-accuracy"
 test: async (agent) => {
   const result = await agent.prompt("Add 5 and 3");
   return result.hasToolCall("add");
-}
+};
 ```
 
 ### Argument Validation
@@ -360,7 +363,7 @@ test: async (agent) => {
   const result = await agent.prompt("Add 10 and 20");
   const args = result.getToolArguments("add");
   return args?.a === 10 && args?.b === 20;
-}
+};
 ```
 
 ### Response Content
@@ -369,7 +372,7 @@ test: async (agent) => {
 test: async (agent) => {
   const result = await agent.prompt("What is 5 + 5?");
   return result.getText().includes("10");
-}
+};
 ```
 
 ### Multiple Conditions
@@ -382,7 +385,7 @@ test: async (agent) => {
     !result.hasError() &&
     result.getText().length > 0
   );
-}
+};
 ```
 
 ### Multi-Turn Conversation
@@ -392,7 +395,7 @@ test: async (agent) => {
   const r1 = await agent.prompt("Create a project");
   const r2 = await agent.prompt("Add a task to it", { context: r1 });
   return r1.hasToolCall("createProject") && r2.hasToolCall("createTask");
-}
+};
 ```
 
 ### With Validators
@@ -403,7 +406,7 @@ import { matchToolCallWithArgs } from "@mcpjam/sdk";
 test: async (agent) => {
   const result = await agent.prompt("Add 2 and 3");
   return matchToolCallWithArgs("add", { a: 2, b: 3 }, result.getToolCalls());
-}
+};
 ```
 
 ---
