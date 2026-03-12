@@ -30,8 +30,14 @@ export const getPostHogOptions = () =>
         opt_out_capturing: true,
         disable_external_dependency_loading: true,
         advanced_disable_decide: true,
-        // Bootstrap a dummy flag so PostHog considers flags "loaded"
-        bootstrap: { featureFlags: { _dev: true } },
+        // Bootstrap all feature flags as enabled so PostHog considers flags "loaded"
+        // and useFeatureFlagEnabled() returns true for gated UI in dev mode
+        bootstrap: {
+          featureFlags: {
+            "ci-evals-enabled": true,
+            "mcpjam-learning": true,
+          },
+        },
         loaded: (posthog: any) => {
           // In dev mode, treat all feature flags as enabled
           posthog.isFeatureEnabled = () => true;
