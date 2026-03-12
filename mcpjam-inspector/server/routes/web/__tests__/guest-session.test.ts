@@ -133,8 +133,8 @@ describe("POST /guest-session", () => {
   });
 
   describe("remote guest session mode", () => {
-    it("proxies the hosted guest session in development by default", async () => {
-      process.env.NODE_ENV = "development";
+    it("proxies the hosted guest session when local signing is explicitly disabled", async () => {
+      process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "false";
       process.env.MCPJAM_GUEST_SESSION_URL =
         "https://app.mcpjam.com/api/web/guest-session";
       global.fetch = vi.fn().mockResolvedValue(

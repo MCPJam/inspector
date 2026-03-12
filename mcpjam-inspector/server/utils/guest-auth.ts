@@ -4,9 +4,9 @@
  * Provides a valid guest JWT for MCPJam model requests from unauthenticated
  * users in non-hosted mode (npx/electron/docker).
  *
- * By default, local dev and shipped production runtimes fetch a guest session
- * from MCPJam so they follow the same hosted guest auth flow as app.mcpjam.com.
- * Local signing remains available as an opt-in for auth debugging.
+ * By default, local runtimes sign guest tokens locally so they keep working
+ * against their own Convex dev/sandbox setup. Hosted guest-session fetching
+ * remains available as an explicit opt-in.
  */
 
 import { issueGuestToken } from "../services/guest-token.js";
@@ -24,9 +24,9 @@ let cachedToken: { token: string; expiresAt: number } | null = null;
 /**
  * Returns a Bearer authorization header for unauthenticated MCPJam model calls.
  *
- * By default, dev and production local runtimes fetch a hosted guest session
- * from MCPJam so they follow the same guest auth flow as app.mcpjam.com.
- * Local signing remains available as an opt-in for auth debugging.
+ * By default, local runtimes sign guest tokens locally so they keep working
+ * against their own Convex dev/sandbox setup. Hosted guest-session fetching
+ * remains available as an explicit opt-in.
  */
 export async function getProductionGuestAuthHeader(): Promise<string | null> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + REFRESH_BUFFER_MS) {

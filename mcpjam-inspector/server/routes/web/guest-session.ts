@@ -1,9 +1,5 @@
 import { Hono } from "hono";
-import {
-  getGuestTokenFingerprint,
-  issueGuestToken,
-} from "../../services/guest-token.js";
-import { logger } from "../../utils/logger.js";
+import { issueGuestToken } from "../../services/guest-token.js";
 import {
   fetchRemoteGuestSession,
   shouldUseLocalGuestSigning,
@@ -39,8 +35,8 @@ function getClientIp(c: any): string {
  * POST /api/web/guest-session
  *
  * Returns a guest bearer token for unauthenticated visitors.
- * In local-signing mode the token is issued here; otherwise the request is
- * proxied to the hosted guest-session endpoint.
+ * By default the token is issued here using the local signer; the hosted
+ * guest-session endpoint remains available as an explicit opt-in.
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
@@ -52,9 +48,6 @@ guestSession.post("/", async (c) => {
   if (entry) {
     if (now - entry.windowStart < IP_WINDOW_MS) {
       if (entry.count >= IP_RATE_LIMIT) {
-        logger.warn(
-          `[guest-auth-debug] guest_session rate_limited ip=${ip} count=${entry.count}`,
-        );
         return c.json(
           {
             code: ErrorCode.RATE_LIMITED,
@@ -79,7 +72,8 @@ guestSession.post("/", async (c) => {
       return c.json(
         {
           code: ErrorCode.INTERNAL_ERROR,
-          message: "Unable to obtain a guest session right now. Please try again.",
+          message:
+            "Unable to obtain a guest session right now. Please try again.",
         },
         503,
       );
@@ -88,9 +82,6 @@ guestSession.post("/", async (c) => {
   }
 
   const { guestId, token, expiresAt } = issueGuestToken();
-  logger.info(
-    `[guest-auth-debug] guest_session issued guestId=${guestId} expiresAt=${new Date(expiresAt).toISOString()} token=${getGuestTokenFingerprint(token)} ip=${ip}`,
-  );
   return c.json({ guestId, token, expiresAt });
 });
 

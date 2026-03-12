@@ -5,9 +5,9 @@ import { logger } from "./logger.js";
 let syncStarted = false;
 
 /**
- * When local guest signing is explicitly enabled in dev, push the guest public
- * key and Convex guest JWKS override so Convex can verify JWTs signed by this
- * local inspector process.
+ * When local guest signing is enabled in dev, push the guest public key and
+ * Convex guest JWKS override so Convex can verify JWTs signed by this local
+ * inspector process.
  */
 export function syncGuestAuthConfigToConvex(): void {
   if (

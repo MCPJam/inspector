@@ -7,8 +7,6 @@ import type { HttpServerConfig } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
-import { getGuestTokenFingerprint } from "../../services/guest-token.js";
-import { logger } from "../../utils/logger.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import { saveThreadToConvex } from "../../utils/shared-chat-persistence.js";
@@ -33,28 +31,18 @@ chatV2.post("/", async (c) => {
   // serialize the Response object as '{}' instead of forwarding the stream.
   // Track OAuth server URLs so we can enrich auth errors with redirect info
   let oauthServerUrls: Record<string, string> = {};
-  let tokenFingerprint = "none";
-  let requestMode = "unknown";
   try {
     const bearerToken = assertBearerToken(c);
-    tokenFingerprint = getGuestTokenFingerprint(bearerToken);
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
 
     // Detect guest request by body shape: no workspaceId means guest-direct
     // (matching the pattern from withEphemeralConnection in auth.ts)
     const isGuestRequest = !rawBody.workspaceId;
-    requestMode = isGuestRequest ? "guest" : "workspace";
-    logger.info(
-      `[guest-auth-debug] chat_v2 request mode=${requestMode} guestId=${c.get("guestId") ? "present" : "missing"} workspaceId=${typeof rawBody.workspaceId === "string" ? "present" : "missing"} serverUrl=${typeof rawBody.serverUrl === "string" ? "present" : "missing"} token=${tokenFingerprint}`,
-    );
 
     if (isGuestRequest) {
       // ── Guest path: direct connection, no Convex authorization ──
       const guestId = c.get("guestId") as string | undefined;
       if (!guestId) {
-        logger.warn(
-          `[guest-auth-debug] chat_v2 reject mode=guest reason=missing_guest_id token=${tokenFingerprint}`,
-        );
         throw new WebRouteError(
           401,
           ErrorCode.UNAUTHORIZED,
@@ -291,9 +279,6 @@ chatV2.post("/", async (c) => {
       }
 
       const modelMessages = await convertToModelMessages(messages);
-      logger.info(
-        `[guest-auth-debug] chat_v2 execute mode=workspace workspaceId=present serverCount=${selectedServerIds.length} model=${String(modelDefinition.id)} token=${tokenFingerprint}`,
-      );
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
@@ -328,18 +313,12 @@ chatV2.post("/", async (c) => {
     if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
       const firstUrl = Object.values(oauthServerUrls)[0];
       const msg = error instanceof Error ? error.message : String(error);
-      logger.warn(
-        `[guest-auth-debug] chat_v2 oauth_required mode=${requestMode} token=${tokenFingerprint} message=${msg}`,
-      );
       return webError(c, 401, ErrorCode.UNAUTHORIZED, msg, {
         oauthRequired: true,
         serverUrl: firstUrl,
       });
     }
     const routeError = mapRuntimeError(error);
-    logger.warn(
-      `[guest-auth-debug] chat_v2 error mode=${requestMode} status=${routeError.status} code=${routeError.code} guestId=${c.get("guestId") ? "present" : "missing"} token=${tokenFingerprint} message=${routeError.message}`,
-    );
     return webError(
       c,
       routeError.status,

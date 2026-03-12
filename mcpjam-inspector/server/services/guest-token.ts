@@ -27,15 +27,25 @@ import {
 } from "fs";
 import os from "os";
 import path from "path";
+import { shouldUseLocalGuestSigning } from "../utils/guest-session-source.js";
 import { logger } from "../utils/logger.js";
 
 const GUEST_TOKEN_TTL_S = 24 * 60 * 60; // 24 hours in seconds
 const GUEST_ISSUER = "https://api.mcpjam.com/guest";
 const KID = "guest-1";
+const DEFAULT_HOSTED_GUEST_JWKS_URL = "https://api.mcpjam.com/guest/jwks";
+const HOSTED_GUEST_JWKS_CACHE_MS = 5 * 60 * 1000;
 
 let privateKey: KeyObject;
 let publicKey: KeyObject;
 let jwks: { keys: JsonWebKey[] };
+let hostedGuestPublicKeysCache:
+  | {
+      fetchedAt: number;
+      keysByKid: Map<string, KeyObject>;
+      fallbackKey: KeyObject | null;
+    }
+  | undefined;
 
 function getLocalGuestKeyDir(): string {
   return process.env.GUEST_JWT_KEY_DIR || path.join(os.homedir(), ".mcpjam");
@@ -126,6 +136,163 @@ function base64url(input: string | Buffer): string {
 
 function base64urlDecode(str: string): Buffer {
   return Buffer.from(str, "base64url");
+}
+
+function getHostedGuestJwksUrl(): string {
+  return process.env.MCPJAM_GUEST_JWKS_URL || DEFAULT_HOSTED_GUEST_JWKS_URL;
+}
+
+function verifyGuestTokenSignature(
+  signingInput: string,
+  signature: string,
+  verificationKey: KeyObject,
+): { valid: boolean; reason?: string } {
+  try {
+    const verifier = createVerify("RSA-SHA256");
+    verifier.update(signingInput);
+    if (!verifier.verify(verificationKey, signature, "base64url")) {
+      return { valid: false, reason: "signature_invalid" };
+    }
+    return { valid: true };
+  } catch {
+    return { valid: false, reason: "signature_error" };
+  }
+}
+
+function parseGuestToken(token: string):
+  | {
+      parsed: {
+        header: Record<string, unknown>;
+        payload: { iss: string; sub: string; exp: number };
+        signingInput: string;
+        signature: string;
+      };
+    }
+  | {
+      reason: string;
+    } {
+  if (!token || typeof token !== "string") {
+    return { reason: "missing_token" };
+  }
+
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return { reason: "malformed_token" };
+  }
+
+  const [encodedHeader, encodedPayload, signature] = parts;
+
+  try {
+    const header = JSON.parse(
+      base64urlDecode(encodedHeader).toString("utf-8"),
+    ) as Record<string, unknown> | undefined;
+    if (!header || header.alg !== "RS256") {
+      return { reason: "invalid_alg" };
+    }
+
+    const payload = JSON.parse(
+      base64urlDecode(encodedPayload).toString("utf-8"),
+    ) as Partial<{ iss: string; sub: string; exp: number }> | undefined;
+
+    if (!payload || payload.iss !== GUEST_ISSUER) {
+      return { reason: "issuer_mismatch" };
+    }
+
+    if (typeof payload.sub !== "string" || typeof payload.exp !== "number") {
+      return { reason: "missing_claims" };
+    }
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (nowSeconds > payload.exp) {
+      return { reason: "expired" };
+    }
+
+    return {
+      parsed: {
+        header,
+        payload: {
+          iss: payload.iss,
+          sub: payload.sub,
+          exp: payload.exp,
+        },
+        signingInput: `${encodedHeader}.${encodedPayload}`,
+        signature,
+      },
+    };
+  } catch {
+    return { reason: "invalid_payload" };
+  }
+}
+
+async function getHostedGuestVerificationKey(
+  kid: string | undefined,
+): Promise<KeyObject | null> {
+  const now = Date.now();
+  if (
+    hostedGuestPublicKeysCache &&
+    now - hostedGuestPublicKeysCache.fetchedAt < HOSTED_GUEST_JWKS_CACHE_MS
+  ) {
+    if (kid && hostedGuestPublicKeysCache.keysByKid.has(kid)) {
+      return hostedGuestPublicKeysCache.keysByKid.get(kid) ?? null;
+    }
+    return hostedGuestPublicKeysCache.fallbackKey;
+  }
+
+  try {
+    const response = await fetch(getHostedGuestJwksUrl(), {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      logger.warn(
+        `[guest-auth] Failed to fetch hosted guest JWKS: ${response.status} ${response.statusText}`,
+      );
+      return null;
+    }
+
+    const body = (await response.json()) as {
+      keys?: Array<JsonWebKey & { kid?: string }>;
+    };
+    const keys = Array.isArray(body.keys) ? body.keys : [];
+    const keysByKid = new Map<string, KeyObject>();
+    let fallbackKey: KeyObject | null = null;
+
+    for (const jwk of keys) {
+      try {
+        const nextKey = createPublicKey({
+          key: jwk,
+          format: "jwk",
+        });
+        if (!fallbackKey) {
+          fallbackKey = nextKey;
+        }
+        if (typeof jwk.kid === "string") {
+          keysByKid.set(jwk.kid, nextKey);
+        }
+      } catch {
+        // Skip malformed keys.
+      }
+    }
+
+    hostedGuestPublicKeysCache = {
+      fetchedAt: now,
+      keysByKid,
+      fallbackKey,
+    };
+
+    if (kid && keysByKid.has(kid)) {
+      return keysByKid.get(kid) ?? null;
+    }
+    return fallbackKey;
+  } catch (error) {
+    logger.warn(
+      `[guest-auth] Failed to fetch hosted guest JWKS: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -283,54 +450,69 @@ export function validateGuestTokenDetailed(token: string): {
     );
   }
 
-  if (!token || typeof token !== "string") {
-    return { valid: false, reason: "missing_token" };
+  const parsed = parseGuestToken(token);
+  if (!("parsed" in parsed)) {
+    return { valid: false, reason: parsed.reason };
   }
 
-  const parts = token.split(".");
-  if (parts.length !== 3) {
-    return { valid: false, reason: "malformed_token" };
+  const signatureResult = verifyGuestTokenSignature(
+    parsed.parsed.signingInput,
+    parsed.parsed.signature,
+    publicKey,
+  );
+  if (!signatureResult.valid) {
+    return { valid: false, reason: signatureResult.reason };
   }
 
-  const [encodedHeader, encodedPayload, signature] = parts;
+  return { valid: true, guestId: parsed.parsed.payload.sub };
+}
 
-  // Verify RS256 signature
-  try {
-    const verifier = createVerify("RSA-SHA256");
-    verifier.update(`${encodedHeader}.${encodedPayload}`);
-    if (!verifier.verify(publicKey, signature, "base64url")) {
-      return { valid: false, reason: "signature_invalid" };
-    }
-  } catch {
-    return { valid: false, reason: "signature_error" };
-  }
-
-  // Decode and validate claims
-  try {
-    const header = JSON.parse(base64urlDecode(encodedHeader).toString("utf-8"));
-    if (header.alg !== "RS256") {
-      return { valid: false, reason: "invalid_alg" };
-    }
-
-    const payload = JSON.parse(
-      base64urlDecode(encodedPayload).toString("utf-8"),
+export async function validateGuestTokenDetailedAsync(token: string): Promise<{
+  valid: boolean;
+  guestId?: string;
+  reason?: string;
+}> {
+  if (!publicKey) {
+    throw new Error(
+      "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
     );
-
-    if (payload.iss !== GUEST_ISSUER) {
-      return { valid: false, reason: "issuer_mismatch" };
-    }
-
-    if (!payload.sub || !payload.exp) {
-      return { valid: false, reason: "missing_claims" };
-    }
-
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    if (nowSeconds > payload.exp) {
-      return { valid: false, reason: "expired" };
-    }
-
-    return { valid: true, guestId: payload.sub };
-  } catch {
-    return { valid: false, reason: "invalid_payload" };
   }
+
+  const parsed = parseGuestToken(token);
+  if (!("parsed" in parsed)) {
+    return { valid: false, reason: parsed.reason };
+  }
+
+  const localSignatureResult = verifyGuestTokenSignature(
+    parsed.parsed.signingInput,
+    parsed.parsed.signature,
+    publicKey,
+  );
+  if (localSignatureResult.valid) {
+    return { valid: true, guestId: parsed.parsed.payload.sub };
+  }
+
+  if (shouldUseLocalGuestSigning()) {
+    return { valid: false, reason: localSignatureResult.reason };
+  }
+
+  const hostedKey = await getHostedGuestVerificationKey(
+    typeof parsed.parsed.header.kid === "string"
+      ? parsed.parsed.header.kid
+      : undefined,
+  );
+  if (!hostedKey) {
+    return { valid: false, reason: "hosted_key_unavailable" };
+  }
+
+  const hostedSignatureResult = verifyGuestTokenSignature(
+    parsed.parsed.signingInput,
+    parsed.parsed.signature,
+    hostedKey,
+  );
+  if (!hostedSignatureResult.valid) {
+    return { valid: false, reason: hostedSignatureResult.reason };
+  }
+
+  return { valid: true, guestId: parsed.parsed.payload.sub };
 }

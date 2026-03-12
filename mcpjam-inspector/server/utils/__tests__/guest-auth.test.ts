@@ -57,8 +57,24 @@ describe("guest-auth", () => {
     global.fetch = originalFetch;
   });
 
-  it("fetches a hosted guest session in development by default", async () => {
+  it("uses local guest signing in development by default", async () => {
     process.env.NODE_ENV = "development";
+    mockIssueGuestToken.mockReturnValue({
+      token: "local-guest-token",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
+    const header = await getProductionGuestAuthHeader();
+
+    expect(header).toBe("Bearer local-guest-token");
+    expect(mockIssueGuestToken).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("fetches a hosted guest session in development when local signing is explicitly disabled", async () => {
+    process.env.NODE_ENV = "development";
+    process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "false";
     process.env.MCPJAM_GUEST_SESSION_URL =
       "https://app.mcpjam.com/api/web/guest-session";
     vi.mocked(global.fetch).mockResolvedValue(
@@ -89,24 +105,24 @@ describe("guest-auth", () => {
     expect(mockIssueGuestToken).not.toHaveBeenCalled();
   });
 
-  it("uses local guest signing in development when explicitly enabled", async () => {
-    process.env.NODE_ENV = "development";
-    process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "true";
+  it("uses local guest signing in production by default", async () => {
+    process.env.NODE_ENV = "production";
     mockIssueGuestToken.mockReturnValue({
-      token: "local-guest-token",
+      token: "prod-local-guest-token",
       expiresAt: Date.now() + 60_000,
     });
 
     const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
     const header = await getProductionGuestAuthHeader();
 
-    expect(header).toBe("Bearer local-guest-token");
+    expect(header).toBe("Bearer prod-local-guest-token");
     expect(mockIssueGuestToken).toHaveBeenCalledTimes(1);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it("fetches a hosted guest session in production when no local signing keys are configured", async () => {
+  it("fetches a hosted guest session in production when local signing is explicitly disabled", async () => {
     process.env.NODE_ENV = "production";
+    process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "false";
     process.env.MCPJAM_GUEST_SESSION_URL =
       "https://app.mcpjam.com/api/web/guest-session";
     vi.mocked(global.fetch).mockResolvedValue(
@@ -135,22 +151,5 @@ describe("guest-auth", () => {
       },
     );
     expect(mockIssueGuestToken).not.toHaveBeenCalled();
-  });
-
-  it("still uses local signing in production when explicit guest signing keys are configured", async () => {
-    process.env.NODE_ENV = "production";
-    process.env.GUEST_JWT_PRIVATE_KEY = "private";
-    process.env.GUEST_JWT_PUBLIC_KEY = "public";
-    mockIssueGuestToken.mockReturnValue({
-      token: "env-signed-guest-token",
-      expiresAt: Date.now() + 60_000,
-    });
-
-    const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
-    const header = await getProductionGuestAuthHeader();
-
-    expect(header).toBe("Bearer env-signed-guest-token");
-    expect(mockIssueGuestToken).toHaveBeenCalledTimes(1);
-    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

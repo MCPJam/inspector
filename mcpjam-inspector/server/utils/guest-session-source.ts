@@ -10,19 +10,17 @@ export type RemoteGuestSession = {
 };
 
 export function shouldUseLocalGuestSigning(): boolean {
-  if (process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING === "true") {
-    return true;
+  if (process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING === "false") {
+    return false;
   }
 
-  if (process.env.NODE_ENV === "test") {
-    return true;
-  }
-
-  return !!process.env.GUEST_JWT_PRIVATE_KEY && !!process.env.GUEST_JWT_PUBLIC_KEY;
+  return true;
 }
 
 export function getRemoteGuestSessionUrl(): string {
-  return process.env.MCPJAM_GUEST_SESSION_URL || DEFAULT_REMOTE_GUEST_SESSION_URL;
+  return (
+    process.env.MCPJAM_GUEST_SESSION_URL || DEFAULT_REMOTE_GUEST_SESSION_URL
+  );
 }
 
 export async function fetchRemoteGuestSession(): Promise<RemoteGuestSession | null> {
@@ -57,7 +55,8 @@ export async function fetchRemoteGuestSession(): Promise<RemoteGuestSession | nu
 
     logger.info("[guest-auth] Fetched guest token from MCPJam guest session");
     return {
-      guestId: typeof session.guestId === "string" ? session.guestId : undefined,
+      guestId:
+        typeof session.guestId === "string" ? session.guestId : undefined,
       token: session.token,
       expiresAt: session.expiresAt,
     };
