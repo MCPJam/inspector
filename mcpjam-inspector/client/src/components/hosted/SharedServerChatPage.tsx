@@ -44,7 +44,10 @@ interface SharedServerChatPageProps {
   onExitSharedChat?: () => void;
 }
 
-function getSharedOAuthCopy(status: string, serverName: string): {
+function getSharedOAuthCopy(
+  status: string,
+  serverName: string,
+): {
   title: string;
   description: string;
   buttonLabel: string | null;
@@ -321,7 +324,8 @@ export function SharedServerChatPage({
       serverId: pendingRuntimeOAuthDetails.serverId ?? session.payload.serverId,
       serverName:
         pendingRuntimeOAuthDetails.serverName ?? session.payload.serverName,
-      serverUrl: pendingRuntimeOAuthDetails.serverUrl ?? session.payload.serverUrl,
+      serverUrl:
+        pendingRuntimeOAuthDetails.serverUrl ?? session.payload.serverUrl,
     });
     setPendingRuntimeOAuthDetails(null);
   }, [markOAuthRequired, pendingRuntimeOAuthDetails, session]);

@@ -2,17 +2,14 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareUsageThreadDetail } from "../ShareUsageThreadDetail";
 
-const {
-  mockMessageView,
-  mockAdaptTraceToUiMessages,
-  mockThreadState,
-} = vi.hoisted(() => ({
-  mockMessageView: vi.fn(),
-  mockAdaptTraceToUiMessages: vi.fn(),
-  mockThreadState: {
-    sourceType: "sandbox",
-  },
-}));
+const { mockMessageView, mockAdaptTraceToUiMessages, mockThreadState } =
+  vi.hoisted(() => ({
+    mockMessageView: vi.fn(),
+    mockAdaptTraceToUiMessages: vi.fn(),
+    mockThreadState: {
+      sourceType: "sandbox",
+    },
+  }));
 
 vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatThread: () => ({

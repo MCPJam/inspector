@@ -37,9 +37,7 @@ function normalizeHostedOAuthReturnHash(
     return null;
   }
 
-  return trimmed.startsWith("#")
-    ? trimmed
-    : `#${trimmed.replace(/^\/+/, "")}`;
+  return trimmed.startsWith("#") ? trimmed : `#${trimmed.replace(/^\/+/, "")}`;
 }
 
 export function matchesHostedOAuthServerIdentity(
@@ -52,11 +50,7 @@ export function matchesHostedOAuthServerIdentity(
     serverUrl?: string | null;
   },
 ): boolean {
-  if (
-    left.serverUrl &&
-    right.serverUrl &&
-    left.serverUrl === right.serverUrl
-  ) {
+  if (left.serverUrl && right.serverUrl && left.serverUrl === right.serverUrl) {
     return true;
   }
 
@@ -108,8 +102,7 @@ export function readHostedOAuthPendingMarker(): HostedOAuthPendingMarker | null 
     return {
       surface: parsed.surface,
       serverName: parsed.serverName,
-      serverUrl:
-        typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
+      serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
       returnHash: normalizeHostedOAuthReturnHash(parsed.returnHash),
       startedAt: parsed.startedAt,
     };
@@ -189,9 +182,7 @@ function inferHostedOAuthSurfaceFromSessions(
   return null;
 }
 
-export function getHostedOAuthCallbackContext():
-  | HostedOAuthCallbackContext
-  | null {
+export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | null {
   if (typeof window === "undefined") {
     return null;
   }

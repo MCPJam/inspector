@@ -137,8 +137,9 @@ describe("adaptTraceToUiMessages", () => {
       traceDisplayText: "result text",
       traceDisplayMode: "markdown",
     });
-    expect(msg.parts.find((part) => part.type === "text" && part !== msg.parts[0]))
-      .toBeUndefined();
+    expect(
+      msg.parts.find((part) => part.type === "text" && part !== msg.parts[0]),
+    ).toBeUndefined();
   });
 
   it("attaches structured tool output as json markdown in attached-to-tool mode", () => {

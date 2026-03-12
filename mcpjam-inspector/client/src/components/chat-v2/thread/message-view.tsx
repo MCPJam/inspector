@@ -175,7 +175,10 @@ export function MessageView({
             className="h-4 w-4 object-contain"
           />
         ) : (
-          <MessageCircle className="h-4 w-4 text-muted-foreground" aria-hidden />
+          <MessageCircle
+            className="h-4 w-4 text-muted-foreground"
+            aria-hidden
+          />
         )}
       </div>
 

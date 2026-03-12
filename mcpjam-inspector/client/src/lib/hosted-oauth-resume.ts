@@ -75,8 +75,7 @@ export function readHostedOAuthResumeMarker(
     return {
       surface: parsed.surface,
       serverName: parsed.serverName,
-      serverUrl:
-        typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
+      serverUrl: typeof parsed.serverUrl === "string" ? parsed.serverUrl : null,
       completedAt: parsed.completedAt,
       errorMessage:
         typeof parsed.errorMessage === "string" ? parsed.errorMessage : null,
@@ -93,9 +92,7 @@ export function clearHostedOAuthResumeMarker(): void {
 
 export function isHostedOAuthBusy(status: HostedOAuthStatus): boolean {
   return (
-    status === "launching" ||
-    status === "resuming" ||
-    status === "verifying"
+    status === "launching" || status === "resuming" || status === "verifying"
   );
 }
 

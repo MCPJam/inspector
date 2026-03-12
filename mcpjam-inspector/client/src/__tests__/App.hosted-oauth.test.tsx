@@ -6,7 +6,10 @@ import {
   clearHostedOAuthPendingState,
   writeHostedOAuthPendingMarker,
 } from "../lib/hosted-oauth-callback";
-import { clearSandboxSession, writeSandboxSession } from "../lib/sandbox-session";
+import {
+  clearSandboxSession,
+  writeSandboxSession,
+} from "../lib/sandbox-session";
 
 const { mockHandleOAuthCallback, mockPosthogCapture, mockUseAppState } =
   vi.hoisted(() => ({

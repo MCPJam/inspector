@@ -107,9 +107,7 @@ export function ShareUsageThreadDetail({
     return adaptTraceToUiMessages({
       trace: { messages: messages as any, widgetSnapshots },
       toolResultDisplay:
-        thread?.sourceType === "sandbox"
-          ? "attached-to-tool"
-          : "sibling-text",
+        thread?.sourceType === "sandbox" ? "attached-to-tool" : "sibling-text",
     });
   }, [messages, thread?.sourceType, widgetSnapshots]);
 

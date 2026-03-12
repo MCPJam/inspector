@@ -231,7 +231,11 @@ describe("PartSwitch", () => {
     });
 
     it("passes reasoning display mode to ReasoningPart", () => {
-      const part = { type: "reasoning", text: "Hidden in traces", state: "done" };
+      const part = {
+        type: "reasoning",
+        text: "Hidden in traces",
+        state: "done",
+      };
 
       render(
         <PartSwitch
@@ -248,7 +252,11 @@ describe("PartSwitch", () => {
     });
 
     it("passes collapsible reasoning display mode to ReasoningPart", () => {
-      const part = { type: "reasoning", text: "Owner thread reasoning", state: "done" };
+      const part = {
+        type: "reasoning",
+        text: "Owner thread reasoning",
+        state: "done",
+      };
 
       render(
         <PartSwitch

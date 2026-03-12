@@ -171,7 +171,11 @@ describe("Thread", () => {
       const messages = [createMessage({ id: "msg-1" })];
 
       render(
-        <Thread {...defaultProps} messages={messages} reasoningDisplayMode="hidden" />,
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          reasoningDisplayMode="hidden"
+        />,
       );
 
       expect(mockMessageView).toHaveBeenCalledWith(

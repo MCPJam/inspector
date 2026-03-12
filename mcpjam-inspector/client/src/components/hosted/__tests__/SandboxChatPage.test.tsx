@@ -254,13 +254,15 @@ describe("SandboxChatPage", () => {
     );
 
     expect(mockSignIn).toHaveBeenCalledTimes(1);
-    expect(
-      localStorage.getItem(SANDBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY),
-    ).toBe("/sandbox/test/token-denied");
+    expect(localStorage.getItem(SANDBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
+      "/sandbox/test/token-denied",
+    );
   });
 
   it("shows a generic fallback for unexpected sandbox bootstrap failures", async () => {
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -364,7 +366,9 @@ describe("SandboxChatPage", () => {
 
   it("shows curated copy instead of transport details when sandbox OAuth validation fails", async () => {
     vi.useFakeTimers();
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
     mockValidateHostedServer.mockRejectedValue(
       new Error(
@@ -468,7 +472,9 @@ describe("SandboxChatPage", () => {
 
     expect(await screen.findByTestId("sandbox-chat-tab")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Trigger OAuth" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Trigger OAuth" }),
+    );
 
     expect(
       screen.getByRole("heading", { name: "Authorization Required" }),
@@ -476,7 +482,9 @@ describe("SandboxChatPage", () => {
     expect(
       screen.getByText("You'll return here automatically after consent."),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Authorize" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Authorize" }),
+    ).toBeInTheDocument();
   });
 
   it("re-opens auth only for the matching sandbox server when chat includes server details", async () => {

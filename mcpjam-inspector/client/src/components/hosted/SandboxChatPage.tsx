@@ -25,9 +25,7 @@ import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { slugify } from "@/lib/shared-server-session";
 import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
-import {
-  getSandboxShellStyle,
-} from "@/lib/sandbox-host-style";
+import { getSandboxShellStyle } from "@/lib/sandbox-host-style";
 
 interface SandboxChatPageProps {
   pathToken?: string | null;
@@ -246,10 +244,7 @@ export function SandboxChatPage({
   const [isResolving, setIsResolving] = useState(!!pathToken);
   const [routeError, setRouteError] = useState<SandboxRouteError | null>(null);
 
-  const oauthServers = useMemo(
-    () => session?.payload.servers ?? [],
-    [session],
-  );
+  const oauthServers = useMemo(() => session?.payload.servers ?? [], [session]);
   const {
     oauthStateByServerId,
     pendingOAuthServers,

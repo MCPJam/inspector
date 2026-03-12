@@ -36,10 +36,7 @@ describe("ReasoningPart", () => {
 
   it("shows collapsible reasoning expanded by default", () => {
     render(
-      <ReasoningPart
-        text="Owner thread reasoning"
-        displayMode="collapsible"
-      />,
+      <ReasoningPart text="Owner thread reasoning" displayMode="collapsible" />,
     );
 
     const toggle = screen.getByRole("button", { name: /reasoning/i });
@@ -49,12 +46,17 @@ describe("ReasoningPart", () => {
     fireEvent.click(toggle);
 
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("Owner thread reasoning")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Owner thread reasoning"),
+    ).not.toBeInTheDocument();
   });
 
   it("hides reasoning when display mode is hidden", () => {
     const { container } = render(
-      <ReasoningPart text="Not for public sandbox viewers" displayMode="hidden" />,
+      <ReasoningPart
+        text="Not for public sandbox viewers"
+        displayMode="hidden"
+      />,
     );
 
     expect(container.firstChild).toBeNull();

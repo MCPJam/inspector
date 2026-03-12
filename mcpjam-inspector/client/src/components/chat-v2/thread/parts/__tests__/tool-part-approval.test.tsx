@@ -268,7 +268,9 @@ describe("ToolPart approval expansion", () => {
       await user.click(headerButton);
     }
 
-    expect(screen.getByTestId("text-part")).toHaveTextContent("Readable output");
+    expect(screen.getByTestId("text-part")).toHaveTextContent(
+      "Readable output",
+    );
     expect(screen.getAllByTestId("json-editor")).toHaveLength(1);
   });
 

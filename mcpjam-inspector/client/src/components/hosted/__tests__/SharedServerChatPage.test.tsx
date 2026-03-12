@@ -297,7 +297,9 @@ describe("SharedServerChatPage", () => {
 
   it("shows an explicit retry CTA when hosted OAuth validation keeps failing", async () => {
     vi.useFakeTimers();
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
     mockValidateHostedServer.mockRejectedValue(
       new Error("invalid_token from hosted validation"),

@@ -115,8 +115,7 @@ function setStoredOAuthTokenState(
     ...previous,
     [serverId]: {
       ...nextState,
-      serverUrl:
-        nextState.serverUrl ?? previous[serverId]?.serverUrl ?? null,
+      serverUrl: nextState.serverUrl ?? previous[serverId]?.serverUrl ?? null,
     },
   }));
 
@@ -235,7 +234,7 @@ export function useHostedOAuthGate({
               server.serverName,
               RESUME_TOKEN_POLL_ATTEMPTS,
             )
-          : getStoredTokens(server.serverName)?.access_token ?? null;
+          : (getStoredTokens(server.serverName)?.access_token ?? null);
 
         if (isUnmountedRef.current) return;
 
@@ -270,7 +269,10 @@ export function useHostedOAuthGate({
           }));
         }
 
-        const validation = await validateWithRetry(server.serverId, accessToken);
+        const validation = await validateWithRetry(
+          server.serverId,
+          accessToken,
+        );
         if (isUnmountedRef.current) return;
 
         if (validation.ok) {

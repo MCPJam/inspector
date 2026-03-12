@@ -5,9 +5,8 @@ import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context"
 import type { ModelDefinition } from "@/shared/types";
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (
-    selector: (state: { themeMode: "light" }) => unknown,
-  ) => selector({ themeMode: "light" }),
+  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
+    selector({ themeMode: "light" }),
 }));
 
 vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({

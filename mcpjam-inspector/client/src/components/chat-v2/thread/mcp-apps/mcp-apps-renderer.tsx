@@ -578,7 +578,7 @@ export function MCPAppsRenderer({
   // These are sent via hostContext.styles.variables - the SDK should pass them through
   const effectiveHostStyle = isPlaygroundActive
     ? playgroundHostStyle
-    : sandboxHostStyle ?? "claude";
+    : (sandboxHostStyle ?? "claude");
   const useChatGPTStyle = effectiveHostStyle === "chatgpt";
   const styleVariables = useMemo(
     () =>

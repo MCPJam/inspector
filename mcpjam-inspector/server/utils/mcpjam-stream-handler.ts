@@ -314,10 +314,7 @@ async function processStream(
 
         case "reasoning-delta":
           flushText();
-          if (
-            pendingReasoningId !== null &&
-            chunk.id !== pendingReasoningId
-          ) {
+          if (pendingReasoningId !== null && chunk.id !== pendingReasoningId) {
             flushReasoning();
           }
           pendingReasoningId = chunk.id;
@@ -326,10 +323,7 @@ async function processStream(
           break;
 
         case "reasoning-end":
-          if (
-            pendingReasoningId !== null &&
-            chunk.id !== pendingReasoningId
-          ) {
+          if (pendingReasoningId !== null && chunk.id !== pendingReasoningId) {
             flushReasoning();
             pendingReasoningId = chunk.id;
           }

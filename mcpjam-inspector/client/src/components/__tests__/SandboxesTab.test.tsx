@@ -244,7 +244,9 @@ describe("SandboxesTab", () => {
   it("opens the selected sandbox from the icon action", () => {
     render(<SandboxesTab workspaceId="ws-1" />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Open sandbox" })[0]!);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Open sandbox" })[0]!,
+    );
 
     expect(window.open).toHaveBeenCalledWith(
       buildSandboxLink("alpha-token", "Alpha"),

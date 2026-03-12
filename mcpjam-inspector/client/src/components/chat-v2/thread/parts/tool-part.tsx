@@ -145,8 +145,7 @@ export function ToolPart({
     .traceDisplayMode;
   const hasAttachedTraceDisplay = Boolean(
     traceDisplayText &&
-      (traceDisplayMode === "markdown" ||
-        traceDisplayMode === "json-markdown"),
+    (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown"),
   );
   const hasInput = inputData !== undefined && inputData !== null;
   const hasOutput = outputData !== undefined && outputData !== null;
@@ -486,7 +485,9 @@ export function ToolPart({
   const renderToolData = () => {
     if (!hasInput && !showRawResult && !hasError && !hasAttachedTraceDisplay) {
       return (
-        <div className="text-muted-foreground/70">No tool details available.</div>
+        <div className="text-muted-foreground/70">
+          No tool details available.
+        </div>
       );
     }
 
@@ -617,9 +618,7 @@ export function ToolPart({
         <div className="border-t border-border/40 px-3 py-3">
           {!hideDiagnosticsUI && (
             <>
-              {hasWidgetDebug && activeDebugTab === "data" && (
-                renderToolData()
-              )}
+              {hasWidgetDebug && activeDebugTab === "data" && renderToolData()}
               {hasWidgetDebug && activeDebugTab === "state" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -728,9 +727,7 @@ export function ToolPart({
                   )}
                 </div>
               )}
-              {!hasWidgetDebug && (
-                renderToolData()
-              )}
+              {!hasWidgetDebug && renderToolData()}
             </>
           )}
           {needsApproval && approvalVisualState === "pending" && (
