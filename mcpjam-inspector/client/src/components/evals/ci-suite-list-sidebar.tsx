@@ -108,9 +108,19 @@ export function CiSuiteListSidebar({
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">Overview</div>
                 <div className="text-[11px] text-muted-foreground">
-                  Compare suite groups
+                  Suite health & status
                 </div>
               </div>
+              {(() => {
+                const failCount = suites.filter(
+                  (e) => e.latestRun?.result === "failed",
+                ).length;
+                return failCount > 0 ? (
+                  <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
+                    {failCount}
+                  </span>
+                ) : null;
+              })()}
             </div>
           </button>
         )}
