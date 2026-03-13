@@ -7,6 +7,9 @@
  */
 
 import { generateKeyPairSync } from "crypto";
+import { mkdtempSync, rmSync } from "fs";
+import os from "os";
+import path from "path";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   initGuestTokenSecret,
@@ -19,6 +22,7 @@ import { logger } from "../../utils/logger.js";
 
 const ORIGINAL_GUEST_JWT_PRIVATE_KEY = process.env.GUEST_JWT_PRIVATE_KEY;
 const ORIGINAL_GUEST_JWT_PUBLIC_KEY = process.env.GUEST_JWT_PUBLIC_KEY;
+const ORIGINAL_GUEST_JWT_KEY_DIR = process.env.GUEST_JWT_KEY_DIR;
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 
 function restoreEnv() {
@@ -34,6 +38,12 @@ function restoreEnv() {
     process.env.GUEST_JWT_PUBLIC_KEY = ORIGINAL_GUEST_JWT_PUBLIC_KEY;
   }
 
+  if (ORIGINAL_GUEST_JWT_KEY_DIR === undefined) {
+    delete process.env.GUEST_JWT_KEY_DIR;
+  } else {
+    process.env.GUEST_JWT_KEY_DIR = ORIGINAL_GUEST_JWT_KEY_DIR;
+  }
+
   if (ORIGINAL_NODE_ENV === undefined) {
     delete process.env.NODE_ENV;
   } else {
@@ -42,16 +52,21 @@ function restoreEnv() {
 }
 
 describe("guest-token service", () => {
+  let testGuestKeyDir: string;
+
   beforeEach(() => {
     restoreEnv();
     delete process.env.GUEST_JWT_PRIVATE_KEY;
     delete process.env.GUEST_JWT_PUBLIC_KEY;
+    testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "guest-token-test-"));
+    process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
     initGuestTokenSecret();
   });
 
   afterEach(() => {
     restoreEnv();
     vi.restoreAllMocks();
+    rmSync(testGuestKeyDir, { recursive: true, force: true });
   });
 
   describe("initGuestTokenSecret", () => {
@@ -69,9 +84,13 @@ describe("guest-token service", () => {
       initGuestTokenSecret();
       const { token: token1 } = issueGuestToken();
 
-      // Re-initialize with a new ephemeral key pair
+      const secondGuestKeyDir = mkdtempSync(
+        path.join(os.tmpdir(), "guest-token-test-"),
+      );
+      process.env.GUEST_JWT_KEY_DIR = secondGuestKeyDir;
       initGuestTokenSecret();
       const result = validateGuestToken(token1);
+      rmSync(secondGuestKeyDir, { recursive: true, force: true });
       expect(result.valid).toBe(false);
     });
 

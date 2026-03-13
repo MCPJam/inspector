@@ -8,6 +8,7 @@ const mockSetMessages = vi.fn();
 const mockStop = vi.fn();
 const mockAddToolApprovalResponse = vi.fn();
 const mockAuthFetch = vi.fn();
+const mockGetSessionAuthHeaders = vi.fn(() => ({}));
 const mockGetAccessToken = vi.fn(async () => null);
 const mockTransportInstances: Array<{
   options: any;
@@ -24,6 +25,11 @@ const mcpJamModel = {
   name: "GPT-5 Mini",
   provider: "openai" as const,
 };
+const nonGuestMcpJamModel = {
+  id: "openai/gpt-oss-120b",
+  name: "GPT OSS 120B",
+  provider: "openai" as const,
+};
 const mockModelState = {
   availableModels: [baseModel],
   selectedModelId: "gpt-4",
@@ -33,6 +39,14 @@ async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
   return typeof value === "function"
     ? await (value as () => T | Promise<T>)()
     : value;
+}
+
+function getUsedTransport() {
+  const transport = [...mockTransportInstances]
+    .reverse()
+    .find((instance) => instance.sendMessages.mock.calls.length > 0);
+  expect(transport).toBeDefined();
+  return transport!;
 }
 
 vi.mock("@/lib/config", () => ({
@@ -86,6 +100,7 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 
 vi.mock("@/lib/session-token", () => ({
   authFetch: (...args: unknown[]) => mockAuthFetch(...args),
+  getAuthHeaders: () => mockGetSessionAuthHeaders(),
 }));
 
 vi.mock("@/hooks/useSharedChatWidgetCapture", () => ({
@@ -197,6 +212,7 @@ describe("useChatSession minimal mode parity", () => {
     vi.clearAllMocks();
     mockModelState.availableModels = [baseModel];
     mockModelState.selectedModelId = "gpt-4";
+    mockGetSessionAuthHeaders.mockReturnValue({});
     mockGetAccessToken.mockResolvedValue(null);
     mockAuthFetch.mockResolvedValue(new Response(null, { status: 200 }));
     mockTransportInstances.length = 0;
@@ -276,7 +292,7 @@ describe("useChatSession minimal mode parity", () => {
     warnSpy.mockRestore();
   });
 
-  it("routes non-hosted chat through authFetch without transport session headers", async () => {
+  it("keeps non-hosted chat off authFetch and omits transport headers by default", async () => {
     const selectedServers = ["server-1"];
     const { result } = renderHook(() =>
       useChatSession({
@@ -286,24 +302,33 @@ describe("useChatSession minimal mode parity", () => {
       }),
     );
 
-    expect(mockTransportInstances).toHaveLength(1);
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    const latestTransport = mockTransportInstances.at(-1)!;
+    expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
+    expect(latestTransport.options.fetch).toBeUndefined();
+    expect(await resolveConfig(latestTransport.options.headers)).toBeUndefined();
 
     act(() => {
       result.current.sendMessage({ text: "hello" });
     });
 
     await waitFor(() => {
-      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+      expect(
+        mockTransportInstances.some(
+          (instance) => instance.sendMessages.mock.calls.length === 1,
+        ),
+      ).toBe(true);
     });
-
-    const [api, init] = mockAuthFetch.mock.calls[0];
-    expect(api).toBe("/api/mcp/chat-v2");
-    expect(init.headers).toBeUndefined();
+    expect(getUsedTransport().options.api).toBe("/api/mcp/chat-v2");
+    expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
-  it("adds explicit Authorization only for the non-hosted MCPJam model path", async () => {
-    mockModelState.availableModels = [mcpJamModel];
-    mockModelState.selectedModelId = mcpJamModel.id;
+  it("adds explicit Authorization transport headers for the non-hosted non-guest MCPJam model path", async () => {
+    mockModelState.availableModels = [nonGuestMcpJamModel];
+    mockModelState.selectedModelId = nonGuestMcpJamModel.id;
     mockGetAccessToken.mockResolvedValue("convex-token");
     const selectedServers = ["server-1"];
 
@@ -319,19 +344,18 @@ describe("useChatSession minimal mode parity", () => {
       expect(result.current.isAuthReady).toBe(true);
     });
 
-    act(() => {
-      result.current.sendMessage({ text: "hello" });
-    });
-
-    await waitFor(() => {
-      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
-    });
-
-    const [api, init] = mockAuthFetch.mock.calls[0];
-    expect(api).toBe("/api/mcp/chat-v2");
-    expect(init.headers).toEqual({
+    const latestTransport = mockTransportInstances.at(-1)!;
+    expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
+    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
       Authorization: "Bearer convex-token",
     });
-    expect(init.headers).not.toHaveProperty("X-MCP-Session-Auth");
+
+    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
+      Authorization: "Bearer convex-token",
+    });
+    expect(await resolveConfig(latestTransport.options.headers)).not.toHaveProperty(
+      "X-MCP-Session-Auth",
+    );
+    expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 });

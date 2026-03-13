@@ -13,6 +13,7 @@ import {
 describe("hosted web context", () => {
   afterEach(() => {
     setHostedApiContext(null);
+    localStorage.removeItem("mcp-tokens-myServer");
   });
 
   it("includes share token and chat_v2 scope for shared-chat requests", () => {
@@ -38,29 +39,6 @@ describe("hosted web context", () => {
     });
   });
 
-  it("includes sandbox token and chat_v2 scope for sandbox requests", () => {
-    setHostedApiContext({
-      workspaceId: "ws_sandbox",
-      serverIdsByName: { demo: "srv_demo" },
-      getAccessToken: async () => null,
-      sandboxToken: "sandbox_tok_123",
-    });
-
-    expect(buildHostedServerRequest("demo")).toEqual({
-      workspaceId: "ws_sandbox",
-      serverId: "srv_demo",
-      accessScope: "chat_v2",
-      sandboxToken: "sandbox_tok_123",
-    });
-
-    expect(buildHostedServerBatchRequest(["demo"])).toEqual({
-      workspaceId: "ws_sandbox",
-      serverIds: ["srv_demo"],
-      accessScope: "chat_v2",
-      sandboxToken: "sandbox_tok_123",
-    });
-  });
-
   it("omits share scope fields when no share token is present", () => {
     setHostedApiContext({
       workspaceId: "ws_regular",
@@ -77,6 +55,26 @@ describe("hosted web context", () => {
   it("builds guest request from serverConfigs when in guest mode", () => {
     setHostedApiContext({
       workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      serverConfigs: {
+        myServer: {
+          url: "https://example.com/mcp",
+          requestInit: { headers: { "X-Api-Key": "key123" } },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+      serverHeaders: { "X-Api-Key": "key123" },
+    });
+  });
+
+  it("keeps using direct guest requests when AuthKit still reports a session", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      hasSession: true,
       isAuthenticated: false,
       serverIdsByName: {},
       serverConfigs: {
@@ -121,6 +119,42 @@ describe("hosted web context", () => {
         "X-Api-Key": "key123",
       },
       oauthAccessToken: "fresh-access-token",
+    });
+  });
+
+  it("prefers persisted guest OAuth token from localStorage when available", () => {
+    localStorage.setItem(
+      "mcp-tokens-myServer",
+      JSON.stringify({
+        access_token: "storage-access-token",
+      }),
+    );
+
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      guestOauthTokensByServerName: {
+        myServer: "context-access-token",
+      },
+      serverConfigs: {
+        myServer: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {
+              "X-Api-Key": "key123",
+            },
+          },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+      serverHeaders: {
+        "X-Api-Key": "key123",
+      },
+      oauthAccessToken: "storage-access-token",
     });
   });
 
