@@ -32,7 +32,7 @@ import { logger } from "../utils/logger.js";
 
 const GUEST_TOKEN_TTL_S = 24 * 60 * 60; // 24 hours in seconds
 const GUEST_ISSUER = "https://api.mcpjam.com/guest";
-const KID = "guest-1";
+const KID = "guest-2";
 const DEFAULT_HOSTED_GUEST_JWKS_URL =
   "https://app.mcpjam.com/api/web/guest-jwks";
 const HOSTED_GUEST_JWKS_CACHE_MS = 5 * 60 * 1000;

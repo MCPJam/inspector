@@ -70,7 +70,7 @@ describe("web routes — chat-v2 guest mode", () => {
   const signHostedGuestToken = () => {
     const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const now = Math.floor(Date.now() / 1000);
-    const header = { alg: "RS256", typ: "JWT", kid: "guest-1" };
+    const header = { alg: "RS256", typ: "JWT", kid: "guest-2" };
     const payload = {
       iss: "https://api.mcpjam.com/guest",
       sub: "hosted-guest-id",
@@ -94,7 +94,7 @@ describe("web routes — chat-v2 guest mode", () => {
         keys: [
           {
             ...(pair.publicKey.export({ format: "jwk" }) as JsonWebKey),
-            kid: "guest-1",
+            kid: "guest-2",
             alg: "RS256",
             use: "sig",
           },

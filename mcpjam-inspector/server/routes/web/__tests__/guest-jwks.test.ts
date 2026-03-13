@@ -53,7 +53,7 @@ describe("GET /api/web/guest-jwks", () => {
     expect(body).toMatchObject({
       keys: [
         expect.objectContaining({
-          kid: "guest-1",
+          kid: "guest-2",
           alg: "RS256",
           use: "sig",
         }),
