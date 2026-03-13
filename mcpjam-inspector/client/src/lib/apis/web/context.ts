@@ -72,6 +72,11 @@ export function isGuestMode(): boolean {
   return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
 }
 
+export function shouldRetryHostedAuth401(): boolean {
+  if (!HOSTED_MODE) return false;
+  return !hostedApiContext.isAuthenticated;
+}
+
 /**
  * Hosted guest access comes in 2 shapes:
  * - direct guest: no workspace, direct serverUrl requests

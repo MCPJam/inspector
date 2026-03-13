@@ -13,6 +13,7 @@ import oauthWeb from "./oauth.js";
 import xrayPayload from "./xray-payload.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
+import { getGuestJwks } from "../../services/guest-token.js";
 
 const web = new Hono();
 
@@ -35,6 +36,12 @@ web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
 web.route("/xray-payload", xrayPayload);
 web.route("/guest-session", guestSession);
+
+// Public JWKS endpoint for guest JWT verification.
+web.get("/guest-jwks", (c) => {
+  c.header("Cache-Control", "public, max-age=3600");
+  return c.json(getGuestJwks());
+});
 
 web.onError((error, c) => {
   const routeError = mapRuntimeError(error);

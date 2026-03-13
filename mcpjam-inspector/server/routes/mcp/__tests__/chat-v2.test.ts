@@ -87,6 +87,13 @@ vi.mock("../../../utils/chat-helpers", async () => {
 vi.mock("@/shared/types", () => ({
   isGPT5Model: vi.fn().mockReturnValue(false),
   isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
+  isGuestAllowedModel: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock("../../../utils/guest-auth.js", () => ({
+  getProductionGuestAuthHeader: vi
+    .fn()
+    .mockResolvedValue("Bearer guest-test-token"),
 }));
 
 // Mock http-tool-calls for testing unresolved tool calls scenario

@@ -48,6 +48,7 @@ vi.mock("@/shared/types", async () => {
   return {
     ...actual,
     isMCPJamProvidedModel: vi.fn().mockReturnValue(true),
+    isGuestAllowedModel: vi.fn().mockReturnValue(true),
   };
 });
 
