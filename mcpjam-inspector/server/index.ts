@@ -27,6 +27,7 @@ import {
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
+import { syncGuestAuthConfigToConvex } from "./utils/convex-guest-auth-sync";
 
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
@@ -183,8 +184,8 @@ try {
 // Generate session token for API authentication
 generateSessionToken();
 
-// Initialize guest token secret for hosted mode
-initGuestTokenSecret();
+// Guest token secret is initialized after dotenv.config() below (line ~231)
+// so that GUEST_JWT_PRIVATE_KEY / GUEST_JWT_PUBLIC_KEY are available.
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -207,6 +208,10 @@ const strictModeResponse = (c: any, path: string) =>
 // Load environment variables early so route handlers can read CONVEX_HTTP_URL
 const loadedEnv = loadInspectorEnv(__dirname);
 warnOnConvexDevMisconfiguration(loadedEnv);
+
+// Initialize guest token secret (must be after env loading so env vars are available)
+initGuestTokenSecret();
+syncGuestAuthConfigToConvex();
 
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
 const mcpClientManager = new MCPClientManager(

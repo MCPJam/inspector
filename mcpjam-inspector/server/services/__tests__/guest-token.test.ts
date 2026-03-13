@@ -7,6 +7,9 @@
  */
 
 import { generateKeyPairSync } from "crypto";
+import { existsSync, mkdtempSync, rmSync } from "fs";
+import path from "path";
+import os from "os";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   initGuestTokenSecret,
@@ -19,7 +22,9 @@ import { logger } from "../../utils/logger.js";
 
 const ORIGINAL_GUEST_JWT_PRIVATE_KEY = process.env.GUEST_JWT_PRIVATE_KEY;
 const ORIGINAL_GUEST_JWT_PUBLIC_KEY = process.env.GUEST_JWT_PUBLIC_KEY;
+const ORIGINAL_GUEST_JWT_KEY_DIR = process.env.GUEST_JWT_KEY_DIR;
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+let testGuestKeyDir: string;
 
 function restoreEnv() {
   if (ORIGINAL_GUEST_JWT_PRIVATE_KEY === undefined) {
@@ -34,6 +39,12 @@ function restoreEnv() {
     process.env.GUEST_JWT_PUBLIC_KEY = ORIGINAL_GUEST_JWT_PUBLIC_KEY;
   }
 
+  if (ORIGINAL_GUEST_JWT_KEY_DIR === undefined) {
+    delete process.env.GUEST_JWT_KEY_DIR;
+  } else {
+    process.env.GUEST_JWT_KEY_DIR = ORIGINAL_GUEST_JWT_KEY_DIR;
+  }
+
   if (ORIGINAL_NODE_ENV === undefined) {
     delete process.env.NODE_ENV;
   } else {
@@ -44,6 +55,8 @@ function restoreEnv() {
 describe("guest-token service", () => {
   beforeEach(() => {
     restoreEnv();
+    testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "guest-token-test-"));
+    process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
     delete process.env.GUEST_JWT_PRIVATE_KEY;
     delete process.env.GUEST_JWT_PUBLIC_KEY;
     initGuestTokenSecret();
@@ -51,11 +64,12 @@ describe("guest-token service", () => {
 
   afterEach(() => {
     restoreEnv();
+    rmSync(testGuestKeyDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
 
   describe("initGuestTokenSecret", () => {
-    it("generates an ephemeral key pair when env vars are not set", () => {
+    it("creates a stable local dev key pair when env vars are not set", () => {
       delete process.env.GUEST_JWT_PRIVATE_KEY;
       delete process.env.GUEST_JWT_PUBLIC_KEY;
       initGuestTokenSecret();
@@ -63,16 +77,36 @@ describe("guest-token service", () => {
       const { token } = issueGuestToken();
       const result = validateGuestToken(token);
       expect(result.valid).toBe(true);
+      expect(
+        existsSync(path.join(testGuestKeyDir, "guest-jwt-private.pem")),
+      ).toBe(true);
+      expect(
+        existsSync(path.join(testGuestKeyDir, "guest-jwt-public.pem")),
+      ).toBe(true);
     });
 
-    it("tokens from different key pairs are incompatible", () => {
+    it("tokens from different local key dirs are incompatible", () => {
       initGuestTokenSecret();
       const { token: token1 } = issueGuestToken();
 
-      // Re-initialize with a new ephemeral key pair
+      // Re-initialize with a different persisted key pair
+      rmSync(testGuestKeyDir, { recursive: true, force: true });
+      testGuestKeyDir = mkdtempSync(
+        path.join(os.tmpdir(), "guest-token-test-"),
+      );
+      process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
       initGuestTokenSecret();
       const result = validateGuestToken(token1);
       expect(result.valid).toBe(false);
+    });
+
+    it("keeps tokens valid across reinitialization when dev keys are persisted", () => {
+      initGuestTokenSecret();
+      const { token } = issueGuestToken();
+
+      initGuestTokenSecret();
+      const result = validateGuestToken(token);
+      expect(result.valid).toBe(true);
     });
 
     it("keeps tokens valid across reinitialization when env keys are stable", () => {

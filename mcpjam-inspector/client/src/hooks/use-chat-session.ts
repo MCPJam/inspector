@@ -49,6 +49,7 @@ import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { getHostedAuthorizationHeader } from "@/lib/apis/web/context";
 
@@ -424,17 +425,15 @@ export function useChatSession({
             : {}),
         };
       },
-      headers: () => {
-        if (HOSTED_MODE) {
-          return undefined;
-        }
-
-        const localAuthorizationHeader =
-          transportConfigRef.current?.localAuthorizationHeader;
-        return localAuthorizationHeader
-          ? { Authorization: localAuthorizationHeader }
-          : undefined;
-      },
+      headers: HOSTED_MODE
+        ? undefined
+        : () => {
+            const localAuthorizationHeader =
+              transportConfigRef.current?.localAuthorizationHeader;
+            return localAuthorizationHeader
+              ? { Authorization: localAuthorizationHeader }
+              : ({} as Record<string, string>);
+          },
     });
   }
   const transport = transportRef.current;
@@ -782,14 +781,35 @@ export function useChatSession({
     };
   }, [messages]);
 
+  // Compute guest access from React state instead of the global hostedApiContext.
+  // Shared chats are guest-capable even though they are scoped to a workspace,
+  // while direct guests have no workspace at all.
+  const directGuestMode = HOSTED_MODE && !isAuthenticated && !hostedWorkspaceId;
+  const sharedGuestMode =
+    HOSTED_MODE &&
+    !isAuthenticated &&
+    !!hostedWorkspaceId &&
+    !!hostedShareToken;
+  const guestMode = directGuestMode || sharedGuestMode;
+
   // Computed state for UI
-  const requiresAuthForChat = HOSTED_MODE || isMcpJamModel;
-  const isAuthReady = !requiresAuthForChat || !!authHeaders;
+  // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
+  // In non-hosted mode: only require auth for non-guest MCPJam models
+  // (server injects production guest token for guest-allowed models).
+  const requiresAuthForChat = HOSTED_MODE
+    ? true
+    : isMcpJamModel && !isGuestAllowedModel(String(selectedModel?.id ?? ""));
+  const isAuthReady =
+    !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
+  // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
   const disableForAuthentication =
-    !HOSTED_MODE && !isAuthenticated && requiresAuthForChat;
-  const authHeadersNotReady = requiresAuthForChat && !authHeaders;
+    !isAuthenticated && requiresAuthForChat && !guestMode;
+  const authHeadersNotReady =
+    requiresAuthForChat && isAuthenticated && !authHeaders;
+  // Direct guests don't need a workspace; shared guests still do.
   const hostedContextNotReady =
     HOSTED_MODE &&
+    !directGuestMode &&
     (!hostedWorkspaceId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

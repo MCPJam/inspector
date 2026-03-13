@@ -12,6 +12,8 @@ export interface HostedApiContext {
   shareToken?: string;
   sandboxToken?: string;
   isAuthenticated?: boolean;
+  /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
+  hasSession?: boolean;
   /** Maps server name → MCPServerConfig for guest mode (no Convex). */
   serverConfigs?: Record<string, unknown>;
 }
@@ -32,6 +34,29 @@ export function resetTokenCache() {
   cachedBearerToken = null;
 }
 
+function readStoredGuestOAuthAccessToken(
+  serverName: string,
+): string | undefined {
+  if (typeof window === "undefined") return undefined;
+
+  try {
+    const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
+    if (!raw) return undefined;
+
+    const parsed = JSON.parse(raw) as { access_token?: unknown };
+    if (
+      typeof parsed.access_token === "string" &&
+      parsed.access_token.trim().length > 0
+    ) {
+      return parsed.access_token;
+    }
+  } catch {
+    // Ignore malformed localStorage data and fall back to in-memory context.
+  }
+
+  return undefined;
+}
+
 function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
@@ -39,13 +64,33 @@ function assertHostedMode() {
 }
 
 /**
- * True when running in hosted mode without an authenticated workspace.
- * Guest users store server configs in localStorage and connect directly
- * (no Convex involvement).
+ * True when running in hosted mode as a direct guest connection.
+ * Direct guests store server configs in localStorage and connect directly
+ * without Convex authorization.
  */
 export function isGuestMode(): boolean {
   if (!HOSTED_MODE) return false;
   return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
+}
+
+/**
+ * Hosted guest access comes in 2 shapes:
+ * - direct guest: no workspace, direct serverUrl requests
+ * - shared guest: workspace-scoped share token, Convex-backed requests
+ */
+function hasHostedGuestAccess(): boolean {
+  if (!HOSTED_MODE) return false;
+  if (hostedApiContext.isAuthenticated) return false;
+  return !hostedApiContext.workspaceId || !!hostedApiContext.shareToken;
+}
+
+/**
+ * Prefer the guest bearer for both direct guests and shared guests.
+ * Shared guests still use Convex-backed requests; they only differ in how the
+ * bearer is obtained.
+ */
+function shouldPreferGuestBearer(): boolean {
+  return hasHostedGuestAccess();
 }
 
 export function shouldRetryHostedAuth401(): boolean {
@@ -53,7 +98,7 @@ export function shouldRetryHostedAuth401(): boolean {
   return !hostedApiContext.isAuthenticated;
 }
 
-function buildGuestServerRequest(
+export function buildGuestServerRequest(
   config: unknown,
   oauthAccessToken?: string,
 ): Record<string, unknown> {
@@ -176,10 +221,13 @@ export function buildHostedServerRequest(
           "The server may not be loaded yet.",
       );
     }
-    return buildGuestServerRequest(
-      config,
-      hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId],
-    );
+    // Prefer persisted OAuth tokens so guest requests can keep working even if
+    // React state has not yet synchronized token updates.
+    const oauthToken =
+      readStoredGuestOAuthAccessToken(serverNameOrId) ??
+      hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId];
+
+    return buildGuestServerRequest(config, oauthToken);
   }
 
   // Authenticated path: resolve via Convex server mappings
@@ -240,6 +288,20 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
     return `Bearer ${cachedBearerToken.token}`;
   }
 
+  // In guest mode, bypass WorkOS token bootstrap entirely and use a guest
+  // bearer token directly. This avoids stale/invalid WorkOS tokens from
+  // masking valid guest sessions.
+  if (shouldPreferGuestBearer()) {
+    const guestToken = await getGuestBearerToken();
+    if (guestToken) {
+      cachedBearerToken = {
+        token: guestToken,
+        expiresAt: now + TOKEN_CACHE_TTL_MS,
+      };
+      return `Bearer ${guestToken}`;
+    }
+  }
+
   // Try WorkOS (logged-in user)
   const getAccessToken = hostedApiContext.getAccessToken;
   if (getAccessToken) {
@@ -254,9 +316,19 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
     }
   }
 
-  // Fall back to guest token
+  if (!hasHostedGuestAccess()) {
+    return null;
+  }
+
+  // Fall back to guest token for explicit guest-capable surfaces only.
   const guestToken = await getGuestBearerToken();
-  if (guestToken) return `Bearer ${guestToken}`;
+  if (guestToken) {
+    cachedBearerToken = {
+      token: guestToken,
+      expiresAt: now + TOKEN_CACHE_TTL_MS,
+    };
+    return `Bearer ${guestToken}`;
+  }
 
   return null;
 }

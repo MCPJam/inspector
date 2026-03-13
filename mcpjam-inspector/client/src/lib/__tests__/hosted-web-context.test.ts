@@ -13,6 +13,7 @@ import {
 describe("hosted web context", () => {
   afterEach(() => {
     setHostedApiContext(null);
+    localStorage.removeItem("mcp-tokens-myServer");
   });
 
   it("includes share token and chat_v2 scope for shared-chat requests", () => {
@@ -93,6 +94,26 @@ describe("hosted web context", () => {
     });
   });
 
+  it("keeps using direct guest requests when AuthKit still reports a session", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      hasSession: true,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      serverConfigs: {
+        myServer: {
+          url: "https://example.com/mcp",
+          requestInit: { headers: { "X-Api-Key": "key123" } },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+      serverHeaders: { "X-Api-Key": "key123" },
+    });
+  });
+
   it("includes the latest guest OAuth token separately from server headers", () => {
     setHostedApiContext({
       workspaceId: null,
@@ -121,6 +142,42 @@ describe("hosted web context", () => {
         "X-Api-Key": "key123",
       },
       oauthAccessToken: "fresh-access-token",
+    });
+  });
+
+  it("prefers persisted guest OAuth token from localStorage when available", () => {
+    localStorage.setItem(
+      "mcp-tokens-myServer",
+      JSON.stringify({
+        access_token: "storage-access-token",
+      }),
+    );
+
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      guestOauthTokensByServerName: {
+        myServer: "context-access-token",
+      },
+      serverConfigs: {
+        myServer: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {
+              "X-Api-Key": "key123",
+            },
+          },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+      serverHeaders: {
+        "X-Api-Key": "key123",
+      },
+      oauthAccessToken: "storage-access-token",
     });
   });
 

@@ -42,6 +42,7 @@ import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
+import { resolveHostedWorkspaceId } from "@/lib/hosted-workspace";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 
@@ -145,7 +146,10 @@ export function ChatTabV2({
   );
 
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const convexWorkspaceId = resolveHostedWorkspaceId(
+    isConvexAuthenticated,
+    activeWorkspace?.sharedWorkspaceId,
+  );
   const { serversByName } = useWorkspaceServers({
     isAuthenticated: isConvexAuthenticated,
     workspaceId: convexWorkspaceId,

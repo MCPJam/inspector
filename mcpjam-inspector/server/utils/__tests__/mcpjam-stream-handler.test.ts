@@ -58,6 +58,7 @@ vi.mock("../mcpjam-tool-helpers", () => ({
 
 vi.mock("../logger", () => ({
   logger: {
+    info: vi.fn(),
     error: vi.fn(),
   },
 }));

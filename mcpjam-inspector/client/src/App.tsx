@@ -62,6 +62,7 @@ import {
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import { resolveHostedNavigation } from "./lib/hosted-navigation";
+import { resolveHostedWorkspaceId } from "./lib/hosted-workspace";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
   clearHostedOAuthPendingState,
@@ -381,7 +382,10 @@ export default function App() {
 
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const convexWorkspaceId = resolveHostedWorkspaceId(
+    isAuthenticated,
+    activeWorkspace?.sharedWorkspaceId,
+  );
 
   // Fetch views for the workspace to determine which servers have saved views
   const { viewsByServer } = useViewQueries({
@@ -434,6 +438,7 @@ export default function App() {
     oauthTokensByServerId,
     guestOauthTokensByServerName,
     isAuthenticated,
+    hasSession: !!workOsUser,
     serverConfigs: guestServerConfigs,
     enabled: !isHostedChatRoute,
   });
