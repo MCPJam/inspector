@@ -95,6 +95,7 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
+  getAuthHeaders: vi.fn(() => ({})),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
