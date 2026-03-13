@@ -105,31 +105,15 @@ describe("guest-auth", () => {
     expect(mockIssueGuestToken).not.toHaveBeenCalled();
   });
 
-  it("uses local guest signing in production by default", async () => {
+  it("fetches a hosted guest session in production by default", async () => {
     process.env.NODE_ENV = "production";
-    mockIssueGuestToken.mockReturnValue({
-      token: "prod-local-guest-token",
-      expiresAt: Date.now() + 60_000,
-    });
-
-    const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
-    const header = await getProductionGuestAuthHeader();
-
-    expect(header).toBe("Bearer prod-local-guest-token");
-    expect(mockIssueGuestToken).toHaveBeenCalledTimes(1);
-    expect(global.fetch).not.toHaveBeenCalled();
-  });
-
-  it("fetches a hosted guest session in production when local signing is explicitly disabled", async () => {
-    process.env.NODE_ENV = "production";
-    process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "false";
     process.env.MCPJAM_GUEST_SESSION_URL =
       "https://app.mcpjam.com/api/web/guest-session";
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
-          guestId: "guest-1",
-          token: "remote-guest-token",
+          guestId: "guest-prod",
+          token: "remote-prod-token",
           expiresAt: Date.now() + 60_000,
         }),
         {
@@ -142,7 +126,7 @@ describe("guest-auth", () => {
     const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
     const header = await getProductionGuestAuthHeader();
 
-    expect(header).toBe("Bearer remote-guest-token");
+    expect(header).toBe("Bearer remote-prod-token");
     expect(global.fetch).toHaveBeenCalledWith(
       "https://app.mcpjam.com/api/web/guest-session",
       {
@@ -151,5 +135,21 @@ describe("guest-auth", () => {
       },
     );
     expect(mockIssueGuestToken).not.toHaveBeenCalled();
+  });
+
+  it("uses local guest signing in production when explicitly enabled", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "true";
+    mockIssueGuestToken.mockReturnValue({
+      token: "prod-local-guest-token",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
+    const header = await getProductionGuestAuthHeader();
+
+    expect(header).toBe("Bearer prod-local-guest-token");
+    expect(mockIssueGuestToken).toHaveBeenCalledTimes(1);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

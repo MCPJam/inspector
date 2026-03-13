@@ -35,8 +35,9 @@ function getClientIp(c: any): string {
  * POST /api/web/guest-session
  *
  * Returns a guest bearer token for unauthenticated visitors.
- * By default the token is issued here using the local signer; the hosted
- * guest-session endpoint remains available as an explicit opt-in.
+ * Hosted web and local dev issue the token here using the local signer for
+ * that runtime. Production local runtimes can proxy to the hosted
+ * guest-session endpoint instead.
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {

@@ -4,16 +4,16 @@
  * Provides a valid guest JWT for MCPJam model requests from unauthenticated
  * users in non-hosted mode (npx/electron/docker).
  *
- * By default, local runtimes sign guest tokens locally so they keep working
- * against their own Convex dev/sandbox setup. Hosted guest-session fetching
- * remains available as an explicit opt-in.
+ * Dev runtimes sign guest tokens locally so they keep working against their
+ * own Convex sandbox setup. Production local runtimes fetch a guest session
+ * from app.mcpjam.com so they use the hosted signer by default.
  */
 
 import { issueGuestToken } from "../services/guest-token.js";
 import { logger } from "./logger.js";
 import {
   fetchRemoteGuestSession,
-  shouldUseLocalGuestSigning,
+  shouldUseHostedGuestSession,
 } from "./guest-session-source.js";
 
 /** Buffer before expiry to trigger a refresh (5 minutes in ms). */
@@ -24,16 +24,16 @@ let cachedToken: { token: string; expiresAt: number } | null = null;
 /**
  * Returns a Bearer authorization header for unauthenticated MCPJam model calls.
  *
- * By default, local runtimes sign guest tokens locally so they keep working
- * against their own Convex dev/sandbox setup. Hosted guest-session fetching
- * remains available as an explicit opt-in.
+ * Dev runtimes sign guest tokens locally so they keep working against their
+ * own Convex sandbox setup. Production local runtimes fetch a guest session
+ * from app.mcpjam.com so they use the hosted signer by default.
  */
 export async function getProductionGuestAuthHeader(): Promise<string | null> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + REFRESH_BUFFER_MS) {
     return `Bearer ${cachedToken.token}`;
   }
 
-  if (!shouldUseLocalGuestSigning()) {
+  if (shouldUseHostedGuestSession()) {
     const session = await fetchRemoteGuestSession();
     if (!session) {
       return null;

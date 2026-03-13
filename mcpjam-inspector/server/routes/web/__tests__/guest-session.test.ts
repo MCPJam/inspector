@@ -133,8 +133,8 @@ describe("POST /guest-session", () => {
   });
 
   describe("remote guest session mode", () => {
-    it("proxies the hosted guest session when local signing is explicitly disabled", async () => {
-      process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "false";
+    it("proxies the hosted guest session in production by default", async () => {
+      process.env.NODE_ENV = "production";
       process.env.MCPJAM_GUEST_SESSION_URL =
         "https://app.mcpjam.com/api/web/guest-session";
       global.fetch = vi.fn().mockResolvedValue(
@@ -167,6 +167,21 @@ describe("POST /guest-session", () => {
           headers: { "Content-Type": "application/json" },
         },
       );
+    });
+
+    it("issues a local guest session in production when local signing is explicitly enabled", async () => {
+      process.env.NODE_ENV = "production";
+      process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "true";
+      global.fetch = vi.fn() as typeof fetch;
+
+      const res = await app.request("/guest-session", { method: "POST" });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(typeof data.guestId).toBe("string");
+      expect(typeof data.token).toBe("string");
+      expect(typeof data.expiresAt).toBe("number");
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 

@@ -1,4 +1,5 @@
 import { logger } from "./logger.js";
+import { HOSTED_MODE } from "../config.js";
 
 const DEFAULT_REMOTE_GUEST_SESSION_URL =
   "https://app.mcpjam.com/api/web/guest-session";
@@ -9,12 +10,27 @@ export type RemoteGuestSession = {
   expiresAt: number;
 };
 
-export function shouldUseLocalGuestSigning(): boolean {
-  if (process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING === "false") {
+export function shouldUseHostedGuestSession(): boolean {
+  if (process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING === "true") {
     return false;
   }
 
-  return true;
+  if (process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING === "false") {
+    return true;
+  }
+
+  // Hosted web signs guest tokens on the hosted inspector server.
+  if (HOSTED_MODE) {
+    return false;
+  }
+
+  // Production local runtimes (npx / packaged Electron / Docker) use the
+  // hosted signer by default. Dev/test stay on local signing.
+  return process.env.NODE_ENV === "production";
+}
+
+export function shouldUseLocalGuestSigning(): boolean {
+  return !shouldUseHostedGuestSession();
 }
 
 export function getRemoteGuestSessionUrl(): string {
