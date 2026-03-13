@@ -9,7 +9,13 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 import { getGuestBearerToken } from "@/lib/guest-session";
-import { getHostedAuthorizationHeader, setHostedApiContext } from "../context";
+import {
+  getHostedAuthorizationHeader,
+  setHostedApiContext,
+  isGuestMode,
+  buildHostedServerRequest,
+  buildGuestServerRequest,
+} from "../context";
 
 describe("getHostedAuthorizationHeader guest fallback", () => {
   beforeEach(() => {
@@ -152,5 +158,95 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(result2).toBe("Bearer guest-2");
 
     vi.useRealTimers();
+  });
+});
+
+describe("isGuestMode and buildHostedServerRequest consistency", () => {
+  beforeEach(() => {
+    setHostedApiContext(null);
+  });
+
+  afterEach(() => {
+    setHostedApiContext(null);
+  });
+
+  it("isGuestMode returns true for direct guests (no workspace, not authenticated)", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+    });
+
+    expect(isGuestMode()).toBe(true);
+  });
+
+  it("isGuestMode returns false for shared guests (has workspace + shareToken)", () => {
+    setHostedApiContext({
+      workspaceId: "ws-shared",
+      isAuthenticated: false,
+      shareToken: "share_tok_123",
+      serverIdsByName: { bench: "srv-1" },
+    });
+
+    expect(isGuestMode()).toBe(false);
+  });
+
+  it("isGuestMode returns false for authenticated users", () => {
+    setHostedApiContext({
+      workspaceId: "ws-1",
+      isAuthenticated: true,
+      serverIdsByName: {},
+    });
+
+    expect(isGuestMode()).toBe(false);
+  });
+
+  it("buildHostedServerRequest uses guest path for direct guests with server config", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      serverConfigs: {
+        "my-server": { url: "https://my-mcp.example.com/sse" },
+      },
+    });
+
+    const result = buildHostedServerRequest("my-server");
+
+    expect(result).toMatchObject({
+      serverUrl: "https://my-mcp.example.com/sse",
+    });
+    // Should NOT have workspaceId — this is a guest request
+    expect(result).not.toHaveProperty("workspaceId");
+  });
+
+  it("buildHostedServerRequest uses workspace path for shared guests", () => {
+    setHostedApiContext({
+      workspaceId: "ws-shared",
+      isAuthenticated: false,
+      shareToken: "share_tok_123",
+      serverIdsByName: { "my-server": "srv-1" },
+    });
+
+    const result = buildHostedServerRequest("my-server");
+
+    expect(result).toMatchObject({
+      workspaceId: "ws-shared",
+      serverId: "srv-1",
+      shareToken: "share_tok_123",
+    });
+  });
+
+  it("buildHostedServerRequest throws for direct guests without server config", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      serverIdsByName: {},
+      serverConfigs: {},
+    });
+
+    expect(() => buildHostedServerRequest("unknown-server")).toThrow(
+      /No guest server config found/,
+    );
   });
 });
