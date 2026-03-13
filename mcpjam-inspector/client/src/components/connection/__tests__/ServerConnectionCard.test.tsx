@@ -21,6 +21,17 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: vi.fn().mockResolvedValue({ tools: [], toolsMetadata: {} }),
 }));
 
+vi.mock("@/lib/apis/mcp-servers-api", () => ({
+  getServerHealth: vi.fn().mockResolvedValue({
+    success: true,
+    serverId: "test-server",
+    connectionStatus: "connected",
+    healthStatus: "healthy",
+    latencyMs: 42,
+    checkedAt: "2026-03-13T12:00:00.000Z",
+  }),
+}));
+
 vi.mock("@/lib/apis/mcp-export-api", () => ({
   exportServerApi: vi.fn().mockResolvedValue({}),
 }));
@@ -58,6 +69,7 @@ vi.mock("sonner", () => ({
 
 // Must import after mocks are set up
 import { ServerConnectionCard } from "../ServerConnectionCard";
+import { getServerHealth } from "@/lib/apis/mcp-servers-api";
 
 // Mock navigator.clipboard
 const mockClipboard = {
@@ -91,6 +103,14 @@ describe("ServerConnectionCard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (getServerHealth as Mock).mockResolvedValue({
+      success: true,
+      serverId: "test-server",
+      connectionStatus: "connected",
+      healthStatus: "healthy",
+      latencyMs: 42,
+      checkedAt: "2026-03-13T12:00:00.000Z",
+    });
   });
 
   describe("rendering", () => {
@@ -165,6 +185,40 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Failed (3)")).toBeInTheDocument();
+    });
+
+    it("shows ping health for connected servers", async () => {
+      const server = createServer({ connectionStatus: "connected" });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Ping ok 42 ms")).toBeInTheDocument();
+      });
+      expect(getServerHealth).toHaveBeenCalledWith("test-server");
+    });
+
+    it("does not check ping health for disconnected servers", () => {
+      const server = createServer({ connectionStatus: "disconnected" });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(getServerHealth).not.toHaveBeenCalled();
+    });
+
+    it("shows failed ping state when the health check fails", async () => {
+      (getServerHealth as Mock).mockResolvedValue({
+        success: false,
+        serverId: "test-server",
+        connectionStatus: "connected",
+        healthStatus: "unhealthy",
+        checkedAt: "2026-03-13T12:00:00.000Z",
+        error: "Ping timeout",
+      });
+
+      render(<ServerConnectionCard server={createServer()} {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText("Ping failed")).toBeInTheDocument();
+      });
     });
   });
 
@@ -243,6 +297,26 @@ describe("ServerConnectionCard", () => {
         expect((toast.error as Mock).mock.calls.length).toBeGreaterThan(0);
       });
       expect(toggle).not.toBeDisabled();
+    });
+  });
+
+  describe("health refresh", () => {
+    it("refreshes server health on demand", async () => {
+      render(
+        <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("Ping ok 42 ms")).toBeInTheDocument();
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Refresh server health" }),
+      );
+
+      await waitFor(() => {
+        expect((getServerHealth as Mock).mock.calls.length).toBeGreaterThan(1);
+      });
     });
   });
 

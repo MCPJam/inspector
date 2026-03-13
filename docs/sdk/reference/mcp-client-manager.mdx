@@ -185,7 +185,7 @@ await manager.disconnectServer("myServer");
 Sends a ping to check if a server is responsive.
 
 ```typescript
-pingServer(serverId: string): void
+pingServer(serverId: string): Promise<{}>
 ```
 
 #### Parameters
@@ -196,7 +196,7 @@ pingServer(serverId: string): void
 
 #### Returns
 
-`void` - This method is synchronous and does not return a value.
+`Promise<{}>` - Resolves when the server responds to the ping request.
 
 #### Throws
 
@@ -207,7 +207,7 @@ pingServer(serverId: string): void
 
 ```typescript
 try {
-  manager.pingServer("myServer");
+  await manager.pingServer("myServer");
   console.log("Server is responsive");
 } catch (error) {
   console.warn("Server not responding:", error.message);

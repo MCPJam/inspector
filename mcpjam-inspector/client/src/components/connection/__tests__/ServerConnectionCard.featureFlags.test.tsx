@@ -19,6 +19,17 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: vi.fn().mockResolvedValue({ tools: [], toolsMetadata: {} }),
 }));
 
+vi.mock("@/lib/apis/mcp-servers-api", () => ({
+  getServerHealth: vi.fn().mockResolvedValue({
+    success: true,
+    serverId: "test-server",
+    connectionStatus: "connected",
+    healthStatus: "healthy",
+    latencyMs: 42,
+    checkedAt: "2026-03-13T12:00:00.000Z",
+  }),
+}));
+
 vi.mock("@/lib/apis/mcp-export-api", () => ({
   exportServerApi: vi.fn().mockResolvedValue({}),
 }));
