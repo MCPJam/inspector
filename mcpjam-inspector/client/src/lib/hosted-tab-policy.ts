@@ -6,6 +6,7 @@ const HASH_TAB_ALIASES = {
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "servers",
   "chat-v2",
+  "sandboxes",
   "app-builder",
   "views",
   "ci-evals",

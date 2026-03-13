@@ -15,13 +15,10 @@
 import { HOSTED_MODE } from "@/lib/config";
 import {
   getHostedAuthorizationHeader,
-  isGuestMode,
   resetTokenCache,
+  shouldRetryHostedAuth401,
 } from "@/lib/apis/web/context";
-import {
-  forceRefreshGuestSession,
-  peekStoredGuestToken,
-} from "@/lib/guest-session";
+import { forceRefreshGuestSession } from "@/lib/guest-session";
 
 // Extend window type for the injected token
 declare global {
@@ -233,14 +230,11 @@ export async function authFetch(
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
   const mergedInit = buildAuthFetchInit(init, hostedAuthHeader);
   const response = await fetch(input, mergedInit);
-  const requestUsedStoredGuestToken =
-    !!hostedAuthHeader &&
-    hostedAuthHeader === `Bearer ${peekStoredGuestToken() ?? ""}`;
 
   if (
     response.status !== 401 ||
     !HOSTED_MODE ||
-    (!isGuestMode() && !requestUsedStoredGuestToken) ||
+    !shouldRetryHostedAuth401() ||
     callerProvidedAuthorization
   ) {
     return response;

@@ -5,7 +5,7 @@ export const VITE_PUBLIC_POSTHOG_HOST = "https://us.i.posthog.com";
 export const options = {
   api_host: VITE_PUBLIC_POSTHOG_HOST,
   capture_pageview: false,
-  person_profiles: "identified_only", // Only create profiles for identified users
+  person_profiles: "always" as const,
 
   // Optional: Set static super properties that never change
   loaded: (posthog: any) => {
@@ -21,9 +21,18 @@ export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true";
 
 // Conditional PostHog key and options
-export const getPostHogKey = () =>
-  isPostHogDisabled ? "" : VITE_PUBLIC_POSTHOG_KEY;
-export const getPostHogOptions = () => (isPostHogDisabled ? {} : options);
+// Always use the real PostHog key so feature flags evaluate properly via /decide
+export const getPostHogKey = () => VITE_PUBLIC_POSTHOG_KEY;
+export const getPostHogOptions = () =>
+  isPostHogDisabled
+    ? {
+        api_host: VITE_PUBLIC_POSTHOG_HOST,
+        capture_pageview: false,
+        person_profiles: "always" as const,
+        // Disable event capture but keep /decide enabled for feature flag evaluation
+        opt_out_capturing: true,
+      }
+    : options;
 
 export function detectPlatform() {
   // Check if running in hosted/web mode

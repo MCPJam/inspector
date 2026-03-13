@@ -204,6 +204,7 @@ chatV2.post("/", async (c) => {
       workspaceId: string;
       selectedServerIds: string[];
       shareToken?: string;
+      sandboxToken?: string;
       accessScope?: "workspace_member" | "chat_v2";
     };
 
@@ -215,6 +216,7 @@ chatV2.post("/", async (c) => {
       requireToolApproval,
       selectedServerIds,
       shareToken,
+      sandboxToken,
     } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -243,6 +245,7 @@ chatV2.post("/", async (c) => {
       {
         accessScope: "chat_v2",
         shareToken,
+        sandboxToken,
       },
     );
     oauthServerUrls = urls;
@@ -258,6 +261,7 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           customProviders: body.customProviders,
+          includeMcpToolInventory: true,
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -297,11 +301,12 @@ chatV2.post("/", async (c) => {
         selectedServers: selectedServerIds,
         requireToolApproval,
         onConversationComplete:
-          shareToken && body.chatSessionId
+          (shareToken || sandboxToken) && body.chatSessionId
             ? async (fullHistory) => {
                 await saveThreadToConvex({
                   chatSessionId: body.chatSessionId!,
                   shareToken,
+                  sandboxToken,
                   bearerToken,
                   messages: fullHistory,
                   messageCount: fullHistory.length,
@@ -318,10 +323,12 @@ chatV2.post("/", async (c) => {
   } catch (error) {
     // Enrich MCPAuthError with OAuth server URL so the client can initiate OAuth
     if (isMCPAuthError(error) && Object.keys(oauthServerUrls).length > 0) {
-      const firstUrl = Object.values(oauthServerUrls)[0];
+      const [firstServerId] = Object.keys(oauthServerUrls);
+      const firstUrl = firstServerId ? oauthServerUrls[firstServerId] : null;
       const msg = error instanceof Error ? error.message : String(error);
       return webError(c, 401, ErrorCode.UNAUTHORIZED, msg, {
         oauthRequired: true,
+        serverId: firstServerId,
         serverUrl: firstUrl,
       });
     }

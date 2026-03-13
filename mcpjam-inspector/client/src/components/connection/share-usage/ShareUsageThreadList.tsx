@@ -3,21 +3,24 @@ import { MessageSquare } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   useSharedChatThreadList,
+  type SharedChatSourceType,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
 
 interface ShareUsageThreadListProps {
-  shareId: string;
+  sourceType: SharedChatSourceType;
+  sourceId: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
 }
 
 export function ShareUsageThreadList({
-  shareId,
+  sourceType,
+  sourceId,
   selectedThreadId,
   onSelectThread,
 }: ShareUsageThreadListProps) {
-  const { threads } = useSharedChatThreadList({ shareId });
+  const { threads } = useSharedChatThreadList({ sourceType, sourceId });
 
   if (threads === undefined) {
     return (

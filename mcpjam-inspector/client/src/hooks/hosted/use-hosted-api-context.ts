@@ -9,6 +9,7 @@ interface UseHostedApiContextOptions {
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
+  sandboxToken?: string;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists, even if the token hasn't resolved yet. */
   hasSession?: boolean;
@@ -24,6 +25,7 @@ export function useHostedApiContext({
   oauthTokensByServerId,
   guestOauthTokensByServerName,
   shareToken,
+  sandboxToken,
   isAuthenticated,
   hasSession,
   serverConfigs,
@@ -51,6 +53,7 @@ export function useHostedApiContext({
       oauthTokensByServerId,
       guestOauthTokensByServerName,
       shareToken,
+      sandboxToken,
       isAuthenticated,
       hasSession,
       serverConfigs,
@@ -67,6 +70,7 @@ export function useHostedApiContext({
     oauthTokensByServerId,
     guestOauthTokensByServerName,
     shareToken,
+    sandboxToken,
     isAuthenticated,
     hasSession,
     serverConfigs,

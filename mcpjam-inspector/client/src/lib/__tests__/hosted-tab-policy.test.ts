@@ -26,6 +26,14 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("ci-evals")).toBe(true);
   });
 
+  it("keeps sandboxes visible in hosted navigation", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("sandboxes");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("sandboxes");
+    expect(isHostedSidebarTabAllowed("sandboxes")).toBe(true);
+    expect(isHostedHashTabAllowed("sandboxes")).toBe(true);
+    expect(isHostedHashTabBlocked("sandboxes")).toBe(false);
+  });
+
   it("allows profile and organizations hashes in hosted mode", () => {
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("profile");
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("organizations");

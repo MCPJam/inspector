@@ -39,6 +39,29 @@ describe("hosted web context", () => {
     });
   });
 
+  it("includes sandbox token and chat_v2 scope for sandbox requests", () => {
+    setHostedApiContext({
+      workspaceId: "ws_sandbox",
+      serverIdsByName: { demo: "srv_demo" },
+      getAccessToken: async () => null,
+      sandboxToken: "sandbox_tok_123",
+    });
+
+    expect(buildHostedServerRequest("demo")).toEqual({
+      workspaceId: "ws_sandbox",
+      serverId: "srv_demo",
+      accessScope: "chat_v2",
+      sandboxToken: "sandbox_tok_123",
+    });
+
+    expect(buildHostedServerBatchRequest(["demo"])).toEqual({
+      workspaceId: "ws_sandbox",
+      serverIds: ["srv_demo"],
+      accessScope: "chat_v2",
+      sandboxToken: "sandbox_tok_123",
+    });
+  });
+
   it("omits share scope fields when no share token is present", () => {
     setHostedApiContext({
       workspaceId: "ws_regular",

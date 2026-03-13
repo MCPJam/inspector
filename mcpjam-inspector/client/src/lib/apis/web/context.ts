@@ -10,6 +10,7 @@ export interface HostedApiContext {
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
+  sandboxToken?: string;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
   hasSession?: boolean;
@@ -90,6 +91,11 @@ function hasHostedGuestAccess(): boolean {
  */
 function shouldPreferGuestBearer(): boolean {
   return hasHostedGuestAccess();
+}
+
+export function shouldRetryHostedAuth401(): boolean {
+  if (!HOSTED_MODE) return false;
+  return !hostedApiContext.isAuthenticated;
 }
 
 export function buildGuestServerRequest(
@@ -193,8 +199,14 @@ export function getHostedShareToken(): string | undefined {
   return hostedApiContext.shareToken;
 }
 
+export function getHostedSandboxToken(): string | undefined {
+  return hostedApiContext.sandboxToken;
+}
+
 function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedShareToken() ? "chat_v2" : undefined;
+  return getHostedShareToken() || getHostedSandboxToken()
+    ? "chat_v2"
+    : undefined;
 }
 
 export function buildHostedServerRequest(
@@ -222,6 +234,7 @@ export function buildHostedServerRequest(
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
   const shareToken = getHostedShareToken();
+  const sandboxToken = getHostedSandboxToken();
   const accessScope = getHostedAccessScope();
   return {
     workspaceId: getHostedWorkspaceId(),
@@ -229,6 +242,7 @@ export function buildHostedServerRequest(
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
+    ...(sandboxToken ? { sandboxToken } : {}),
   };
 }
 
@@ -238,10 +252,12 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   shareToken?: string;
+  sandboxToken?: string;
 } {
   const serverIds = resolveHostedServerIds(serverNamesOrIds);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const shareToken = getHostedShareToken();
+  const sandboxToken = getHostedSandboxToken();
   const accessScope = getHostedAccessScope();
   return {
     workspaceId: getHostedWorkspaceId(),
@@ -249,6 +265,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
+    ...(sandboxToken ? { sandboxToken } : {}),
   };
 }
 

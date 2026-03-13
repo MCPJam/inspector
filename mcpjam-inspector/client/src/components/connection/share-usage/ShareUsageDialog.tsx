@@ -14,27 +14,30 @@ import {
 } from "@/components/ui/resizable";
 import { ShareUsageThreadList } from "./ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "./ShareUsageThreadDetail";
+import type { SharedChatSourceType } from "@/hooks/useSharedChatThreads";
 
 interface ShareUsageDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onBackToSettings: () => void;
-  shareId: string;
-  serverName: string;
+  sourceType: SharedChatSourceType;
+  sourceId: string;
+  title: string;
 }
 
 export function ShareUsageDialog({
   isOpen,
   onClose,
   onBackToSettings,
-  shareId,
-  serverName,
+  sourceType,
+  sourceId,
+  title,
 }: ShareUsageDialogProps) {
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedThreadId(null);
-  }, [shareId]);
+  }, [sourceId]);
 
   return (
     <Dialog
@@ -55,7 +58,7 @@ export function ShareUsageDialog({
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <DialogTitle className="text-base">
-              Usage &mdash; {serverName}
+              Usage &mdash; {title}
             </DialogTitle>
           </div>
         </DialogHeader>
@@ -65,7 +68,8 @@ export function ShareUsageDialog({
             <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
               <div className="h-full overflow-hidden">
                 <ShareUsageThreadList
-                  shareId={shareId}
+                  sourceType={sourceType}
+                  sourceId={sourceId}
                   selectedThreadId={selectedThreadId}
                   onSelectThread={setSelectedThreadId}
                 />

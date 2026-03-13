@@ -8,6 +8,9 @@ export interface PromptOptions {
   /** Previous PromptResult(s) to include as conversation context for multi-turn conversations */
   context?: PromptResult | PromptResult[];
 
+  /** Optional abort signal for cancelling the prompt runtime. */
+  abortSignal?: AbortSignal;
+
   /**
    * Additional stop conditions for the agentic loop.
    * Evaluated after each step completes (tools execute normally).
@@ -46,6 +49,15 @@ export interface PromptOptions {
    * respect the `abortSignal` passed to `execute()`.
    */
   timeout?: TimeoutConfiguration;
+
+  /** Shortcut for a total prompt timeout in milliseconds. */
+  timeoutMs?: number;
+
+  /**
+   * Stop the prompt loop after the step where one of these tools is called and
+   * short-circuit that tool execution with a stub result.
+   */
+  stopAfterToolCall?: string | string[];
 }
 
 /**

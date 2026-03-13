@@ -262,4 +262,132 @@ describe("mcpjam-stream-handler", () => {
     expect(onConversationComplete).not.toHaveBeenCalled();
     expect(onStreamComplete).toHaveBeenCalledTimes(1);
   });
+
+  it("removes reasoning parts from outbound backend context", async () => {
+    await handleMCPJamFreeChatModel({
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "reasoning",
+              text: "private chain of thought",
+              state: "done",
+            },
+            {
+              type: "text",
+              text: "Visible answer",
+            },
+          ],
+        },
+      ] as any,
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const fetchBody = JSON.parse(
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
+    );
+    const scrubbedMessages = JSON.parse(fetchBody.messages);
+
+    expect(scrubbedMessages).toEqual([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Visible answer",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("persists reasoning parts in order with surrounding assistant content", async () => {
+    const onConversationComplete = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        {
+          type: "reasoning-start",
+          id: "reasoning-1",
+        },
+        {
+          type: "reasoning-delta",
+          id: "reasoning-1",
+          delta: "Need to inspect tool inventory first.",
+        },
+        {
+          type: "reasoning-end",
+          id: "reasoning-1",
+        },
+        {
+          type: "text-start",
+          id: "text-1",
+        },
+        {
+          type: "text-delta",
+          id: "text-1",
+          delta: "Connected server details:",
+        },
+        {
+          type: "text-end",
+          id: "text-1",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "call-1",
+          toolName: "list_servers",
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ]),
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "List my servers" }] as any,
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      requireToolApproval: true,
+      onConversationComplete,
+    });
+
+    await lastExecution;
+
+    const fullHistory = onConversationComplete.mock.calls[0]?.[0];
+    expect(fullHistory).toHaveLength(2);
+    expect(fullHistory[1]).toEqual({
+      role: "assistant",
+      content: [
+        {
+          type: "reasoning",
+          text: "Need to inspect tool inventory first.",
+          state: "done",
+        },
+        {
+          type: "text",
+          text: "Connected server details:",
+        },
+        {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "list_servers",
+          input: {},
+        },
+      ],
+    });
+  });
 });

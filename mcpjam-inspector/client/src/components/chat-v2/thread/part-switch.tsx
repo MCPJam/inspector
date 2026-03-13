@@ -7,7 +7,10 @@ import { usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 
 import { ToolPart } from "./parts/tool-part";
-import { ReasoningPart } from "./parts/reasoning-part";
+import {
+  ReasoningPart,
+  type ReasoningDisplayMode,
+} from "./parts/reasoning-part";
 import { FilePart } from "./parts/file-part";
 import { SourceUrlPart } from "./parts/source-url-part";
 import { SourceDocumentPart } from "./parts/source-document-part";
@@ -71,6 +74,7 @@ export function PartSwitch({
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
+  reasoningDisplayMode = "inline",
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -100,6 +104,7 @@ export function PartSwitch({
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  reasoningDisplayMode?: ReasoningDisplayMode;
 }) {
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
@@ -400,7 +405,13 @@ export function PartSwitch({
     case "text":
       return <TextPart text={part.text} role={role} />;
     case "reasoning":
-      return <ReasoningPart text={part.text} state={part.state} />;
+      return (
+        <ReasoningPart
+          text={part.text}
+          state={part.state}
+          displayMode={reasoningDisplayMode}
+        />
+      );
     case "file":
       return <FilePart part={part} />;
     case "source-url":

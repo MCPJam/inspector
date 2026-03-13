@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { MessageView } from "../thread/message-view";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 
 // Mock PartSwitch
 vi.mock("../thread/part-switch", () => ({
@@ -31,8 +32,8 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 }));
 
 // Mock chat-helpers
-vi.mock("../shared/chat-helpers", () => ({
-  getProviderLogoFromModel: () => null,
+vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({
+  getProviderLogoFromModel: () => "/provider-logo.png",
 }));
 
 describe("MessageView", () => {
@@ -142,6 +143,22 @@ describe("MessageView", () => {
         "data-role",
         "assistant",
       );
+    });
+
+    it("uses a neutral placeholder for sandbox assistant avatars", () => {
+      const message = createMessage({
+        role: "assistant",
+        parts: [{ type: "text", text: "Hello" }],
+      });
+
+      render(
+        <SandboxHostStyleProvider value="claude">
+          <MessageView {...defaultProps} message={message} />
+        </SandboxHostStyleProvider>,
+      );
+
+      expect(screen.getByLabelText("Assistant")).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
     });
   });
 
