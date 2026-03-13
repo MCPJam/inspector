@@ -214,7 +214,9 @@ describe("ServerConnectionCard", () => {
         error: "Ping timeout",
       });
 
-      render(<ServerConnectionCard server={createServer()} {...defaultProps} />);
+      render(
+        <ServerConnectionCard server={createServer()} {...defaultProps} />,
+      );
 
       await waitFor(() => {
         expect(screen.getByText("Ping failed")).toBeInTheDocument();

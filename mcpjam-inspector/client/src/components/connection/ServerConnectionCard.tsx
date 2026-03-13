@@ -235,8 +235,7 @@ export function ServerConnectionCard({
         connectionStatus: server.connectionStatus,
         healthStatus: "unhealthy",
         checkedAt: new Date().toISOString(),
-        error:
-          error instanceof Error ? error.message : "Health check failed",
+        error: error instanceof Error ? error.message : "Health check failed",
       });
     } finally {
       if (healthCheckRequestIdRef.current === requestId) {
