@@ -53,6 +53,22 @@ describe("ci-evals-router", () => {
     );
   });
 
+  it("parses commit detail route", () => {
+    window.location.hash = "#/ci-evals/commit/abc1234567890";
+    expect(parseCiEvalsRoute()).toEqual({
+      type: "commit-detail",
+      commitSha: "abc1234567890",
+    });
+  });
+
+  it("navigates to commit detail route", () => {
+    navigateToCiEvalsRoute({
+      type: "commit-detail",
+      commitSha: "abc1234567890",
+    });
+    expect(window.location.hash).toBe("#/ci-evals/commit/abc1234567890");
+  });
+
   it("returns null outside ci-evals routes", () => {
     window.location.hash = "#/evals";
     expect(parseCiEvalsRoute()).toBeNull();

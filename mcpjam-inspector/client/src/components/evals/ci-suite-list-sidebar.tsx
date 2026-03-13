@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { EvalSuiteOverviewEntry } from "./types";
+import type { CommitGroup, EvalSuiteOverviewEntry } from "./types";
 import { TagBadges } from "./tag-editor";
+import { CommitListSidebar } from "./commit-list-sidebar";
 
 /** Force a re-render every `intervalMs` so relative timestamps stay fresh. */
 function useTick(intervalMs = 60_000) {
@@ -12,6 +13,8 @@ function useTick(intervalMs = 60_000) {
     return () => clearInterval(id);
   }, [intervalMs]);
 }
+
+export type SidebarMode = "suites" | "runs";
 
 interface CiSuiteListSidebarProps {
   suites: EvalSuiteOverviewEntry[];
@@ -23,6 +26,11 @@ interface CiSuiteListSidebarProps {
   filterTag?: string | null;
   onFilterTagChange?: (tag: string | null) => void;
   hasTags: boolean;
+  sidebarMode: SidebarMode;
+  onSidebarModeChange: (mode: SidebarMode) => void;
+  commitGroups: CommitGroup[];
+  selectedCommitSha: string | null;
+  onSelectCommit: (commitSha: string) => void;
 }
 
 function getStatusInfo(entry: EvalSuiteOverviewEntry): {
@@ -94,6 +102,11 @@ export function CiSuiteListSidebar({
   isLoading = false,
   filterTag,
   hasTags,
+  sidebarMode,
+  onSidebarModeChange,
+  commitGroups,
+  selectedCommitSha,
+  onSelectCommit,
 }: CiSuiteListSidebarProps) {
   useTick(); // keep "Xm ago" labels ticking
 
@@ -105,15 +118,54 @@ export function CiSuiteListSidebar({
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Eval suites</h2>
-          {filteredSuites.length > 0 && (
+          <h2 className="text-sm font-semibold">
+            {sidebarMode === "suites" ? "Eval suites" : "Runs by commit"}
+          </h2>
+          {sidebarMode === "suites" && filteredSuites.length > 0 && (
             <span className="text-[10px] text-muted-foreground tabular-nums">
               {filteredSuites.length}
             </span>
           )}
+          {sidebarMode === "runs" && commitGroups.length > 0 && (
+            <span className="text-[10px] text-muted-foreground tabular-nums">
+              {commitGroups.length}
+            </span>
+          )}
+        </div>
+        <div className="mt-2 flex rounded-md border bg-muted/50 p-0.5">
+          <button
+            onClick={() => onSidebarModeChange("suites")}
+            className={cn(
+              "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
+              sidebarMode === "suites"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Suites
+          </button>
+          <button
+            onClick={() => onSidebarModeChange("runs")}
+            className={cn(
+              "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
+              sidebarMode === "runs"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Runs
+          </button>
         </div>
       </div>
 
+      {sidebarMode === "runs" ? (
+        <CommitListSidebar
+          commitGroups={commitGroups}
+          selectedCommitSha={selectedCommitSha}
+          onSelectCommit={onSelectCommit}
+          isLoading={isLoading}
+        />
+      ) : (
       <div className="flex-1 overflow-y-auto">
         {hasTags && (
           <button
@@ -220,6 +272,7 @@ export function CiSuiteListSidebar({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
