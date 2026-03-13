@@ -184,10 +184,7 @@ if (isInIframe) {
 
     root.render(
       <StrictMode>
-        <PostHogProvider
-          apiKey={getPostHogKey()}
-          options={getPostHogOptions()}
-        >
+        <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
           {Providers}
         </PostHogProvider>
       </StrictMode>,
