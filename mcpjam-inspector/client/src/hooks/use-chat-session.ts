@@ -784,10 +784,7 @@ export function useChatSession({
   // Compute guest access from React state instead of the global hostedApiContext.
   // Shared chats are guest-capable even though they are scoped to a workspace,
   // while direct guests have no workspace at all.
-  const directGuestMode =
-    HOSTED_MODE &&
-    !isAuthenticated &&
-    !hostedWorkspaceId;
+  const directGuestMode = HOSTED_MODE && !isAuthenticated && !hostedWorkspaceId;
   const sharedGuestMode =
     HOSTED_MODE &&
     !isAuthenticated &&
