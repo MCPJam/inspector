@@ -436,18 +436,15 @@ const server = serve({
 });
 
 // Handle graceful shutdown
-process.on("SIGINT", async () => {
+async function shutdown() {
   console.log("\n🛑 Shutting down gracefully...");
   await tunnelManager.closeAll();
   server.close();
+  await appLogger.flush();
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", async () => {
-  console.log("\n🛑 Shutting down gracefully...");
-  await tunnelManager.closeAll();
-  server.close();
-  process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 export default app;
