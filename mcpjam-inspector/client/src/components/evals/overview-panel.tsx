@@ -209,6 +209,7 @@ export function OverviewPanel({
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
   const [failuresOnly, setFailuresOnly] = useState(false);
   const [suiteSearch, setSuiteSearch] = useState("");
+  const [failurePageSize, setFailurePageSize] = useState(10);
 
   // Apply tag filter
   const filteredSuites = useMemo(
@@ -646,9 +647,12 @@ export function OverviewPanel({
 
             <CollapsibleContent>
               <div className="border-t divide-y">
-                {failureEntries.map((entry) => {
+                {failureEntries.slice(0, failurePageSize).map((entry) => {
                   const isFailed = entry.latestRun?.result === "failed";
                   const isNeverRun = !entry.latestRun;
+                  const passRate = isFailed && entry.latestRun?.summary
+                    ? toPercent(entry.latestRun.summary.passRate ?? 0)
+                    : null;
 
                   return (
                     <button
@@ -673,11 +677,20 @@ export function OverviewPanel({
                               ))}
                           </div>
                           {isFailed && entry.latestRun?.summary && (
-                            <div className="text-xs text-muted-foreground mt-0.5">
-                              {entry.latestRun.summary.passed}/
-                              {entry.latestRun.summary.total} tests passed
-                              {entry.latestRun.summary.passRate !== undefined &&
-                                ` (${Math.round(entry.latestRun.summary.passRate)}%)`}
+                            <div className="flex items-center gap-2 mt-1">
+                              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-full transition-all",
+                                    passRate! >= 75 ? "bg-amber-500" : "bg-destructive",
+                                  )}
+                                  style={{ width: `${passRate}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+                                {entry.latestRun.summary.passed}/
+                                {entry.latestRun.summary.total} ({passRate}%)
+                              </span>
                             </div>
                           )}
                           {isFailed && entry.latestRun?.ciMetadata && (
@@ -718,6 +731,14 @@ export function OverviewPanel({
                   );
                 })}
               </div>
+              {failureEntries.length > failurePageSize && (
+                <button
+                  onClick={() => setFailurePageSize((s) => s + 20)}
+                  className="w-full py-2 text-xs text-primary hover:bg-muted/50 transition-colors border-t font-medium"
+                >
+                  Show more ({failureEntries.length - failurePageSize} remaining)
+                </button>
+              )}
             </CollapsibleContent>
           </div>
         </Collapsible>
