@@ -194,7 +194,7 @@ describe("guest-token service", () => {
 
       expect(header.alg).toBe("RS256");
       expect(header.typ).toBe("JWT");
-      expect(header.kid).toBe("guest-1");
+      expect(header.kid).toBe("guest-2");
     });
 
     it("payload contains iss, sub, iat, and exp", () => {
@@ -445,7 +445,7 @@ describe("guest-token service", () => {
       expect(key.kty).toBe("RSA");
       expect(key.alg).toBe("RS256");
       expect(key.use).toBe("sig");
-      expect(key.kid).toBe("guest-1");
+      expect(key.kid).toBe("guest-2");
       expect(key.n).toBeDefined(); // RSA modulus
       expect(key.e).toBeDefined(); // RSA exponent
     });
