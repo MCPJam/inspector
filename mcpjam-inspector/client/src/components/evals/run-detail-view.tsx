@@ -1,21 +1,11 @@
 import { useMemo } from "react";
-import { X, Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import {
-  BarChart,
-  Bar,
-  CartesianGrid,
-  PieChart,
-  Pie,
-  XAxis,
-  YAxis,
-  Label,
-} from "recharts";
+import { PieChart, Pie, Label } from "recharts";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import { getIterationBorderColor } from "./helpers";
@@ -288,6 +278,40 @@ export function RunDetailView({
               metricLabel={metricLabel}
             />
           </div>
+
+          {/* Inline model performance (only when ≥2 models) */}
+          {selectedRunChartData.modelData.length >= 2 && (
+            <div className="flex items-center gap-4 mt-2 pt-2 border-t border-border/50">
+              <span className="text-[10px] text-muted-foreground">
+                By Model:
+              </span>
+              {selectedRunChartData.modelData.map((model) => (
+                <div
+                  key={model.model}
+                  className="flex items-center gap-1.5"
+                >
+                  <div
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{
+                      backgroundColor:
+                        model.passRate >= 80
+                          ? "hsl(142.1 76.2% 36.3%)"
+                          : model.passRate >= 50
+                            ? "hsl(45.4 93.4% 47.5%)"
+                            : "hsl(0 84.2% 60.2%)",
+                    }}
+                  />
+                  <span className="text-[11px]">{model.model}</span>
+                  <span className="text-[11px] font-mono font-medium">
+                    {model.passRate}%
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    ({model.passed}/{model.total})
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -316,15 +340,12 @@ export function RunDetailView({
                   No iterations found.
                 </div>
               ) : (
-                caseGroupsForSelectedRun.map((iteration, idx) => (
-                  <IterationListItem
-                    key={iteration._id}
-                    iteration={iteration}
-                    index={idx + 1}
-                    isSelected={selectedIterationId === iteration._id}
-                    onSelect={() => onSelectIteration(iteration._id)}
-                  />
-                ))
+                <IterationListWithSections
+                  iterations={caseGroupsForSelectedRun}
+                  sortBy={runDetailSortBy}
+                  selectedIterationId={selectedIterationId}
+                  onSelectIteration={onSelectIteration}
+                />
               )}
             </div>
           </div>
@@ -356,294 +377,113 @@ export function RunDetailView({
         </div>
       </div>
 
-      {/* Run Summary Sidebar */}
-      {showRunSummarySidebar && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/50 z-40 animate-in fade-in duration-200"
-            onClick={() => setShowRunSummarySidebar(false)}
+    </div>
+  );
+}
+
+// Iteration list with section headers when sorted by result
+function IterationListWithSections({
+  iterations,
+  sortBy,
+  selectedIterationId,
+  onSelectIteration,
+}: {
+  iterations: EvalIteration[];
+  sortBy: "model" | "test" | "result";
+  selectedIterationId: string | null;
+  onSelectIteration: (id: string) => void;
+}) {
+  if (sortBy !== "result") {
+    // No sections — just render flat list
+    return (
+      <>
+        {iterations.map((iteration, idx) => (
+          <IterationListItem
+            key={iteration._id}
+            iteration={iteration}
+            index={idx + 1}
+            isSelected={selectedIterationId === iteration._id}
+            onSelect={() => onSelectIteration(iteration._id)}
           />
+        ))}
+      </>
+    );
+  }
 
-          <div className="fixed right-0 top-0 bottom-0 w-[500px] bg-background border-l z-50 overflow-y-auto animate-in slide-in-from-right duration-300">
-            <div className="sticky top-0 bg-background border-b px-4 py-3 flex items-center justify-between z-10">
-              <div className="text-sm font-semibold">Run Summary</div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowRunSummarySidebar(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
+  // Group by result: failing first, then passing, then pending/cancelled
+  const failing = iterations.filter(
+    (i) => computeIterationResult(i) === "failed",
+  );
+  const passing = iterations.filter(
+    (i) => computeIterationResult(i) === "passed",
+  );
+  const other = iterations.filter((i) => {
+    const r = computeIterationResult(i);
+    return r !== "failed" && r !== "passed";
+  });
 
-            <div className="p-4 space-y-4">
-              {/* Charts */}
-              {(selectedRunChartData.durationData.length > 0 ||
-                selectedRunChartData.tokensData.length > 0 ||
-                selectedRunChartData.modelData.length > 0) && (
-                <div className="space-y-4">
-                  {/* Duration per Test Bar Chart */}
-                  {selectedRunChartData.durationData.length > 0 && (
-                    <div className="rounded-lg border bg-background/50 p-4">
-                      <div className="text-xs font-medium text-muted-foreground mb-3">
-                        Duration per Test
-                      </div>
-                      <ChartContainer
-                        config={{
-                          duration: {
-                            label: "Duration",
-                            color: "var(--chart-1)",
-                          },
-                        }}
-                        className="aspect-auto h-64 w-full"
-                      >
-                        <BarChart
-                          data={selectedRunChartData.durationData}
-                          width={undefined}
-                          height={undefined}
-                        >
-                          <CartesianGrid
-                            strokeDasharray="3 3"
-                            vertical={false}
-                            stroke="hsl(var(--muted-foreground) / 0.2)"
-                          />
-                          <XAxis
-                            dataKey="name"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{
-                              fontSize: 10,
-                              angle: -45,
-                              textAnchor: "end",
-                            }}
-                            interval={0}
-                            height={80}
-                            tickFormatter={(value) => {
-                              if (value.length > 20) {
-                                return value.substring(0, 17) + "...";
-                              }
-                              return value;
-                            }}
-                          />
-                          <YAxis
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 12 }}
-                            tickFormatter={(value) => `${value.toFixed(1)}s`}
-                          />
-                          <ChartTooltip
-                            cursor={false}
-                            content={({ active, payload }) => {
-                              if (!active || !payload || payload.length === 0)
-                                return null;
-                              const data = payload[0].payload;
-                              return (
-                                <div className="rounded-lg border bg-background p-2 shadow-sm">
-                                  <div className="text-xs font-semibold">
-                                    {data.name}
-                                  </div>
-                                  <div className="text-sm font-medium mt-1">
-                                    {data.durationSeconds.toFixed(2)}s
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
-                          <Bar
-                            dataKey="durationSeconds"
-                            fill="var(--color-duration)"
-                            radius={[4, 4, 0, 0]}
-                            isAnimationActive={false}
-                          />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  )}
+  let globalIdx = 0;
 
-                  {/* Tokens per Test Bar Chart */}
-                  {selectedRunChartData.tokensData.length > 0 && (
-                    <div className="rounded-lg border bg-background/50 p-4">
-                      <div className="text-xs font-medium text-muted-foreground mb-3">
-                        Tokens per Test
-                      </div>
-                      <ChartContainer
-                        config={{
-                          tokens: {
-                            label: "Tokens",
-                            color: "var(--chart-2)",
-                          },
-                        }}
-                        className="aspect-auto h-64 w-full"
-                      >
-                        <BarChart
-                          data={selectedRunChartData.tokensData}
-                          width={undefined}
-                          height={undefined}
-                        >
-                          <CartesianGrid
-                            strokeDasharray="3 3"
-                            vertical={false}
-                            stroke="hsl(var(--muted-foreground) / 0.2)"
-                          />
-                          <XAxis
-                            dataKey="name"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{
-                              fontSize: 10,
-                              angle: -45,
-                              textAnchor: "end",
-                            }}
-                            interval={0}
-                            height={80}
-                            tickFormatter={(value) => {
-                              if (value.length > 20) {
-                                return value.substring(0, 17) + "...";
-                              }
-                              return value;
-                            }}
-                          />
-                          <YAxis
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 12 }}
-                            tickFormatter={(value) => value.toLocaleString()}
-                          />
-                          <ChartTooltip
-                            cursor={false}
-                            content={({ active, payload }) => {
-                              if (!active || !payload || payload.length === 0)
-                                return null;
-                              const data = payload[0].payload;
-                              return (
-                                <div className="rounded-lg border bg-background p-2 shadow-sm">
-                                  <div className="text-xs font-semibold">
-                                    {data.name}
-                                  </div>
-                                  <div className="text-sm font-medium mt-1">
-                                    {Math.round(data.tokens).toLocaleString()}{" "}
-                                    tokens
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
-                          <Bar
-                            dataKey="tokens"
-                            fill="var(--color-tokens)"
-                            radius={[4, 4, 0, 0]}
-                            isAnimationActive={false}
-                          />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  )}
-
-                  {/* Per-Model Performance for this run */}
-                  {selectedRunChartData.modelData.length > 1 && (
-                    <div className="rounded-lg border bg-background/50 p-4">
-                      <div className="text-xs font-medium text-muted-foreground mb-3">
-                        Performance by model
-                      </div>
-                      <ChartContainer
-                        config={{
-                          passRate: {
-                            label: metricLabel,
-                            color: "var(--chart-1)",
-                          },
-                        }}
-                        className="aspect-auto h-48 w-full"
-                      >
-                        <BarChart
-                          data={selectedRunChartData.modelData}
-                          width={undefined}
-                          height={undefined}
-                        >
-                          <CartesianGrid
-                            strokeDasharray="3 3"
-                            vertical={false}
-                            stroke="hsl(var(--muted-foreground) / 0.2)"
-                          />
-                          <XAxis
-                            dataKey="model"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 11 }}
-                            interval={0}
-                            height={40}
-                            tickFormatter={(value) => {
-                              if (value.length > 15) {
-                                return value.substring(0, 12) + "...";
-                              }
-                              return value;
-                            }}
-                          />
-                          <YAxis
-                            domain={[0, 100]}
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 12 }}
-                            tickFormatter={(value) => `${value}%`}
-                          />
-                          <ChartTooltip
-                            cursor={false}
-                            content={({ active, payload }) => {
-                              if (!active || !payload || payload.length === 0)
-                                return null;
-                              const data = payload[0].payload;
-                              return (
-                                <div className="rounded-lg border bg-background p-2 shadow-sm">
-                                  <div className="grid gap-2">
-                                    <div className="flex flex-col">
-                                      <span className="text-xs font-semibold">
-                                        {data.model}
-                                      </span>
-                                      <span className="text-xs text-muted-foreground mt-0.5">
-                                        {data.passed} passed · {data.failed}{" "}
-                                        failed
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <div
-                                        className="h-2 w-2 rounded-full"
-                                        style={{
-                                          backgroundColor:
-                                            "var(--color-passRate)",
-                                        }}
-                                      />
-                                      <span className="text-sm font-semibold">
-                                        {data.passRate}%
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
-                          <Bar
-                            dataKey="passRate"
-                            fill="var(--color-passRate)"
-                            radius={[4, 4, 0, 0]}
-                            isAnimationActive={false}
-                            minPointSize={8}
-                          />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+  return (
+    <>
+      {failing.length > 0 && (
+        <>
+          <div className="px-3 py-1.5 bg-red-500/10 text-[10px] font-semibold text-red-500 uppercase tracking-wide sticky top-0 z-[1]">
+            Failing ({failing.length})
           </div>
+          {failing.map((iteration) => {
+            globalIdx++;
+            return (
+              <IterationListItem
+                key={iteration._id}
+                iteration={iteration}
+                index={globalIdx}
+                isSelected={selectedIterationId === iteration._id}
+                onSelect={() => onSelectIteration(iteration._id)}
+              />
+            );
+          })}
         </>
       )}
-    </div>
+      {passing.length > 0 && (
+        <>
+          <div className="px-3 py-1.5 bg-green-500/10 text-[10px] font-semibold text-green-500 uppercase tracking-wide sticky top-0 z-[1]">
+            Passing ({passing.length})
+          </div>
+          {passing.map((iteration) => {
+            globalIdx++;
+            return (
+              <IterationListItem
+                key={iteration._id}
+                iteration={iteration}
+                index={globalIdx}
+                isSelected={selectedIterationId === iteration._id}
+                onSelect={() => onSelectIteration(iteration._id)}
+              />
+            );
+          })}
+        </>
+      )}
+      {other.length > 0 && (
+        <>
+          <div className="px-3 py-1.5 bg-muted/50 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide sticky top-0 z-[1]">
+            Pending / Cancelled ({other.length})
+          </div>
+          {other.map((iteration) => {
+            globalIdx++;
+            return (
+              <IterationListItem
+                key={iteration._id}
+                iteration={iteration}
+                index={globalIdx}
+                isSelected={selectedIterationId === iteration._id}
+                onSelect={() => onSelectIteration(iteration._id)}
+              />
+            );
+          })}
+        </>
+      )}
+    </>
   );
 }
 
